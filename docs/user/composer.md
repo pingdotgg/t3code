@@ -54,7 +54,7 @@ See [images and videos](#images-and-videos-in-messages) for previewing and savin
 On web and desktop, choose **Settings → Chat → Follow-up behavior** to queue
 new messages for a later turn or steer the running turn immediately. The setting
 applies to this client; already queued messages keep their place. Queued messages
-are saved on the server and can be edited, reordered, or removed before they send.
+are saved on the server and can be edited or removed before they send.
 When Enter sends, `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses
 the opposite action: it steers when your default is Queue and queues when your
 default is Steer.
@@ -204,15 +204,15 @@ Steer. Click it or press your send shortcut to use that action. Hold `Cmd` on ma
 Windows and Linux to switch the button to the opposite action, then click, or use the opposite-action
 shortcut described above.
 
-On web and desktop, queued messages appear at the end of the thread under **Up next**, as dashed
-messages that have not been sent yet. On mobile they appear above the composer. Each shows its text
-and any attached images. Drag a message by its handle to reorder it, use the handle's arrow keys,
-promote the message to a steer, or remove it.
+On web and desktop, queued messages appear at the end of the thread as dashed messages that have
+not been sent yet. On mobile they appear above the composer. Each shows its text and any attached
+images. **Send now** sends a message right away, into the running turn if there is one. You can
+also edit or remove it.
 
 If you stop the agent or the server restarts, queued messages keep their order and are held.
 Press **Resume** in an empty composer on web and desktop, or **Resume queue** on mobile, to
 continue. Sending a new message also resumes the queue, unless it steers a turn that is already
-running. You can edit, reorder, or remove held messages without starting them.
+running. You can edit or remove held messages without starting them.
 
 The pencil on a queued message opens it in the composer for editing. The original message
 stays in the queue until you save, and it is highlighted while you edit. The message's

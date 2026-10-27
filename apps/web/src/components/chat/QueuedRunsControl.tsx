@@ -9,15 +9,7 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import {
-  ChevronDownIcon,
-  Clock3Icon,
-  CornerUpRightIcon,
-  GripVerticalIcon,
-  ListOrderedIcon,
-  PencilIcon,
-  XIcon,
-} from "lucide-react";
+import { ChevronDownIcon, Clock3Icon, ArrowUpIcon, PencilIcon, XIcon } from "lucide-react";
 import { useId, useImperativeHandle, useRef, useState, type Ref } from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
@@ -27,6 +19,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
+import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface EditQueuedRunRequest {
@@ -42,7 +35,6 @@ interface QueuedRowThumbnail {
   readonly url: string | null;
 }
 
-const QUEUED_RUN_DRAG_TYPE = "application/x-t3code-queued-run";
 // A longer queue shows its first messages and a button that shows the rest.
 const QUEUE_VISIBLE_ROWS = 3;
 
@@ -85,19 +77,12 @@ export function QueuedRunsControl({
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
-  const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
-  const [dragState, setDragState] = useState<{
-    readonly runId: RunId;
-    readonly insertIndex: number | null;
-  } | null>(null);
-  // Arm from the grip to prevent accidental text drags from reordering queued runs.
-  const dragArmedRunIdRef = useRef<RunId | null>(null);
   const steerInFlightRef = useRef(false);
   // Run-only acknowledgements can resurrect pending rows after cancellation or startup.
   const acknowledgedMessageIds = new Set((projection?.messages ?? []).map((message) => message.id));
@@ -109,7 +94,6 @@ export function QueuedRunsControl({
   const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
-  const canReorder = workflow?.canReorder === true;
   const canSend = workflow?.canSendNow === true || workflow?.canPromoteToSteer === true;
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
@@ -159,25 +143,6 @@ export function QueuedRunsControl({
       pending: true,
     })),
   ];
-
-  const move = async (runId: RunId, beforeRunId: RunId | null) => {
-    setBusyRunId(runId);
-    await reorder({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId, runId, beforeRunId },
-    });
-    setBusyRunId(null);
-  };
-
-  const completeDrag = (runId: RunId, insertIndex: number | null) => {
-    setDragState(null);
-    dragArmedRunIdRef.current = null;
-    if (insertIndex === null || busyRunId !== null) return;
-    const draggedIndex = queued.findIndex(({ run }) => run.id === runId);
-    if (draggedIndex === -1) return;
-    if (insertIndex === draggedIndex || insertIndex === draggedIndex + 1) return;
-    void move(runId, queued[insertIndex]?.run.id ?? null);
-  };
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
     if (!canSend || steerInFlightRef.current) return;
@@ -246,17 +211,13 @@ export function QueuedRunsControl({
 
   return (
     <section
-      aria-label={`Up next: ${items.length} queued message${items.length === 1 ? "" : "s"}`}
+      aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
       data-thread-queue="true"
       className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
     >
-      <h3 className="flex min-h-5 items-center gap-1.5 px-1 text-xs font-normal text-muted-foreground [&_svg]:size-3.5">
-        <ListOrderedIcon aria-hidden />
-        Up next
-        <span className="tabular-nums" aria-live="polite">
-          · {items.length} queued
-        </span>
-      </h3>
+      <span className="sr-only" aria-live="polite">
+        {items.length} queued
+      </span>
       <ol className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
           const previewText = assistantCitationsToPlainText(
@@ -264,11 +225,7 @@ export function QueuedRunsControl({
               reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
             ),
           ).trim();
-          const rowRunId = item.runId;
-          const rowServerIndex = item.serverIndex;
-          const isEditing = rowRunId !== null && rowRunId === props.editingRunId;
-          const rowDraggable =
-            rowRunId !== null && rowServerIndex !== null && canReorder && busyRunId === null;
+          const isEditing = item.runId !== null && item.runId === props.editingRunId;
           return (
             <li
               key={item.key}
@@ -276,56 +233,8 @@ export function QueuedRunsControl({
               aria-posinset={position + 1}
               aria-setsize={items.length}
               aria-current={isEditing ? "true" : undefined}
-              className={cn(
-                "group/queued relative flex w-full flex-col items-end gap-1 transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none",
-                dragState !== null && dragState.runId === item.runId && "opacity-50",
-              )}
-              draggable={rowDraggable}
-              onDragStart={(event) => {
-                if (item.runId === null || dragArmedRunIdRef.current !== item.runId) {
-                  event.preventDefault();
-                  return;
-                }
-                event.dataTransfer.setData(QUEUED_RUN_DRAG_TYPE, item.runId);
-                event.dataTransfer.effectAllowed = "move";
-                setDragState({ runId: item.runId, insertIndex: null });
-              }}
-              onDragEnd={() => {
-                dragArmedRunIdRef.current = null;
-                setDragState(null);
-              }}
-              onDragOver={(event) => {
-                if (dragState === null || item.serverIndex === null) return;
-                event.preventDefault();
-                event.dataTransfer.dropEffect = "move";
-                const rect = event.currentTarget.getBoundingClientRect();
-                const insertIndex =
-                  event.clientY < rect.top + rect.height / 2
-                    ? item.serverIndex
-                    : item.serverIndex + 1;
-                if (dragState.insertIndex !== insertIndex) {
-                  setDragState({ runId: dragState.runId, insertIndex });
-                }
-              }}
-              onDrop={(event) => {
-                if (dragState === null) return;
-                event.preventDefault();
-                completeDrag(dragState.runId, dragState.insertIndex);
-              }}
+              className="flex w-full flex-col items-end gap-1 transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
             >
-              {item.serverIndex !== null && dragState?.insertIndex === item.serverIndex ? (
-                <span
-                  aria-hidden
-                  className="pointer-events-none absolute inset-x-0 -top-1.5 h-0.5 rounded bg-primary/70"
-                />
-              ) : null}
-              {item.serverIndex === queued.length - 1 &&
-              dragState?.insertIndex === queued.length ? (
-                <span
-                  aria-hidden
-                  className="pointer-events-none absolute inset-x-0 -bottom-1.5 h-0.5 rounded bg-primary/70"
-                />
-              ) : null}
               {/* Dashed and unfilled: a turn that has not been sent yet. */}
               <div
                 className={cn(
@@ -369,38 +278,30 @@ export function QueuedRunsControl({
                 ) : null}
               </div>
               <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
-                {items.length > 1 && canReorder && rowRunId !== null && rowServerIndex !== null ? (
-                  <Button
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    aria-label={`Reorder queued message ${position + 1} of ${items.length} (drag, or press the arrow keys)`}
-                    className="group/grip cursor-grab active:cursor-grabbing"
-                    // Not `disabled`: that drops keyboard focus mid-move and breaks repeated arrow presses.
-                    aria-disabled={busyRunId !== null || undefined}
-                    onPointerDown={() => {
-                      if (busyRunId === null) dragArmedRunIdRef.current = rowRunId;
-                    }}
-                    onKeyDown={(event) => {
-                      if (busyRunId !== null) return;
-                      if (event.key === "ArrowUp" && rowServerIndex > 0) {
-                        event.preventDefault();
-                        void move(rowRunId, queued[rowServerIndex - 1]?.run.id ?? null);
-                      }
-                      if (event.key === "ArrowDown" && rowServerIndex < queued.length - 1) {
-                        event.preventDefault();
-                        // Moving into the collapsed rows would unmount the focused grip.
-                        if (rowServerIndex + 1 >= visibleItems.length) setShowAll(true);
-                        void move(rowRunId, queued[rowServerIndex + 2]?.run.id ?? null);
-                      }
-                    }}
-                  >
-                    <span className="text-xs font-medium tabular-nums group-hover/queued:hidden group-focus-visible/grip:hidden">
-                      {position + 1}
-                    </span>
-                    <GripVerticalIcon className="hidden group-hover/queued:block group-focus-visible/grip:block" />
-                  </Button>
-                ) : items.length > 1 ? (
-                  <span className="px-1.5 font-medium tabular-nums">{position + 1}</span>
+                {canSend && !isEditing ? (
+                  <>
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="flex shrink-0" />}>
+                        <Button
+                          size="xs"
+                          variant="ghost-muted"
+                          disabled={item.runId === null || busyRunId !== null}
+                          onClick={() => {
+                            if (item.runId !== null) {
+                              void sendQueuedMessage(item.runId);
+                            }
+                          }}
+                        >
+                          <ArrowUpIcon />
+                          Send now
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipPopup>
+                        {`${workflow?.canSendNow ? "Start a turn with this message" : "Send into the current turn"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                      </TooltipPopup>
+                    </Tooltip>
+                    <Separator orientation="vertical" className="mx-2 h-4" />
+                  </>
                 ) : null}
                 {item.pending ? (
                   <span className="flex items-center gap-1 px-1">
@@ -452,26 +353,6 @@ export function QueuedRunsControl({
                       <TooltipPopup>
                         {props.editBlockedReason ??
                           `Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
-                      </TooltipPopup>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger render={<span className="flex shrink-0" />}>
-                        <Button
-                          size="xs"
-                          variant="ghost-muted"
-                          disabled={item.runId === null || busyRunId !== null || !canSend}
-                          onClick={() => {
-                            if (item.runId !== null) {
-                              void sendQueuedMessage(item.runId);
-                            }
-                          }}
-                        >
-                          <CornerUpRightIcon />
-                          {workflow?.canSendNow ? "Send now" : "Steer"}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipPopup>
-                        {`${workflow?.canSendNow ? "Start a turn with this message" : "Send as a steer instead"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
                     <Tooltip>

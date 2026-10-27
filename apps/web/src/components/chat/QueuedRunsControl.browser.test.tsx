@@ -71,7 +71,6 @@ it("previews assistant quotes as readable text and preserves the citation when e
   state.workflow = {
     activeRun: { id: "run:active" },
     canPromoteToSteer: true,
-    canReorder: true,
     queuedRuns: [
       {
         run: { id: "run:quote-only", userMessageId: "message:quote-only" },
