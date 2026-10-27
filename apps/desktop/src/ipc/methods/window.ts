@@ -456,6 +456,8 @@ export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
     if (fullscreen) {
       if (window.isFullScreen()) return;
       htmlFullscreenWindows.add(window);
+      // Leaving OS fullscreen any other way, such as F11, hands the window back to the user.
+      window.once("leave-full-screen", () => htmlFullscreenWindows.delete(window));
       window.setFullScreen(true);
     } else if (htmlFullscreenWindows.delete(window)) {
       window.setFullScreen(false);

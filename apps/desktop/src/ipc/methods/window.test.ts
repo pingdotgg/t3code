@@ -360,14 +360,20 @@ describe("pickProjectFavicon", () => {
 describe("syncHtmlFullscreen", () => {
   const fullscreenWindow = (fullscreen: boolean) => {
     let current = fullscreen;
+    const leaveListeners: Array<() => void> = [];
     const setFullScreen = vi.fn((next: boolean) => {
+      const left = current && !next;
       current = next;
+      if (left) for (const listener of leaveListeners.splice(0)) listener();
     });
     const window = {
       webContents: { id: 1 },
       isDestroyed: () => false,
       isFullScreen: () => current,
       setFullScreen,
+      once: (event: string, listener: () => void) => {
+        if (event === "leave-full-screen") leaveListeners.push(listener);
+      },
     } as unknown as Electron.BrowserWindow;
     const layer = Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) });
     return { window, setFullScreen, layer };
@@ -393,6 +399,18 @@ describe("syncHtmlFullscreen", () => {
 
       assert.isTrue(window.isFullScreen());
       assert.strictEqual(setFullScreen.mock.calls.length, 0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("hands the window back once the user leaves OS fullscreen during playback", () => {
+    const { window, layer } = fullscreenWindow(false);
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      window.setFullScreen(false);
+      window.setFullScreen(true);
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+
+      assert.isTrue(window.isFullScreen());
     }).pipe(Effect.provide(layer));
   });
 });
