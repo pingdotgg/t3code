@@ -25,6 +25,7 @@ export const LOCAL_ACP_WIZARD_STEPS = [PROVIDER_STEP, IDENTITY_STEP_LABEL] as co
 export interface ProviderIdentityDraft {
   readonly label: string;
   readonly accentColor: string;
+  readonly iconUrl?: string;
   readonly instanceIdOverride: string | null;
 }
 

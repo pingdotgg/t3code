@@ -1,5 +1,6 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
+import { ProviderIconUrlInput } from "./ProviderIconUrlInput";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
@@ -223,7 +224,8 @@ export function AddProviderInstanceDialog({
     accentColor: "",
     instanceIdOverride: null,
   };
-  const { label, accentColor, instanceIdOverride } = identityByDriver[driver] ?? defaultIdentity;
+  const { label, accentColor, iconUrl, instanceIdOverride } =
+    identityByDriver[driver] ?? defaultIdentity;
   const instanceId =
     instanceIdOverride ??
     deriveAvailableInstanceId(
@@ -400,6 +402,7 @@ export function AddProviderInstanceDialog({
       enabled: true,
       ...(label.trim().length > 0 ? { displayName: label.trim() } : {}),
       ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
+      ...(iconUrl ? { iconUrl } : {}),
       ...(hasConfig ? { config } : {}),
       ...(isLocalAcp && localEnvironment.length > 0 ? { environment: localEnvironment } : {}),
     };
@@ -716,6 +719,18 @@ export function AddProviderInstanceDialog({
                         setIdentityDraft({ instanceIdOverride: event.target.value });
                       }}
                       aria-invalid={showInstanceIdError}
+                    />
+                  }
+                />
+                <SettingsRow
+                  title="Icon"
+                  description="Optional HTTPS image URL for this instance."
+                  control={
+                    <ProviderIconUrlInput
+                      value={iconUrl}
+                      driverKind={driver}
+                      displayName={label || driverOption.label}
+                      onCommit={(value) => setIdentityDraft({ iconUrl: value })}
                     />
                   }
                 />

@@ -787,6 +787,7 @@ function AgentLogoStack({
           key={provider.instanceId}
           driverKind={provider.driver}
           displayName={agentName(provider)}
+          iconUrl={provider.iconUrl}
           iconClassName="size-3.5"
         />
       ))}
@@ -1185,6 +1186,7 @@ function OnboardingCodexSetup({
       readOnly={!canManageProviders}
       existingCliDisabled={!canOperateTerminal}
       displayName={agentName(provider)}
+          iconUrl={provider.iconUrl}
       onModeChange={changeMode}
     />
   );
@@ -1255,6 +1257,7 @@ function AgentRow({
         <ProviderInstanceIcon
           driverKind={provider.driver}
           displayName={name}
+          iconUrl={provider.iconUrl}
           iconClassName={compact ? "size-4" : "size-[18px]"}
         />
       </RowIcon>

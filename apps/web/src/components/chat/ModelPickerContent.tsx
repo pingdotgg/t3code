@@ -80,7 +80,7 @@ type ModelPickerItem = {
   instanceDisplayName: string;
   instanceAccentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
-  acpRegistryIconUrl?: string | undefined;
+  iconUrl?: string | undefined;
   continuationGroupKey?: string | undefined;
   isLegacy?: boolean | undefined;
   isUnavailable?: boolean | undefined;
@@ -589,7 +589,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           instanceDisplayName: entry.displayName,
           ...(entry.accentColor ? { instanceAccentColor: entry.accentColor } : {}),
           ...(entry.acpRegistryAgentId ? { acpRegistryAgentId: entry.acpRegistryAgentId } : {}),
-          ...(entry.acpRegistryIconUrl ? { acpRegistryIconUrl: entry.acpRegistryIconUrl } : {}),
+          ...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {}),
           ...(entry.continuationGroupKey
             ? { continuationGroupKey: entry.continuationGroupKey }
             : {}),
@@ -1069,7 +1069,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     providerDisplayName={model.instanceDisplayName}
                     providerAccentColor={model.instanceAccentColor}
                     acpRegistryAgentId={model.acpRegistryAgentId}
-                    acpRegistryIconUrl={model.acpRegistryIconUrl}
+                    iconUrl={model.iconUrl}
                     isFavorite={favoritesSet.has(providerModelKey(model.instanceId, model.slug))}
                     isSelected={
                       selectedModelKeys !== undefined
