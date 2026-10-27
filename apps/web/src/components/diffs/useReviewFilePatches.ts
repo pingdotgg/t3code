@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
-import { useContext, useEffect, useRef, useState } from "react";
+import { useContext, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   getRenderablePatch,
