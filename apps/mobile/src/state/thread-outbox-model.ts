@@ -14,7 +14,6 @@ import {
   ModelSelection,
   OrchestrationMessageContext,
   ProjectId,
-  ProjectGroupingIdentity,
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
@@ -41,7 +40,6 @@ const QueuedThreadCreationSchema = Schema.Struct({
   projectId: ProjectId,
   projectTitle: Schema.optional(Schema.String),
   projectCwd: Schema.optional(Schema.String),
-  groupingIdentity: Schema.optional(Schema.NullOr(ProjectGroupingIdentity)),
   workspaceMode: Schema.Literals(["local", "worktree"]),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
@@ -75,7 +73,6 @@ export interface QueuedThreadCreation {
   readonly projectId: ProjectIdType;
   readonly projectTitle?: string;
   readonly projectCwd?: string;
-  readonly groupingIdentity?: string | null;
   readonly workspaceMode: "local" | "worktree";
   readonly branch: string | null;
   readonly worktreePath: string | null;
