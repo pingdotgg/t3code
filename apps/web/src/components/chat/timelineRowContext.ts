@@ -45,7 +45,7 @@ export interface TimelineRowSharedState {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills: ReadonlyArray<ServerProviderSkill>;
   runs: ReadonlyArray<HandoffTimelineRun>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;

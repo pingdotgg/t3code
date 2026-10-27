@@ -17,8 +17,8 @@ import { pullRequestComposerContext, threadComposerContext } from "../../lib/com
 import { uuidv4 } from "../../lib/uuid";
 import {
   getComposerDraftSnapshot,
-  readComposerDraftSelection,
   setComposerDraftContext,
+  useComposerDraftSelection,
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -43,7 +43,7 @@ import {
 } from "@t3tools/client-runtime/providerSkills";
 import { useAtomRefresh } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
@@ -66,6 +66,27 @@ const idleWorkspaceSnapshotRefreshAtom: Atom.Atom<unknown> = Atom.make<void>(und
 
 function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
   return { start: draftMessage.length, end: draftMessage.length };
+}
+
+/**
+ * A caret placed by an insertion (chips, pasted context) wins while the draft
+ * still has the text it was placed in. Otherwise the composer's own caret is
+ * clamped to the draft, and a caret from another owner starts at the end.
+ */
+export function resolveComposerMenuSelection(input: {
+  readonly draftMessage: string;
+  readonly ownerKey: string | null;
+  readonly inserted: ComposerEditorSelection | null;
+  readonly local: {
+    readonly ownerKey: string | null;
+    readonly start: number;
+    readonly end: number;
+  };
+}): ComposerEditorSelection {
+  if (input.inserted) return input.inserted;
+  if (input.local.ownerKey !== input.ownerKey) return composerSelectionAtEnd(input.draftMessage);
+  const length = input.draftMessage.length;
+  return { start: Math.min(input.local.start, length), end: Math.min(input.local.end, length) };
 }
 
 export function buildComposerSlashCommandItems(input: {
@@ -212,34 +233,21 @@ export function useComposerCommandMenu({
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   readonly onUsageLimits?: () => void;
 }) {
-  const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
+  const [localSelection, setLocalSelection] = useState(() => ({
+    ownerKey,
+    ...composerSelectionAtEnd(draftMessage),
+  }));
   // Thread mentions rank by recency as of when the composer mounted.
   const [now] = useState(() => Date.now());
-  const previousOwnerKeyRef = useRef(ownerKey);
-  useEffect(() => {
-    const inserted = ownerKey ? readComposerDraftSelection(ownerKey, draftMessage) : null;
-    if (inserted) {
-      // oxlint-disable-next-line react/set-state-in-effect -- Applies a selection inserted into the draft store by another surface.
-      setSelection((current) =>
-        current.start === inserted.start && current.end === inserted.end ? current : inserted,
-      );
-      return;
-    }
-    const end = draftMessage.length;
-    setSelection((current) => {
-      const start = Math.min(current.start, end);
-      const selectionEnd = Math.min(current.end, end);
-      if (start === current.start && selectionEnd === current.end) {
-        return current;
-      }
-      return { start, end: selectionEnd };
-    });
-  }, [draftMessage, ownerKey]);
-  useEffect(() => {
-    if (previousOwnerKeyRef.current === ownerKey) return;
-    previousOwnerKeyRef.current = ownerKey;
-    setSelection(composerSelectionAtEnd(draftMessage));
-  }, [draftMessage, ownerKey]);
+  const insertedSelection = useComposerDraftSelection(ownerKey, draftMessage);
+  const selection = resolveComposerMenuSelection({
+    draftMessage,
+    ownerKey,
+    inserted: insertedSelection,
+    local: localSelection,
+  });
+  const setSelection = (next: ComposerEditorSelection) =>
+    setLocalSelection({ ownerKey, start: next.start, end: next.end });
 
   const skills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd)

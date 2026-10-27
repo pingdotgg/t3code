@@ -1,9 +1,7 @@
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  BackHandler,
   Keyboard,
-  Platform,
   Pressable,
   View,
   useWindowDimensions,
@@ -14,6 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { GlassSurface } from "../../components/ui/GlassSurface";
+import { useHardwareBack } from "../../lib/backHandler";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceDock } from "./WorkspaceDock";
 import { WorkspaceSearchField } from "./WorkspaceSearchField";
@@ -79,18 +78,14 @@ export function WorkspaceToolbar(props: {
       );
     workspace?.dispatch({ type: "cancel" });
   }, [workspace]);
-  const handleBack = useEffectEvent(() => {
-    if (!workspace || workspace.state.tabs[workspace.state.selectedTab].searchMode === "resting")
-      return false;
+  const searchOpen =
+    workspace !== null &&
+    workspace.state.tabs[workspace.state.selectedTab].searchMode !== "resting";
+  useHardwareBack(searchOpen, () => {
     if (keyboardVisible) Keyboard.dismiss();
     else cancelSearch();
     return true;
   });
-  useEffect(() => {
-    if (Platform.OS !== "android") return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", handleBack);
-    return () => subscription.remove();
-  }, []);
   useEffect(() => {
     if (focusRequest > 0) input.current?.focus();
   }, [focusRequest]);

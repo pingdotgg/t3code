@@ -346,6 +346,23 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
+  it.effect("counts every inbound frame, including ones that answer no request", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+      const before = yield* session.inboundFrames;
+
+      socket.serverMessage(encodeJson({ _tag: "Pong" }));
+
+      expect(yield* session.inboundFrames).toBe(before + 1);
+    }),
+  );
+
   it.effect("closes the websocket when the session scope is released", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

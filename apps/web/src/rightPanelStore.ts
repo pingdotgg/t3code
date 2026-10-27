@@ -972,8 +972,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface) => surface.id === current.activeSurfaceId,
             );
             const fallbackBrowser = surfaces.find((surface) => surface.kind === "preview");
+            // A closed session tab was the last surface: hide the panel rather than leave it on
+            // the empty picker, as a user close would. A dropped `browser:new` placeholder does not count.
+            const closedLastSessionTab =
+              surfaces.length === 0 &&
+              current.surfaces.some((surface) => surface.kind === "preview" && surface.resourceId);
             return {
               ...current,
+              isOpen: closedLastSessionTab ? false : current.isOpen,
               surfaces,
               activeSurfaceId: activeStillExists
                 ? current.activeSurfaceId

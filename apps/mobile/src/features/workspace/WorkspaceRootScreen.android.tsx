@@ -1,9 +1,10 @@
+import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { useMemo } from "react";
-import { View } from "react-native";
+import { useWindowDimensions, View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
@@ -11,11 +12,11 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { HomeRouteScreen } from "../home/HomeRouteScreen";
-import { PullRequestFilterMenuProvider } from "../pull-requests/PullRequestFilterMenuContext";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { AndroidWorkspaceNavigation } from "./AndroidWorkspaceNavigation";
+import { AndroidWorkspaceNavigation, FloatingWorkspaceTabs } from "./AndroidWorkspaceNavigation";
+import { FLOATING_TABS, floatingTabsMetrics } from "./floating-workspace-tabs";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
 import type { WorkspaceTab } from "./workspace-tabs-state";
@@ -23,17 +24,38 @@ import type { WorkspaceTab } from "./workspace-tabs-state";
 const TABS: readonly WorkspaceTab[] = NAVIGATION_TAB_ORDER;
 
 export function WorkspaceRootScreen() {
+  const floatingTabsEnabled = useAndroidFloatingTabs();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
   const insets = useSafeAreaInsets();
-  const { fabClearance } = useAndroidControlSizing();
+  const { fabClearance, scale, fabSize } = useAndroidControlSizing();
+  const window = useWindowDimensions();
+  const floating = floatingTabsMetrics(enabled.length + 1, scale, fabSize, window.width);
   const context = useMemo(
     () => ({
       ...workspace,
-      bottomClearance: workspace.state.selectedTab === "threads" ? fabClearance + 16 : 16,
+      bottomClearance: floatingTabsEnabled
+        ? insets.bottom +
+          FLOATING_TABS.bottom +
+          FLOATING_TABS.edge +
+          Math.max(
+            floating.height,
+            workspace.state.selectedTab === "threads" ? floating.fabOffset + fabSize : 0,
+          )
+        : workspace.state.selectedTab === "threads"
+          ? fabClearance + 16
+          : 16,
     }),
-    [workspace, fabClearance],
+    [
+      floatingTabsEnabled,
+      workspace,
+      fabClearance,
+      insets.bottom,
+      floating.height,
+      floating.fabOffset,
+      fabSize,
+    ],
   );
   const tab = workspace.state.selectedTab;
 
@@ -70,7 +92,15 @@ export function WorkspaceRootScreen() {
     <WorkspaceTabsContext value={context}>
       <View className="flex-1 bg-header">
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <SafeAreaInsetsContext value={{ ...insets, bottom: 0 }}>
+        <SafeAreaInsetsContext
+          value={
+            floatingTabsEnabled
+              ? tab === "usage"
+                ? { ...insets, bottom: context.bottomClearance }
+                : insets
+              : { ...insets, bottom: 0 }
+          }
+        >
           {enabled.length === 0 ? (
             <WorkspaceNoTabs />
           ) : (
@@ -83,18 +113,24 @@ export function WorkspaceRootScreen() {
                 ) : tab !== "pullRequests" ? (
                   <WorkspaceExtraTab tab={tab} />
                 ) : (
-                  <PullRequestFilterMenuProvider>
-                    <PullRequestToolbar />
-                    <ScreenContent>
-                      <PullRequestsScreen />
-                    </ScreenContent>
-                  </PullRequestFilterMenuProvider>
+                  <PullRequestsScreen
+                    renderFrame={(filters, list) => (
+                      <>
+                        <PullRequestToolbar filters={filters} />
+                        <ScreenContent>{list}</ScreenContent>
+                      </>
+                    )}
+                  />
                 )
               }
             />
           )}
         </SafeAreaInsetsContext>
-        <AndroidWorkspaceNavigation onNewThread={startNewTask} />
+        {floatingTabsEnabled ? (
+          <FloatingWorkspaceTabs fillWidth onNewThread={startNewTask} />
+        ) : (
+          <AndroidWorkspaceNavigation onNewThread={startNewTask} />
+        )}
       </View>
     </WorkspaceTabsContext>
   );

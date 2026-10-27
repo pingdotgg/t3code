@@ -43,6 +43,7 @@ const baseProps = {
   optimisticMessages: [],
   threadId: "thread:test" as never,
   editingRunId: null,
+  editBlockedReason: null,
   onEditQueuedRun: () => undefined,
   onCancelEdit: () => undefined,
 } satisfies ComponentProps<typeof QueuedRunsControl>;
@@ -70,7 +71,6 @@ it("previews assistant quotes as readable text and preserves the citation when e
   state.workflow = {
     activeRun: { id: "run:active" },
     canPromoteToSteer: true,
-    canReorder: true,
     queuedRuns: [
       {
         run: { id: "run:quote-only", userMessageId: "message:quote-only" },

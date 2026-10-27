@@ -6,7 +6,7 @@ import {
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   Keyboard,
@@ -22,11 +22,16 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useWorkspaceState } from "../../state/workspace";
 import { useProjects } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { PullRequestListRow } from "./PullRequestListRow";
-import { PullRequestListFilters } from "./PullRequestListFilters";
+import {
+  PullRequestListFilters,
+  usePullRequestListFilters,
+  type PullRequestFilterMenu,
+} from "./PullRequestListFilters";
 import { PullRequestCardRow } from "./PullRequestControls";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
@@ -79,6 +84,11 @@ export function PullRequestsScreen(
   props: {
     readonly sidebar?: boolean;
     readonly selectedPullRequestKey?: string | null;
+    /**
+     * Places the list under a header that opens the full filter menu (the Android toolbar). The
+     * filters live here, so the header gets them in the same render as the list.
+     */
+    readonly renderFrame?: (filters: PullRequestFilterMenu | null, list: ReactNode) => ReactNode;
   } = {},
 ) {
   const navigation = useNavigation();
@@ -87,9 +97,27 @@ export function PullRequestsScreen(
   const { environments } = useWorkspaceState();
   const configs = useAtomValue(environmentServerConfigsAtom);
   const insets = useSafeAreaInsets();
-  const [initialOffset] = useState(() => workspace.getScrollOffset("pullRequests"));
+  // UIKit insets the list by its column's safe area, which this context can report as 0.
+  const columnSafeBottom = useNativeColumnLayoutMetrics()?.safeArea.bottom;
+  const bottomSafeArea =
+    Platform.OS === "ios" ? (columnSafeBottom ?? insets.bottom) : insets.bottom;
   const listRef = useRef<LegendListRef>(null);
   const tab = workspace.state.tabs.pullRequests;
+  const [initialScrollOffset] = useState(() => workspace.getScrollOffset("pullRequests"));
+  // Cancelling search restores the offset recorded when search opened. The
+  // toolbar that cancels has no handle on this list, so the list scrolls itself
+  // once it sees the tab come back to resting.
+  const previousSearchMode = useRef(tab.searchMode);
+  useEffect(() => {
+    const restoringSearch =
+      previousSearchMode.current !== "resting" && tab.searchMode === "resting";
+    previousSearchMode.current = tab.searchMode;
+    if (restoringSearch)
+      void listRef.current?.scrollToOffset({
+        offset: tab.scrollOffset - (Platform.OS === "ios" ? insets.top : 0),
+        animated: false,
+      });
+  }, [tab.searchMode, tab.scrollOffset, insets.top]);
   const maintainVisiblePosition = useMemo(
     () => ({
       data: tab.searchMode === "resting",
@@ -203,6 +231,39 @@ export function PullRequestsScreen(
     (project) =>
       !project.isScratch && (environmentId === null || project.environmentId === environmentId),
   );
+  const filters = usePullRequestListFilters({
+    environments: environments.map((item) => ({
+      id: String(item.environmentId),
+      label: item.environmentLabel,
+    })),
+    environmentId,
+    onEnvironmentChange: listControls.setEnvironmentId,
+    value: typedDraft
+      ? { ...controls, filters: { ...controls.filters, draft: typedDraft } }
+      : controls,
+    onChange: (next) => {
+      const update = applyPullRequestDraftFilterChange(typedQuery, controls.filters, next.filters);
+      listControls.setControls(environmentId, { ...next, filters: update.filters });
+      if (update.query !== typedQuery)
+        workspace.dispatch({ type: "query", tab: "pullRequests", query: update.query });
+      void listRef.current?.scrollToOffset({
+        offset: Platform.OS === "ios" ? -insets.top : 0,
+        animated: false,
+      });
+    },
+    authors: knownFacets.environmentId === environmentId ? knownFacets.authors : facets.authors,
+    labels: knownFacets.environmentId === environmentId ? knownFacets.labels : facets.labels,
+    labelColors,
+    projects,
+    onSearch: (kind) =>
+      navigation.navigate("PullRequestFilterSearch", {
+        kind,
+        environmentId,
+        environmentIds: targets.map((target) => String(target.environmentId)),
+        suggestions: knownFacets.environmentId === environmentId ? knownFacets[kind] : facets[kind],
+        labelColors,
+      }),
+  });
   const renderPullRequest = useCallback(
     ({ item }: { readonly item: EnvironmentPullRequestListEntry }) => (
       <PullRequestListRow
@@ -217,19 +278,7 @@ export function PullRequestsScreen(
     ),
     [selectPullRequest, selectedKey, actions, select, busyKey, sidebar],
   );
-  const previousSearchMode = useRef(tab.searchMode);
-  useEffect(() => {
-    const restoringSearch =
-      previousSearchMode.current !== "resting" && tab.searchMode === "resting";
-    previousSearchMode.current = tab.searchMode;
-    if (restoringSearch)
-      void listRef.current?.scrollToOffset({
-        offset: tab.scrollOffset - (Platform.OS === "ios" ? insets.top : 0),
-        animated: false,
-      });
-  }, [tab.searchMode, tab.scrollOffset, insets.top]);
-
-  return (
+  const list = (
     <View className={sidebar ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
       <LegendList
         ref={listRef}
@@ -263,13 +312,15 @@ export function PullRequestsScreen(
         // A plain offset: LegendList adds the list header to an index-based restore, which
         // landed every return one header lower.
         initialScrollOffset={
-          initialOffset > 0 ? initialOffset - (Platform.OS === "ios" ? insets.top : 0) : undefined
+          initialScrollOffset > 0
+            ? initialScrollOffset - (Platform.OS === "ios" ? insets.top : 0)
+            : undefined
         }
         contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
         contentContainerStyle={{
           paddingBottom:
-            Math.max(insets.bottom, workspace.bottomClearance) -
-            (Platform.OS === "ios" ? insets.bottom : 0),
+            Math.max(bottomSafeArea, workspace.bottomClearance) -
+            (Platform.OS === "ios" ? bottomSafeArea : 0),
         }}
         onScroll={(event) => {
           workspace.recordScrollOffset(
@@ -285,52 +336,7 @@ export function PullRequestsScreen(
         renderItem={renderPullRequest}
         ListHeaderComponent={
           <>
-            <PullRequestListFilters
-              sidebar={sidebar}
-              environments={environments.map((item) => ({
-                id: String(item.environmentId),
-                label: item.environmentLabel,
-              }))}
-              environmentId={environmentId}
-              onEnvironmentChange={listControls.setEnvironmentId}
-              value={
-                typedDraft
-                  ? { ...controls, filters: { ...controls.filters, draft: typedDraft } }
-                  : controls
-              }
-              onChange={(next) => {
-                const update = applyPullRequestDraftFilterChange(
-                  typedQuery,
-                  controls.filters,
-                  next.filters,
-                );
-                listControls.setControls(environmentId, { ...next, filters: update.filters });
-                if (update.query !== typedQuery)
-                  workspace.dispatch({ type: "query", tab: "pullRequests", query: update.query });
-                void listRef.current?.scrollToOffset({
-                  offset: Platform.OS === "ios" ? -insets.top : 0,
-                  animated: false,
-                });
-              }}
-              authors={
-                knownFacets.environmentId === environmentId ? knownFacets.authors : facets.authors
-              }
-              labels={
-                knownFacets.environmentId === environmentId ? knownFacets.labels : facets.labels
-              }
-              labelColors={labelColors}
-              projects={projects}
-              onSearch={(kind) =>
-                navigation.navigate("PullRequestFilterSearch", {
-                  kind,
-                  environmentId,
-                  environmentIds: targets.map((target) => String(target.environmentId)),
-                  suggestions:
-                    knownFacets.environmentId === environmentId ? knownFacets[kind] : facets[kind],
-                  labelColors,
-                })
-              }
-            />
+            <PullRequestListFilters sidebar={sidebar} filters={filters} />
             {result.data?.errors.length ? (
               <PullRequestListErrors
                 key={JSON.stringify(targets)}
@@ -405,4 +411,5 @@ export function PullRequestsScreen(
       />
     </View>
   );
+  return props.renderFrame ? props.renderFrame(filters.headerMenu, list) : list;
 }

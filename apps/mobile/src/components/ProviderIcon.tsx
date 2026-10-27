@@ -10,7 +10,7 @@ import { useId, useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./ui/AppText";
-import { getProviderClient } from "../lib/providerClients";
+import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;

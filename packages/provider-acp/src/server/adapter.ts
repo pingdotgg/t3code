@@ -3878,6 +3878,43 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* rearmDeferredFinalize(context);
         });
 
+        /**
+         * Notices have no id; each is its own item, numbered by the turn's item count.
+         * A notice is not conversation content, so an open message keeps streaming across it.
+         */
+        const emitNotice = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          notice: { readonly title: string; readonly description?: string },
+        ) {
+          const nativeItemId = `${context.nativeTurnId}:notice:${context.itemOrdinals.size}`;
+          const now = yield* DateTime.now;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: providerTurnItemId(nativeItemId),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
+              parentItemId: null,
+              ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+              type: "system_notice",
+              status: "completed",
+              title: notice.title,
+              message:
+                notice.description === undefined
+                  ? notice.title
+                  : `${notice.title}\n\n${notice.description}`,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+        });
+
         const emitPlan = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           update: AcpPlanUpdate,
@@ -5026,6 +5063,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* emitTool(context, event.toolCall);
                 } else if (event._tag === "PlanUpdated") {
                   yield* emitPlan(context, event.payload);
+                } else if (event._tag === "NoticeReceived") {
+                  yield* emitNotice(context, event);
                 } else if (event._tag === "UnknownUpdate") {
                   yield* emitTool(context, {
                     toolCallId: `${context.nativeTurnId}:unsupported:${event.updateType}`,

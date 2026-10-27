@@ -561,6 +561,28 @@ describe("review thread conversations", () => {
     );
   });
 
+  it("keeps bot review verdicts when bot comments are hidden", () => {
+    const review = (id: string, reviewState: string) => ({
+      ...comment(id, 9),
+      author: bot,
+      kind: "review" as const,
+      reviewState,
+    });
+    const items = pullRequestConversationItems(
+      [
+        review("approved", "APPROVED"),
+        review("changes", "CHANGES_REQUESTED"),
+        review("commented", "COMMENTED"),
+      ],
+      [],
+    );
+    expect(
+      filterPullRequestConversationItems(items, { bots: false, resolved: false }).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["approved", "changes"]);
+  });
+
   it("distinguishes unloaded replies from complete threads, even when the host only supplies a cursor", () => {
     const timeline = (reviewThread: PullRequestReviewThread) =>
       buildPullRequestTimeline({

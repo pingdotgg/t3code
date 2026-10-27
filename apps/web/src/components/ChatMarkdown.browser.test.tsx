@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import "../index.css";
@@ -257,6 +258,37 @@ describe("ChatMarkdown workspace file opens", () => {
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
+  });
+});
+
+describe("ChatMarkdown skill chips", () => {
+  it("shows the skill's details and opens its instructions", async () => {
+    setup();
+    const threadRef = {
+      environmentId: EnvironmentId.make("workspace"),
+      threadId: ThreadId.make("thread"),
+    };
+    await using screen = await renderText("Run $review now", {
+      threadRef,
+      skills: [
+        {
+          name: "review",
+          displayName: "Review",
+          description: "Reviews the current branch.",
+          path: "/skills/review/SKILL.md",
+          enabled: true,
+        },
+      ],
+    });
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+
+    await userEvent.click(screen.getByRole("button", { name: "Skill Review. Show details" }));
+    await expect.element(page.getByText("Reviews the current branch.")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "View instructions" }));
+
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/skills/review/SKILL.md");
   });
 });
 

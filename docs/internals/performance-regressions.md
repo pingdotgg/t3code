@@ -63,9 +63,10 @@ for the same synthetic workload, preserving historical application-object counts
 These are neither compressed WebSocket captures nor measurements of server RSS, and command
 fixtures exclude unrelated settings calls and subscription events. Payload budgets belong in
 these tests so regressions fail locally. The transfer budget integration test
-(`apps/server/integration/transferBudgetV2.integration.test.ts`) caps the decoded bytes and rows
-of the compact bounded snapshot that web and mobile load, and of one older page, for a 900-row
-agent turn.
+(`apps/server/integration/transferBudgetV2.integration.test.ts`) sends the opt-ins current clients
+send and caps the decoded bytes and rows of the bounded snapshot and one older page for a 900-row
+agent turn, and of the cold-connect shell for a sidebar of settled threads and idle subagents. When
+clients gain an opt-in, add it to the test's client queries and give a fixture the data it saves.
 
 ## Event store and startup
 

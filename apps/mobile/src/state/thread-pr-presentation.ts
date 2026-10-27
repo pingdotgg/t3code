@@ -131,3 +131,20 @@ export function resolveThreadPrBadgeAction(pr: ThreadPrPresentation) {
     ? { kind: "list" as const, accessibilityLabel: `Show ${pr.accessibilityLabel}` }
     : { kind: "open" as const, accessibilityLabel: `Open ${pr.accessibilityLabel}` };
 }
+
+/** Records `value` as the newest entry, evicting the least recently answered beyond `limit`. */
+export function rememberBounded<V>(
+  current: ReadonlyMap<string, V>,
+  key: string,
+  value: V,
+  limit: number,
+): ReadonlyMap<string, V> {
+  const next = new Map(current);
+  next.delete(key);
+  next.set(key, value);
+  for (const oldest of next.keys()) {
+    if (next.size <= limit) break;
+    next.delete(oldest);
+  }
+  return next;
+}

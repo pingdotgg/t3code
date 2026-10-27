@@ -9,6 +9,7 @@ import {
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  resolveAddProjectEntry,
   createCommandPaletteSearchState,
   reduceCommandPaletteSearchState,
   type CommandPaletteUiState,
@@ -32,7 +33,7 @@ describe("linked pull request thread navigation", () => {
       ],
     };
     const state = reduceCommandPaletteUiState(
-      { open: false, mode: "command", openIntent: null },
+      { open: false, mode: "command", openIntent: null, session: 0 },
       {
         _tag: "OpenSearch",
         query,
@@ -59,7 +60,7 @@ describe("linked pull request thread navigation", () => {
 describe("reduceCommandPaletteUiState", () => {
   it("opens PR search from another overlay and replaces an earlier search", () => {
     const first = reduceCommandPaletteUiState(
-      { open: true, mode: "files", openIntent: null },
+      { open: true, mode: "files", openIntent: null, session: 0 },
       {
         _tag: "OpenSearch",
         query: "https://github.com/acme/web/pull/7",
@@ -69,6 +70,7 @@ describe("reduceCommandPaletteUiState", () => {
       open: true,
       mode: "command",
       openIntent: { kind: "search", query: "https://github.com/acme/web/pull/7" },
+      session: 1,
     });
     const second = reduceCommandPaletteUiState(first, {
       _tag: "OpenSearch",
@@ -78,9 +80,55 @@ describe("reduceCommandPaletteUiState", () => {
       kind: "search",
       query: "https://github.com/acme/web/pull/8",
     });
+    // The second intent starts a new session, so the open palette starts over from it.
+    expect(second.session).toBe(2);
     expect(
       reduceCommandPaletteUiState(second, { _tag: "SetOpen", open: false }).openIntent,
     ).toBeNull();
+  });
+
+  it("keeps the session across mode switches so only intents start the palette over", () => {
+    let state: CommandPaletteUiState = {
+      open: false,
+      mode: "command",
+      openIntent: null,
+      session: 0,
+    };
+    state = reduceCommandPaletteUiState(state, { _tag: "OpenNewThreadIn" });
+    expect(state).toMatchObject({ open: true, openIntent: { kind: "new-thread-in" }, session: 1 });
+    state = reduceCommandPaletteUiState(state, { _tag: "ToggleMode", mode: "files" });
+    expect(state).toMatchObject({ mode: "files", openIntent: null, session: 1 });
+    state = reduceCommandPaletteUiState(state, { _tag: "OpenAddProject" });
+    expect(state).toMatchObject({
+      mode: "command",
+      openIntent: { kind: "add-project" },
+      session: 2,
+    });
+  });
+});
+
+describe("resolveAddProjectEntry", () => {
+  const local = EnvironmentId.make("local");
+  const remote = EnvironmentId.make("remote");
+
+  it("sends the user to connect an environment when none can add a project", () => {
+    expect(resolveAddProjectEntry([], null)).toEqual({ kind: "connect-environment" });
+  });
+
+  it("asks for an environment when there is a choice or no connected default", () => {
+    expect(
+      resolveAddProjectEntry([{ environmentId: local }, { environmentId: remote }], local),
+    ).toEqual({ kind: "choose-environment" });
+    expect(resolveAddProjectEntry([{ environmentId: local }], null)).toEqual({
+      kind: "choose-environment",
+    });
+  });
+
+  it("goes straight to sources for the only environment", () => {
+    expect(resolveAddProjectEntry([{ environmentId: local }], local)).toEqual({
+      kind: "choose-source",
+      environmentId: local,
+    });
   });
 });
 
@@ -825,7 +873,12 @@ describe("command palette search return", () => {
 });
 
 describe("returning from file and content search", () => {
-  const root: CommandPaletteUiState = { open: true, mode: "command", openIntent: null };
+  const root: CommandPaletteUiState = {
+    open: true,
+    mode: "command",
+    openIntent: null,
+    session: 0,
+  };
   const query = "https://github.com/acme/web/pull/7";
   const context = {
     query,
@@ -860,7 +913,7 @@ describe("returning from file and content search", () => {
   it("closing a child search discards its return context before reopening", () => {
     const child: CommandPaletteUiState = { ...root, mode: "files", parentSearch: context };
     const closed = reduceCommandPaletteUiState(child, { _tag: "SetOpen", open: false });
-    expect(closed).toEqual({ open: false, mode: "files", openIntent: null });
+    expect(closed).toEqual({ open: false, mode: "files", openIntent: null, session: 0 });
     expect(reduceCommandPaletteUiState(closed, { _tag: "BackToCommand" })).toEqual(closed);
     expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual(root);
   });

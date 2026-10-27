@@ -32,7 +32,7 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import { listThreadPullRequests } from "./handlers.ts";
 import * as PullRequestsHandlers from "./handlers.ts";
-import { PullRequestsToolkit } from "./tools.ts";
+import { CHILD_PULL_REQUEST_REPORT_NEXT, PullRequestsToolkit } from "./tools.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
 const THREAD_ID = ThreadId.make("thread-1");
@@ -350,6 +350,25 @@ describe("pull request toolkit handlers", () => {
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "PullRequestWatchFromSubagentError" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
+  it.effect("asks a subagent thread to end with its PR report after it links", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([]),
+          lineage: {
+            rootThreadId: ThreadId.make("parent"),
+            parentThreadId: ThreadId.make("parent"),
+            relationshipToParent: "subagent",
+          },
+        },
+      });
+      const result = yield* harness.call("link_pull_request", {
+        url: "https://github.com/t3tools/t3code/pull/124",
+      });
+      expect(result).toMatchObject({ number: 124, next: CHILD_PULL_REQUEST_REPORT_NEXT });
     }),
   );
 

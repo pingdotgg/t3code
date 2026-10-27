@@ -17,8 +17,12 @@ export function promptLinkSearchFromParams(
   return search.size > 0 ? search.toString() : null;
 }
 
-export function clearedPromptLinkParams(keys: ReadonlyArray<string> = PROMPT_LINK_PARAM_KEYS) {
-  return Object.fromEntries(keys.map((key) => [key, undefined]));
+export function withoutPromptLinkParams(params: object | undefined): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(params ?? {}).filter(
+      ([key]) => !(PROMPT_LINK_PARAM_KEYS as ReadonlyArray<string>).includes(key),
+    ),
+  );
 }
 
 export function promptLinkNotice(input: {
@@ -73,3 +77,17 @@ export function latestThreadEnvironmentIds<Id extends string>(
 
 export const promptLinkRepositoryName = (repository: PromptLinkRepository) =>
   `${repository.owner}/${repository.name}`;
+
+/**
+ * Advances a parsed link at each navigation state; `resolve` is the link to apply. The first
+ * state after the parse must hold the link's screen. A link that never lands there, or whose
+ * screen is left before its target is ready, is dropped so it cannot apply on a later visit.
+ */
+export function stepPendingPromptLink<Link>(
+  link: Link,
+  input: { readonly screenOnStack: boolean; readonly ready: boolean },
+): { readonly pending: Link | null; readonly resolve: Link | null } {
+  if (!input.screenOnStack) return { pending: null, resolve: null };
+  if (input.ready) return { pending: null, resolve: link };
+  return { pending: link, resolve: null };
+}

@@ -478,6 +478,10 @@
     "./model-traits": {
       "types": "./src/modelTraits.ts",
       "default": "./src/modelTraits.ts"
+    },
+    "./provider-clients": {
+      "types": "./src/providerClients.ts",
+      "default": "./src/providerClients.ts"
     }
   },
   "scripts": {
@@ -487,6 +491,14 @@
   "dependencies": {
     "@pierre/diffs": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-acp-registry": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/provider-cursor": "workspace:*",
+    "@t3tools/provider-fx": "workspace:*",
+    "@t3tools/provider-grok": "workspace:*",
+    "@t3tools/provider-muse": "workspace:*",
+    "@t3tools/provider-opencode": "workspace:*",
+    "@t3tools/provider-pi": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
     "@t3tools/source-control-definitions": "workspace:*",

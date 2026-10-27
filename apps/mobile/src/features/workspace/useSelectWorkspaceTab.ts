@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { Keyboard } from "react-native";
 
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 

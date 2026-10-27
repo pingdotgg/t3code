@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../test/render";
-import { useSnoozeWakeClock } from "./Sidebar.logic";
+import { act, fakeTimers, render } from "../../test/render";
+import { useSnoozeWakeClock, useThreadJumpHintsVisible } from "./Sidebar.logic";
 
 const MOUNTED_AT_MS = Date.parse("2026-10-24T08:00:00.000Z");
 
@@ -29,5 +29,31 @@ describe("useSnoozeWakeClock", () => {
     // The clock lands on the last elapsed wake, so every woken thread has left the shelf.
     const lastWakeMs = MOUNTED_AT_MS + 1 + 39 * 60_000;
     await expect.element(screen.getByRole("status")).toHaveTextContent(String(lastWakeMs));
+  });
+});
+
+function JumpHints(props: { readonly held: boolean }) {
+  return <output>{useThreadJumpHintsVisible(props.held) ? "shown" : "hidden"}</output>;
+}
+
+describe("useThreadJumpHintsVisible", () => {
+  it("waits for the delay again on a second hold", async () => {
+    // The first render reads the clock.
+    using _timers = fakeTimers({ now: 0 });
+    await using screen = await render(<JumpHints held />, {
+      // A bare hook host; nothing here links or navigates.
+      router: false,
+    });
+    await act(() => vi.advanceTimersByTime(1_000));
+    await expect.element(screen.getByRole("status")).toHaveTextContent("shown");
+
+    await screen.rerender(<JumpHints held={false} />);
+    await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
+    await act(() => vi.advanceTimersByTime(1_000));
+
+    await screen.rerender(<JumpHints held />);
+    await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
+    await act(() => vi.advanceTimersByTime(1_000));
+    await expect.element(screen.getByRole("status")).toHaveTextContent("shown");
   });
 });

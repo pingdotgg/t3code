@@ -6,7 +6,7 @@ import { serverEnvironment } from "~/state/server";
 
 /**
  * Whether this environment offers "Share with guest": the user may create links there, and its
- * Guest links beta is on (Settings > Beta). The server refuses links while the beta is off.
+ * Guest links beta is on (Settings > Labs). The server refuses links while the beta is off.
  */
 export const canShareWithGuestAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make(

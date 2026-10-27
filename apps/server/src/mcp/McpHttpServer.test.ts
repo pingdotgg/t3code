@@ -21,6 +21,7 @@ import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/http
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerConfig from "../config.ts";
+import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
@@ -29,6 +30,7 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
+import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
@@ -344,7 +346,7 @@ it.effect("refuses preview tools to a client outside a thread before they run", 
       client: { sessionId: "session-1", label: "Claude Code", access: "read-only" as const },
     };
     const click = yield* server
-      .callTool({ name: "preview_click", arguments: { locator: "text=Send" } })
+      .callTool({ name: "preview_act", arguments: { action: "click", locator: "text=Send" } })
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, readOnly),
         Effect.provideService(McpSchema.McpServerClient, client),
@@ -354,6 +356,41 @@ it.effect("refuses preview tools to a client outside a thread before they run", 
       { type: "text", text: expect.stringContaining("needs an agent running inside T3 Code") },
     ]);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("advertises the compact input schema for every registered tool", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const tools: Record<string, Tool.Any> = PreviewToolkit.tools;
+
+    expect(server.tools.length).toBe(Object.keys(tools).length);
+    for (const { tool } of server.tools) {
+      expect(tool.inputSchema, tool.name).toEqual(advertisedJsonSchema(tools[tool.name]!));
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("checks each preview_act action against that action's own input", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const inputs = yield* serveSnapshots("mcp-act-client", {});
+
+      const missingKey = yield* callTool("preview_act", { action: "press" });
+      expect(missingKey.isError).toBe(true);
+      expect(inputs).toEqual([]);
+
+      const click = yield* callTool("preview_act", {
+        action: "click",
+        locator: "text=Send",
+        key: "Enter",
+      });
+      expect(click.isError).toBe(false);
+      expect(inputs[0]).toEqual({ locator: "text=Send" });
+
+      yield* callTool("preview_act", { action: "type", selector: "#name", text: "Ada" });
+      expect(inputs.at(-2)).toEqual({ selector: "#name", text: "Ada" });
+    }),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("decodes null optional arguments the way it decodes omitted ones", () => {

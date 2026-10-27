@@ -36,6 +36,7 @@ import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   threadListInboxReturns,
 } from "./threadListV2";
+import { useThreadListNow } from "./use-thread-list-now";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 
 const ROW_HEIGHT = 56;
@@ -168,7 +169,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const dropBusy = useAtomValue(threadDropBusyAtom);
   const { moveThread } = useThreadListActions();
   const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
-  const [now, setNow] = useState(() => new Date().toISOString());
+  const now = useThreadListNow(threads);
   const [expanded, setExpanded] = useState({ snoozed: false, settled: false });
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
@@ -179,20 +180,6 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     expanded: expanded.settled,
     visibleCount: settledVisibleCount,
   });
-  useEffect(() => {
-    const wakeAt = Math.min(
-      ...threads.flatMap((thread) => {
-        const at = Date.parse(thread.snoozedUntil ?? "");
-        return at > Date.parse(now) ? [at] : [];
-      }),
-    );
-    if (!Number.isFinite(wakeAt)) return;
-    const timer = setTimeout(
-      () => setNow(new Date().toISOString()),
-      Math.min(Math.max(0, wakeAt - Date.now()) + 1, 2_147_483_647),
-    );
-    return () => clearTimeout(timer);
-  }, [threads, now]);
   const sections = useMemo(() => {
     const shared = {
       threads,

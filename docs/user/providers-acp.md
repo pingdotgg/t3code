@@ -5,13 +5,14 @@ T3 Code can run installed ACP commands or coding agents from the official
 own models, tools, and sign-in, while T3 Code provides projects, threads, checkpoints, and task
 delegation.
 
-Google Antigravity is available through its official `antigravity-acp` Registry entry. Add it like
-any other Registry agent; it does not need an Antigravity-specific T3 Code provider.
+Agents that T3 Code supports as their own providers, such as Codex, Claude, Cursor, Grok, OpenCode,
+Pi, and [Antigravity](./providers-antigravity.md), don't appear in the Registry list. Enable them in
+**Settings → Providers** instead.
 
 T3 Code prefers the current ACP v2 preview protocol and uses its richer messages, usage, plans,
 configuration, compaction, and agent-terminal updates when the agent supports them. It also
-negotiates ACP v1 for Registry agents that have not migrated yet, so agents such as Pi continue to
-work through the same generic integration.
+negotiates ACP v1 for Registry agents that have not migrated yet, so they continue to work through
+the same generic integration.
 
 Claude Agent uses the ACP v2 preview by default for Registry and local `claude-agent-acp`
 commands. If you encounter preview issues, set `CLAUDE_AGENT_ACP_EXPERIMENTAL_V2=0` in the
@@ -20,8 +21,8 @@ provider instance's environment overrides to use ACP v1.
 ## Add an agent
 
 1. Open **Settings → Providers**.
-2. Select **Add provider** and search the ACP Registry.
-3. Search for the agent and select **Add** on its result.
+2. Select **Add provider**, then **Show more**.
+3. Search the ACP Registry for the agent and select **Add** on its result.
 4. Confirm the name and instance ID, then complete the agent's sign-in step.
 
 Search only shows agents that can run on the connected server. Registry agents are third-party
@@ -29,7 +30,7 @@ code; review an agent's source and license before adding it.
 
 ## Add a local command
 
-In **Settings → Providers → Add provider**, select **Local ACP command**. Enter the executable
+In **Settings → Providers → Add provider**, select **Show more**, then **Local ACP command**. Enter the executable
 name or path on the selected environment, add one literal argument per row, and choose a display
 name. For DeepSeek Harness, use `dsh` with arguments `--profile` and `acp`.
 
@@ -54,7 +55,7 @@ but keeps package installs. To use an existing local binary, set **Executable ov
 
 Open the agent's account section in **Settings → Providers** on web or desktop. Choose
 **Sign in** and, if the agent offers several methods, select one. For an installed, configured
-provider, mobile also offers **Settings → Provider accounts**.
+provider, mobile also offers **Settings → Providers**.
 
 Browser sign-in shows the agent's URL and waits for you to open or copy it before telling the
 agent to proceed. The page opens on your device, while the agent runs on the environment.

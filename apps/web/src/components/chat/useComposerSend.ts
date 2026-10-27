@@ -5,7 +5,6 @@ import {
   restorePlanFollowUpComposer,
   buildExpiredTerminalContextToastCopy,
   deriveComposerSendState,
-  revokeUserMessagePreviewUrls,
   boundAttachmentIds,
   formatOutgoingPrompt,
   optimisticMessageAttachments,
@@ -224,6 +223,11 @@ interface ComposerSendInput {
   readonly setDockedDraftHeroThreadKey: Dispatch<SetStateAction<string | null>>;
   readonly setSetupQueueSendThreadKey: Dispatch<SetStateAction<string | null>>;
   readonly setOptimisticUserMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+  /** Takes ownership of, and later releases, an optimistic message's blob previews. */
+  readonly optimisticBlobPreviews: {
+    readonly track: (message: ChatMessage) => void;
+    readonly release: (message: ChatMessage) => void;
+  };
   readonly setFeedbackSubmissionsByThreadKey: Dispatch<
     SetStateAction<Record<string, ReadonlyArray<CodexFeedbackSubmission>>>
   >;
@@ -311,6 +315,7 @@ export function useComposerSend(input: ComposerSendInput) {
     setDockedDraftHeroThreadKey,
     setSetupQueueSendThreadKey,
     setOptimisticUserMessages,
+    optimisticBlobPreviews,
     setFeedbackSubmissionsByThreadKey,
     setThreadError,
     setKeepFullHistory,
@@ -1112,25 +1117,30 @@ export function useComposerSend(input: ComposerSendInput) {
         messageIdForSend,
       );
     }
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
-        runId: null,
-        createdAt: messageCreatedAt,
-        updatedAt: messageCreatedAt,
-        streaming: false,
-        ...(shouldQueueBehindActiveRun
-          ? { inputIntent: "queued_turn" as const }
-          : phase === "running" && dispatchMode === "steer"
-            ? { inputIntent: "steer" as const }
-            : {}),
-      },
-    ]);
+    const optimisticMessage: ChatMessage = {
+      id: messageIdForSend,
+      role: "user",
+      text: outgoingMessageText,
+      ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+      ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
+      runId: null,
+      createdAt: messageCreatedAt,
+      updatedAt: messageCreatedAt,
+      streaming: false,
+      ...(shouldQueueBehindActiveRun
+        ? { inputIntent: "queued_turn" as const }
+        : phase === "running" && dispatchMode === "steer"
+          ? { inputIntent: "steer" as const }
+          : {}),
+    };
+    // After leaving the thread during an upload, its previews were already released and the
+    // message is never shown, so tracking them would keep them alive past the thread.
+    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      optimisticBlobPreviews.track(optimisticMessage);
+    } else {
+      optimisticBlobPreviews.release(optimisticMessage);
+    }
+    setOptimisticUserMessages((existing) => [...existing, optimisticMessage]);
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -1369,13 +1379,11 @@ export function useComposerSend(input: ComposerSendInput) {
         )
       ) {
         setOptimisticUserMessages((existing) => {
-          const removed = existing.filter((message) => message.id === messageIdForSend);
-          for (const message of removed) {
-            revokeUserMessagePreviewUrls(message);
-          }
           const next = existing.filter((message) => message.id !== messageIdForSend);
           return next.length === existing.length ? existing : next;
         });
+        // The restored draft clones its images, so the sent copies are no longer used.
+        optimisticBlobPreviews.release(optimisticMessage);
         const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);
         if (currentRouteThreadKeyRef.current === routeThreadKey) {
           promptRef.current = messageTextForSend;

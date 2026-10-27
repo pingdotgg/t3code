@@ -3201,14 +3201,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             olderSettledShelf.retry();
                             showMoreSettled();
                           }}
-                          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:cursor-default redesign:text-sidebar-muted-foreground"
+                          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:cursor-default"
                         >
-                          {/* The New design keeps plus for "add" and uses a chevron to reveal more. */}
-                          <PlusIcon aria-hidden className="size-4 shrink-0 redesign:hidden" />
-                          <ChevronDownIcon
-                            aria-hidden
-                            className="hidden size-4 shrink-0 redesign:block"
-                          />
+                          {/* Plus means "add", so revealing more uses a chevron. */}
+                          <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
                           {olderSettledShelf.loading
                             ? "Loading"
                             : olderSettledShelf.failed

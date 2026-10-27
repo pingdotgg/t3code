@@ -140,6 +140,8 @@ export async function runJourney(
   await delay(1_000);
   threads = await device.orient(device.pose.landscape ? "landscape" : "portrait");
   const tabs = tabBarRect(threads);
+  // A bottom tab bar gives way to a pushed thread; the folded Duo's side rail stays put.
+  const bottomTabs = phone && tabs && tabs.width > tabs.height ? tabs : undefined;
   const wide = threads.viewport.width > threads.viewport.height;
   await capture("threads", threads, [
     check(
@@ -160,19 +162,18 @@ export async function runJourney(
   );
   const threadShot = NodePath.join(directory, `${steps.length + 1}-thread.png`);
   await device.screenshot(threadShot);
-  const openLag =
-    phone && tabs
-      ? await lagCheck(
-          "no tabs over the entering thread (video)",
-          {
-            video: opening,
-            nav: topBand(threads),
-            chrome: tabs,
-            viewportWidth: threads.viewport.width,
-          },
-          NodePath.join(directory, "open-thread-lag.png"),
-        )
-      : null;
+  const openLag = bottomTabs
+    ? await lagCheck(
+        "no tabs over the entering thread (video)",
+        {
+          video: opening,
+          nav: topBand(threads),
+          chrome: bottomTabs,
+          viewportWidth: threads.viewport.width,
+        },
+        NodePath.join(directory, "open-thread-lag.png"),
+      )
+    : null;
   steps.push({
     name: "thread",
     screenshot: threadShot,
@@ -185,9 +186,9 @@ export async function runJourney(
         inside(composer(thread)?.rect, thread),
         describeRect(composer(thread)?.rect),
       ),
-      ...(phone
+      ...(phone ? [check("back button visible", backButton(thread) !== undefined, "back")] : []),
+      ...(bottomTabs
         ? [
-            check("back button visible", backButton(thread) !== undefined, "back"),
             check(
               "tab bar hidden",
               tabBarRect(thread) === undefined,
@@ -238,13 +239,13 @@ export async function runJourney(
     );
     const listShot = NodePath.join(directory, `${steps.length + 1}-back.png`);
     await device.screenshot(listShot);
-    const backLag = tabs
+    const backLag = bottomTabs
       ? await lagCheck(
           "tabs return with the list (video)",
           {
             video: back,
             nav: topBand(list),
-            chrome: tabs,
+            chrome: bottomTabs,
             viewportWidth: list.viewport.width,
           },
           NodePath.join(directory, "back-lag.png"),

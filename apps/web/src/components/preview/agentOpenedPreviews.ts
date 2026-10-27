@@ -1,16 +1,35 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  parseScopedThreadKey,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import type {
+  DeviceServiceState,
+  EnvironmentId,
+  PreviewSessionSnapshot,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 
 import { getClientSettings } from "../../hooks/useSettings";
-import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
+import {
+  browserMiniPlayerSource,
+  type PreviewMiniPlayerSource,
+  usePreviewMiniPlayerStore,
+} from "../../previewMiniPlayerStore";
 import {
   previewStateAtom,
   previewThreadRefsAtom,
   type ThreadPreviewState,
 } from "../../previewStateStore";
 import { useRightPanelStore } from "../../rightPanelStore";
+import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../../rightPanelLayout";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { deviceEnvironment } from "../../state/device";
 import { readEnvironmentSupportsServerBrowser } from "../../state/entities";
+import { environmentSummaries } from "../../state/presentation";
 
 /**
  * Shows browsers an agent or another client revealed for a thread: floating
@@ -99,7 +118,126 @@ function followThread(threadKey: string, threadRef: ScopedThreadRef): () => void
   });
 }
 
-/** Follows every thread's browser previews for the life of the page, not just the open thread's. */
+// `openedAt` tells a session apart from one that ended and reopened on the same device while
+// this client was disconnected.
+const sessionKey = (session: DeviceServiceState["sessions"][number]) =>
+  `${session.threadId}:${session.hostId}:${session.deviceId}:${session.openedAt}`;
+
+/**
+ * Per environment: the device sessions seen in the last snapshot. The first
+ * snapshot is a baseline, so persisted tabs restore themselves and existing
+ * sessions never resurrect tabs the user closed. Baselines outlive a
+ * disconnect, so a device an agent opened during the gap still shows.
+ */
+const deviceSessionBaselines = new Map<EnvironmentId, ReadonlySet<string>>();
+
+function hasLiveSession(
+  state: DeviceServiceState,
+  threadId: ThreadId,
+  target: { readonly hostId: string; readonly deviceId: string },
+): boolean {
+  return state.sessions.some(
+    (session) =>
+      session.threadId === threadId &&
+      session.hostId === target.hostId &&
+      session.deviceId === target.deviceId,
+  );
+}
+
+/**
+ * A device the agent opens floats over its thread's chat, or becomes a panel tab
+ * when floating previews are off; sheet layouts get neither. A session without a
+ * device summary yet stays out of the baseline so a later snapshot opens it.
+ * Floating devices whose session ended close here.
+ */
+export function applyDeviceSnapshot(
+  environmentId: EnvironmentId,
+  state: DeviceServiceState,
+  options: { readonly sheetLayout: boolean; readonly autoShowFloatingPreview: boolean },
+): void {
+  const deviceFor = (session: DeviceServiceState["sessions"][number]) =>
+    state.devices.find((entry) => entry.hostId === session.hostId && entry.id === session.deviceId);
+
+  const miniPlayer = usePreviewMiniPlayerStore.getState();
+  for (const [threadKey, entry] of Object.entries(miniPlayer.byThreadKey)) {
+    if (entry.source.kind !== "device") continue;
+    const ref = parseScopedThreadKey(threadKey);
+    if (ref?.environmentId === environmentId && !hasLiveSession(state, ref.threadId, entry.source))
+      miniPlayer.close(ref);
+  }
+
+  const previous = deviceSessionBaselines.get(environmentId);
+  deviceSessionBaselines.set(
+    environmentId,
+    new Set(state.sessions.filter((session) => deviceFor(session) !== undefined).map(sessionKey)),
+  );
+  if (!previous || options.sheetLayout) return;
+  for (const session of state.sessions) {
+    if (previous.has(sessionKey(session))) continue;
+    const device = deviceFor(session);
+    if (!device) continue;
+    const threadRef = scopeThreadRef(environmentId, session.threadId);
+    const target = {
+      hostId: session.hostId,
+      deviceId: session.deviceId,
+      platform: device.platform,
+      name: device.name,
+    };
+    if (options.autoShowFloatingPreview) {
+      usePreviewMiniPlayerStore.getState().open(threadRef, { kind: "device", ...target });
+      continue;
+    }
+    const existing = useRightPanelStore
+      .getState()
+      .byThreadKey[scopedThreadKey(threadRef)]?.surfaces.some(
+        (surface) =>
+          surface.kind === "device" &&
+          surface.target?.hostId === session.hostId &&
+          surface.target.deviceId === session.deviceId,
+      );
+    if (existing) continue;
+    useRightPanelStore.getState().openDevice(threadRef, target, true);
+  }
+}
+
+/**
+ * Floats a device panel tab over chat. A tab whose device session already
+ * ended has nothing to stream, so it only closes the panel. Before the first
+ * device snapshot the tab floats, and that snapshot closes it if needed.
+ */
+export function floatDeviceSurface(
+  threadRef: ScopedThreadRef,
+  source: Extract<PreviewMiniPlayerSource, { kind: "device" }>,
+  state: DeviceServiceState | null,
+): void {
+  if (state !== null && !hasLiveSession(state, threadRef.threadId, source)) return;
+  usePreviewMiniPlayerStore.getState().open(threadRef, source);
+}
+
+export function resetDeviceSessionBaselinesForTests(): void {
+  deviceSessionBaselines.clear();
+}
+
+function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
+  return appAtomRegistry.subscribe(
+    deviceEnvironment.state({ environmentId, input: {} }),
+    (result) => {
+      const state = Option.getOrNull(AsyncResult.value(result));
+      if (state === null) return;
+      applyDeviceSnapshot(environmentId, state, {
+        sheetLayout: window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches,
+        autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
+      });
+    },
+    { immediate: true },
+  );
+}
+
+/**
+ * Follows every thread's browser previews and every connected environment's
+ * device sessions for the life of the page, not just the open thread's: an
+ * agent in a background thread can open either.
+ */
 export function startAgentOpenedPreviews(): () => void {
   const followed = new Map<string, () => void>();
   const followNewThreads = (refs: ReadonlyMap<string, ScopedThreadRef>) => {
@@ -110,8 +248,28 @@ export function startAgentOpenedPreviews(): () => void {
   const stopIndex = appAtomRegistry.subscribe(previewThreadRefsAtom, followNewThreads, {
     immediate: true,
   });
+  const watchedEnvironments = new Map<EnvironmentId, () => void>();
+  const watchConnectedEnvironments = (environmentIds: ReadonlyArray<EnvironmentId>) => {
+    for (const [environmentId, stop] of watchedEnvironments) {
+      if (environmentIds.includes(environmentId)) continue;
+      stop();
+      watchedEnvironments.delete(environmentId);
+    }
+    for (const environmentId of environmentIds) {
+      if (!watchedEnvironments.has(environmentId)) {
+        watchedEnvironments.set(environmentId, watchEnvironmentDevices(environmentId));
+      }
+    }
+  };
+  const stopEnvironments = appAtomRegistry.subscribe(
+    environmentSummaries.connectedEnvironmentIdsAtom,
+    watchConnectedEnvironments,
+    { immediate: true },
+  );
   return () => {
     stopIndex();
+    stopEnvironments();
     for (const stop of followed.values()) stop();
+    for (const stop of watchedEnvironments.values()) stop();
   };
 }

@@ -47,7 +47,7 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
         return "The environment's T3 Connect tunnel is still being set up.";
       }
       if (error.reason === "endpoint_provider_not_managed") {
-        return "This environment is linked only to publish agent activity, so it cannot accept connections. On that computer, open Settings > Connections and turn T3 Connect on.";
+        return "This environment is linked only to publish agent activity, so it cannot accept connections. On that computer, open Settings > Sharing & access and turn T3 Connect on.";
       }
       return error.reason
         ? `Relay rejected the environment connection request (${error.reason}).`

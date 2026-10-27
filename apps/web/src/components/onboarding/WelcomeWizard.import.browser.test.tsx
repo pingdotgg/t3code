@@ -35,6 +35,7 @@ const state = vi.hoisted(() => ({
   onDone: vi.fn(),
   scan: vi.fn(),
   refreshScan: vi.fn(),
+  waitForProject: vi.fn(),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
@@ -87,6 +88,7 @@ vi.mock(import("../../state/entities"), async (original) => {
     ...(await original()),
     useProjects: (() => useAtomValue(state.projects as Atom.Atom<Project[]>)) as never,
     readProjects: (() => appAtomRegistry.get(state.projects as Atom.Atom<Project[]>)) as never,
+    waitForProject: ((ref: unknown) => state.waitForProject(ref)) as never,
   };
 });
 vi.mock(import("../../state/projects"), async (original) => ({
@@ -183,6 +185,27 @@ function recordProject({ environmentId, input }: CreateProjectInput) {
   return AsyncResult.success(undefined);
 }
 
+// Resolves once the project reaches the mocked projects atom; the real helper's timeout is
+// replaced per test with a rejection.
+function waitForRecordedProject(ref: { environmentId: EnvironmentId; projectId: string }) {
+  const find = () =>
+    appAtomRegistry
+      .get(projectsAtom())
+      .find(
+        (project) => project.id === ref.projectId && project.environmentId === ref.environmentId,
+      );
+  return new Promise<Project>((resolve) => {
+    const current = find();
+    if (current) return resolve(current);
+    const unsubscribe = appAtomRegistry.subscribe(projectsAtom(), () => {
+      const project = find();
+      if (!project) return;
+      unsubscribe();
+      resolve(project);
+    });
+  });
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((complete) => {
@@ -255,6 +278,7 @@ function setup() {
   state.onDone.mockReset();
   state.scan.mockReset();
   state.refreshScan.mockReset();
+  state.waitForProject.mockReset().mockImplementation(waitForRecordedProject);
   return now;
 }
 
@@ -303,4 +327,24 @@ it("completes accepted imports when permission is revoked after the final server
   expect(state.importThreads).toHaveBeenCalledOnce();
   expect(state.completeOnboarding).toHaveBeenCalledOnce();
   expect(state.onDone).toHaveBeenCalledOnce();
+});
+
+it("finishes setup without landing when the imported project never reaches the client", async () => {
+  using _now = setup();
+  state.candidates = state.candidates.slice(0, 1);
+  // The server accepts the project, but it never shows up in the client's projects.
+  state.createProject.mockResolvedValue(AsyncResult.success(undefined));
+  state.waitForProject.mockRejectedValue(new Error("The project did not appear."));
+  state.completeOnboarding.mockRejectedValueOnce(new Error("offline"));
+  await using _screen = await mountImport();
+
+  await click("Import 1 project");
+  await vi.waitFor(() => expect(state.completeOnboarding).toHaveBeenCalledOnce());
+  // A failed completion hands the step back instead of leaving it importing.
+  await vi.waitFor(() => expect(button("Import 1 project").disabled).toBe(false));
+  expect(state.onDone).not.toHaveBeenCalled();
+
+  await click("Import 1 project");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.onDone).toHaveBeenCalledWith(undefined);
 });

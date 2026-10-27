@@ -1,29 +1,22 @@
 import {
   OrchestratorMcpFailure,
   ToolActivityIcon,
-  PreviewAutomationClickInput,
+  PreviewAutomationActInput,
   PreviewAutomationDialogInput,
-  PreviewAutomationDragInput,
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
-  PreviewAutomationHoverInput,
   PreviewAutomationNavigateInput,
   PreviewAutomationOpenInput,
-  PreviewAutomationPressInput,
   PreviewAutomationRecordingArtifact,
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
-  PreviewAutomationScrollInput,
-  PreviewAutomationSelectInput,
   PreviewAutomationSelectResult,
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
-  PreviewAutomationTypeInput,
-  PreviewAutomationUploadInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -137,7 +130,7 @@ const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = safeBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Use it only when the current request asks for browser work, including checking an edit in the browser. Never use it unasked to verify your own edit, or to repeat a snapshot from an earlier turn. Works on a tab the user is driving. Returns page state, elements, diagnostics, and screenshot size. Target one element with `locator='aria-ref=<ref>'` from `accessibilityTree`, even in frames. Refs die on navigation, a new snapshot, or handoff. Text caps near 20 KB; on your own or an unclaimed tab, `preview_evaluate` reads more. To show a screenshot: `save=true`, then embed ![alt](screenshotPath).",
+      "Use it only when the current request asks for browser work, including checking an edit in the browser. Never use it unasked to verify your own edit, or to repeat a snapshot from an earlier turn. Works on a tab the user is driving. Returns page state, elements, diagnostics, and screenshot size. Target one element with `locator='aria-ref=<ref>'` from `accessibilityTree`, even in frames. Refs die on navigation, a new snapshot, or handoff. Text caps near 20 KB; on your own or an unclaimed tab, `preview_evaluate` reads more. To show a screenshot when asked: `save=true`, then embed ![alt](screenshotPath).",
     parameters: Schema.Struct({
       ...PreviewAutomationTabTargetInput.fields,
       includeImage: Schema.optional(
@@ -157,90 +150,18 @@ export const PreviewSnapshotTool = safeBrowserTool(
   }).annotate(Tool.Title, "Inspect browser page"),
 );
 
-const PreviewClickTool = browserTool(
-  Tool.make("preview_click", {
-    description: "Click exactly one target. Prefer a Playwright locator. `x` and `y` go together.",
-    parameters: PreviewAutomationClickInput,
-    success: PreviewActionResult,
-    failure: PreviewToolFailure,
-    dependencies,
-  }).annotate(Tool.Title, "Click preview page"),
-);
-
-const PreviewTypeTool = browserTool(
-  Tool.make("preview_type", {
-    description: "Type literal text into one input. `clear=true` replaces the current text.",
-    parameters: PreviewAutomationTypeInput,
-    success: PreviewActionResult,
-    failure: PreviewToolFailure,
-    dependencies,
-  }).annotate(Tool.Title, "Type into preview page"),
-);
-
-const PreviewHoverTool = safeBrowserTool(
-  Tool.make("preview_hover", {
-    description: "Hover one target to show menus or tooltips.",
-    parameters: PreviewAutomationHoverInput,
-    success: PreviewActionResult,
-    failure: PreviewToolFailure,
-    dependencies,
-  }).annotate(Tool.Title, "Hover preview page"),
-);
-
-const PreviewSelectTool = browserTool(
-  Tool.make("preview_select", {
+const PreviewActTool = browserTool(
+  Tool.make("preview_act", {
     description:
-      "Pick options in one native <select>, by value or label. For a custom dropdown, click it open, then click the option.",
-    parameters: PreviewAutomationSelectInput,
-    success: Schema.Struct({
-      ...PreviewAutomationSelectResult.fields,
-      ...presentationFields,
-    }),
+      "Act on the chosen tab. Target with `locator='aria-ref=<ref>'` from `preview_snapshot`; `x` and `y` go together. `timeoutMs` defaults to 15000. click: `button`, `clickCount` 1 to 3. type: literal `text`, `clear=true` replaces it. hover: shows menus or tooltips. select: `values` in one native <select>, by value or label; for a custom dropdown, click it open, then click the option. drag: `source` onto `target`. upload: absolute `paths` answer the file picker `preview_status` reports, [] cancels it, or a `locator` sets an <input type=file>. press: one `key`, such as 'Enter', with `modifiers`, to the focused element; click a field first to focus it. scroll: the tab, or one container with a locator; positive `deltaY` scrolls down, positive `deltaX` right.",
+    parameters: PreviewAutomationActInput,
+    success: Schema.Union([
+      Schema.Struct({ ...PreviewAutomationSelectResult.fields, ...presentationFields }),
+      PreviewActionResult,
+    ]),
     failure: PreviewToolFailure,
     dependencies,
-  }).annotate(Tool.Title, "Select preview option"),
-);
-
-const PreviewDragTool = browserTool(
-  Tool.make("preview_drag", {
-    description: "Drag one element onto another.",
-    parameters: PreviewAutomationDragInput,
-    success: PreviewActionResult,
-    failure: PreviewToolFailure,
-    dependencies,
-  }).annotate(Tool.Title, "Drag in preview page"),
-);
-
-const PreviewUploadTool = browserTool(
-  Tool.make("preview_upload", {
-    description:
-      "Give files from this environment to the page. After a click opens a file picker, `preview_status` reports it. Pass absolute paths to answer it, or an empty list to cancel. Or pass a locator for an <input type=file>.",
-    parameters: PreviewAutomationUploadInput,
-    success: PreviewActionResult,
-    failure: PreviewToolFailure,
-    dependencies,
-  }).annotate(Tool.Title, "Upload files to preview page"),
-);
-
-const PreviewPressTool = browserTool(
-  Tool.make("preview_press", {
-    description: "Press one key, such as {key:'Enter'} or {key:'a',modifiers:['Meta']}.",
-    parameters: PreviewAutomationPressInput,
-    success: PreviewActionResult,
-    failure: PreviewToolFailure,
-    dependencies,
-  }).annotate(Tool.Title, "Press key in preview page"),
-);
-
-const PreviewScrollTool = safeBrowserTool(
-  Tool.make("preview_scroll", {
-    description:
-      "Scroll the chosen tab, or one container with a locator or selector. Positive `deltaY` scrolls down. Positive `deltaX` scrolls right.",
-    parameters: PreviewAutomationScrollInput,
-    success: PreviewActionResult,
-    failure: PreviewToolFailure,
-    dependencies,
-  }).annotate(Tool.Title, "Scroll preview page"),
+  }).annotate(Tool.Title, "Act in preview page"),
 );
 
 /** Wrap non-objects: MCP requires object structuredContent, and Claude Code rejects invalid results entirely. */
@@ -302,14 +223,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewResizeTool,
   PreviewSetAppearanceTool,
   PreviewSnapshotTool,
-  PreviewClickTool,
-  PreviewTypeTool,
-  PreviewHoverTool,
-  PreviewSelectTool,
-  PreviewDragTool,
-  PreviewUploadTool,
-  PreviewPressTool,
-  PreviewScrollTool,
+  PreviewActTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
   PreviewRecordingStartTool,
@@ -323,14 +237,7 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewNavigateTool,
   PreviewResizeTool,
   PreviewSetAppearanceTool,
-  PreviewClickTool,
-  PreviewTypeTool,
-  PreviewHoverTool,
-  PreviewSelectTool,
-  PreviewDragTool,
-  PreviewUploadTool,
-  PreviewPressTool,
-  PreviewScrollTool,
+  PreviewActTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
   PreviewRecordingStartTool,

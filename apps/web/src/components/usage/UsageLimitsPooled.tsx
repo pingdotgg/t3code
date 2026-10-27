@@ -402,15 +402,12 @@ function SegmentTriggers({
               className="min-w-0 truncate font-medium text-foreground"
             />
           ) : null}
-          <span
-            className={cn(
-              "shrink-0 font-semibold text-foreground tabular-nums",
-              // A single-account bar repeats the headline percentage.
-              !showAccountName && "redesign:hidden",
-            )}
-          >
-            {remaining}%
-          </span>
+          {/* A single-account bar repeats the headline percentage. */}
+          {showAccountName ? (
+            <span className="shrink-0 font-semibold text-foreground tabular-nums">
+              {remaining}%
+            </span>
+          ) : null}
           {resetsIn || credits ? (
             <span className="ms-auto flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums">
               {resetsIn?.replace("resets in ", "↻ ") ?? ""}

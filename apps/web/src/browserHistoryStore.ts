@@ -1,14 +1,53 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+} from "@t3tools/client-runtime/environment";
+import type {
+  EnvironmentId,
+  PreviewSessionSnapshot,
+  ScopedProjectRef,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import {
+  previewStateAtom,
+  previewThreadRefsAtom,
+  readThreadPreviewState,
+  type ThreadPreviewState,
+} from "~/previewStateStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import {
+  readProject,
+  readProjects,
+  readThreadShell,
+  useProjects,
+  useQuietThreadShell,
+} from "~/state/entities";
+import { readPrimaryEnvironmentId, usePrimaryEnvironmentId } from "~/state/environments";
 import { readPreparedConnection } from "~/state/session";
 
 import { isLocalLoopbackHost, normalizeHostname } from "./browser/browserTargetResolver";
+import { useComposerDraftStore } from "./composerDraftStore";
+import {
+  ensureClientSettingsHydrated,
+  getClientSettings,
+  isClientSettingsHydrated,
+  useClientSettings,
+} from "./hooks/useSettings";
 import { resolveStorage } from "./lib/storage";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
+  selectProjectGroupingSettings,
+  type ProjectGroupingSettings,
+} from "./logicalProject";
+import { buildPhysicalToLogicalProjectKeyMap } from "./sidebarProjectGrouping";
+import type { Project } from "./types";
 
 export type BrowserHistoryEntry = { url: string; lastVisitedAt: number; title?: string };
 
@@ -144,13 +183,11 @@ const PENDING_MAX_PER_THREAD = 10;
 const PENDING_MAX_THREADS = 20;
 
 type PendingVisit = { url: string; at: number; environmentHostname: string | null };
-type PendingTitle = { url: string; title: string; environmentHostname: string | null | undefined };
 
 interface BrowserHistoryStoreState {
   byProjectKey: Record<string, BrowserHistoryEntry[]>;
   projectKeyByThreadKey: Record<string, string>;
   pendingVisitsByThreadKey: Record<string, PendingVisit[]>;
-  pendingTitlesByThreadKey: Record<string, PendingTitle[]>;
   recordVisit: (
     projectKey: string,
     url: string,
@@ -189,7 +226,6 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()(
       byProjectKey: {},
       projectKeyByThreadKey: {},
       pendingVisitsByThreadKey: {},
-      pendingTitlesByThreadKey: {},
       recordVisit: (projectKey, url, at, options) => {
         const normalized = normalizeHistoryUrl(url);
         if (!normalized) return;
@@ -245,35 +281,22 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()(
         const threadKey = scopedThreadKey(ref);
         const state = get();
         const pendingVisits = state.pendingVisitsByThreadKey[threadKey];
-        const pendingTitles = state.pendingTitlesByThreadKey[threadKey];
-        if (
-          state.projectKeyByThreadKey[threadKey] === projectKey &&
-          !pendingVisits &&
-          !pendingTitles
-        ) {
-          return;
-        }
+        if (state.projectKeyByThreadKey[threadKey] === projectKey && !pendingVisits) return;
         const nextPendingVisits = { ...state.pendingVisitsByThreadKey };
-        const nextPendingTitles = { ...state.pendingTitlesByThreadKey };
         delete nextPendingVisits[threadKey];
-        delete nextPendingTitles[threadKey];
         set({
           projectKeyByThreadKey: { ...state.projectKeyByThreadKey, [threadKey]: projectKey },
           pendingVisitsByThreadKey: nextPendingVisits,
-          pendingTitlesByThreadKey: nextPendingTitles,
         });
         for (const visit of pendingVisits ?? [])
           get().recordVisit(projectKey, visit.url, visit.at, {
             insertOrdered: true,
             environmentHostname: visit.environmentHostname,
           });
-        for (const pendingTitle of pendingTitles ?? [])
-          get().setTitleForUrl(
-            projectKey,
-            pendingTitle.url,
-            pendingTitle.title,
-            pendingTitle.environmentHostname,
-          );
+        if (pendingVisits)
+          recordPreviewTitles(ref, readThreadPreviewState(ref), {
+            urls: pendingVisits.map((visit) => visit.url),
+          });
       },
     }),
     {
@@ -302,7 +325,6 @@ export function mergeBrowserHistoryState(
     ...migrated,
     projectKeyByThreadKey: migratePersistedThreadProjectKeys(persistedState, migrated.byProjectKey),
     pendingVisitsByThreadKey: {},
-    pendingTitlesByThreadKey: {},
   };
 }
 
@@ -323,10 +345,63 @@ function migratePersistedThreadProjectKeys(
   );
 }
 
+/**
+ * History follows the sidebar's project rows, so a duplicate row shares the
+ * history of the group it is listed under rather than keying by its own path.
+ */
+function deriveHistoryProjectKey(
+  project: Project,
+  projects: ReadonlyArray<Project>,
+  settings: ProjectGroupingSettings,
+  primaryEnvironmentId: EnvironmentId | null,
+): string {
+  return (
+    buildPhysicalToLogicalProjectKeyMap({ projects, settings, primaryEnvironmentId }).get(
+      derivePhysicalProjectKey(project),
+    ) ?? deriveLogicalProjectKeyFromSettings(project, settings)
+  );
+}
+
+/** Server threads name their project in the shell; drafts in the composer draft store. */
+function readThreadProjectRef(ref: ScopedThreadRef): ScopedProjectRef | null {
+  const projectId = readThreadShell(ref)?.projectId;
+  if (projectId) return scopeProjectRef(ref.environmentId, projectId);
+  const draft = useComposerDraftStore.getState().getDraftSessionByRef(ref);
+  return draft ? scopeProjectRef(draft.environmentId, draft.projectId) : null;
+}
+
+/**
+ * Registers the thread under its current project so queued visits and titles
+ * land. Until the project loads, or client settings hydrate (the grouping is
+ * unknown before then), the last registration stands and writes stay queued.
+ */
+function resolveThreadProjectKey(ref: ScopedThreadRef): string | undefined {
+  const state = useBrowserHistoryStore.getState();
+  const registered = state.projectKeyByThreadKey[scopedThreadKey(ref)];
+  if (!isClientSettingsHydrated()) {
+    void ensureClientSettingsHydrated().then(
+      () => resolveThreadProjectKey(ref),
+      () => undefined,
+    );
+    return registered;
+  }
+  const projectRef = readThreadProjectRef(ref);
+  const project = projectRef ? readProject(projectRef) : null;
+  if (!project) return registered;
+  const projectKey = deriveHistoryProjectKey(
+    project,
+    readProjects(),
+    selectProjectGroupingSettings(getClientSettings()),
+    readPrimaryEnvironmentId(),
+  );
+  state.registerThreadProject(ref, projectKey);
+  return projectKey;
+}
+
 export function recordVisitForThread(ref: ScopedThreadRef, url: string, at?: number): void {
   const threadKey = scopedThreadKey(ref);
+  const projectKey = resolveThreadProjectKey(ref);
   const state = useBrowserHistoryStore.getState();
-  const projectKey = state.projectKeyByThreadKey[threadKey];
   const visitAt = at ?? Date.now();
   const connection = readPreparedConnection(ref.environmentId);
   const environmentHostname = connection ? new URL(connection.httpBaseUrl).hostname : null;
@@ -341,46 +416,131 @@ export function recordVisitForThread(ref: ScopedThreadRef, url: string, at?: num
     return;
   }
   state.recordVisit(projectKey, url, visitAt, { environmentHostname });
+  // A page can settle before the address bar records its visit.
+  recordPreviewTitles(ref, readThreadPreviewState(ref), { urls: [url] });
 }
 
-export function setTitleForThreadUrl(
+/**
+ * History is shared across a project's threads and settled sessions are retained,
+ * so replaying an old settle would clobber another thread's newer title. Visits
+ * only fill untitled entries; settles apply only pages that loaded or retitled.
+ */
+function recordPreviewTitles(
   ref: ScopedThreadRef,
-  url: string,
-  title: string,
-  environmentHostname?: string | null,
+  preview: ThreadPreviewState,
+  only:
+    | { readonly urls: ReadonlyArray<string> }
+    | { readonly changedSince: ThreadPreviewState["sessions"] },
 ): void {
-  const threadKey = scopedThreadKey(ref);
   const state = useBrowserHistoryStore.getState();
-  const projectKey = state.projectKeyByThreadKey[threadKey];
-  if (!projectKey) {
-    useBrowserHistoryStore.setState({
-      pendingTitlesByThreadKey: addPendingByThread(state.pendingTitlesByThreadKey, threadKey, {
-        url,
-        title,
-        environmentHostname,
-      }),
-    });
-    return;
+  const projectKey = state.projectKeyByThreadKey[scopedThreadKey(ref)];
+  if (!projectKey || !state.byProjectKey[projectKey]?.length) return;
+  const connection = readPreparedConnection(ref.environmentId);
+  const environmentHostname = connection ? new URL(connection.httpBaseUrl).hostname : null;
+  const titleKey = (url: string) => {
+    const normalized = normalizeHistoryUrl(url);
+    return normalized ? titleLookupKey(normalized, environmentHostname) : null;
+  };
+  const titled = new Set(
+    "urls" in only
+      ? state.byProjectKey[projectKey]?.flatMap((entry) =>
+          entry.title ? [titleLookupKey(entry.url, environmentHostname)] : [],
+        )
+      : [],
+  );
+  const visitKeys =
+    "urls" in only
+      ? new Set(only.urls.map(titleKey).filter((key) => key !== null && !titled.has(key)))
+      : null;
+  // Resizes and list reconciles replace a session without loading a new page.
+  const settledAgain = (session: PreviewSessionSnapshot, previous?: PreviewSessionSnapshot) =>
+    previous?.navStatus._tag === "Success" &&
+    session.navStatus._tag === "Success" &&
+    previous.navStatus.url === session.navStatus.url &&
+    previous.navStatus.title === session.navStatus.title;
+  const include = (session: PreviewSessionSnapshot, url: string) =>
+    "changedSince" in only
+      ? !settledAgain(session, only.changedSince[session.tabId])
+      : (visitKeys?.has(titleKey(url)) ?? false);
+  // Tabs can share a URL; applying oldest first lets the newest settle win.
+  const sessions = Object.values(preview.sessions).toSorted((a, b) =>
+    a.updatedAt.localeCompare(b.updatedAt),
+  );
+  for (const session of sessions) {
+    const status = session.navStatus;
+    if (status._tag !== "Success" || !status.title || !include(session, status.url)) continue;
+    state.setTitleForUrl(projectKey, status.url, status.title, environmentHostname);
   }
-  state.setTitleForUrl(projectKey, url, title, environmentHostname);
+}
+
+/** Records settled page titles for every thread with previews, for the life of the page. */
+export function startPreviewTitleRecording(): () => void {
+  const followed = new Map<string, () => void>();
+  const followNewThreads = (refs: ReadonlyMap<string, ScopedThreadRef>) => {
+    for (const [threadKey, threadRef] of refs) {
+      if (followed.has(threadKey)) continue;
+      const atom = previewStateAtom(threadKey);
+      let previousSessions = appAtomRegistry.get(atom).sessions;
+      followed.set(
+        threadKey,
+        appAtomRegistry.subscribe(atom, (next) => {
+          if (next.sessions === previousSessions) return;
+          const changedSince = previousSessions;
+          previousSessions = next.sessions;
+          recordPreviewTitles(threadRef, next, { changedSince });
+        }),
+      );
+    }
+  };
+  const stopIndex = appAtomRegistry.subscribe(previewThreadRefsAtom, followNewThreads, {
+    immediate: true,
+  });
+  return () => {
+    stopIndex();
+    for (const stop of followed.values()) stop();
+  };
 }
 
 export function removeUrlForThread(ref: ScopedThreadRef, url: string): void {
-  const state = useBrowserHistoryStore.getState();
-  const projectKey = state.projectKeyByThreadKey[scopedThreadKey(ref)];
+  const projectKey = resolveThreadProjectKey(ref);
   if (!projectKey) return;
-  state.removeUrl(projectKey, url);
+  useBrowserHistoryStore.getState().removeUrl(projectKey, url);
 }
 
 const EMPTY_HISTORY: ReadonlyArray<BrowserHistoryEntry> = [];
+
+function useThreadHistoryProjectKey(ref: ScopedThreadRef): string | null {
+  const threadKey = scopedThreadKey(ref);
+  const shellProjectId = useQuietThreadShell(ref)?.projectId ?? null;
+  const draftProjectKey = useComposerDraftStore((state) => {
+    const draft = state.getDraftSessionByRef(ref);
+    return draft ? scopedProjectKey(scopeProjectRef(draft.environmentId, draft.projectId)) : null;
+  });
+  const projectKey = shellProjectId
+    ? scopedProjectKey(scopeProjectRef(ref.environmentId, shellProjectId))
+    : draftProjectKey;
+  const projects = useProjects();
+  const settings = useClientSettings(selectProjectGroupingSettings);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const registered = useBrowserHistoryStore(
+    (state) => state.projectKeyByThreadKey[threadKey] ?? null,
+  );
+  const project = projects.find(
+    (candidate) =>
+      scopedProjectKey(scopeProjectRef(candidate.environmentId, candidate.id)) === projectKey,
+  );
+  return project
+    ? deriveHistoryProjectKey(project, projects, settings, primaryEnvironmentId)
+    : registered;
+}
 
 export function useThreadRecentHistory(
   ref: ScopedThreadRef,
   limit: number,
 ): ReadonlyArray<BrowserHistoryEntry> {
+  const projectKey = useThreadHistoryProjectKey(ref);
   return useBrowserHistoryStore(
     useShallow((state) => {
-      const projectKey = state.projectKeyByThreadKey[scopedThreadKey(ref)];
       const entries = projectKey ? state.byProjectKey[projectKey] : undefined;
       return entries && entries.length > 0 ? entries.slice(0, limit) : EMPTY_HISTORY;
     }),
@@ -392,7 +552,6 @@ export function resetBrowserHistoryForTests(): void {
     byProjectKey: {},
     projectKeyByThreadKey: {},
     pendingVisitsByThreadKey: {},
-    pendingTitlesByThreadKey: {},
   });
   useBrowserHistoryStore.persist.clearStorage();
 }

@@ -768,6 +768,11 @@ export class GhosttyTerminalSurface {
     this.refreshHoveredLink();
   }
 
+  /** Mount height, in CSS pixels, that shows exactly `rows` rows at the current font. */
+  heightForRows(rows: number): number {
+    return Math.ceil(rows * this.metrics.height + CONTENT_PADDING * 2);
+  }
+
   async setFont(font: GhosttyTerminalFont): Promise<void> {
     if (this.disposed) return;
     const fontSize = terminalFontSize(font.size);

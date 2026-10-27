@@ -21,6 +21,7 @@ import * as Persistable from "effect/persistence/Persistable";
 import * as PersistedCache from "effect/persistence/PersistedCache";
 import * as Persistence from "effect/persistence/Persistence";
 import * as ServerConfig from "../config.ts";
+import { detachStackFrame } from "../git/detachStackFrame.ts";
 import { forkParked } from "../serverActivation.ts";
 
 const CONCURRENT_READS = 512;
@@ -124,6 +125,8 @@ export const make = Effect.gen(function* () {
     }),
     { capacity: CONCURRENT_READS, timeToLive: () => Duration.zero },
   );
+  // A cache entry keeps the fiber that filled it, whose lazy stack frames would keep the caller's
+  // data (e.g. a whole sync sweep) alive until eviction.
   return PullRequestReadCache.of({
     get: Effect.fn("PullRequestReadCache.get")(function* (key, lookup, scopes = []) {
       if (!enabled) return yield* lookup;
@@ -151,7 +154,7 @@ export const make = Effect.gen(function* () {
         }),
         lock.withPermits(1),
       );
-    }),
+    }, detachStackFrame),
     invalidate: Effect.fn("PullRequestReadCache.invalidate")(
       function* (scope) {
         const now = clock.currentTimeMillisUnsafe();
@@ -170,6 +173,7 @@ export const make = Effect.gen(function* () {
       }),
       Effect.uninterruptible,
       lock.withPermits(CONCURRENT_READS),
+      detachStackFrame,
     ),
   });
 });

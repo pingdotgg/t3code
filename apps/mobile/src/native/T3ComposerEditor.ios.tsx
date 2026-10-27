@@ -111,6 +111,13 @@ interface NativeComposerEditorProps extends ViewProps {
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
 
+// A view command rejects with "Unable to find the view" when the composer's native view is
+// unmounted, which can happen while an open question hides the composer slot. There is nothing
+// to act on then.
+function settleViewCommand(command: Promise<void> | undefined): void {
+  command?.catch(() => undefined);
+}
+
 function basename(path: string): string {
   const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separator >= 0 ? path.slice(separator + 1) : path;
@@ -159,10 +166,10 @@ export function ComposerEditor({
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => void nativeRef.current?.focus(),
-      blur: () => void nativeRef.current?.blur(),
+      focus: () => settleViewCommand(nativeRef.current?.focus()),
+      blur: () => settleViewCommand(nativeRef.current?.blur()),
       setSelection: (nextSelection) =>
-        void nativeRef.current?.setSelection(nextSelection.start, nextSelection.end),
+        settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
     }),
     [],
   );

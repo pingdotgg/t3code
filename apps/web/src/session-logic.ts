@@ -7,7 +7,6 @@ import {
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2RunAttempt,
-  type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type PlanId,
   type RunId,
@@ -98,17 +97,6 @@ export interface WorkLogEntry {
 
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
-
-export interface ActivePlanState {
-  readonly createdAt: string;
-  readonly runId: RunId | null;
-  readonly explanation?: string | null;
-  readonly steps: Array<{
-    readonly step: string;
-    readonly status: "pending" | "inProgress" | "completed";
-    readonly durationMs?: number;
-  }>;
-}
 
 export interface LatestProposedPlanState {
   readonly id: PlanId;
@@ -249,71 +237,6 @@ export function derivePendingUserInputs(
   inputs: ReadonlyArray<ThreadPendingUserInput>,
 ): ThreadPendingUserInput[] {
   return [...inputs].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
-}
-
-export function deriveActivePlanState(
-  projection: ThreadStructure | null,
-  latestRunId: RunId | undefined,
-): ActivePlanState | null {
-  if (projection === null) return null;
-  const plans = projection.plans
-    .filter((plan) => plan.kind === "todo_list")
-    .filter((plan) => plan.status !== "superseded");
-  const runOrdinals = new Map<RunId | null, number>(
-    projection.runs.map((run) => [run.id, run.ordinal]),
-  );
-  const plan =
-    plans.findLast((candidate) => candidate.runId === latestRunId) ??
-    plans.reduce<(typeof plans)[number] | null>(
-      (latest, candidate) =>
-        latest === null ||
-        (runOrdinals.get(candidate.runId) ?? -1) >= (runOrdinals.get(latest.runId) ?? -1)
-          ? candidate
-          : latest,
-      null,
-    );
-  if (plan === null || plan.steps.length === 0) return null;
-  return {
-    createdAt: planItemTime(projection, plan),
-    runId: plan.runId,
-    explanation: plan.explanation ?? null,
-    steps: plan.steps.map(({ text, status, durationMs }) => ({
-      step: text,
-      status: status === "running" ? "inProgress" : status,
-      ...(durationMs === undefined ? {} : { durationMs }),
-    })),
-  };
-}
-
-// Claude's unfinished tasks belong to the provider session, not just the turn.
-export function selectComposerTasksPlan(
-  projection: ThreadStructure | null,
-  plan: ActivePlanState | null,
-  activeRunId: RunId | null,
-  activeRunSettled: boolean,
-): ActivePlanState | null {
-  if (projection === null || plan === null) return null;
-  if (activeRunId !== null && !activeRunSettled && plan.runId === activeRunId) return plan;
-  if (plan.steps.every((step) => step.status === "completed")) return null;
-  const planProviderThreadId = projection.runs.find(
-    (run) => run.id === plan.runId,
-  )?.providerThreadId;
-  if (planProviderThreadId === undefined || planProviderThreadId === null) return null;
-  const planDriver = projection.providerThreads.find(
-    (providerThread) => providerThread.id === planProviderThreadId,
-  )?.driver;
-  if (planDriver !== "claudeAgent") return null;
-  let latestStartedRun: OrchestrationV2ThreadProjection["runs"][number] | null = null;
-  for (const run of projection.runs) {
-    if (
-      run.startedAt !== null &&
-      run.providerThreadId !== null &&
-      (latestStartedRun === null || run.ordinal > latestStartedRun.ordinal)
-    ) {
-      latestStartedRun = run;
-    }
-  }
-  return latestStartedRun?.providerThreadId === planProviderThreadId ? plan : null;
 }
 
 function planItemTime(
@@ -589,6 +512,17 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         toolData: { input: item.input, output: item.output },
       };
     }
+    case "todo_list": {
+      // Each todo update is a quiet row where the agent wrote it; it opens to every step.
+      const done = item.steps.filter((step) => step.status === "completed").length;
+      const current =
+        item.steps.find((step) => step.status === "running") ??
+        item.steps.find((step) => step.status === "pending");
+      return {
+        ...common,
+        label: `Tasks ${done}/${item.steps.length}${current ? ` · ${current.text}` : ""}`,
+      };
+    }
     case "approval_request":
       return {
         ...common,
@@ -666,7 +600,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item)) continue;
-    if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);

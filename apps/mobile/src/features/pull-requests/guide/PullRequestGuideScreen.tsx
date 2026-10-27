@@ -207,7 +207,6 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                             ...route.params,
                             path: excerpt.path,
                             focus: { side: excerpt.side, start: excerpt.start, end: excerpt.end },
-                            fileSelectionId: `guide:${position}:${excerpt.path}:${excerpt.start}`,
                           }),
                         )
                       }

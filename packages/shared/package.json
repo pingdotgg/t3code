@@ -447,6 +447,10 @@
       "types": "./src/markdownGithubAlerts.ts",
       "import": "./src/markdownGithubAlerts.ts"
     },
+    "./markdownFrontmatter": {
+      "types": "./src/markdownFrontmatter.ts",
+      "import": "./src/markdownFrontmatter.ts"
+    },
     "./markdownListIndentation": {
       "types": "./src/markdownListIndentation.ts",
       "import": "./src/markdownListIndentation.ts"

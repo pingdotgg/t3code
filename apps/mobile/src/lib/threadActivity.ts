@@ -111,6 +111,7 @@ export interface ThreadFeedActivity {
     | "eye"
     | "globe"
     | "search"
+    | "stop"
     | "hammer"
     | "lock"
     | "message"
@@ -617,6 +618,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "hammer";
     case "run_interrupt_request":
     case "run_interrupt_result":
+      return "stop";
     case "system_notice":
       return "warning";
     case "error":
@@ -643,7 +645,10 @@ function itemToolPresentation(item: OrchestrationV2TurnItem): T3McpToolPresentat
   if (item.type !== "dynamic_tool") {
     return null;
   }
-  return resolveT3McpToolPresentation(item.toolName) ?? resolveT3McpToolPresentation(item.title);
+  return (
+    resolveT3McpToolPresentation(item.toolName, item.input) ??
+    resolveT3McpToolPresentation(item.title, item.input)
+  );
 }
 
 function itemSummary(
@@ -2170,13 +2175,31 @@ export function buildThreadFeed(
 
   const entries: RawThreadFeedEntry[] = [];
   const entryRows: number[] = [];
+  // A stopped compaction's own row already says it stopped. A `/compact` run stopped
+  // before its provider started has no such row, so it keeps the interrupted one.
+  const compactPromptRunIds = new Set<RunId>();
+  const compactedRunIds = new Set<RunId>();
+  for (const { item } of visibleTurnItems) {
+    if (item.runId === null) continue;
+    if (item.type === "user_message" && isCompactionCommandMessage({ role: "user", ...item })) {
+      compactPromptRunIds.add(item.runId);
+    } else if (item.type === "compaction") {
+      compactedRunIds.add(item.runId);
+    }
+  }
   for (let index = restart?.row ?? 0; index < visibleTurnItems.length; index += 1) {
     const row = visibleTurnItems[index]!;
     const item = row.item;
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
-    if (item.type === "run_interrupt_request") {
+    if (
+      item.type === "run_interrupt_request" ||
+      (item.type === "run_interrupt_result" &&
+        item.runId !== null &&
+        compactPromptRunIds.has(item.runId) &&
+        compactedRunIds.has(item.runId))
+    ) {
       continue;
     }
     const attemptId = resolveAttemptId(item);

@@ -3,11 +3,11 @@ import { providerErrorPresentation } from "../../session-logic";
 import {
   CheckIcon,
   CircleAlertIcon,
+  CircleStopIcon,
   GitForkIcon,
   type LucideIcon,
   MinusIcon,
   WrenchIcon,
-  XIcon,
   ZapIcon,
 } from "lucide-react";
 import * as DateTime from "effect/DateTime";
@@ -38,15 +38,15 @@ export function v2EventPresentation(item: OrchestrationV2TurnItem): {
       return {
         label: "Interrupt requested",
         detail: item.message,
-        tone: "warning",
-        icon: CircleAlertIcon,
+        tone: "muted",
+        icon: CircleStopIcon,
       };
     case "run_interrupt_result":
       return {
         label: "Run interrupted",
         detail: item.message,
-        tone: "danger",
-        icon: XIcon,
+        tone: "muted",
+        icon: CircleStopIcon,
       };
     case "handoff":
       return {

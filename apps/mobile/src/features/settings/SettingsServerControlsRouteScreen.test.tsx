@@ -12,6 +12,7 @@ const { Children, mocks } = vi.hoisted(() => ({
     updateSettings: vi.fn(),
     alert: vi.fn(),
     targets: [] as ReturnType<typeof environment>[],
+    readOnly: new Set<string>(),
     projectSelected: false,
   },
 }));
@@ -48,7 +49,12 @@ vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ b
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({}) }));
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => true,
-  useEnvironmentsWithScope: () => new Set(mocks.targets.map((target) => target.environmentId)),
+  useEnvironmentsWithScope: () =>
+    new Set(
+      mocks.targets
+        .map((target) => target.environmentId)
+        .filter((environmentId) => !mocks.readOnly.has(environmentId)),
+    ),
 }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -125,7 +131,10 @@ vi.mock("./settings-environment-filter", () => ({
   }),
 }));
 
-import { SettingsEnvironmentSourceControlRouteScreen } from "./SettingsServerControlsRouteScreen";
+import {
+  SettingsThreadsRouteScreen,
+  SettingsWorktreesRouteScreen,
+} from "./SettingsServerControlsRouteScreen";
 
 function environment(environmentId: string, label: string) {
   return {
@@ -154,6 +163,7 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.targets = [environment("local", "Local")];
   mocks.projectSelected = false;
+  mocks.readOnly = new Set();
   mocks.alert.mockReset();
   mocks.updateSettings.mockReset();
   mocks.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
@@ -167,7 +177,7 @@ describe("SettingsServerControlsRouteScreen", () => {
   it("sends a draft saved during a pending write once that write settles", async () => {
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();
     mocks.updateSettings.mockReturnValueOnce(pending.promise);
-    act(() => root.render(<SettingsEnvironmentSourceControlRouteScreen />));
+    act(() => root.render(<SettingsWorktreesRouteScreen />));
 
     act(() => mocks.branchNaming.onChange({ branchNamingMode: "custom" }));
     act(() => mocks.branchNaming.onChange({ branchNameInstructions: "Use issue IDs." }));
@@ -182,5 +192,37 @@ describe("SettingsServerControlsRouteScreen", () => {
         patch: { branchNamingMode: "custom", branchNameInstructions: "Use issue IDs." },
       },
     });
+  });
+
+  it("holds auto-settle changes until a pending project override write settles", async () => {
+    mocks.projectSelected = true;
+    const pending = Promise.withResolvers<AsyncResult.Success<void>>();
+    mocks.updateSettings.mockReturnValueOnce(pending.promise);
+    act(() => root.render(<SettingsThreadsRouteScreen />));
+    const toggle = (label: string) =>
+      [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+        (button) => button.textContent === label,
+      )!;
+
+    act(() => toggle("Agent browser access").click());
+    act(() => toggle("Auto-settle merged threads").click());
+
+    // Both rewrite the whole project override, so a second write planned now would drop the first.
+    expect(mocks.updateSettings).toHaveBeenCalledOnce();
+    await act(async () => pending.resolve(AsyncResult.success(undefined)));
+  });
+
+  it("disables auto-settle when a selected environment cannot save settings", () => {
+    const remote = environment("remote", "Remote");
+    // Auto-settle rows skip a server without auto-settlement, but the page still saves to it.
+    remote.serverConfig.environment.capabilities.threadAutoSettlement = false;
+    mocks.targets = [environment("local", "Local"), remote];
+    mocks.readOnly = new Set(["remote"]);
+    act(() => root.render(<SettingsThreadsRouteScreen />));
+
+    const autoSettle = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+      (button) => button.textContent === "Auto-settle merged threads",
+    )!;
+    expect(autoSettle.disabled).toBe(true);
   });
 });

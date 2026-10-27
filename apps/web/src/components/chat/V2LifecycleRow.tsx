@@ -33,12 +33,12 @@ import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   BotIcon,
   ChevronRightIcon,
+  CircleStopIcon,
   ArrowRightLeftIcon,
   ArrowRightIcon,
   GitForkIcon,
   MessageSquareIcon,
   MinusIcon,
-  XIcon,
 } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
@@ -86,7 +86,7 @@ export function V2LifecycleRow(props: {
   if (item.type === "run_interrupt_request") {
     return (
       <div className="flex justify-end px-1 py-1" data-v2-item-type={item.type}>
-        <div className="flex max-w-[80%] items-center gap-2 text-xs text-destructive">
+        <div className="flex max-w-[80%] items-center gap-2 text-xs text-muted-foreground">
           <span aria-hidden="true" className="font-mono">
             ■
           </span>
@@ -104,12 +104,7 @@ export function V2LifecycleRow(props: {
   }
   if (item.type === "run_interrupt_result") {
     return (
-      <TimelineSystemDivider
-        label="Run interrupted"
-        detail={item.message}
-        tone="danger"
-        icon={XIcon}
-      />
+      <TimelineSystemDivider label="Run interrupted" detail={item.message} icon={CircleStopIcon} />
     );
   }
   if (item.type === "compaction") {
@@ -630,7 +625,7 @@ function HandoffEndpoint(props: {
       : entry?.models.find((candidate) => candidate.slug === model);
   const label =
     providerModel !== undefined
-      ? getTriggerDisplayModelName(providerModel)
+      ? getTriggerDisplayModelName(providerModel, entry?.driverKind)
       : model !== undefined && model.length > 0
         ? model
         : (entry?.displayName ?? props.instanceId);

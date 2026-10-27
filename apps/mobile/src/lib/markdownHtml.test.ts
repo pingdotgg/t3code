@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  markdownForNativeRendering,
   markdownHtmlContent,
   markdownWithHtml,
   markdownWithFileEmbeds,
@@ -9,6 +10,7 @@ import {
 import { markdownImageSources } from "./markdownImageSources";
 import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "./markdownMedia";
 import { resolveMarkdownLinkPresentation } from "./markdownLinks";
+import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 
@@ -294,5 +296,37 @@ describe("file embeds in native thread and file Markdown", () => {
     expect(converted.markdown).toContain("`![sheet](./literal.csv)`");
     expect(converted.markdown).toContain("```md\n![sheet](./fenced.csv)\n```");
     expect(converted.fileHrefs.has(href)).toBe(true);
+  });
+});
+
+describe("Windows paths in native Markdown", () => {
+  // regression: #23722 Markdown escapes ate the separator before `.t3` and `_build`
+  it("keeps backslashes in Windows image and link destinations", async () => {
+    const image = String.raw`C:\work\.t3\_build\shot.png`;
+    const link = String.raw`\\server\share\.t3\notes.md`;
+    const markdown = [
+      `![shot](${image} "Shot")`,
+      String.raw`![paren](C:\a\)b.png)`,
+      `[notes](<${link}>)`,
+      `<img src="${image}">`,
+      String.raw`![amp](C:\R&D\.t3\a&amp;b.png)`,
+      String.raw`<img src="C:\R&amp;D\.t3\b.png">`,
+      "> ![quoted](\n> " + image + ")",
+    ].join("\n\n");
+
+    const native = await parseMarkdown(
+      markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+    );
+    const urls: string[] = [];
+    const collect = (node: { attributes?: { url?: string }; children?: unknown[] }) => {
+      if (node.attributes?.url) urls.push(node.attributes.url);
+      node.children?.forEach((child) => collect(child as typeof node));
+    };
+    collect(native);
+    const paren = String.raw`C:\a\)b.png`;
+    const amp = String.raw`C:\R&D\.t3\a&b.png`;
+    const htmlAmp = String.raw`C:\R&D\.t3\b.png`;
+    expect(urls).toEqual([image, paren, link, image, amp, htmlAmp, image]);
+    expect(markdownImageSources(markdown)).toEqual([image, paren, amp, htmlAmp]);
   });
 });

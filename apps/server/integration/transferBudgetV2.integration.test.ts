@@ -55,6 +55,7 @@ import { subscribeOrchestrationV2Thread, subscribeOrchestrationV2Shell } from ".
 import {
   measureHttpGet,
   openMeasuredWsClient,
+  type HttpTransferMeasurement,
   type MeasuredWsClient,
 } from "./NetworkTransferMeasurement.integration.ts";
 import { makeSqlStatementCounter } from "./SqlStatementCounter.integration.ts";
@@ -68,10 +69,19 @@ import { TRANSFER_HISTORY_TURN_COUNT } from "./fixtures/transferBudget.ts";
 import {
   LONG_TURN_THREAD_ID,
   longTurnThreadBatches,
+  SHELL_IDLE_SUBAGENTS,
+  SHELL_SETTLED_THREADS,
+  shellFleetEvents,
   THREAD_ID,
   threadCreated,
   turnEvents,
 } from "./TransferBudgetV2Fixture.integration.ts";
+
+// The opt-ins current web and mobile clients send; keep in sync with client-runtime's
+// boundedThreadSnapshotHttp.ts, threadHistoryHttp.ts, shellSnapshotHttp.ts, threads.ts and shell.ts.
+const CLIENT_BOUNDED_QUERY = "compactTurnItems=1&dedupeBodies=1&compactIds=1";
+const CLIENT_HISTORY_QUERY = "compactIds=1";
+const CLIENT_SHELL_QUERY = "omitIdleSubagents=1&omitOlderSettled=1";
 
 const decodeThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot)),
@@ -220,10 +230,15 @@ const subscribe = Effect.fn("transfer.subscribe")(function* (
           afterSequence,
           requestCompletionMarker: true,
           acceptBoundedSnapshot: true,
+          acceptCompactTurnItems: true,
+          acceptCompactIds: true,
+          acceptDedupedBodies: true,
         })
       : client.client[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({
           afterSequence,
           requestCompletionMarker: true,
+          omitIdleSubagents: true,
+          omitOlderSettled: true,
         });
   yield* stream.pipe(
     Stream.runForEach((item) => Queue.offer(queue, item)),
@@ -323,7 +338,18 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
           const finalShell = yield* projection.getThreadShell(THREAD_ID);
           const shellTerminal = (item: StreamItem) =>
             item.kind === "thread.updated" && NodeUtil.isDeepStrictEqual(item.thread, finalShell);
-          for (const queue of [tq, ttq]) yield* collectUntil(queue, threadTerminal);
+          const liveTurn = yield* collectUntil(tq, threadTerminal);
+          yield* collectUntil(ttq, threadTerminal);
+          // A direct check, so live dedupe stays guarded however small the turn gets.
+          const liveAnswer = liveTurn.flatMap((item) =>
+            item.kind === "event" &&
+            item.event.type === "turn-item.updated" &&
+            item.event.payload.type === "assistant_message"
+              ? [item.event.payload]
+              : [],
+          );
+          assert.equal(liveAnswer.length, 1);
+          assert.equal(liveAnswer[0]!.textOmitted, true);
           for (const queue of [sq, ssq]) yield* collectUntil(queue, shellTerminal);
           const measuredTurnWebSocket = difference(thread.recorder.totals(), threadBefore);
           const measuredTurnShellWebSocket = difference(shell.recorder.totals(), shellBefore);
@@ -353,25 +379,52 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
           assert.equal(threadMode, "snapshot");
 
           for (const events of longTurnThreadBatches(provider)) yield* sink.write({ events });
-          const longTurnColdOpen = yield* measureHttpGet({
-            url: `${base}/api/orchestration/threads/${LONG_TURN_THREAD_ID}/bounded?compactTurnItems=1`,
-            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
-          });
-          assert.equal(longTurnColdOpen.status, 200);
-          const coldOpen = yield* decodeBoundedSnapshot(
-            Buffer.from(longTurnColdOpen.decodedBody).toString(),
-          );
-          const cursor = coldOpen.historyCursor;
+          const get = (path: string) =>
+            measureHttpGet({
+              url: `${base}${path}`,
+              headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
+            }).pipe(Effect.tap((http) => Effect.sync(() => assert.equal(http.status, 200))));
+          const decoded = (http: HttpTransferMeasurement) =>
+            Buffer.from(http.decodedBody).toString();
+          const longTurnPath = `/api/orchestration/threads/${LONG_TURN_THREAD_ID}`;
+          const readColdOpen = (query: string) =>
+            Effect.gen(function* () {
+              const http = yield* get(`${longTurnPath}/bounded?${query}`);
+              const snapshot = yield* decodeBoundedSnapshot(decoded(http));
+              const rows = snapshot.projection.visibleTurnItems.length;
+              return { http, rows, cursor: snapshot.historyCursor };
+            });
+          const readHistoryPage = (cursor: string, query: string) =>
+            Effect.gen(function* () {
+              const http = yield* get(
+                `${longTurnPath}/history?cursor=${encodeURIComponent(cursor)}&${query}`,
+              );
+              const page = yield* decodeHistoryPage(decoded(http));
+              assert.isTrue(page.hasMoreHistory);
+              return { http, rows: page.items.length };
+            });
+          const readShell = (query: string) =>
+            Effect.gen(function* () {
+              const http = yield* get(`/api/orchestration/shell?${query}`);
+              return { http, rows: (yield* decodeShellSnapshot(decoded(http))).threads.length };
+            });
+
+          const { cursor: _, ...longTurnColdOpenLegacy } =
+            yield* readColdOpen("compactTurnItems=1");
+          const { cursor, ...longTurnColdOpen } = yield* readColdOpen(CLIENT_BOUNDED_QUERY);
           if (cursor === null) return yield* Effect.die("Expected older long-turn history");
-          const longTurnHistoryPage = yield* measureHttpGet({
-            url: `${base}/api/orchestration/threads/${LONG_TURN_THREAD_ID}/history?cursor=${encodeURIComponent(cursor)}`,
-            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
-          });
-          assert.equal(longTurnHistoryPage.status, 200);
-          const historyPage = yield* decodeHistoryPage(
-            Buffer.from(longTurnHistoryPage.decodedBody).toString(),
+          const longTurnHistoryPageLegacy = yield* readHistoryPage(cursor, "");
+          const longTurnHistoryPage = yield* readHistoryPage(cursor, CLIENT_HISTORY_QUERY);
+
+          // The transfer thread plus the long-turn thread.
+          const earlierThreads = decodedShell.threads.length + 1;
+          yield* sink.write({ events: shellFleetEvents(provider) });
+          const fleetShellLegacy = yield* readShell("");
+          const fleetShell = yield* readShell(CLIENT_SHELL_QUERY);
+          assert.equal(
+            fleetShellLegacy.rows,
+            earlierThreads + SHELL_SETTLED_THREADS + SHELL_IDLE_SUBAGENTS,
           );
-          assert.isTrue(historyPage.hasMoreHistory);
           return {
             provider,
             threadSnapshot,
@@ -383,11 +436,12 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             reconnectThread,
             reconnectShell,
             reconnectSqlStatements,
-            longTurnColdOpen: {
-              http: longTurnColdOpen,
-              rows: coldOpen.projection.visibleTurnItems.length,
-            },
-            longTurnHistoryPage: { http: longTurnHistoryPage, rows: historyPage.items.length },
+            longTurnColdOpenLegacy,
+            longTurnColdOpen,
+            longTurnHistoryPageLegacy,
+            longTurnHistoryPage,
+            fleetShellLegacy,
+            fleetShell,
           } satisfies TransferBudgetRun;
         }).pipe(
           Effect.provide(Layer.fresh(layerServices).pipe(Layer.provideMerge(NodeServices.layer))),

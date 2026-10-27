@@ -15,21 +15,25 @@ import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
+import type { ThreadNowItem } from "./ThreadNow";
 
 /** Subagents waiting on the user, unless the parent is itself waiting on them. */
-export function childInputBannerItem(input: {
+export function childInputNowItem(input: {
   readonly childThreadInputs: ReadonlyArray<EnvironmentThreadShell>;
   readonly parentAwaitingUser: boolean;
   readonly onOpenThread: (threadId: ThreadId) => void;
-}): ComposerBannerStackItem | null {
+}): ThreadNowItem | null {
   const { childThreadInputs, onOpenThread } = input;
   const first = childThreadInputs[0];
   if (!first || input.parentAwaitingUser) return null;
   return {
     id: `child-input:${first.id}`,
-    variant: "info",
-    priority: "activity",
-    icon: first.hasPendingApprovals ? <ShieldQuestionIcon /> : <MessageCircleIcon />,
+    // The only line at the end of the timeline that needs you gets the info color.
+    icon: first.hasPendingApprovals ? (
+      <ShieldQuestionIcon className="text-info-foreground" />
+    ) : (
+      <MessageCircleIcon className="text-info-foreground" />
+    ),
     title: childThreadInputsTitle(childThreadInputs),
     description: childThreadInputs.map((child, index) => (
       <Fragment key={child.id}>
@@ -43,25 +47,24 @@ export function childInputBannerItem(input: {
       </Fragment>
     )),
     actions: (
-      <Button size="xs" variant="ghost" onClick={() => onOpenThread(first.id)}>
+      <InlineButton onClick={() => onOpenThread(first.id)}>
         {first.hasPendingApprovals ? "Open approval" : "Open question"}
-      </Button>
+      </InlineButton>
     ),
   };
 }
 
-export function goalBannerItem(input: {
+/** The thread's goal, for the end of the timeline. */
+export function goalNowItem(input: {
   readonly threadId: ThreadId;
   readonly goal: OrchestrationV2ProviderGoal;
   readonly isWorking: boolean;
   readonly onSendCommand: (text: string, failureMessage: string) => Promise<void>;
-}): ComposerBannerStackItem {
+}): ThreadNowItem {
   const { isWorking, onSendCommand } = input;
   const presentation = presentProviderGoal(input.goal, isWorking);
   return {
     id: `goal:${input.threadId}`,
-    variant: "default",
-    priority: "activity",
     icon: <TargetIcon />,
     title:
       presentation.usage === null
@@ -72,46 +75,45 @@ export function goalBannerItem(input: {
     actions: (
       <>
         {presentation.canResume && !isWorking ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
-          >
-            Resume
-          </Button>
+          <>
+            <InlineButton
+              onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
+            >
+              Resume
+            </InlineButton>
+            <span aria-hidden>·</span>
+          </>
         ) : null}
-        <Button
-          size="xs"
-          variant="ghost"
+        <InlineButton
+          tone="muted"
           onClick={() => void onSendCommand("/goal clear", "Failed to clear goal.")}
         >
           Clear
-        </Button>
+        </InlineButton>
       </>
     ),
   };
 }
 
-export function backgroundWorkBannerItem(input: {
+/** Background commands and subagents, for the end of the timeline. */
+export function backgroundWorkNowItem(input: {
   readonly threadId: ThreadId;
   readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
   readonly stopDisabled: boolean;
   readonly stopping: boolean;
   readonly onStop: () => Promise<void>;
   readonly onOpenThread: (threadId: ThreadId) => void;
-}): ComposerBannerStackItem | null {
+}): ThreadNowItem | null {
   const { onOpenThread } = input;
   const presentation = presentPendingBackgroundWork(input.tasks);
   if (presentation === null) return null;
   return {
     id: `background-work:${input.threadId}`,
-    variant: "default",
-    priority: "activity",
     icon: (
       <span
         className={cn(
-          "size-1.5 rounded-full bg-foreground",
-          presentation.waiting && "motion-safe:animate-status-pulse",
+          "size-1.5 rounded-full",
+          presentation.waiting ? "bg-foreground" : "bg-muted-foreground",
         )}
         aria-hidden="true"
       />
@@ -147,14 +149,9 @@ export function backgroundWorkBannerItem(input: {
             );
           }),
     actions: (
-      <Button
-        size="xs"
-        variant="ghost"
-        disabled={input.stopDisabled}
-        onClick={() => void input.onStop()}
-      >
+      <InlineButton disabled={input.stopDisabled} onClick={() => void input.onStop()}>
         {input.stopping ? "Stopping..." : "Stop"}
-      </Button>
+      </InlineButton>
     ),
   };
 }

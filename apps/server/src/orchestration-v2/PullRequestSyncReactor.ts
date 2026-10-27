@@ -139,7 +139,7 @@ type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "comma
  * does, existed before it ran. More URLs than create commands means something else printed
  * some, such as `gh pr list`, so none are taken.
  */
-function changeRequestsCreatedBy(input: string, output: string) {
+export function changeRequestsCreatedBy(input: string, output: string) {
   if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
   const script = shellScript(input);
   const code = shellCode(script);

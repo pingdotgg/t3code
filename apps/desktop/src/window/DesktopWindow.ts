@@ -131,7 +131,7 @@ function getIconOption(
 }
 
 function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
-  return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
+  return shouldUseDarkColors ? "#000000" : "#ffffff";
 }
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
@@ -619,7 +619,6 @@ export const make = Effect.gen(function* () {
       }
     });
 
-    // Terminal-close repeats can outlive the terminal; reject them before the native close-window accelerator.
     const quitShortcutHandler = makeQuitShortcutHandler({
       platform: environment.platform,
       getMode: () =>
@@ -645,6 +644,7 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("before-input-event", (event, input) => {
       quitShortcutHandler(event, input);
+      // A held Cmd/Ctrl+W closes one tab or terminal, not each one behind it.
       if (input.type !== "keyDown" || !input.isAutoRepeat) return;
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
       if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {

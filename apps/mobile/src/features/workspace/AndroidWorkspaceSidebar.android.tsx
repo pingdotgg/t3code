@@ -1,10 +1,13 @@
+import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
 import { useMemo, type ReactNode } from "react";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import { FLOATING_TABS, floatingTabsMetrics } from "./floating-workspace-tabs";
 import { View } from "react-native";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { PullRequestFilterMenuProvider } from "../pull-requests/PullRequestFilterMenuContext";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -15,9 +18,16 @@ export function AndroidWorkspaceSidebar(props: {
   readonly onRequestVisibility: () => void;
   readonly selectedPullRequestKey: string | null;
 }) {
+  const floatingTabsEnabled = useAndroidFloatingTabs();
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
-  const context = useMemo(() => ({ ...workspace, bottomClearance: 16 }), [workspace]);
+  const insets = useSafeAreaInsets();
+  const { scale, fabSize } = useAndroidControlSizing();
+  const floating = floatingTabsMetrics(enabled.length + 1, scale, fabSize);
+  const bottomClearance = floatingTabsEnabled
+    ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + floating.height
+    : 16;
+  const context = useMemo(() => ({ ...workspace, bottomClearance }), [workspace, bottomClearance]);
   if (enabled.length === 0) return <WorkspaceNoTabs />;
   return (
     <WorkspaceTabPanes
@@ -30,17 +40,19 @@ export function AndroidWorkspaceSidebar(props: {
           <View className="flex-1 bg-screen" />
         ) : (
           <WorkspaceTabsContext value={context}>
-            <PullRequestFilterMenuProvider>
-              <View className="flex-1 bg-header">
-                <PullRequestToolbar onRequestVisibility={props.onRequestVisibility} />
-                <ScreenContent insetHorizontal>
-                  <PullRequestsScreen
-                    sidebar
-                    selectedPullRequestKey={props.selectedPullRequestKey}
+            <PullRequestsScreen
+              sidebar
+              selectedPullRequestKey={props.selectedPullRequestKey}
+              renderFrame={(filters, list) => (
+                <View className="flex-1 bg-header">
+                  <PullRequestToolbar
+                    filters={filters}
+                    onRequestVisibility={props.onRequestVisibility}
                   />
-                </ScreenContent>
-              </View>
-            </PullRequestFilterMenuProvider>
+                  <ScreenContent insetHorizontal>{list}</ScreenContent>
+                </View>
+              )}
+            />
           </WorkspaceTabsContext>
         )
       }

@@ -236,7 +236,7 @@ export function HostedBrowserWebview(props: {
     handleResizePointerDown,
     layout: viewportLayout,
   } = useBrowserViewportResize({
-    tabId: runtimeTabId,
+    target: { threadRef, tabId, runtimeTabId },
     viewport,
     zoomFactor: layoutZoomFactor,
     containerSize,

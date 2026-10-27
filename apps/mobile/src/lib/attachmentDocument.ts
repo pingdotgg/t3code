@@ -1,24 +1,76 @@
-import { AsyncResult } from "effect/reactivity";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../components/ui/Dialog";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { readFilePreviewResponse } from "@t3tools/client-runtime/file-preview";
 import { filePreviewKind, FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
 import { fetch } from "expo/fetch";
 import { File } from "expo-file-system";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
 
 import type { FileBackedComposerAttachment } from "./composerImages";
-import { loadLocalAttachmentPreview } from "./localAttachmentPreview";
+import { localAttachmentPreviewAtom, localAttachmentPreviewState } from "./localAttachmentPreview";
 import { downloadAndShareAttachment, shareLocalAttachment } from "./attachmentDownload";
-import { useRefreshAssetUrl } from "../state/assets";
+import { refreshAssetUrl, useFreshAssetUrl, useRefreshAssetUrl } from "../state/assets";
 import { attachmentDocumentPresentation } from "./attachmentDocumentPresentation";
 
 const isLocalUri = (uri: string) => /^(file|content):/.test(uri);
 
 /** Signed asset URLs live for an hour; treat anything older than this as worth re-minting. */
 const STALE_URL_MS = 5 * 60_000;
+
+interface AttachmentTextKey {
+  readonly uri: string;
+  /** When a remote `uri` was signed; null for local files. */
+  readonly authorizedAt: number | null;
+  readonly environmentId: EnvironmentId | null;
+  readonly resource: AssetResource;
+  readonly sizeBytes: number;
+  readonly revision: number;
+}
+
+async function readAttachmentText(key: AttachmentTextKey, signal: AbortSignal) {
+  if (isLocalUri(key.uri)) {
+    return readFilePreviewResponse({ ok: true, body: new File(key.uri).readableStream() }, signal);
+  }
+  // Reauthorize before source reads; the opening URL may have expired.
+  let target = key.uri;
+  if (key.authorizedAt === null || Date.now() - key.authorizedAt > STALE_URL_MS) {
+    const refreshed =
+      key.environmentId === null
+        ? null
+        : await refreshAssetUrl(key.environmentId, key.resource, signal);
+    if (!refreshed) throw new Error("Reconnect to this environment and try again.");
+    target = refreshed;
+  }
+  const response = await fetch(target, {
+    signal,
+    headers: {
+      ...(key.sizeBytes > 0 ? { Range: `bytes=0-${FILE_TEXT_PREVIEW_MAX_BYTES}` } : {}),
+      ...(key.revision > 0 ? { "Cache-Control": "no-cache" } : {}),
+    },
+  });
+  return readFilePreviewResponse(response, signal);
+}
+
+// Plain-object keys compare structurally (Effect `Equal`/`Hash`). Unmounting the
+// last reader interrupts the read, which aborts the fetch.
+const attachmentTextAtom = Atom.family((key: AttachmentTextKey) =>
+  Atom.make(
+    Effect.tryPromise({
+      try: (signal) => readAttachmentText(key, signal),
+      catch: (cause) => (cause instanceof Error ? cause : new Error("Could not read this file.")),
+    }),
+  ).pipe(Atom.withLabel("attachment-text")),
+);
+
+const noAttachmentText = Atom.make(
+  AsyncResult.initial<{ text: string; truncated: boolean }, Error>(),
+).pipe(Atom.withLabel("attachment-text:none"));
 
 /** Captured bytes never resolve against the workspace. */
 export function useAttachmentDocument(input: {
@@ -42,117 +94,45 @@ export function useAttachmentDocument(input: {
   };
   const environmentId = input.attachment ? null : input.environmentId;
   const refresh = useRefreshAssetUrl(environmentId, resource);
-  const [localUri, setLocalUri] = useState<string | null>(null);
-  const [remoteUri, setRemoteUri] = useState<string | null>(null);
-  const [content, setContent] = useState<{ text: string; truncated: boolean } | null>(null);
-  const table = content && delimiter ? parseDelimitedPreview(content.text, delimiter) : null;
-  const [error, setError] = useState<string | null>(null);
-  const [contentError, setContentError] = useState<string | null>(null);
-  const textReadUrl = useRef<{ uri: string; authorizedAt: number } | null>(null);
   const [rendered, setRendered] = useState(true);
+  const [revision, setRevision] = useState(0);
+  const [sharing, setSharing] = useState(false);
+  const attachment = input.attachment;
+  const localPreviewAtom = localAttachmentPreviewAtom(attachment);
+  const localPreview = localAttachmentPreviewState(useAtomValue(localPreviewAtom));
+  const refreshLocalPreview = useAtomRefresh(localPreviewAtom);
+  const remote = useFreshAssetUrl(environmentId, attachment ? null : resource, revision);
+  const remoteUrl = AsyncResult.isSuccess(remote) && !remote.waiting ? remote.value : null;
+  const uri = attachment ? localPreview.uri : (remoteUrl?.url ?? null);
+  const needsText = kind === "text" || kind === "markdown" || (kind === "html" && !rendered);
+  const text = useAtomValue(
+    uri && needsText
+      ? attachmentTextAtom({
+          uri,
+          authorizedAt: remoteUrl?.authorizedAt ?? null,
+          environmentId,
+          resource,
+          sizeBytes: input.sizeBytes,
+          revision,
+        })
+      : noAttachmentText,
+  );
+  const content = AsyncResult.isSuccess(text) ? text.value : null;
+  const contentError = AsyncResult.isFailure(text)
+    ? (Option.getOrNull(AsyncResult.error(text))?.message ?? "Could not read this file.")
+    : null;
+  const table = content && delimiter ? parseDelimitedPreview(content.text, delimiter) : null;
   const presentation = attachmentDocumentPresentation({
     kind,
     hasTable: table !== null,
     hasEnvironment: input.environmentId !== null,
     rendered,
   });
-  const [revision, setRevision] = useState(0);
-  const [sharing, setSharing] = useState(false);
-  const uri = input.attachment ? localUri : remoteUri;
-  const attachment = input.attachment;
-  useEffect(() => {
-    if (attachment) return;
-    let cancelled = false;
-    // Await a fresh signed URL: cached links can expire while the client is suspended.
-    // oxlint-disable-next-line react/set-state-in-effect -- A new preview request clears its previous URL and error.
-    setRemoteUri(null);
-    setError(null);
-    textReadUrl.current = null;
-    void refresh()
-      .then((url) => {
-        if (cancelled) return;
-        if (!url) throw new Error("Reconnect to this environment and try again.");
-        textReadUrl.current = { uri: url, authorizedAt: Date.now() };
-        setRemoteUri(url);
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled)
-          setError(cause instanceof Error ? cause.message : "The attachment is unavailable.");
-      });
-    return () => {
-      cancelled = true;
-    };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry must reauthorize the remote file.
-  }, [attachment, refresh, revision]);
-  useEffect(() => {
-    if (!attachment) return;
-    // Clear old attachment bytes or a failed load could share them under the new name.
-    // oxlint-disable-next-line react/set-state-in-effect -- A new attachment invalidates the last one.
-    setLocalUri(null);
-    setContent(null);
-    setContentError(null);
-    const controller = new AbortController();
-    let release: (() => void) | undefined;
-    void loadLocalAttachmentPreview(attachment, controller.signal)
-      .then((file) => {
-        if (!file) return;
-        if (controller.signal.aborted) return file.dispose();
-        release = file.dispose;
-        setLocalUri(file.uri);
-        setError(null);
-      })
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "The local file is unavailable.");
-      });
-    return () => {
-      controller.abort();
-      release?.();
-    };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry must reacquire a local file lease after a failed load.
-  }, [attachment, revision]);
-  const needsText = kind === "text" || kind === "markdown" || (kind === "html" && !rendered);
-  const sizeBytes = input.sizeBytes;
-  useEffect(() => {
-    if (!uri || !needsText) return;
-    const controller = new AbortController();
-    // oxlint-disable-next-line react/set-state-in-effect -- A new external resource must clear the previous response before loading.
-    setContent(null);
-    setContentError(null);
-    const response = isLocalUri(uri)
-      ? Promise.resolve().then(() => ({ ok: true, body: new File(uri).readableStream() }))
-      : (async () => {
-          // Reauthorize before source reads; the opening URL may have expired.
-          const authorized = textReadUrl.current;
-          let target = authorized?.uri ?? uri;
-          if (!authorized || Date.now() - authorized.authorizedAt > STALE_URL_MS) {
-            const refreshed = await refresh();
-            if (!refreshed) throw new Error("Reconnect to this environment and try again.");
-            target = refreshed;
-            if (!controller.signal.aborted) {
-              // Keep the source-read URL and its age together without restarting active media.
-              textReadUrl.current = { uri: refreshed, authorizedAt: Date.now() };
-            }
-          }
-          return fetch(target, {
-            signal: controller.signal,
-            headers: {
-              ...(sizeBytes > 0 ? { Range: `bytes=0-${FILE_TEXT_PREVIEW_MAX_BYTES}` } : {}),
-              ...(revision > 0 ? { "Cache-Control": "no-cache" } : {}),
-            },
-          });
-        })();
-    void response
-      .then((value) => readFilePreviewResponse(value, controller.signal))
-      .then((value) => {
-        if (!controller.signal.aborted) setContent(value);
-      })
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted)
-          setContentError(cause instanceof Error ? cause.message : "Could not read this file.");
-      });
-    return () => controller.abort();
-  }, [uri, needsText, revision, sizeBytes, refresh]);
+  const error = attachment
+    ? localPreview.error && (localPreview.error.message || "The local file is unavailable.")
+    : AsyncResult.isFailure(remote)
+      ? (Option.getOrNull(AsyncResult.error(remote))?.message ?? "The attachment is unavailable.")
+      : null;
   const share = async () => {
     if (!uri || sharing) return;
     setSharing(true);
@@ -185,12 +165,15 @@ export function useAttachmentDocument(input: {
     resource,
     content,
     table,
-    error: error ?? (needsText ? contentError : null),
+    error: error ?? contentError,
     needsText,
     rendered,
     setRendered,
     revision,
-    retry: () => setRevision((value) => value + 1),
+    retry: () => {
+      setRevision((value) => value + 1);
+      if (attachment) refreshLocalPreview();
+    },
     share,
     sharing,
   };

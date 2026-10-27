@@ -3,20 +3,16 @@ import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
 
+// Light mode uses a darker pierre-light so syntax stays readable on every code surface.
 export const DIFF_THEME_NAMES = {
-  light: "pierre-light",
+  light: READABLE_LIGHT_THEME_NAME,
   dark: "pierre-dark",
-  readableLight: READABLE_LIGHT_THEME_NAME,
 } as const;
 
 export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
 
 export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  if (theme === "dark") return DIFF_THEME_NAMES.dark;
-  // The New design (data-redesign on <html>) keeps light syntax readable on every code surface.
-  return typeof document !== "undefined" && document.documentElement.hasAttribute("data-redesign")
-    ? DIFF_THEME_NAMES.readableLight
-    : DIFF_THEME_NAMES.light;
+  return DIFF_THEME_NAMES[theme];
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
@@ -278,21 +274,6 @@ export function buildFileDiffContentVersion(fileDiff: FileDiffMetadata): number 
   return hash;
 }
 
-export function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
-  switch (fileDiff.type) {
-    case "new":
-      return "text-[var(--diffs-addition-base)] redesign:text-muted-foreground/80";
-    case "deleted":
-      return "text-[var(--diffs-deletion-base)] redesign:text-muted-foreground/80";
-    case "change":
-    case "rename-pure":
-    case "rename-changed":
-      return "text-[var(--diffs-modified-base)] redesign:text-muted-foreground/80";
-    default:
-      return "text-muted-foreground/80";
-  }
-}
-
 export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 [data-diffs-header],
 [data-diff],
@@ -367,7 +348,7 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 [data-change-icon="deleted"] {
   color: light-dark(var(--diff-deletion-foreground), var(--diffs-deletion-base)) !important;
 }
-/* The page sets --diff-modified-icon under the New design: a muted T3 blue, so the common case stays quiet. */
+/* The page sets --diff-modified-icon to a muted T3 blue, so the common case stays quiet. */
 [data-change-icon="change"],
 [data-change-icon="rename-pure"],
 [data-change-icon="rename-changed"] {

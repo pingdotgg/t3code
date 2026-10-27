@@ -1181,6 +1181,24 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("hides the panel when browser reconciliation removes its last session tab", () => {
+    const store = useRightPanelStore.getState();
+    store.openBrowser(refA, "tab-a");
+    store.reconcileBrowserSurfaces(refA, []);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+
+    store.openBrowser(refA, "tab-b");
+    store.open(refA, "diff");
+    store.reconcileBrowserSurfaces(refA, []);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({ isOpen: true, activeSurfaceId: "diff" });
+  });
+
   it("moves a surface to a new index and keeps it there through browser reconciliation", () => {
     const store = useRightPanelStore.getState();
     store.openTerminal(refA, "term-1");

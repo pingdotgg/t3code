@@ -5,7 +5,6 @@ import {
   CheckpointScopeId,
   NodeId,
   PlanId,
-  ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
   RunAttemptId,
@@ -24,14 +23,12 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  deriveActivePlanState,
   deriveCanInterruptRunningThread,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
   isLatestRunSettled,
-  selectComposerTasksPlan,
   selectHandoffImageResources,
   selectMessageImageResources,
   createMessageAttachmentPreviewProjector,
@@ -465,7 +462,7 @@ describe("V2 session presentation", () => {
       ...base("item-todo", 4),
       type: "todo_list" as const,
       planId: PlanId.make("plan-visible"),
-      explanation: "Keep task detail in the Tasks panel",
+      explanation: "Show task updates where the agent wrote them",
       steps: [
         { id: "step-1", text: "First", status: "completed" as const },
         { id: "step-2", text: "Second", status: "pending" as const },
@@ -526,6 +523,7 @@ describe("V2 session presentation", () => {
       ["event", requestItem.id],
       ["work", commandItem.id],
       ["event", resultItem.id],
+      ["work", todoItem.id],
       ["work", errorItem.id],
       ["work", threadCreatedItem.id],
     ]);
@@ -545,7 +543,7 @@ describe("V2 session presentation", () => {
       expect(commandEntry.entry.command).toBe(commandItem.input);
       expect(commandEntry.entry.detail).toBeUndefined();
     }
-    const errorEntry = entries[4];
+    const errorEntry = entries[5];
     expect(errorEntry?.kind).toBe("work");
     if (errorEntry?.kind === "work") {
       expect(errorEntry.entry.projectedItem).toBe(visibleTurnItems[5]);
@@ -554,7 +552,7 @@ describe("V2 session presentation", () => {
       expect(errorEntry.entry.tone).toBe("info");
       expect(errorEntry.entry.toolLifecycleStatus).toBe("failed");
     }
-    const threadCreatedEntry = entries[5];
+    const threadCreatedEntry = entries[6];
     expect(threadCreatedEntry?.kind).toBe("work");
     if (threadCreatedEntry?.kind === "work") {
       expect(threadCreatedEntry.entry.projectedItem?.item.type).toBe("thread_created");
@@ -562,7 +560,7 @@ describe("V2 session presentation", () => {
   });
 
   it.each(["pending", "running", "completed"] as const)(
-    "keeps %s task progress available to the composer and out of the timeline",
+    "shows a %s todo update in the timeline where the agent wrote it",
     (stepStatus) => {
       const projection = makeThreadProjectionFixture();
       const now = DateTime.makeUnsafe("2026-09-04T00:00:00.000Z");
@@ -615,45 +613,16 @@ describe("V2 session presentation", () => {
           optimisticMessages: [],
           plans,
         }),
-      ).toEqual([]);
-      expect(
-        deriveActivePlanState({ ...projection, plans, turnItems: [item] }, runId),
-      ).toMatchObject({
-        runId,
-        steps: [
-          {
-            step: "Verify the change",
-            status: stepStatus === "running" ? "inProgress" : stepStatus,
+      ).toMatchObject([
+        {
+          kind: "work",
+          entry: {
+            label: stepStatus === "completed" ? "Tasks 1/1" : "Tasks 0/1 · Verify the change",
           },
-        ],
-      });
+        },
+      ]);
     },
   );
-
-  it("preserves independently derived durations for repeated plan-step labels", () => {
-    const projection = makeThreadProjectionFixture();
-    const runId = RunId.make("run-timed-tasks");
-    const planId = PlanId.make("plan-timed-tasks");
-    const plan = {
-      id: planId,
-      threadId: projection.thread.id,
-      runId,
-      nodeId: NodeId.make("node-timed-tasks"),
-      kind: "todo_list" as const,
-      status: "active" as const,
-      steps: [
-        { id: "verify-a", text: "Verify", status: "completed" as const, durationMs: 3_000 },
-        { id: "verify-b", text: "Verify", status: "completed" as const, durationMs: 4_000 },
-        { id: "report", text: "Report", status: "pending" as const },
-      ],
-    };
-
-    expect(deriveActivePlanState({ ...projection, plans: [plan] }, runId)?.steps).toEqual([
-      { step: "Verify", status: "completed", durationMs: 3_000 },
-      { step: "Verify", status: "completed", durationMs: 4_000 },
-      { step: "Report", status: "pending" },
-    ]);
-  });
 
   it("waits for a dispatched turn item before adding queued input to the timeline", () => {
     const projection = makeThreadProjectionFixture();
@@ -1039,190 +1008,6 @@ describe("V2 session presentation", () => {
     expect(next.entries.at(-1)?.attempt?.status).toBe("superseded");
     expect(previous.entries.at(-1)?.attempt?.status).toBe("running");
   });
-});
-
-describe("composer tasks drawer", () => {
-  const projection = makeThreadProjectionFixture();
-  const now = projection.updatedAt;
-
-  function providerThread(id: string, driver: string) {
-    return {
-      id: ProviderThreadId.make(id),
-      driver: ProviderDriverKind.make(driver),
-      providerInstanceId: ProviderInstanceId.make(driver),
-      providerSessionId: null,
-      appThreadId: projection.thread.id,
-      ownerNodeId: null,
-      nativeThreadRef: null,
-      nativeConversationHeadRef: null,
-      status: "idle" as const,
-      firstRunOrdinal: null,
-      lastRunOrdinal: null,
-      handoffIds: [],
-      forkedFrom: null,
-      createdAt: now,
-      updatedAt: now,
-    };
-  }
-
-  function run(id: string, ordinal: number, providerThreadId: string | null) {
-    return {
-      id: RunId.make(id),
-      threadId: projection.thread.id,
-      ordinal,
-      providerInstanceId: projection.thread.providerInstanceId,
-      modelSelection: projection.thread.modelSelection,
-      providerThreadId: providerThreadId === null ? null : ProviderThreadId.make(providerThreadId),
-      userMessageId: MessageId.make(`message-${id}`),
-      rootNodeId: null,
-      activeAttemptId: null,
-      status: "completed" as const,
-      requestedAt: now,
-      startedAt: now,
-      completedAt: now,
-      checkpointId: null,
-      contextHandoffId: null,
-    };
-  }
-
-  const openList = {
-    createdAt: "2026-06-20T00:00:00.000Z",
-    runId: RunId.make("run-1"),
-    steps: [
-      { step: "Inspect", status: "completed" as const },
-      { step: "Implement", status: "inProgress" as const },
-      { step: "Verify", status: "pending" as const },
-    ],
-  };
-  const completedList = {
-    ...openList,
-    steps: openList.steps.map((step) => ({ ...step, status: "completed" as const })),
-  };
-
-  it.each(["claudeAgent", "codex"])(
-    "shows %s tasks through the run lifecycle, retaining unfinished tasks only for Claude",
-    (driver) => {
-      const firstRun = run("run-1", 1, driver);
-      const settled = {
-        ...projection,
-        providerThreads: [providerThread(driver, driver)],
-        runs: [firstRun],
-      };
-      const running = {
-        ...settled,
-        runs: [{ ...firstRun, status: "running" as const, completedAt: null }],
-      };
-      expect(selectComposerTasksPlan(running, openList, firstRun.id, false)).toBe(openList);
-      expect(selectComposerTasksPlan(running, completedList, firstRun.id, false)).toBe(
-        completedList,
-      );
-
-      const retainedList = driver === "claudeAgent" ? openList : null;
-      expect(selectComposerTasksPlan(settled, openList, firstRun.id, true)).toBe(retainedList);
-      expect(selectComposerTasksPlan(settled, completedList, firstRun.id, true)).toBeNull();
-
-      const nextRun = {
-        ...run("run-2", 2, driver),
-        status: "running" as const,
-        completedAt: null,
-      };
-      const later = { ...settled, runs: [...settled.runs, nextRun] };
-      expect(selectComposerTasksPlan(later, openList, nextRun.id, false)).toBe(retainedList);
-    },
-  );
-
-  it("retains the newest unfinished Claude list after loading plans in snapshot order", () => {
-    const olderRun = run("run:ordinal:8", 8, "claudeAgent");
-    const planRun = run("run:ordinal:12", 12, "claudeAgent");
-    const laterRun = {
-      ...run("run:ordinal:13", 13, "claudeAgent"),
-      status: "running" as const,
-      completedAt: null,
-    };
-    const newestPlan = {
-      id: PlanId.make("plan:run:ordinal:12"),
-      threadId: projection.thread.id,
-      runId: planRun.id,
-      nodeId: NodeId.make("node:ordinal:12"),
-      kind: "todo_list" as const,
-      status: "active" as const,
-      steps: [{ id: "new", text: "Finish the current task", status: "pending" as const }],
-    };
-    for (const status of ["superseded", "active"] as const) {
-      const snapshot = {
-        ...projection,
-        providerThreads: [providerThread("claudeAgent", "claudeAgent")],
-        runs: [olderRun, planRun, laterRun],
-        plans: [
-          newestPlan,
-          {
-            ...newestPlan,
-            id: PlanId.make("plan:run:ordinal:8"),
-            runId: olderRun.id,
-            nodeId: NodeId.make("node:ordinal:8"),
-            status,
-            steps: [{ id: "old", text: "Stale task", status: "pending" as const }],
-          },
-        ],
-      };
-      const plan = deriveActivePlanState(snapshot, laterRun.id);
-      expect
-        .soft(selectComposerTasksPlan(snapshot, plan, laterRun.id, false), status)
-        .toMatchObject({
-          runId: planRun.id,
-          steps: [{ step: "Finish the current task", status: "pending" }],
-        });
-    }
-  });
-
-  it.each(["codex", "claudeAgent"])(
-    "drops retained Claude tasks only after a new %s session actually starts",
-    (driver) => {
-      const settled = {
-        ...projection,
-        providerThreads: [
-          providerThread("claude-original", "claudeAgent"),
-          providerThread("next-session", driver),
-        ],
-        runs: [run("run-1", 1, "claude-original")],
-      };
-      const nextRun = run("run-2", 2, "next-session");
-      for (const status of ["queued", "cancelled"] as const) {
-        const unstarted = {
-          ...settled,
-          runs: [
-            ...settled.runs,
-            {
-              ...nextRun,
-              status,
-              startedAt: null,
-              completedAt: status === "cancelled" ? now : null,
-            },
-          ],
-        };
-        expect
-          .soft(
-            selectComposerTasksPlan(unstarted, openList, nextRun.id, status === "cancelled"),
-            `A ${status} run with an assigned provider thread has not switched sessions`,
-          )
-          .toBe(openList);
-      }
-
-      const started = {
-        ...settled,
-        runs: [...settled.runs, { ...nextRun, status: "running" as const, completedAt: null }],
-      };
-      expect(selectComposerTasksPlan(started, openList, nextRun.id, false)).toBeNull();
-      expect(
-        selectComposerTasksPlan(
-          { ...settled, runs: [...settled.runs, nextRun] },
-          openList,
-          nextRun.id,
-          true,
-        ),
-      ).toBeNull();
-    },
-  );
 });
 
 describe("native provider presentation in the v2 timeline", () => {

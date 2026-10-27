@@ -686,3 +686,103 @@ describe("local project navigation", () => {
     },
   );
 });
+
+describe("local folder path", () => {
+  function findPathInput(
+    node: ReactNode,
+  ): { value: string; onChangeText: (value: string) => void } | null {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const input = findPathInput(child);
+        if (input) return input;
+      }
+      return null;
+    }
+    if (
+      !isValidElement<{
+        value?: string;
+        onChangeText?: (value: string) => void;
+        onSubmit?: () => void;
+        children?: ReactNode;
+      }>(node)
+    ) {
+      return null;
+    }
+    const { value, onChangeText, onSubmit } = node.props;
+    if (typeof value === "string" && onChangeText && onSubmit) return { value, onChangeText };
+    return findPathInput(node.props.children);
+  }
+
+  function mountLocalFolder() {
+    state.scopes = new Set([AuthOrchestrationOperateScope]);
+    state.baseDirectory = "/work";
+    state.connectionStates = {};
+    state.environments = [
+      { environmentId: "environment", environmentLabel: "Environment" },
+      { environmentId: "another-environment", environmentLabel: "Another environment" },
+    ];
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    const renderedPaths: string[] = [];
+    let input: ReturnType<typeof findPathInput> = null;
+    function LocalFolderObserver(props: { environmentId?: string }) {
+      input = findPathInput(AddProjectLocalFolderScreen(props));
+      if (input) renderedPaths.push(input.value);
+      return null;
+    }
+    return {
+      renderedPaths,
+      get path() {
+        return input?.value;
+      },
+      type: (value: string) => act(() => input!.onChangeText(value)),
+      render: (environmentId?: string) =>
+        act(() => root.render(createElement(LocalFolderObserver, { environmentId }))),
+      [Symbol.asyncDispose]: async () => {
+        await act(() => root.unmount());
+        state.connectionStates = {};
+        state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+      },
+    };
+  }
+
+  it("shows the new host's default path on the first render after the host changes", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render("environment");
+    await screen.type("/work/edited");
+    screen.renderedPaths.length = 0;
+
+    await screen.render("another-environment");
+
+    expect(screen.renderedPaths).not.toContain("/work/edited");
+    expect(screen.path).toBe("~/");
+  });
+
+  it("keeps each host's typed path when switching between hosts", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render("environment");
+    await screen.type("/work/a");
+    await screen.render("another-environment");
+    await screen.type("~/b");
+
+    await screen.render("environment");
+    expect(screen.path).toBe("/work/a");
+    await screen.render("another-environment");
+    expect(screen.path).toBe("~/b");
+  });
+
+  it("keeps a typed path when the default host drops out and comes back", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render();
+    expect(screen.path).toBe("~/");
+    await screen.type("~/code/app");
+
+    state.connectionStates = { "another-environment": "offline" };
+    await screen.render();
+    expect(screen.path).toBe("/work/");
+
+    state.connectionStates = {};
+    await screen.render();
+    expect(screen.path).toBe("~/code/app");
+  });
+});

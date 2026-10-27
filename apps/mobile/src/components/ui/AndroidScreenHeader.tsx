@@ -1,7 +1,7 @@
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import { Column, Row, Text as NativeText, RNHostView } from "@expo/ui/jetpack-compose";
 import { weight } from "@expo/ui/jetpack-compose/modifiers";
-import { useState, type ReactNode } from "react";
+import { use, useState, type ReactNode } from "react";
 import { View } from "react-native";
 
 import type { AppSymbolName } from "./AppSymbol";
@@ -12,6 +12,7 @@ import { splitAndroidHeaderActions } from "./headerMenu.android";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import { useToolbarLayout } from "./useToolbarLayout";
 import { useControlTheme } from "./useControlTheme";
+import { RoutedFormSheetContext } from "./RoutedFormSheetContext";
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
@@ -50,7 +51,8 @@ export function AndroidScreenHeader(props: {
   const { colors } = useControlTheme();
   const titleTypography = useScaledTextRole("title");
   const subtitleTypography = useScaledTextRole("label");
-  const { paddingTop, paddingBottom } = useToolbarLayout(props.embedded);
+  const inFormSheet = use(RoutedFormSheetContext);
+  const { paddingTop, paddingBottom } = useToolbarLayout(props.embedded || inFormSheet);
   const [headerWidth, setHeaderWidth] = useState(0);
   const { visibleActions, overflowActions } = splitAndroidHeaderActions(
     props.actions ?? [],
@@ -67,6 +69,12 @@ export function AndroidScreenHeader(props: {
         borderBottomWidth: props.hideBottomBorder ? 0 : undefined,
       }}
     >
+      {inFormSheet ? (
+        <View
+          pointerEvents="none"
+          className="absolute top-1 h-1 w-8 self-center rounded-full bg-header-foreground/40"
+        />
+      ) : null}
       <NativeAppBar
         singleLine={props.compact}
         navigationIcon={

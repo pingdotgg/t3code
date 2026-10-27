@@ -728,7 +728,6 @@ describe("buildThreadListV2ListItems", () => {
           projectId: ProjectId.make("project-1"),
           projectTitle: undefined,
           projectCwd: undefined,
-          branch: null,
           title: "unsent",
           createdAt: NOW,
           draftKey: "new-task:unsent",

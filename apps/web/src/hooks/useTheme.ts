@@ -485,6 +485,11 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+/** For shortcuts and other handlers outside React that read the theme at event time. */
+export function getThemeSnapshot(): ThemeSnapshot {
+  return getSnapshot();
+}
+
 /** For code outside React (worker pools) that follows the rendered appearance. */
 export function subscribeRenderedAppearance(listener: () => void): () => void {
   const unsubscribeTheme = subscribe(listener);
@@ -626,7 +631,7 @@ function clearThemeHalves(): boolean {
   return true;
 }
 
-function refreshTheme({ preservePreview = false } = {}): void {
+export function refreshTheme({ preservePreview = false } = {}): void {
   if (typeof window === "undefined") return;
   lastAppliedTheme = null;
   applyTheme(getStored(), { suppressTransitions: true, preservePreview });

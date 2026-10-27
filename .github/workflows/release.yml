@@ -344,6 +344,12 @@ jobs:
       - name: Test
         run: vp run --filter @t3tools/web test
 
+      # Browser tests run source modules; this boots the production chunk graph.
+      - name: Boot the built web client
+        run: |
+          vp run --filter @t3tools/web build
+          node apps/web/scripts/verify-built-boot.ts
+
   # Server test files run one at a time, so more small runners beat fewer big ones.
   test_server:
     name: Release server tests ${{ matrix.shard }}
@@ -613,6 +619,7 @@ jobs:
       rust_target: aarch64-apple-darwin
       resource_key: darwin-arm64
       cli_archive: true
+      launch_check: true
 
   desktop_mac_x64:
     name: Desktop macOS x64
@@ -662,6 +669,7 @@ jobs:
       rust_target: x86_64-unknown-linux-gnu
       resource_key: linux-x64
       cli_archive: true
+      launch_check: true
 
   # node-pty has no Linux prebuild and compiles from source, so the arm64 app
   # and archive are built on arm64 hardware rather than cross-built.

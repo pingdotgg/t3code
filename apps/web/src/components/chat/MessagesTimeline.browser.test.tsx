@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-import { act, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
@@ -199,6 +199,146 @@ describe("MessagesTimeline messages", () => {
       expect(props.listRef.current!.getState().sizeAtIndex(0)).toBeGreaterThan(0);
     });
     expect(maxNestedCommits).toBeLessThan(20);
+  });
+
+  it("keeps the first and last message headings reachable from either end", async () => {
+    setup();
+    const props = baseProps();
+    // Folded messages at both ends: their headings must not live inside the fold.
+    const entries = Array.from({ length: 120 }, (_, index) =>
+      index === 0
+        ? message("First turn", { scheduledTaskId: TASK_ID }, "turn-0")
+        : index === 119
+          ? message(
+              "Last turn",
+              { createdBy: "agent", senderThreadId: ThreadId.make("thread-sender") },
+              "turn-119",
+            )
+          : message(
+              `Turn ${index}:\n\n${"x ".repeat(200)}`,
+              { role: index % 2 === 0 ? "user" : "assistant" },
+              `turn-${index}`,
+            ),
+    );
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} />,
+    );
+    const headings = () => [...screen.container.querySelectorAll("h3")];
+    const headingFor = (text: string) =>
+      headings().find((heading) => heading.parentElement?.textContent?.includes(text));
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    // A screen reader scrolls the heading it moves to into view.
+    const expectHeadingInView = async (text: string, neighbour: string) => {
+      await act(() => headingFor(text)!.scrollIntoView({ block: "start" }));
+      await vi.waitFor(() => expect(screen.text()).toContain(neighbour));
+      const row = headingFor(text)!.parentElement!.getBoundingClientRect();
+      const view = viewport.getBoundingClientRect();
+      expect(row.top).toBeLessThan(view.bottom);
+      expect(row.bottom).toBeGreaterThan(view.top);
+    };
+
+    await vi.waitFor(() => expect(screen.text()).toContain("Turn 118:"));
+    expect(screen.text()).not.toContain("Turn 60:");
+    // Wrapping follows DOM order, so the ends must also sit first and last.
+    await vi.waitFor(() => {
+      expect(headings()[0]).toBe(headingFor("First turn"));
+      expect(headings().at(-1)).toBe(headingFor("Last turn"));
+    });
+
+    await expectHeadingInView("First turn", "Turn 1:");
+    expect(headingFor("Last turn")).toBeDefined();
+    await expectHeadingInView("Last turn", "Turn 118:");
+  });
+
+  it("keeps rows in item order after a reload or thread switch, before any timer runs", async () => {
+    setup();
+    // NVDA's browse mode keeps the first DOM order it reads, so a timer that sorts rows later is too late.
+    using _timers = fakeTimers();
+    const thread = (name: string) =>
+      Array.from({ length: 120 }, (_, index) =>
+        message(
+          `${name} turn ${index}:\n\n${"x ".repeat(200)}`,
+          { role: index % 2 === 0 ? "user" : "assistant" },
+          `${name}-${index}`,
+        ),
+      );
+    const props = baseProps();
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={thread("A")} />,
+    );
+    const turnsInDomOrder = () =>
+      [...screen.container.querySelectorAll("h3")].map((heading) =>
+        Number(/turn (\d+):/.exec(heading.parentElement?.textContent ?? "")?.[1]),
+      );
+    const expectItemOrder = () => {
+      const turns = turnsInDomOrder();
+      expect(turns).toEqual(turns.toSorted((a, b) => a - b));
+    };
+
+    expect(screen.text()).toContain("A turn 118:");
+    expect(turnsInDomOrder()).toContain(0);
+    expectItemOrder();
+
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        routeThreadKey={`${props.routeThreadKey}-other`}
+        timelineEntries={thread("B")}
+      />,
+    );
+    expect(screen.text()).toContain("B turn 118:");
+    expect(screen.text()).not.toContain("A turn");
+    expectItemOrder();
+  });
+
+  it("puts rows back in item order soon after a continuous scroll stops", async () => {
+    setup();
+    const props = baseProps();
+    await using screen = await renderElement(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={Array.from({ length: 120 }, (_, index) =>
+          message(
+            `Turn ${index}:\n\n${"x ".repeat(200)}`,
+            { role: index % 2 === 0 ? "user" : "assistant" },
+            `turn-${index}`,
+          ),
+        )}
+      />,
+    );
+    await vi.waitFor(() => expect(screen.text()).toContain("Turn 118:"));
+    using _timers = fakeTimers();
+    const turnsInDomOrder = () =>
+      [...screen.container.querySelectorAll("h3")].map((heading) =>
+        Number(/Turn (\d+):/.exec(heading.parentElement?.textContent ?? "")?.[1]),
+      );
+    const viewport = props.listRef.current!.getScrollableNode()!;
+
+    const scroll = async (by: number) => {
+      for (let step = 0; step < 40; step++) {
+        await act(() => {
+          viewport.scrollTop += by;
+          viewport.dispatchEvent(new Event("scroll"));
+          vi.advanceTimersByTime(16);
+        });
+      }
+      // Wrapping right after a scroll must still reach the first and last message.
+      expect(turnsInDomOrder()[0]).toBe(0);
+      expect(turnsInDomOrder().at(-1)).toBe(119);
+    };
+
+    await act(() => {
+      viewport.scrollTop = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(300);
+    });
+    await scroll(300);
+    expect(turnsInDomOrder().filter((turn) => turn > 0 && turn < 100).length).toBeGreaterThan(0);
+    await scroll(-300);
+
+    await act(() => vi.advanceTimersByTime(300));
+    const turns = turnsInDomOrder();
+    expect(turns).toEqual(turns.toSorted((a, b) => a - b));
   });
 
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
@@ -576,6 +716,8 @@ describe("MessagesTimeline attachments", () => {
     const props = baseProps();
     await using screen = await renderTimeline(
       [
+        // The first message row is always mounted, so the recordings go in the second.
+        message("Start of the thread.", { role: "user" }, "opening"),
         message(
           "Two recordings.",
           {
@@ -601,7 +743,7 @@ describe("MessagesTimeline attachments", () => {
     await vi.waitFor(
       async () => {
         await act(() => {
-          void props.listRef.current?.scrollToIndex({ index: 0, animated: false });
+          void props.listRef.current?.scrollToIndex({ index: 1, animated: false });
         });
         expect(screen.container.querySelectorAll("audio")).toHaveLength(2);
       },
