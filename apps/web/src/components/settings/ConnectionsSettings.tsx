@@ -69,7 +69,8 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
-import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { EnvironmentBadgeIcon } from "../EnvironmentBadgeIcon";
+import { EnvironmentGlyphInput } from "./EnvironmentGlyphInput";
 import {
   revokeOtherServerClientSessions,
   revokeServerClientSession,
@@ -1024,8 +1025,8 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
               primaryEnvironment?.label ?? (desktopBridge ? "This machine" : "Primary environment")
             }
             icon={
-              <EnvironmentMachineIcon
-                aria-hidden
+              <EnvironmentBadgeIcon
+                environmentId={primaryEnvironmentId}
                 kind={
                   primaryServerConfig
                     ? resolveEnvironmentMachineKind(primaryServerConfig)
@@ -1059,6 +1060,17 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
               ) : null
             }
           >
+            <SettingsRow
+              title="Badge glyph"
+              description="One character or emoji, shown on this device. Clear it to use the machine icon."
+              control={
+                <EnvironmentGlyphInput
+                  key={primaryEnvironmentId}
+                  environmentId={primaryEnvironmentId}
+                  label={primaryEnvironment?.label ?? "this environment"}
+                />
+              }
+            />
             {canManageLocalBackend ? (
               <SettingsRow
                 title="Version"
