@@ -18,7 +18,7 @@ const SCREENSHOT_TIMEOUT = Duration.seconds(20);
 const LIST_TIMEOUT_SECONDS = 40;
 // simctl could not list simulators at all, so the hub's empty iOS list says nothing.
 const SIMULATOR_LIST_FAILED =
-  /^\[apple-utils\] Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)/;
+  /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
 
 const HubDevice = Schema.Struct({
   id: Schema.String,

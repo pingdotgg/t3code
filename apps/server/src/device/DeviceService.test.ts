@@ -1240,7 +1240,9 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 
-const discoveryFixture = Effect.fn("discoveryFixture")(function* () {
+const discoveryFixture = Effect.fn("discoveryFixture")(function* (
+  simctlError = "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
+) {
   const hubDevices = [
     { id: "iphone", name: "iPhone", platform: "ios", physical: false },
     { id: "emulator-5554", name: "Running_AVD", platform: "android", physical: false },
@@ -1267,7 +1269,7 @@ const discoveryFixture = Effect.fn("discoveryFixture")(function* () {
                   emulators: [],
                   errors: [
                     {
-                      message: "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
+                      message: simctlError,
                       error: "Unable to connect to CoreSimulatorService",
                     },
                   ],
@@ -1318,26 +1320,27 @@ const discoveryFixture = Effect.fn("discoveryFixture")(function* () {
   return { service, hub, listed };
 });
 
-it.effect(
-  "keeps the last simulators while simctl fails and drops them once a listing succeeds",
-  () =>
-    Effect.gen(function* () {
-      const { service, hub, listed } = yield* discoveryFixture();
-      expect((yield* service.list).devices).toEqual(listed);
+it.effect.each([
+  "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
+  "[apple-utils] `xcrun simctl list devices --json` did not respond within 30 s; CoreSimulatorService may need restarting",
+])("keeps the last simulators after %s and drops them once a listing succeeds", (simctlError) =>
+  Effect.gen(function* () {
+    const { service, hub, listed } = yield* discoveryFixture(simctlError);
+    expect((yield* service.list).devices).toEqual(listed);
 
-      hub.mode = "simctl_failed";
-      const failed = yield* service.list;
-      expect(failed.devices).toEqual(listed.filter((device) => device.platform === "ios"));
-      expect(failed.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
-        status: "ready",
-        detail: "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
-      });
+    hub.mode = "simctl_failed";
+    const failed = yield* service.list;
+    expect(failed.devices).toEqual(listed.filter((device) => device.platform === "ios"));
+    expect(failed.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+      status: "ready",
+      detail: simctlError,
+    });
 
-      hub.mode = "empty";
-      const emptied = yield* service.list;
-      expect(emptied.devices).toEqual([]);
-      expect(emptied.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({ status: "ready" });
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+    hub.mode = "empty";
+    const emptied = yield* service.list;
+    expect(emptied.devices).toEqual([]);
+    expect(emptied.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({ status: "ready" });
+  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 
 it.effect("keeps devices with a warning when the hub never answers within 40 seconds", () =>
