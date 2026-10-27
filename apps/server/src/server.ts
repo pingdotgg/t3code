@@ -67,6 +67,7 @@ import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceR
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -743,7 +744,12 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   Layer.provide(PreviewBrowser.layer),
   // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
-  Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
+  Layer.provide(
+    PeerForwarding.layer.pipe(
+      Layer.provideMerge(PeerMcpClient.layer),
+      Layer.provideMerge(PeerLinks.layer),
+    ),
+  ),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),

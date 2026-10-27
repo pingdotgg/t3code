@@ -2,12 +2,14 @@ import {
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
   OrchestrationV2StopWorkflowInput,
+  OrchestratorMcpEnvironmentLinksResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpDeleteScheduledTaskInput,
   OrchestratorMcpDeleteScheduledTaskResult,
+  OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
   OrchestratorMcpFailure,
@@ -34,8 +36,10 @@ import {
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -45,6 +49,8 @@ const dependencies = [
   ThreadManagementService.ThreadManagementService,
   OrchestratorMcpService.OrchestratorMcpService,
 ];
+/** Listing this environment's links. */
+const linkDependencies = [...dependencies, PeerForwarding.PeerForwarding];
 const threadMetadataDependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
@@ -107,7 +113,10 @@ const TaskCancelTool = Tool.make("task_cancel", {
 const WorkflowStopTool = Tool.make("t3_workflow_stop", {
   description:
     "Stop a running Claude workflow in a thread. `subagentId`: coordinator from `t3_thread_read` 'activity'. Stops only the workflow, not the thread.",
-  parameters: OrchestrationV2StopWorkflowInput,
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    ...OrchestrationV2StopWorkflowInput.fields,
+  }),
   success: Schema.Struct({}),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -231,7 +240,11 @@ const ThreadReadTool = Tool.make("t3_thread_read", {
 const ThreadUpdateTool = Tool.make("t3_thread_update", {
   description:
     "Rename a thread (`action:'rename'` with `title`) or regenerate its title. Omit `threadId` for this thread. Workspace and branch cannot change here.",
-  parameters: ThreadMetadataMcpUpdateInput,
+  // Keeps the input's action/field check, which rebuilding the struct would drop.
+  parameters: ThreadMetadataMcpUpdateInput.mapFields(
+    Struct.assign({ environmentId: OrchestratorMcpEnvironmentTarget }),
+    { unsafePreserveChecks: true },
+  ),
   success: ThreadMetadataMcpUpdateResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -280,6 +293,19 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Title, "Interrupt a T3 thread")
   .annotate(Tool.Destructive, true);
 
+const EnvironmentLinksTool = Tool.make("t3_environment_links", {
+  description:
+    "List the other T3 Code environments this one is linked to, such as the user's other machines, and whether each answers now. Pass one's environmentId to any tool that takes environmentId, such as t3_thread_launch, t3_thread_send, t3_pending_request_respond, t3_queue_list or t3_project_list, to act there; delegate_task takes it as target.environmentId. A linked environment lets this one's agents do at most its access there, and never more than the calling agent may do here. An expired link has to be linked again from a new pairing code.",
+  success: OrchestratorMcpEnvironmentLinksResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: linkDependencies,
+})
+  .annotate(Tool.Title, "List linked environments")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
@@ -298,4 +324,5 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadSendTool,
   ThreadWaitTool,
   ThreadInterruptTool,
+  EnvironmentLinksTool,
 );
