@@ -6,6 +6,7 @@ import { MuseSettings } from "./settings.ts";
 export const museClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("muse"),
   label: "Muse Code",
+  modelFamilies: ["Muse "],
   settingsSchema: MuseSettings,
   icon: {
     viewBox: "0 0 287.56 191",

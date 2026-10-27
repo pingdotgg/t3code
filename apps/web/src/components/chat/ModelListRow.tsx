@@ -1,11 +1,7 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
-import {
-  getDisplayModelName,
-  getProviderRowLabel,
-  getTriggerDisplayModelLabel,
-} from "./providerIconUtils";
+import { getDisplayModelName, getProviderRowLabel } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -19,7 +15,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
   slug: string;
   name: string;
-  shortName?: string | undefined;
   subProvider?: string | undefined;
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
@@ -30,8 +25,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   isFavorite: boolean;
   isSelected: boolean;
   showProvider: boolean;
-  preferShortName?: boolean;
-  useTriggerLabel?: boolean;
   showNewBadge?: boolean;
   unavailable?: boolean;
   jumpLabel?: string | null;
@@ -41,7 +34,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   const model = {
     slug: props.slug,
     name: props.name,
-    shortName: props.shortName,
     subProvider: props.subProvider,
   };
   const providerLabel = getProviderRowLabel(props.providerDisplayName, props.subProvider);
@@ -61,12 +53,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
       <div className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
           <div className="min-w-0 truncate text-sm font-normal leading-snug">
-            {props.useTriggerLabel
-              ? getTriggerDisplayModelLabel(model)
-              : getDisplayModelName(
-                  model,
-                  props.preferShortName ? { preferShortName: true } : undefined,
-                )}
+            {getDisplayModelName(model)}
           </div>
           {props.showNewBadge ? (
             <span

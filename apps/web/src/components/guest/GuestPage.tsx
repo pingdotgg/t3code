@@ -49,7 +49,7 @@ import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { GuestMessageName, guestBubbleClassName } from "../chat/guestMessageStyle";
 import { MessagesTimeline } from "../chat/MessagesTimeline";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
+import { getDisplayModelName, getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { ScrollToEndButton } from "../chat/TimelineOverlays";
 import type { TimelineRow } from "../chat/timelineRowContext";
 import { useTimelineFollow } from "../chat/useTimelineFollow";
@@ -557,11 +557,12 @@ function UnplacedGuestMessage({
 
 /** The thread's model, labeled as the owner's composer labels it, with no way to change it. */
 function GuestModelLabel({ model }: { readonly model: GuestThreadModel }) {
-  const label = getTriggerDisplayModelName({ slug: model.name, ...model });
+  const label = getTriggerDisplayModelName({ slug: model.name, ...model }, model.driver);
+  const fullLabel = getDisplayModelName({ slug: model.name, ...model });
   return (
     <ComposerControl
       render={<span />}
-      aria-label={`Model: ${label}`}
+      aria-label={`Model: ${fullLabel}`}
       className="pointer-events-none min-w-0 shrink"
     >
       {model.driver === null ? null : (
