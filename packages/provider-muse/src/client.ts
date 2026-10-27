@@ -7,7 +7,6 @@ export const museClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("muse"),
   label: "Muse Code",
   settingsSchema: MuseSettings,
-  badgeLabel: "Beta",
   icon: {
     viewBox: "0 0 287.56 191",
     fill: { light: "#0081fb", dark: "#0081fb" },
