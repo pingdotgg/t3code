@@ -49,6 +49,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
@@ -929,7 +930,6 @@ const make = Effect.gen(function* () {
         if (project.id !== input.projectId) {
           return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
         }
-
         let runId: RunId | null = null;
         let messageWasAlreadyAccepted = false;
         if (input.initialMessage !== undefined) {
@@ -962,7 +962,19 @@ const make = Effect.gen(function* () {
               createdBy: input.createdBy,
               creationSource: input.creationSource,
             })
-            .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId)));
+            .pipe(
+              // An agent's launch can land on a thread that a replay, or a concurrent
+              // launch with the same key, created with broader modes. The orchestrator
+              // refuses the message under the thread's lock; the user's own clients
+              // launch into their own drafts, whatever modes those hold.
+              input.createdBy === "agent"
+                ? Effect.provideService(DispatchModeLimit, {
+                    runtimeMode: input.runtimeMode,
+                    interactionMode: input.interactionMode,
+                  })
+                : (effect) => effect,
+              Effect.mapError(mapError(input, "dispatch-message", threadId)),
+            );
           // A concurrent retry can read no receipt and still replay the dispatch.
           messageWasAlreadyAccepted ||= dispatched.replayed === true;
           const runCreated = dispatched.storedEvents.find(

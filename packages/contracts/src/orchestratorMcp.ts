@@ -30,6 +30,7 @@ import {
   ThreadPullRequestKey,
   ThreadPullRequestLinkSource,
 } from "./threadPullRequest.ts";
+import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
@@ -42,9 +43,15 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
-const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(256),
-).annotate({ description: "Reuse it to retry the same call. A new call gets a new key." });
+export const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256))
+  .check(
+    Schema.makeFilter((value) =>
+      hasOnlyPairedSurrogates(value)
+        ? true
+        : "clientRequestId must contain valid paired Unicode surrogates.",
+    ),
+  )
+  .annotate({ description: "Reuse it to retry the same call. A new call gets a new key." });
 
 // OpenCode 1.15 serializes nested MCP union objects as JSON strings; decode that form at the boundary.
 const OrchestratorMcpScheduleFromJsonString = Schema.fromJsonString(
