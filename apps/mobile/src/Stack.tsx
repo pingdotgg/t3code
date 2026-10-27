@@ -15,7 +15,7 @@ import {
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { useEffect, useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -139,20 +139,12 @@ import {
   SettingsLegalDocumentExternalHeaderButton,
 } from "./features/settings/components/SettingsLegalDocumentRouteScreen";
 import { useAppShortcuts } from "./features/shortcuts/useAppShortcuts";
-import { useIncomingShare } from "./features/sharing/IncomingShareProvider";
-import {
-  EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
-  transitionIncomingSharePresentation,
-} from "./features/sharing/incoming-share-presentation";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
-import {
-  selectWorkspaceDetail,
-  workspaceDetailRouter,
-} from "./features/workspace/workspace-detail-selection";
+import { workspaceDetailRouter } from "./features/workspace/workspace-detail-selection";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -498,9 +490,6 @@ function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
 }) {
-  const navigation = useNavigation();
-  const { pendingShare } = useIncomingShare();
-  const sharePresentationRef = useRef(EMPTY_INCOMING_SHARE_PRESENTATION_STATE);
   const path = getPathFromState(props.state, navigationPathConfig);
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspaceLocation = workspaceLocationFromState(props.state);
@@ -519,22 +508,6 @@ function RootStackLayout(props: {
   useAgentNotificationNavigation(workspaceLocation.pathname);
   useConnectOnboardingNavigation();
   useAppShortcuts(props.state);
-  useEffect(() => {
-    const transition = transitionIncomingSharePresentation(sharePresentationRef.current, {
-      isShareSheetPresented: isDraftThreadRoute(props.state.routes[props.state.index]),
-      pendingShareId: pendingShare?.id ?? null,
-    });
-    sharePresentationRef.current = transition.state;
-    if (!transition.shareIdToPresent) {
-      return;
-    }
-    navigation.dispatch(
-      selectWorkspaceDetail({
-        name: "Thread",
-        params: { draft: { incomingShareId: transition.shareIdToPresent } },
-      }),
-    );
-  }, [navigation, pendingShare, props.state]);
 
   return (
     <NewTaskFlowProvider active={isDraftThreadRoute(draftRoute)} routeDraftId={routeDraftId}>
