@@ -1678,7 +1678,7 @@ const main = Effect.gen(function* () {
   }
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const readJsonl = <A, E>(file: string, decode: (line: string) => Effect.Effect<A, E>) =>
+  const readNdjson = <A, E>(file: string, decode: (line: string) => Effect.Effect<A, E>) =>
     fs.readFileString(file).pipe(
       Effect.map((content) => content.split("\n").filter((line) => line.trim() !== "")),
       Effect.flatMap((lines) => Effect.forEach(lines, (line) => decode(line))),
@@ -1687,10 +1687,10 @@ const main = Effect.gen(function* () {
   const caseFiles =
     flags.cases ??
     (yield* fs.readDirectory(casesDir))
-      .filter((name) => name.endsWith(".jsonl"))
+      .filter((name) => name.endsWith(".ndjson"))
       .toSorted()
       .map((name) => path.join(casesDir, name));
-  const cases = (yield* Effect.forEach(caseFiles, (file) => readJsonl(file, decodeCase))).flat();
+  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase))).flat();
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";
@@ -1764,7 +1764,7 @@ const main = Effect.gen(function* () {
     shellModel: flags["shell-model"],
   };
   const previous =
-    flags.baseline === undefined ? [] : yield* readJsonl(flags.baseline, decodeBaselineRow);
+    flags.baseline === undefined ? [] : yield* readNdjson(flags.baseline, decodeBaselineRow);
   const baseline = new Map(groups(previous, (row) => row.id).map(([id, r]) => [id, passRate(r)]));
   // Only a case that passed every baseline sample can stop a run; flaky ones are just reported.
   const passedBefore = (id: string) => baseline.get(id) === 1;
