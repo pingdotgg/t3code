@@ -209,6 +209,12 @@ function contrastRatio(
   );
 }
 
+export function themeColorContrastRatio(first: string, second: string): number {
+  const firstChannels = rgbChannels(first);
+  const secondChannels = rgbChannels(second);
+  return firstChannels && secondChannels ? contrastRatio(firstChannels, secondChannels) : 1;
+}
+
 export function themeColorWithContrast(
   accent: string,
   surface: string | ReadonlyArray<string>,
