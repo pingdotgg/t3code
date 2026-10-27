@@ -7,7 +7,6 @@ import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
 import {
   markdownForNativeRendering,
   markdownWithInlineFileLinks,
-  parseMarkdownDocument,
   markdownWithHtml,
 } from "./markdownDocument";
 
@@ -87,7 +86,7 @@ describe("inline code that names a file", () => {
 
   it("links to the exact path when it holds backslashes or ampersands", () => {
     for (const path of ["C:\\repo\\_private\\file.ts", "./src/a&copy;.ts", "./src/[id].ts"]) {
-      const paragraph = parseMarkdownDocument(rewrite(`\`${path}\``)).children[0];
+      const paragraph = parser.parse(rewrite(`\`${path}\``)).children[0];
       const link = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
       expect(link?.type === "link" && link.url).toBe(path);
       expect(
