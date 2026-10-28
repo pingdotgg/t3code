@@ -1,4 +1,9 @@
-import { reviewThreadReplyTarget } from "@t3tools/client-runtime/review-editing";
+import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
+import { useRetiredReviewDraftCommentIds } from "./usePullRequestReviewDraft";
+import {
+  reviewThreadReplyTarget,
+  pendingReviewCommentsFromThreads,
+} from "@t3tools/client-runtime/review-editing";
 import { useAtomRefresh } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { reviewLineRangeLabel } from "@t3tools/client-runtime/review-selection";
@@ -105,6 +110,8 @@ export function PullRequestCommentItem({
   badges,
   meta,
   leadingAction,
+  onDiscard,
+  disabled,
   onResolve,
   onUnresolve,
 }: {
@@ -126,6 +133,8 @@ export function PullRequestCommentItem({
   meta?: ReactNode;
   /** A direct action shown before the reaction and overflow controls. */
   leadingAction?: ReactNode;
+  onDiscard?: (() => void) | undefined;
+  disabled?: boolean;
   onResolve?: (() => void) | undefined;
   onUnresolve?: (() => void) | undefined;
 }) {
@@ -133,6 +142,8 @@ export function PullRequestCommentItem({
     <PullRequestCommentControls
       params={params}
       comment={comment}
+      onDiscard={onDiscard}
+      disabled={disabled}
       onResolve={onResolve}
       onUnresolve={onUnresolve}
       render={({ actions, reactions }) => (
@@ -295,12 +306,22 @@ export function PullRequestThreadCard({
   const [uploading, setUploading] = useState(false);
   const sendingRef = useRef(false);
   const page = loadedPage?.threadId === thread.id ? loadedPage : null;
-  const comments = useMemo(
-    () => mergeReviewThreadComments(thread.comments, page?.comments ?? []),
-    [thread.comments, page?.comments],
-  );
+  const pendingActions = usePendingReviewCommentActions(params);
+  const retiredIds = useRetiredReviewDraftCommentIds(params);
+  const comments = useMemo(() => {
+    const retired = new Set(retiredIds);
+    return mergeReviewThreadComments(thread.comments, page?.comments ?? []).filter(
+      (comment) => !comment.pendingReviewId || !retired.has(comment.id),
+    );
+  }, [thread.comments, page?.comments, retiredIds]);
   const nextCursor = page === null ? (thread.nextCommentsCursor ?? null) : page.nextCursor;
   const summary = reviewThreadSummary(thread);
+  const pendingById = new Map(
+    pendingReviewCommentsFromThreads([{ ...thread, comments }]).map((comment) => [
+      comment.id,
+      { ...comment, headSha: "", code: "" },
+    ]),
+  );
 
   const send = async () => {
     const body = reply.trim();
@@ -417,6 +438,27 @@ export function PullRequestThreadCard({
                 params={params}
                 comment={{ ...comment, url: comment.url ?? null }}
                 badges={comment.pendingReviewId ? <PullRequestPendingBadge /> : null}
+                disabled={pendingActions.busy}
+                onDiscard={
+                  comment.pendingReviewId &&
+                  pendingById.has(comment.id) &&
+                  pendingActions.canDiscard
+                    ? () =>
+                        Alert.alert(
+                          "Discard this comment?",
+                          "Your other review comments will be kept.",
+                          [
+                            { text: "Cancel", style: "cancel" },
+                            {
+                              text: "Discard",
+                              style: "destructive",
+                              onPress: () =>
+                                void pendingActions.discard(pendingById.get(comment.id)!),
+                            },
+                          ],
+                        )
+                    : undefined
+                }
                 leadingAction={
                   index === 0 && actions.canResolve && !thread.isResolved ? (
                     <InlineIconAction

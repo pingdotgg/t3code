@@ -33,16 +33,26 @@ export function PullRequestCommentsSheet({
   const [status, setStatus] = useState<"resolved" | "unresolved" | "pending">("unresolved");
   // Threads come from the optimistic activity projection, so a resolve moves its card between
   // tabs and updates every count before the host answers.
-  const resolved = draft.threads.filter((thread) => thread.isResolved);
-  const unresolved = draft.threads.filter((thread) => !thread.isResolved);
-  const counts = countReviewThreads(draft.threads);
+  const published = draft.threads.filter((thread) =>
+    thread.comments.some((comment) => !comment.pendingReviewId),
+  );
+  const pendingThreads = draft.threads.filter((thread) =>
+    thread.comments.some((comment) => comment.pendingReviewId),
+  );
+  const resolved = published.filter((thread) => thread.isResolved);
+  const unresolved = published.filter((thread) => !thread.isResolved);
+  const counts = countReviewThreads(published);
   // Removing the last draft also removes its tab; stay on an available status.
   const selectedStatus =
     status === "pending" && draft.comments.length === 0 ? "unresolved" : status;
   if (selectedStatus !== status) setStatus(selectedStatus);
   const threads =
-    selectedStatus === "resolved" ? resolved : selectedStatus === "unresolved" ? unresolved : [];
-  const pending = selectedStatus === "pending" ? draft.comments : [];
+    selectedStatus === "resolved"
+      ? resolved
+      : selectedStatus === "unresolved"
+        ? unresolved
+        : pendingThreads;
+  const pending = selectedStatus === "pending" ? draft.ungroupedComments : [];
   const options = [
     {
       value: "unresolved" as const,

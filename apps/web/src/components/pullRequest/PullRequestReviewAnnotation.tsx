@@ -48,7 +48,7 @@ import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
-import type { PendingReviewComment } from "./pullRequestReviewStore";
+import { usePendingReviewComments, type PendingReviewComment } from "./pullRequestReviewStore";
 
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
@@ -108,6 +108,14 @@ export function PendingReviewCommentCard({
   const [replyCommentId, setReplyCommentId] = useState<string | null>(null);
   const { busy, canSave, canDiscard, saveDraft, copyLink, discard } =
     usePendingReviewCommentActions(environmentId, reference);
+  if (replyCommentId)
+    return (
+      <HostedReviewThreadCard
+        environmentId={environmentId}
+        reference={reference}
+        commentId={replyCommentId}
+      />
+    );
   return (
     <div
       className={cn(CARD_CLASS, "border-dashed")}
@@ -168,13 +176,6 @@ export function PendingReviewCommentCard({
           Reply to conversation
         </Button>
       ) : null}
-      {replyCommentId ? (
-        <HostedReviewThreadCard
-          environmentId={environmentId}
-          reference={reference}
-          commentId={replyCommentId}
-        />
-      ) : null}
     </div>
   );
 }
@@ -221,6 +222,7 @@ export function ReviewThreadCard({
   onAddToComposer?: ((comment: PullRequestThreadComment) => void) | undefined;
 }) {
   // A resolved thread is finished work, so it opens collapsed and stays one line until asked for.
+  const pendingActions = usePendingReviewCommentActions(environmentId, reference);
   const [expanded, setExpanded] = useState(revealRequest !== undefined || !thread.isResolved);
   const [lastRevealRequest, setLastRevealRequest] = useState(revealRequest);
   if (lastRevealRequest !== revealRequest) {
@@ -239,7 +241,21 @@ export function ReviewThreadCard({
   >(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const currentPage = loadedPage?.threadId === thread.id ? loadedPage : null;
-  const comments = mergePullRequestThreadComments(thread.comments, currentPage?.comments ?? []);
+  const receivedComments = mergePullRequestThreadComments(
+    thread.comments,
+    currentPage?.comments ?? [],
+  );
+  const pendingComments = usePendingReviewComments(reference, [
+    { ...thread, comments: receivedComments },
+  ]);
+  const pendingById = new Map(
+    pendingComments.flatMap((comment) =>
+      comment.hostedComment ? [[comment.hostedComment.commentId, comment] as const] : [],
+    ),
+  );
+  const comments = receivedComments.filter(
+    (comment) => !comment.pendingReviewId || pendingById.has(comment.id),
+  );
   const nextCommentsCursor =
     currentPage === null ? (thread.nextCommentsCursor ?? null) : currentPage.nextCursor;
   const commentCount = thread.commentCount ?? comments.length;
@@ -405,13 +421,26 @@ export function ReviewThreadCard({
                         <CheckIcon className="size-4" />
                       </Button>
                     ) : null}
+                    {comment.pendingReviewId &&
+                    pendingById.has(comment.id) &&
+                    pendingActions.canDiscard ? (
+                      <Button
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        aria-label="Discard this comment"
+                        disabled={pendingActions.busy}
+                        onClick={() => void pendingActions.discard(pendingById.get(comment.id)!)}
+                      >
+                        <Trash2Icon className="size-3.5" />
+                      </Button>
+                    ) : null}
                     <PullRequestCommentActions
                       body={comment.body}
                       url={comment.url ?? null}
                       onEdit={canEditComment(comment) ? () => setEditingId(comment.id) : undefined}
                       onAddToComposer={onAddToComposer ? () => onAddToComposer(comment) : undefined}
                       resolution={
-                        canResolve
+                        canResolve && !thread.comments.some((entry) => entry.pendingReviewId)
                           ? { resolved: thread.isResolved, pending, onToggle: onToggleResolved }
                           : undefined
                       }

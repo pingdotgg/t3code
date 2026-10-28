@@ -49,6 +49,47 @@ export function pendingReviewCommentsFromThreads(threads: ReadonlyArray<PullRequ
   });
 }
 
+export function groupPendingReviewComments<T extends PullRequestReviewCommentDraft>(
+  threads: ReadonlyArray<PullRequestReviewThread>,
+  pendingComments: ReadonlyArray<T>,
+) {
+  const pendingIds = new Set(
+    pendingComments.flatMap((comment) =>
+      comment.hostedComment ? [comment.hostedComment.commentId] : [],
+    ),
+  );
+  const represented = new Set<string>();
+  const conversations = threads.flatMap((thread) => {
+    const comments = thread.comments.filter(
+      (comment) => !comment.pendingReviewId || pendingIds.has(comment.id),
+    );
+    if (comments.length === 0) return [];
+    for (const comment of comments) represented.add(comment.id);
+    return [
+      comments.length === thread.comments.length
+        ? thread
+        : {
+            ...thread,
+            comments,
+            ...(thread.commentCount === undefined
+              ? {}
+              : {
+                  commentCount: Math.max(
+                    comments.length,
+                    thread.commentCount - (thread.comments.length - comments.length),
+                  ),
+                }),
+          },
+    ];
+  });
+  return {
+    threads: conversations,
+    pendingComments: pendingComments.filter(
+      (comment) => !comment.hostedComment || !represented.has(comment.hostedComment.commentId),
+    ),
+  };
+}
+
 /** Only the parts of a detail either answer reads, so a caller can pass a whole detail view. */
 type EditingSubject = Pick<
   PullRequestDetail,

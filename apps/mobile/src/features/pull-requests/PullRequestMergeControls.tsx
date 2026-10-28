@@ -140,12 +140,11 @@ export function PullRequestMergeControls(props: {
     checks: pr.checks,
     baseBehind: pr.baseComparison === "behind" && pr.mergeability === "mergeable",
   });
-  const canBypassRequirements = canAdminMerge && requirementsUnmet;
   const confirmationKey = `${target.environmentId}:${pr.projectId}:${pr.repository}:${pr.number}:${pr.headSha ?? ""}:${method ?? ""}`;
   const bypass = confirmation?.key === confirmationKey && confirmation.bypass;
-  const confirmationOpen = confirmation?.key === confirmationKey && canBypassRequirements;
+  const confirmationOpen = confirmation?.key === confirmationKey && canAdminMerge;
   const canConfirmAutoMerge = canAutoMerge && autoAction === "enable-auto-merge";
-  if (confirmation !== null && (!canBypassRequirements || confirmation.key !== confirmationKey))
+  if (confirmation !== null && (!canAdminMerge || confirmation.key !== confirmationKey))
     setConfirmation(null);
   const perform = async (
     action: "merge" | "enable-auto-merge" | "disable-auto-merge",
@@ -154,7 +153,7 @@ export function PullRequestMergeControls(props: {
     if (
       pending.current ||
       (action !== "disable-auto-merge" && !method) ||
-      (action === "merge" ? (adminOverride ? !canBypassRequirements : !canMerge) : !canAutoMerge)
+      (action === "merge" ? (adminOverride ? !canAdminMerge : !canMerge) : !canAutoMerge)
     )
       return false;
     pending.current = true;
@@ -213,7 +212,7 @@ export function PullRequestMergeControls(props: {
       });
   };
   const confirm = (action: "merge" | "enable-auto-merge" | "disable-auto-merge") => {
-    if (action === "merge" && canBypassRequirements) {
+    if (action === "merge" && canAdminMerge) {
       setConfirmation({ key: confirmationKey, bypass: false });
       return;
     }
@@ -316,14 +315,16 @@ export function PullRequestMergeControls(props: {
               <Text className="text-sm text-foreground-muted">
                 {bypass
                   ? `Merge #${pr.number} into ${pr.baseBranch} before its requirements are met.`
-                  : canConfirmAutoMerge || pr.autoMergeEnabled
-                    ? "Merge requirements have not passed. Auto-merge waits for them to be met."
-                    : "Merge requirements have not passed."}
+                  : requirementsUnmet
+                    ? canConfirmAutoMerge || pr.autoMergeEnabled
+                      ? "Merge requirements have not passed. Auto-merge waits for them to be met."
+                      : "Merge requirements have not passed."
+                    : `Merge #${pr.number} into ${pr.baseBranch} using ${method}.`}
               </Text>
             </View>
             <Pressable
               accessibilityRole="checkbox"
-              accessibilityLabel="Merge without waiting for requirements to be met (bypass rules)"
+              accessibilityLabel="Merge with admin permissions"
               accessibilityState={{ checked: bypass, disabled: busy }}
               disabled={busy}
               className="min-h-11 flex-row items-start gap-2 py-2"
@@ -341,7 +342,7 @@ export function PullRequestMergeControls(props: {
                 ) : null}
               </View>
               <Text className="min-w-0 flex-1 text-sm text-danger-foreground">
-                Merge without waiting for requirements to be met (bypass rules)
+                Merge with admin permissions
               </Text>
             </Pressable>
             <View className="flex-row flex-wrap justify-end gap-2">

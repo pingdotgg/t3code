@@ -1,4 +1,7 @@
-import { resolvedReviewCommentsLabel } from "@t3tools/client-runtime/review-editing";
+import {
+  resolvedReviewCommentsLabel,
+  groupPendingReviewComments,
+} from "@t3tools/client-runtime/review-editing";
 export { reviewPositionLabel } from "@t3tools/client-runtime/review-selection";
 import {
   reviewPositionLabel,
@@ -104,7 +107,7 @@ export function annotatePullRequestDiff(
         : undefined,
     );
   }
-  for (const draft of drafts) {
+  for (const draft of groupPendingReviewComments(threads, drafts).pendingComments) {
     if (draft.headSha !== headSha) continue;
     const side =
       draft.position.kind === "deleted"

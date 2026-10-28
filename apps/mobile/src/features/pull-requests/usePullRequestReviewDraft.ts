@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
-import { pendingReviewCommentsFromThreads } from "@t3tools/client-runtime/review-editing";
+import {
+  pendingReviewCommentsFromThreads,
+  groupPendingReviewComments,
+} from "@t3tools/client-runtime/review-editing";
 import { AppState } from "react-native";
 import * as Atom from "effect/reactivity/Atom";
 import * as Schema from "effect/Schema";
@@ -27,6 +30,12 @@ const operations = Atom.make<ReadonlySet<string>>(new Set<string>()).pipe(Atom.k
 const removedHostComments = Atom.make<Readonly<Record<string, ReadonlyArray<string>>>>({}).pipe(
   Atom.keepAlive,
 );
+
+const NO_RETIRED_COMMENTS: ReadonlyArray<string> = [];
+
+export function useRetiredReviewDraftCommentIds(params: PullRequestParams) {
+  return useAtomValue(removedHostComments)[pullRequestReviewKey(params)] ?? NO_RETIRED_COMMENTS;
+}
 
 /** Keep a successful removal from reappearing in an older activity snapshot. */
 export function retireReviewDraftComments(
@@ -167,12 +176,11 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
       .map((comment) => ({ ...comment, headSha: detail.data?.headSha ?? "", code: "" }));
     return remote.length ? [...local, ...remote] : local;
   }, [draft.comments, activity.data?.reviewThreads, detail, retiredIds]);
-  const threads = useMemo(() => {
-    return (activity.data?.reviewThreads ?? []).flatMap((thread) => {
-      const published = thread.comments.filter((comment) => !comment.pendingReviewId);
-      return published.length ? [{ ...thread, comments: published }] : [];
-    });
-  }, [activity.data?.reviewThreads]);
+  const grouped = useMemo(
+    () => groupPendingReviewComments(activity.data?.reviewThreads ?? [], comments),
+    [activity.data?.reviewThreads, comments],
+  );
+  const threads = grouped.threads;
   const pendingReviewId = comments.find((comment) => comment.hostedComment)?.hostedComment
     ?.reviewId;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads review drafts from disk and persists them when AppState leaves active and on unmount
@@ -191,6 +199,7 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
   return {
     draft,
     comments,
+    ungroupedComments: grouped.pendingComments,
     threads,
     activityLoaded: activity.data !== null,
     activityError: activity.error,

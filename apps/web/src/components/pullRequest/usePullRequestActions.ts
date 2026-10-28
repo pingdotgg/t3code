@@ -153,8 +153,8 @@ export function usePullRequestActionRunner({
         ]);
   const actionPending = actionKey !== null && pendingKeys.has(actionKey);
 
-  const perform = async (action: PullRequestAction, method?: PullRequestMergeMethod) => {
-    if (actionKey === null || reference === null || pendingRef.current.has(actionKey)) return;
+  const perform = async (action: PullRequestAction, method?: PullRequestMergeMethod, adminOverride = false) => {
+    if (actionKey === null || reference === null || pendingRef.current.has(actionKey)) return false;
     pendingRef.current.add(actionKey);
     setPendingKeys(new Set(pendingRef.current));
     const result = await runAction({
@@ -162,6 +162,7 @@ export function usePullRequestActionRunner({
       input: {
         ...reference,
         action,
+        ...(adminOverride ? { adminOverride: true } : {}),
         ...(method ? { mergeMethod: method } : resolveMergeMethod ? { resolveMergeMethod } : {}),
       },
     });
@@ -176,10 +177,11 @@ export function usePullRequestActionRunner({
           actionFailureHints(terminology.singular)[action],
         ),
       });
-      return;
+      return false;
     }
     toastManager.add({ type: "success", title: actionSuccessLabels(terminology.singular)[action] });
     onSuccess?.(action);
+    return true;
   };
 
   return { actionPending, perform };

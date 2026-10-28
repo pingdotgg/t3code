@@ -68,6 +68,8 @@ import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
 import {
   canEditPullRequestComment,
+  groupPendingReviewComments,
+  reviewThreadReplyTarget,
   canResolvePullRequestThread,
 } from "@t3tools/client-runtime/review-editing";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
@@ -618,25 +620,8 @@ function PullRequestCodeTab({
   // Placing a conversation takes more than its file being in the diff: its line has to fall
   // inside a hunk that was rendered. One that does not is drawn nowhere, so it belongs in the
   // off-diff list rather than disappearing between the two.
-  const visibleHostThreads = detail.reviewThreads.flatMap((thread) => {
-    const comments = thread.comments.filter((comment) => !comment.pendingReviewId);
-    if (comments.length === 0) return [];
-    if (comments.length === thread.comments.length) return [thread];
-    return [
-      {
-        ...thread,
-        comments,
-        ...(thread.commentCount === undefined
-          ? {}
-          : {
-              commentCount: Math.max(
-                comments.length,
-                thread.commentCount - (thread.comments.length - comments.length),
-              ),
-            }),
-      },
-    ];
-  });
+  const { threads: visibleHostThreads, pendingComments: unthreadedPendingComments } =
+    groupPendingReviewComments(detail.reviewThreads, pendingComments);
 
   const placedThreadIds = (() => {
     const placed = new Set<string>();
@@ -688,7 +673,7 @@ function PullRequestCodeTab({
     // Pending comments anchor to the head diff exactly like host threads do, so a
     // commit's diff must not place them either — the same line means other code there.
     if (commit === null) {
-      for (const comment of pendingComments) {
+      for (const comment of unthreadedPendingComments) {
         if (comment.path !== path) continue;
         const anchor = getReviewPositionAnchor(comment.position);
         groupAt(anchor.side, anchor.line).pending.push(comment);
@@ -1254,7 +1239,7 @@ function PullRequestCodeTab({
         runThreadCommand("Reply could not be posted", () =>
           replyToThread({
             environmentId,
-            input: { ...reference, threadId: thread.id, body },
+            input: { ...reference, ...reviewThreadReplyTarget(thread), body },
           }),
         )
       }
@@ -1925,7 +1910,7 @@ function PullRequestCodeTab({
           <aside className="w-64 shrink-0 overflow-y-auto border-r border-border/60 px-3 py-4 @max-[56rem]/guide:hidden">
             {guideStatus}
             {chapterRail}
-          </FileExplorerPane>
+          </aside>
         ) : null}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* Relative wrapper so the review overlay floats over the diff rather than pushing it

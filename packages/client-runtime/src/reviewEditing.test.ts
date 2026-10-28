@@ -9,6 +9,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   reviewThreadReplyTarget,
+  pendingReviewCommentsFromThreads,
+  groupPendingReviewComments,
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
   canResolvePullRequestThread,
@@ -231,5 +233,44 @@ describe("reviewThreadReplyTarget", () => {
         ],
       }),
     ).toEqual({ threadId: "t1", pendingReviewId: "private-review" });
+    const privateThread = {
+      ...thread,
+      commentCount: 2,
+      comments: ["root", "reply"].map((id) => ({
+        id,
+        body: id,
+        url: `https://github.com/example/repo/pull/1#discussion_${id}`,
+        author: null,
+        createdAt: "2026-10-20T00:00:00Z",
+        pendingReviewId: "private-review",
+      })),
+    };
+    const pending = pendingReviewCommentsFromThreads([privateThread]);
+    const local = {
+      id: "local",
+      path: "a.ts",
+      position: { kind: "added" as const, newLine: 3 },
+      body: "Unsaved",
+    };
+    expect(pending).toHaveLength(2);
+    expect(groupPendingReviewComments([privateThread], [...pending, local])).toEqual({
+      threads: [privateThread],
+      pendingComments: [local],
+    });
+    expect(groupPendingReviewComments([privateThread], pending.slice(0, 1)).threads).toEqual([
+      { ...privateThread, comments: privateThread.comments.slice(0, 1), commentCount: 1 },
+    ]);
+    const publishedRoot = {
+      ...privateThread,
+      comments: [
+        { ...privateThread.comments[0]!, pendingReviewId: undefined },
+        privateThread.comments[1]!,
+      ],
+    };
+    expect(groupPendingReviewComments([publishedRoot], pending.slice(1))).toEqual({
+      threads: [publishedRoot],
+      pendingComments: [],
+    });
+    expect(groupPendingReviewComments([], pending).pendingComments).toEqual(pending);
   });
 });

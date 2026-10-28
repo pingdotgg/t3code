@@ -34,6 +34,7 @@ export function PullRequestCommentControls({
   onEdit,
   onUnresolve,
   onResolve,
+  onDiscard,
   disabled,
   render,
 }: {
@@ -51,6 +52,7 @@ export function PullRequestCommentControls({
   onUnresolve?: (() => void) | undefined;
   onResolve?: (() => void) | undefined;
   disabled?: boolean;
+  onDiscard?: (() => void) | undefined;
   render?: (slots: { actions: ReactNode; reactions: ReactNode }) => ReactNode;
 }) {
   const target = pullRequestTarget(params);
@@ -202,6 +204,15 @@ export function PullRequestCommentControls({
             ]
           : []),
         ...(onEdit || canEdit ? [{ id: "edit", title: "Edit comment" }] : []),
+        ...(onDiscard
+          ? [
+              {
+                id: "discard",
+                title: "Discard comment",
+                attributes: { destructive: true, disabled: Boolean(disabled) },
+              },
+            ]
+          : []),
         {
           id: "copy-menu",
           title: "Copy",
@@ -233,6 +244,7 @@ export function PullRequestCommentControls({
             markdown,
           );
         else if (nativeEvent.event === "unresolve") onUnresolve?.();
+        else if (nativeEvent.event === "discard") onDiscard?.();
         else if (nativeEvent.event === "edit") edit();
         else if (nativeEvent.event === "copy") void Clipboard.setStringAsync(markdown);
         else if (nativeEvent.event === "copy-link" && comment.url)

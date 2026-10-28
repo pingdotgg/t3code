@@ -44,7 +44,10 @@ import {
   type PullRequestReviewOutcome,
   type PullRequestTimelineEvent,
 } from "./pullRequestDetail.logic";
-import { canEditPullRequestComment } from "@t3tools/client-runtime/review-editing";
+import {
+  canEditPullRequestComment,
+  groupPendingReviewComments,
+} from "@t3tools/client-runtime/review-editing";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -560,7 +563,11 @@ export function PullRequestTimelineTab({
     comment: PullRequestThreadComment,
   ) => void;
 }) {
-  const pendingComments = usePendingReviewComments(reference, detail.reviewThreads);
+  const pending = usePendingReviewComments(reference, detail.reviewThreads);
+  const { threads: conversations, pendingComments } = groupPendingReviewComments(
+    detail.reviewThreads,
+    pending,
+  );
   // Private host drafts use the merged list, including its successful-removal tombstones.
   // Keeping them in the ordinary discussion would duplicate cards or resurrect a discarded draft.
   const hostedPendingIds = new Set(
@@ -571,25 +578,7 @@ export function PullRequestTimelineTab({
   const events = buildPullRequestTimeline({
     ...detail,
     comments: detail.comments.filter((comment) => !hostedPendingIds.has(comment.id)),
-    reviewThreads: detail.reviewThreads.flatMap((thread) => {
-      const comments = thread.comments.filter((comment) => !hostedPendingIds.has(comment.id));
-      if (comments.length === thread.comments.length) return [thread];
-      if (comments.length === 0) return [];
-      return [
-        {
-          ...thread,
-          comments,
-          ...(thread.commentCount === undefined
-            ? {}
-            : {
-                commentCount: Math.max(
-                  comments.length,
-                  thread.commentCount - (thread.comments.length - comments.length),
-                ),
-              }),
-        },
-      ];
-    }),
+    reviewThreads: conversations,
   });
   const threadActions = useReviewThreadActions(environmentId, reference, detail, onRefresh);
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;

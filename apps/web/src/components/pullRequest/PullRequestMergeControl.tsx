@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
+import { PullRequestAdminMergeOption } from "./PullRequestAdminMergeOption";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
@@ -77,15 +77,11 @@ export function PullRequestMergeControl({
             </p>
           </div>
           {canAdminOverride ? (
-            <label htmlFor={checkboxId} className="flex items-start gap-2 text-xs text-destructive">
-              <Checkbox
-                id={checkboxId}
-                checked={bypass}
-                onCheckedChange={setBypass}
-                disabled={pending}
-              />
-              <span>Merge without waiting for requirements to be met (bypass rules)</span>
-            </label>
+            <PullRequestAdminMergeOption
+              checked={bypass}
+              onCheckedChange={setBypass}
+              disabled={pending}
+            />
           ) : null}
           <div className="flex items-center justify-end gap-2">
             <Button

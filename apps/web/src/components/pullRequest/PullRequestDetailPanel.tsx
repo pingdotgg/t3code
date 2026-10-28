@@ -147,7 +147,6 @@ import {
   shouldRefreshPullRequestActivity,
   stripPullRequestHandoffReferences,
 } from "./pullRequestDetail.logic";
-import { pullRequestMergeRequirementsUnmet } from "@t3tools/client-runtime/review-workspace";
 import { resolvePickableEnvironments } from "./pullRequestProjectAssignment.logic";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import {
@@ -1248,24 +1247,15 @@ export function PullRequestDetailPanel({
     canWriteSourceControl &&
     !detail.isDraft &&
     !conflicting;
-  const mergeRequirementsUnmet =
-    detail !== null &&
-    pullRequestMergeRequirementsUnmet({
-      mergeRequirementsSatisfied: detail.mergeRequirementsSatisfied,
-      checks: detail.checks,
-      checksState,
-      reviewDecision: sharedSummary?.reviewDecision,
-      baseBehind: freshness !== null,
-    });
   const renderMergeControl = (autoMerge: boolean) =>
     detail ? (
       <PullRequestMergeControl
-        key={`${pullRequestKey}:${detail.headSha}:${autoMerge}:${canAdminOverride && mergeRequirementsUnmet}`}
+        key={`${pullRequestKey}:${detail.headSha}:${autoMerge}:${canAdminOverride}`}
         label={autoMerge ? pendingAutoMergeLabel : selectedMergeMethodLabel}
         methodLabel={selectedMergeMethodLabel}
         baseBranch={detail.baseBranch}
         autoMerge={autoMerge}
-        canAdminOverride={canAdminOverride && mergeRequirementsUnmet}
+        canAdminOverride={canAdminOverride}
         pending={actionPending}
         onConfirm={(adminOverride) =>
           perform(

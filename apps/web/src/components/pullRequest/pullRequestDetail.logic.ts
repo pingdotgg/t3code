@@ -291,7 +291,7 @@ export function allowedPullRequestMergeMethods(
     : detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
 }
 
-function canPerformPullRequestAction(
+export function canPerformPullRequestAction(
   detail: Pick<PullRequestActionableDetail, "capabilities" | "viewerPermissions"> | null,
   action: PullRequestAction,
 ): boolean {
