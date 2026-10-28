@@ -94,7 +94,7 @@ export function ComponentCatalogScreen() {
           options={[
             { value: "controls", label: "Controls" },
             { value: "forms", label: "Forms" },
-            { value: "feedback", label: "Feedback", count: 3 },
+            { value: "feedback", label: "Feedback" },
           ]}
           selected={page}
           onSelect={setPage}

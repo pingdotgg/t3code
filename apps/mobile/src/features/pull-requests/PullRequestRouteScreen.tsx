@@ -156,7 +156,6 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
   })();
   return {
     rows,
-    count: result.data ? result.data.commentCount + result.data.reviewThreads.length : undefined,
     hiddenCount: filtered?.hiddenCount ?? 0,
     pending: result.isPending && !result.data,
     error: result.error,
@@ -779,11 +778,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                                 ...(guidesEnabled
                                   ? [{ value: "guide" as const, label: "Guide" }]
                                   : []),
-                                {
-                                  value: "activity",
-                                  label: "Activity",
-                                  count: activityContent.count,
-                                },
+                                { value: "activity", label: "Activity" },
                               ]}
                               selected={section}
                               onSelect={selectSection}

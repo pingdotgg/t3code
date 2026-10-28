@@ -15,7 +15,6 @@ export interface TabsProps<Value extends string> {
   readonly options: readonly {
     readonly value: Value;
     readonly label: string;
-    readonly count?: number;
   }[];
   readonly selected: Value;
   readonly onSelect: (value: Value) => void;
@@ -58,7 +57,7 @@ export function Tabs<Value extends string>(props: TabsProps<Value>) {
           <Pressable
             key={option.value}
             accessibilityRole="tab"
-            accessibilityLabel={option.count ? `${option.label}, ${option.count}` : option.label}
+            accessibilityLabel={option.label}
             accessibilityState={{ selected }}
             onPress={() => props.onSelect(option.value)}
             onLayout={({ nativeEvent: { layout } }) =>
@@ -80,11 +79,6 @@ export function Tabs<Value extends string>(props: TabsProps<Value>) {
             >
               {option.label}
             </AppText>
-            {option.count ? (
-              <AppText textRole="label" className="font-t3-medium text-foreground-muted">
-                {option.count}
-              </AppText>
-            ) : null}
           </Pressable>
         );
       })}
