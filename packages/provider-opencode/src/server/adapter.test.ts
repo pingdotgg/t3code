@@ -296,6 +296,112 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
+  it.effect("applies a changed runtime policy to existing subagent sessions", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+      const updates: Array<{
+        sessionID: string;
+        permission: ReturnType<typeof openCodePermissionRules>;
+      }> = [];
+      const fullAccess = runtimePolicy("full-access", { cwd: "/workspace" });
+      const supervised = runtimePolicy("approval-required", { cwd: "/workspace" });
+      const root = "ses_root";
+      const child = "ses_child";
+      const taskDeny = { permission: "task", pattern: "*", action: "deny" as const };
+      const nativePermissions = new Map<string, (typeof updates)[number]["permission"]>([
+        [root, openCodePermissionRules(fullAccess)],
+        [child, [taskDeny]],
+      ]);
+      let failNextChildUpdate = false;
+      const harness = yield* makeOpenCodeRuntimeHarness("child-policy-change", root, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+          get: async ({ sessionID }: { sessionID: string }) => ({
+            data: {
+              id: sessionID,
+              ...(sessionID === child ? { parentID: root } : {}),
+              permission: nativePermissions.get(sessionID),
+              time: { created: 1, updated: 1 },
+            },
+          }),
+          update: async (input: (typeof updates)[number]) => {
+            if (input.sessionID === child && failNextChildUpdate) {
+              failNextChildUpdate = false;
+              throw new Error("child update failed");
+            }
+            updates.push(input);
+            nativePermissions.set(input.sessionID, input.permission);
+            return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
+          },
+          promptAsync: async () => ({ data: true }),
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+
+      yield* harness.startTurn("hello", harness.providerThread, fullAccess);
+      yield* push({
+        type: "message.part.updated",
+        properties: {
+          sessionID: root,
+          part: {
+            id: "prt_task",
+            sessionID: root,
+            messageID: "msg_root_assistant",
+            type: "tool",
+            tool: "task",
+            callID: "call_task",
+            state: {
+              status: "running",
+              input: { description: "Explore", prompt: "look around", subagent_type: "general" },
+              title: "Explore",
+              metadata: { parentSessionId: root, sessionId: child },
+              time: { start: 3 },
+            },
+          },
+        },
+      });
+      const childUpdates = () => updates.filter((update) => update.sessionID === child);
+      assert.equal(permissionAction(childUpdates().at(-1)!.permission, "bash"), "allow");
+
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: supervised,
+      });
+      const childRules = childUpdates().at(-1)!.permission;
+      assert.equal(childUpdates().length, 2);
+      assert.equal(permissionAction(childRules, "bash"), "ask");
+      assert.equal(permissionAction(childRules, "task"), "deny");
+      assert.deepStrictEqual(childRules, openCodeChildPermissionRules(supervised, [taskDeny]));
+
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: fullAccess,
+      });
+      assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "allow");
+
+      failNextChildUpdate = true;
+      const failed = yield* Effect.exit(
+        harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          runtimePolicy: supervised,
+        }),
+      );
+      assert.isTrue(Exit.isFailure(failed));
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: supervised,
+      });
+      assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "ask");
+      assert.equal(permissionAction(nativePermissions.get(child)!, "task"), "deny");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect.each(["completed", "failed", "unavailable"] as const)(
     "normalizes OpenCode step usage for %s turns",
     (ending) =>
@@ -2428,6 +2534,17 @@ describe("OpenCodeAdapterV2", () => {
     ]);
     assert.equal(permissionAction(childApprovalRules, "bash"), "ask");
     assert.equal(permissionAction(childApprovalRules, "task"), "deny");
+
+    const fullAccessChildRules = openCodeChildPermissionRules(runtimePolicy("full-access"), [
+      { permission: "task", pattern: "*", action: "deny" },
+    ]);
+    const reappliedRules = openCodeChildPermissionRules(
+      approvalRequiredPolicy,
+      fullAccessChildRules,
+      openCodePermissionRules(runtimePolicy("full-access")),
+    );
+    assert.equal(permissionAction(reappliedRules, "bash"), "ask");
+    assert.equal(permissionAction(reappliedRules, "task"), "deny");
   });
 
   it("uses the next native user message as the exclusive fork and revert boundary", () => {
