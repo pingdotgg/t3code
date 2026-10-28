@@ -34,6 +34,7 @@
     "knip:production": "knip --production --preprocessor ./scripts/knip-schemas.ts",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "mobile:install": "node scripts/mobile-native-client.ts ensure",
+    "mobile:behavior": "node scripts/mobile-behavior.ts",
     "mobile:e2e": "node scripts/mobile-e2e.ts",
     "test": "vp run -r test",
     "test:cached": "node scripts/test-cached.ts",
