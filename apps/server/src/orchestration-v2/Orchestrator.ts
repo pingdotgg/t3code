@@ -1920,6 +1920,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
         providerThreadId: queuedProviderThread.id,
         inputIntent: "queued_turn",
+        status: "completed",
         startedAt: now,
         completedAt: now,
         updatedAt: now,
@@ -5749,6 +5750,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerThreadId: queuedProviderThread.id,
             providerTurnId: null,
             inputIntent: "queued_turn",
+            status: "pending",
+            startedAt: null,
+            completedAt: null,
             updatedAt: now,
           },
         });
