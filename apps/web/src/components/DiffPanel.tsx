@@ -1431,6 +1431,7 @@ export default function DiffPanel({
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
                     pendingFiles={pendingFiles}
+                    isRefreshingDiff={isRefreshingDiff}
                     renderCodeViewFooter={renderLoadingBoundary}
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}
