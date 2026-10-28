@@ -18,6 +18,10 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { draftWorkspaceStrategy } from "@t3tools/client-runtime/operations";
+import {
+  nextPipelineStartAttempt,
+  type PipelineStartAttempt,
+} from "@t3tools/client-runtime/pipeline-start";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import {
   isAtomCommandInterrupted,
@@ -39,7 +43,6 @@ import { KeyboardController } from "react-native-keyboard-controller";
 
 import {
   AuthOrchestrationOperateScope,
-  CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   resolveEnvironmentMachineKind,
@@ -62,11 +65,10 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
-import { randomHex } from "../../lib/uuid";
+import { uuidv4 } from "../../lib/uuid";
 import { Menu } from "../../components/ui/Menu";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { nextPipelineStartAttempt, type PipelineStartAttempt } from "./pipeline-run-view";
 import { waitForThreadShell } from "./wait-for-thread-shell";
 import {
   activeDraftPipelineId,
@@ -690,25 +692,19 @@ export function NewTaskDraftScreen(props: {
         workspaceMode === "worktree" ? null : (workspaceSelection.worktreePath ?? null);
       const attempt = (pipelineStartAttemptRef.current = nextPipelineStartAttempt(
         pipelineStartAttemptRef.current,
-        JSON.stringify([
-          selectedPipeline.id,
-          selectedProject.id,
-          initialMessageText,
-          workspaceMode,
-          branch,
-          worktreePath,
-          startFromOrigin,
-        ]),
-        () => ({
-          commandId: CommandId.make(creationMetadata.commandId),
-          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
-        }),
+        {
+          pipelineId: selectedPipeline.id,
+          projectId: selectedProject.id,
+          input: initialMessageText,
+          workspace: [workspaceMode, branch, worktreePath, startFromOrigin],
+        },
+        uuidv4,
       ));
       flow.setSubmitting(true);
       const started = await startPipelineRun({
         environmentId: selectedProject.environmentId,
         input: {
-          commandId: CommandId.make(attempt.commandId),
+          commandId: attempt.commandId,
           pipelineId: selectedPipeline.id,
           projectId: selectedProject.id,
           input: initialMessageText,
@@ -718,7 +714,9 @@ export function NewTaskDraftScreen(props: {
               ? {
                   projectCwd: selectedProject.workspaceRoot,
                   baseBranch: branch,
-                  branch: attempt.worktreeBranchName,
+                  branch: buildTemporaryWorktreeBranchName(() =>
+                    attempt.commandId.replaceAll("-", ""),
+                  ),
                   ...(startFromOrigin ? { startFromOrigin: true } : {}),
                 }
               : undefined,

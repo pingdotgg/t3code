@@ -53,6 +53,7 @@ import {
 } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
+import { indexPipelineLiveRuns } from "./pipelineNesting.ts";
 import {
   applyServerConfigProjection,
   reuseUnchanged,
@@ -1196,6 +1197,27 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
   }) => welcomeFamily(target.environmentId);
+  // One stream per environment of every running or paused run, for thread lists. Subscribe only
+  // where capabilities.pipelines is advertised.
+  const pipelineRunsLive = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:server:pipeline-runs:live",
+    tag: WS_METHODS.pipelineRunsSubscribeLive,
+  });
+  /** Keyed by the environments' ids joined with "\n", so equal lists share one atom. */
+  const pipelineLiveRunsAtom = Atom.family((environmentIdsKey: string) =>
+    Atom.make((get) =>
+      indexPipelineLiveRuns(
+        (environmentIdsKey === "" ? [] : (environmentIdsKey.split("\n") as EnvironmentId[])).map(
+          (environmentId) => ({
+            environmentId,
+            runs:
+              AsyncResult.getOrElse(get(pipelineRunsLive({ environmentId, input: {} })), () => null)
+                ?.runs ?? [],
+          }),
+        ),
+      ),
+    ).pipe(Atom.withLabel(`environment-data:server:pipeline-live-runs:${environmentIdsKey}`)),
+  );
   const updateSettings = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:server:update-settings",
     tag: WS_METHODS.serverUpdateSettings,
@@ -1348,6 +1370,8 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:pipeline-run:live",
       tag: WS_METHODS.pipelineRunsSubscribe,
     }),
+    pipelineRunsLive,
+    pipelineLiveRunsAtom,
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {

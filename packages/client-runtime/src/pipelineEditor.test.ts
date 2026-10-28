@@ -194,12 +194,36 @@ describe("form and input conversion", () => {
 
   it("turns a starter into a create input that keeps the step ids its prompts reference", () => {
     const input = draftToUpsertInput(
-      starterToDraft(FEATURE_DELIVERY_PIPELINE, idSequence(), "approval-required"),
+      starterToDraft(FEATURE_DELIVERY_PIPELINE, idSequence(), {
+        ...defaults,
+        runtimeMode: "approval-required",
+      }),
     );
     expect(input).toMatchObject({ commandId: "id-1", name: FEATURE_DELIVERY_PIPELINE.name });
     expect(input).not.toHaveProperty("id");
     expect(input?.steps).toEqual(
       withStarterRuntimeMode(FEATURE_DELIVERY_PIPELINE.steps, "approval-required"),
+    );
+  });
+
+  it("swaps a starter step on an unavailable provider for the default model", () => {
+    const draft = starterToDraft(
+      FEATURE_DELIVERY_PIPELINE,
+      idSequence(),
+      defaults,
+      new Set(["codex"]),
+    );
+    expect(draft.steps.map((entry) => entry.modelSelection)).toEqual(
+      FEATURE_DELIVERY_PIPELINE.steps.map(() => defaults.modelSelection),
+    );
+    const available = starterToDraft(
+      FEATURE_DELIVERY_PIPELINE,
+      idSequence(),
+      { ...defaults, modelSelection: null },
+      new Set([claude.instanceId]),
+    );
+    expect(available.steps.map((entry) => entry.modelSelection)).toEqual(
+      FEATURE_DELIVERY_PIPELINE.steps.map((entry) => entry.modelSelection),
     );
   });
 
@@ -234,6 +258,14 @@ describe("draft issues", () => {
       "Choose a model.",
       "Write a prompt template.",
     ]);
+  });
+
+  it("reports a step on a provider the environment does not have", () => {
+    const draft = draftOf([step({ name: "Plan" }), step({ name: "Build", modelSelection: codex })]);
+    expect(pipelineDraftIssues(draft).valid).toBe(true);
+    const issues = pipelineDraftIssues(draft, new Set([claude.instanceId]));
+    expect(issues.valid).toBe(false);
+    expect(issues.messages).toEqual(["Build: Provider codex isn't available here."]);
   });
 
   it("limits the step count and validates skill names", () => {

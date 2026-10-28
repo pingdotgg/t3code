@@ -85,15 +85,23 @@ export function pipelineStepStatusLabel(step: Pick<PipelineRunStep, "status">): 
   }
 }
 
+/** Where a step's thread sits in its run; null for a step the run does not have. */
+export function pipelineStepPosition(
+  run: Pick<PipelineRun, "definition" | "steps">,
+  stepId: string,
+): { readonly number: number; readonly total: number; readonly name: string } | null {
+  const index = run.steps.findIndex((step) => step.stepId === stepId);
+  if (index < 0) return null;
+  return { number: index + 1, total: run.definition.steps.length, name: stepName(run, index) };
+}
+
 /** Breadcrumb for a step's thread: "Pipeline: <name> · step n/N". */
 export function pipelineStepBreadcrumbTitle(
   run: Pick<PipelineRun, "definition" | "steps">,
   stepId: string,
 ): string {
-  const index = run.steps.findIndex((step) => step.stepId === stepId);
-  const total = run.definition.steps.length;
-  const position = index < 0 ? "" : ` · step ${index + 1}/${total}`;
-  return `Pipeline: ${run.definition.name}${position}`;
+  const position = pipelineStepPosition(run, stepId);
+  return `Pipeline: ${run.definition.name}${position ? ` · step ${position.number}/${position.total}` : ""}`;
 }
 
 export interface PipelineFeedingStep {

@@ -385,18 +385,24 @@ export function scheduledTaskDestinationThreads(
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
-export function scheduledTaskDefaultModel(
-  settings: ServerSettings,
-  project: (LegacyProjectSettingsFields & { readonly id: ProjectId }) | null,
+export function usableProviderEntries(
   entries: readonly ProviderInstanceEntry[],
-): ModelSelection | null {
-  const available = entries.filter(
+): readonly ProviderInstanceEntry[] {
+  return entries.filter(
     (entry) =>
       entry.enabled &&
       entry.installed &&
       entry.isAvailable &&
       entry.snapshot.auth.status !== "unauthenticated",
   );
+}
+
+export function scheduledTaskDefaultModel(
+  settings: ServerSettings,
+  project: (LegacyProjectSettingsFields & { readonly id: ProjectId }) | null,
+  entries: readonly ProviderInstanceEntry[],
+): ModelSelection | null {
+  const available = usableProviderEntries(entries);
   const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
     .defaultModelSelection;
   for (const selection of [configured, settings.defaultModelSelection]) {

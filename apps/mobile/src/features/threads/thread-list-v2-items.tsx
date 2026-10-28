@@ -30,7 +30,6 @@ import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import {
   mergePipelineParentStatus,
-  nestedPipelineStepLabel,
   type PipelineStepStatus,
 } from "@t3tools/client-runtime/state/pipeline-nesting";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -678,6 +677,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly isLastStep?: boolean;
   /** On a pipeline's parent: what its steps need; replaces a quiet status of its own. */
   readonly stepStatus?: PipelineStepStatus | null;
+  /** On a pipeline step: its label under the parent; the thread title when unset. */
+  readonly stepLabel?: string;
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
   readonly pinned?: boolean;
@@ -1552,7 +1553,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               )}
               numberOfLines={1}
             >
-              {nested ? nestedPipelineStepLabel(thread.title) : thread.title}
+              {nested ? (props.stepLabel ?? thread.title) : thread.title}
             </Text>
             {providerNameLabel ? (
               <Text

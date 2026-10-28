@@ -8,20 +8,14 @@ Pipelines need a T3 Code server that supports them. Update an older server befor
 
 ## Set up a pipeline
 
-Define pipelines in **Settings → Pipelines** on web, desktop, and mobile. Choose **New pipeline**
-and start from **Blank** or from the **Feature delivery** template.
+Define pipelines in **Settings → Pipelines**. Choose **New pipeline** and start from **Blank** or
+from the **Feature delivery** template, a full feature-delivery flow from requirements to review.
+T3 Code adds it once. If you delete it, it stays deleted, and you can recreate it from the
+template.
 
-T3 Code adds **Feature delivery** once: Refine requirements, Implement, Prepare QA, QA, Review,
-and Visual review guide, using Claude models. If you delete it, create it again from the template.
-
-Each step has:
-
-- A name, and the provider and model it uses, with options such as effort.
-- Permissions, which set the step's [permission mode](./permission-modes.md). Pipelines have no
-  plan mode.
-- Skills, which T3 Code adds to the prompt as `$skill` mentions.
-- A prompt template.
-- **Pause before this step**, which waits for you before the step starts.
+Each step has a name, a provider and model, a prompt template, optional skills, and a
+[permission mode](./permission-modes.md). Pipelines have no plan mode. The starter's steps use the
+default runtime mode from your settings. You can also make a step wait for you before it starts.
 
 ### Template variables
 
@@ -33,7 +27,7 @@ Use these variables in a prompt template:
 | `{{previous.output}}`                | The final answer of the nearest earlier step that completed. |
 | `{{steps.<step id or name>.output}}` | The final answer of that step.                               |
 
-Because `{{previous.output}}` comes from the nearest completed step, it is not always the step directly above, for example after you skip one.
+`{{previous.output}}` is not always the step directly above, for example after you skip one.
 
 ### Skills
 
@@ -43,33 +37,26 @@ without skill support can show the mention to the agent as literal text.
 
 ## Start a pipeline
 
-Start from a new thread:
-
-- On web and desktop, pick the pipeline from the **Pipeline** control in the composer.
-- On mobile, pick it on the new-task screen.
-- In the command palette, choose **Start pipeline…**.
+Pick a pipeline when you start a new thread, or choose **Start pipeline…** in the command palette.
+You can also ask an agent to start one for you. Agents can list your pipelines, start, check on,
+continue, and cancel runs when you ask them to.
 
 The starting prompt is text only. Attachments are not supported.
-
-A run creates a parent thread that shows progress, and one thread per step. The step threads sit
-under the parent in the sidebar. The parent has no composer.
 
 ## Work with a run
 
 A step is done when its agent has finished, including any subagents it launched and any queued
-follow-ups. Its final answer feeds the next step.
+follow-ups. Open a step's thread to steer it like any other chat.
 
-Open a step's thread to steer it like any other chat. When the run is paused, either before a step
-or after a failure, you can keep chatting in the previous step's thread to refine its answer.
-**Continue** then uses that thread's latest answer.
-
-The run offers these actions:
-
-- **Continue** resumes a paused run.
-- **Retry step** runs the step again in a new thread, in the same workspace.
-- **Skip step** moves on without it.
+- **Refine before continuing.** When a run is paused, before a step or after a failure, keep
+  chatting in the previous step's thread. **Continue** then passes that thread's latest answer on.
+  A paused run is marked as needing attention in the sidebar.
+- **Retry** runs a failed step again in a new thread, in the same workspace.
+- **Skip** moves on without a step.
 - **Cancel** stops the active step.
-- Each step has a pause toggle, so you can pause before a step that has not started yet.
+- **Pause** a step that has not started yet if you want to check the result before it runs.
+
+An agent cannot move past a pause on a run you started. Continue those yourself.
 
 ### Shared workspace
 

@@ -254,6 +254,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    pipelineEnvironmentIds,
     snoozePresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
@@ -276,6 +277,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     searchQuery: props.searchQuery,
     searchMatches: threadSearchMatchByKey,
     settlementEnvironmentIds,
+    pipelineEnvironmentIds,
     snoozeEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
@@ -417,6 +419,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             nested={item.item.nested}
             isLastStep={item.item.isLastStep}
             stepStatus={item.item.stepStatus}
+            stepLabel={item.item.stepLabel}
             hasQueuedMessages={item.hasQueuedMessages}
             snoozed={item.item.snoozed}
             pinned={item.item.pinned}

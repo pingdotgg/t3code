@@ -7,10 +7,8 @@ import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   activeDraftPipelineId,
   approvalRedirectNotice,
-  commandIdForPipelineSend,
   PIPELINE_TEXT_ONLY_HINT,
   pipelineSendBlock,
-  pipelineSendRetryKey,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -148,24 +146,5 @@ describe("pipelineSendBlock", () => {
     expect(pipelineSendBlock({ attachmentCount: 0, hasContext: true })).toBe(
       PIPELINE_TEXT_ONLY_HINT,
     );
-  });
-});
-
-describe("commandIdForPipelineSend", () => {
-  const key = (text: string) =>
-    pipelineSendRetryKey({
-      routeKey: "r",
-      pipelineId: "p",
-      projectId: "proj",
-      workspaceStrategy: { type: "root" },
-      text,
-    });
-  it("reuses the id for the same attempt and mints a new one when the text changes", () => {
-    const commands = new Map<string, string>();
-    let next = 0;
-    const make = () => `cmd-${(next += 1)}`;
-    expect(commandIdForPipelineSend(commands, key("a"), make)).toBe("cmd-1");
-    expect(commandIdForPipelineSend(commands, key("a"), make)).toBe("cmd-1");
-    expect(commandIdForPipelineSend(commands, key("b"), make)).toBe("cmd-2");
   });
 });

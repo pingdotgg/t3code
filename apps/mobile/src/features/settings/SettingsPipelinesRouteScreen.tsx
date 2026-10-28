@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   PIPELINE_MAX_STEPS,
+  PIPELINE_STEP_SKILLS_MAX,
   resolveEnvironmentMachineKind,
   type EnvironmentId,
   type PipelineDefinition,
@@ -52,7 +53,6 @@ import {
   normalizeSkillName,
   pipelineDraftIssues,
   pipelineToDraft,
-  PIPELINE_STEP_SKILLS_MAX,
   resolveStepIds,
   type PipelineDraft,
   type PipelineStepDraft,
@@ -62,6 +62,8 @@ import { SettingsSection } from "./components/SettingsSection";
 import {
   discardPipelineEditor,
   markPipelineEditorSaved,
+  pipelineAvailableInstanceIds,
+  pipelineStepDefaults,
   pipelineTargetSupportsPipelines,
   usePipelineEditor,
 } from "./pipeline-editor";
@@ -369,7 +371,10 @@ function PipelineForm({
     pipelines.data !== null &&
     !pipelines.data.pipelines.some((pipeline) => pipeline.id === draft.editingId);
   const environmentUnavailable = !targets.some((target) => target.environmentId === environmentId);
-  const issues = pipelineDraftIssues(draft).messages;
+  const issues = pipelineDraftIssues(
+    draft,
+    config ? pipelineAvailableInstanceIds(config) : undefined,
+  ).messages;
   const stepIds = resolveStepIds(draft.steps);
 
   const updateStep = (stepId: string, patch: Partial<PipelineStepDraft>) =>
@@ -387,7 +392,7 @@ function PipelineForm({
       environmentUnavailable
     )
       return;
-    const input = draftToUpsertInput(draft);
+    const input = issues.length === 0 ? draftToUpsertInput(draft) : null;
     if (!input) {
       Dialog.alert("Incomplete pipeline", issues[0] ?? "Fix the highlighted problems first.");
       return;
@@ -499,11 +504,7 @@ function PipelineForm({
               ...draft,
               steps: [
                 ...draft.steps,
-                newStepDraft(
-                  draft.steps,
-                  { modelSelection: null, runtimeMode: "full-access" },
-                  uuidv4,
-                ),
+                newStepDraft(draft.steps, pipelineStepDefaults(config), uuidv4),
               ],
             })
           }

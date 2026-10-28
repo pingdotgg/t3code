@@ -4,8 +4,9 @@ import {
   hasPipelineDraftChanges,
   starterToDraft,
   type PipelineDraft,
+  type PipelineStepDefaults,
 } from "@t3tools/client-runtime/pipeline-editor";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import type { PipelineStarter } from "@t3tools/shared/pipelineStarters";
 import { Atom } from "effect/reactivity";
 import { useCallback, useMemo, type Dispatch, type SetStateAction } from "react";
@@ -13,6 +14,7 @@ import { useCallback, useMemo, type Dispatch, type SetStateAction } from "react"
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useServerConfigs } from "../../state/entities";
+import { buildModelOptions } from "../../lib/modelOptions";
 import { scheduledTaskDefaultModel } from "./scheduledTaskDraft";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
@@ -33,6 +35,22 @@ type PipelineEditorSession = {
 export const pipelineEditorSessionAtom = Atom.make<PipelineEditorSession | null>(null).pipe(
   Atom.keepAlive,
 );
+
+/** The provider instances a pipeline step can run on in `config`'s environment. */
+export function pipelineAvailableInstanceIds(config: ServerConfig | null): ReadonlySet<string> {
+  return new Set(
+    buildModelOptions(config, null, undefined, null).flatMap((option) =>
+      option.isUnavailable ? [] : [option.selection.instanceId],
+    ),
+  );
+}
+
+export function pipelineStepDefaults(config: ServerConfig | null): PipelineStepDefaults {
+  return {
+    modelSelection: scheduledTaskDefaultModel(config, null),
+    runtimeMode: (config?.settings ?? DEFAULT_SERVER_SETTINGS).defaultRuntimeMode,
+  };
+}
 
 export function pipelineTargetSupportsPipelines(target: SettingsTarget): boolean {
   return target.serverConfig.environment.capabilities.pipelines === true;
@@ -73,7 +91,7 @@ export function usePipelineEditor() {
   const defaultTarget = pipelineTargets[0];
   const modelForEnvironment = useCallback(
     (environmentId: EnvironmentId) =>
-      scheduledTaskDefaultModel(configs.get(environmentId) ?? null, null),
+      pipelineStepDefaults(configs.get(environmentId) ?? null).modelSelection,
     [configs],
   );
   const defaultEditor = useMemo<PipelineEditor | null>(
@@ -83,16 +101,13 @@ export function usePipelineEditor() {
             environmentId: defaultTarget.environmentId,
             environmentLabel: defaultTarget.label,
             draft: emptyPipelineDraft(
-              {
-                modelSelection: modelForEnvironment(defaultTarget.environmentId),
-                runtimeMode: "full-access",
-              },
+              pipelineStepDefaults(configs.get(defaultTarget.environmentId) ?? null),
               uuidv4,
             ),
             modelStepId: null,
           }
         : null,
-    [defaultTarget, modelForEnvironment],
+    [defaultTarget, configs],
   );
   const session = useAtomValue(pipelineEditorSessionAtom);
   const editor = session ? session.current : defaultEditor;
@@ -114,10 +129,16 @@ export function usePipelineEditor() {
     resetEditor: () => startPipelineEditor(defaultEditor),
     startFromStarter: (starter: PipelineStarter) => {
       if (!defaultTarget) return;
+      const config = configs.get(defaultTarget.environmentId) ?? null;
       startPipelineEditor({
         environmentId: defaultTarget.environmentId,
         environmentLabel: defaultTarget.label,
-        draft: starterToDraft(starter, uuidv4),
+        draft: starterToDraft(
+          starter,
+          uuidv4,
+          pipelineStepDefaults(config),
+          pipelineAvailableInstanceIds(config),
+        ),
         modelStepId: null,
       });
     },

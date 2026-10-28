@@ -109,36 +109,3 @@ export function pipelineSendBlock(input: {
 }): string | null {
   return input.attachmentCount > 0 || input.hasContext ? PIPELINE_TEXT_ONLY_HINT : null;
 }
-
-/** Same pipeline, project, workspace and text means the same attempt. */
-export function pipelineSendRetryKey(input: {
-  readonly routeKey: string;
-  readonly pipelineId: string;
-  readonly projectId: string;
-  readonly workspaceStrategy: unknown;
-  readonly text: string;
-}): string {
-  return JSON.stringify([
-    input.routeKey,
-    input.pipelineId,
-    input.projectId,
-    input.workspaceStrategy,
-    input.text,
-  ]);
-}
-
-/**
- * A command id that stays the same while the same send is retried, so a request that reached the
- * server before failing resolves to its run instead of starting a second one.
- */
-export function commandIdForPipelineSend<T>(
-  commands: Map<string, T>,
-  retryKey: string,
-  make: () => T,
-): T {
-  const existing = commands.get(retryKey);
-  if (existing !== undefined) return existing;
-  const created = make();
-  commands.set(retryKey, created);
-  return created;
-}

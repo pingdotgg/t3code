@@ -23,18 +23,22 @@ import { RuntimeMode } from "./providerPolicy.ts";
 
 export const PIPELINE_MAX_STEPS = 12;
 export const PIPELINE_OUTPUT_PREVIEW_CHARS = 2_000;
+export const PIPELINE_NAME_MAX_LENGTH = 80;
+export const PIPELINE_STEP_SKILLS_MAX = 8;
 
 /** The name part of a `$skill` mention, as the composer parses it. */
+export const PIPELINE_SKILL_NAME_PATTERN =
+  /^(?=[a-zA-Z0-9:_-]*[a-zA-Z])[a-zA-Z0-9][a-zA-Z0-9:_-]*$/;
 const PipelineSkillName = TrimmedNonEmptyString.check(
-  Schema.isPattern(/^(?=[a-zA-Z0-9:_-]*[a-zA-Z])[a-zA-Z0-9][a-zA-Z0-9:_-]*$/),
+  Schema.isPattern(PIPELINE_SKILL_NAME_PATTERN),
 );
 
 export const PipelineStep = Schema.Struct({
   id: PipelineStepId,
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(PIPELINE_NAME_MAX_LENGTH)),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
-  skills: Schema.Array(PipelineSkillName).check(Schema.isMaxLength(8)),
+  skills: Schema.Array(PipelineSkillName).check(Schema.isMaxLength(PIPELINE_STEP_SKILLS_MAX)),
   promptTemplate: TrimmedNonEmptyString,
   pauseBefore: Schema.Boolean,
 });
@@ -145,7 +149,7 @@ export function pipelineDefinitionIssues(
   return issues;
 }
 
-const PipelineName = TrimmedNonEmptyString.check(Schema.isMaxLength(80));
+const PipelineName = TrimmedNonEmptyString.check(Schema.isMaxLength(PIPELINE_NAME_MAX_LENGTH));
 
 const PipelineSteps = Schema.Array(PipelineStep)
   .check(Schema.isMinLength(1), Schema.isMaxLength(PIPELINE_MAX_STEPS))

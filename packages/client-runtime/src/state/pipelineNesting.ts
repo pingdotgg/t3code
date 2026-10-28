@@ -1,4 +1,4 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, PipelineRunSummary, ThreadId } from "@t3tools/contracts";
 
 import { scopedThreadKey, scopeThreadRef } from "../environment/scoped.ts";
 
@@ -9,6 +9,9 @@ export interface PipelineNestable {
   readonly createdAt: string;
   readonly pipeline?: { readonly runId: string; readonly stepId: string | null } | null | undefined;
 }
+
+/** Running and paused runs by `environmentId:runId`, from the environments' live-run streams. */
+export type PipelineLiveRuns = ReadonlyMap<string, PipelineRunSummary>;
 
 export interface PipelineNesting<T> {
   /** The list's top-level rows in display order; a pipeline's steps are not repeated here. */
@@ -70,16 +73,42 @@ export function pipelineStepsOfParents<T extends PipelineNestable>(
   return stepsOfParent;
 }
 
+export function indexPipelineLiveRuns(
+  environments: Iterable<{
+    readonly environmentId: EnvironmentId;
+    readonly runs: ReadonlyArray<PipelineRunSummary>;
+  }>,
+): PipelineLiveRuns {
+  const index = new Map<string, PipelineRunSummary>();
+  for (const { environmentId, runs } of environments) {
+    for (const run of runs) index.set(runKey(environmentId, run.id), run);
+  }
+  return index;
+}
+
+/** The live run a parent or step thread belongs to; undefined for a run that is over or unknown. */
+export function livePipelineRunOf(
+  runs: PipelineLiveRuns | undefined,
+  shell: PipelineNestable,
+): PipelineRunSummary | undefined {
+  return shell.pipeline == null
+    ? undefined
+    : runs?.get(runKey(shell.environmentId, shell.pipeline.runId));
+}
+
 /**
  * Whether a pipeline's group is active for shelf placement: the parent or any
  * of its steps is, by the predicate the shelf already uses. A parent with no
- * active step is placed as itself.
+ * active step is placed as itself. A paused run waits on the user, so like any
+ * thread needing input it is never active.
  */
 export function isPipelineGroupActive<T extends PipelineNestable>(
   parent: T,
   stepsOfParent: ReadonlyMap<string, readonly T[]>,
   isActive: (shell: T) => boolean,
+  liveRuns?: PipelineLiveRuns,
 ): boolean {
+  if (livePipelineRunOf(liveRuns, parent)?.status === "paused") return false;
   return (
     isActive(parent) ||
     (stepsOfParent.get(shellKey(parent))?.some((step) => isActive(step)) ?? false)
@@ -158,12 +187,29 @@ export function nestedPipelineStepLabel(title: string): string {
   return label === "" ? title : label;
 }
 
+/** A step's label under its parent: its name in the live run, else its title as `nestedPipelineStepLabel` reads it. */
+export function pipelineStepLabel(
+  runs: PipelineLiveRuns | undefined,
+  step: PipelineNestable & { readonly title: string },
+): string {
+  const stepId = step.pipeline?.stepId;
+  const name = livePipelineRunOf(runs, step)?.steps.find((entry) => entry.stepId === stepId)?.name;
+  return name === undefined || name === "" ? nestedPipelineStepLabel(step.title) : name;
+}
+
 const URGENT_STEP_STATUSES = ["approval", "input", "request", "working"] as const;
 export type PipelineStepStatus = (typeof URGENT_STEP_STATUSES)[number];
 
-/** The most urgent status among a pipeline's steps (needs you before running), or null. */
-export function aggregatePipelineStepStatus(statuses: Iterable<string>): PipelineStepStatus | null {
+/**
+ * The most urgent status among a pipeline's steps (needs you before running), or null. A paused
+ * run counts as `input`: it waits on Continue, or on a failed or stopped step.
+ */
+export function aggregatePipelineStepStatus(
+  statuses: Iterable<string>,
+  run?: Pick<PipelineRunSummary, "status"> | null,
+): PipelineStepStatus | null {
   const seen = new Set(statuses);
+  if (run?.status === "paused") seen.add("input");
   return URGENT_STEP_STATUSES.find((status) => seen.has(status)) ?? null;
 }
 

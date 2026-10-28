@@ -12,8 +12,6 @@ import {
   moveStep,
   newStepDraft,
   normalizeSkillName,
-  PIPELINE_NAME_MAX_LENGTH,
-  PIPELINE_STEP_SKILLS_MAX,
   type PipelineDraft,
   pipelineDraftIssues,
   type PipelineStepDefaults,
@@ -27,6 +25,8 @@ import {
   type EnvironmentId,
   type ModelSelection,
   PIPELINE_MAX_STEPS,
+  PIPELINE_NAME_MAX_LENGTH,
+  PIPELINE_STEP_SKILLS_MAX,
   type PipelineDefinition,
   type ProviderInstanceId,
   type RuntimeMode,
@@ -88,7 +88,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { scheduledTaskDefaultModel } from "./scheduledTasksSettings.logic";
+import { scheduledTaskDefaultModel, usableProviderEntries } from "./scheduledTasksSettings.logic";
 
 import {
   SettingsPageContainer,
@@ -436,6 +436,9 @@ function PipelineEditorDialog({
     reportFailure: false,
   });
   const instanceEntries = providerInstanceEntriesFor(providers, settings, null);
+  const availableInstanceIds = new Set(
+    usableProviderEntries(instanceEntries).map((entry) => entry.instanceId),
+  );
   const defaults: PipelineStepDefaults = {
     modelSelection: scheduledTaskDefaultModel(settings, null, instanceEntries),
     runtimeMode: settings.defaultRuntimeMode,
@@ -444,7 +447,7 @@ function PipelineEditorDialog({
     pipeline
       ? pipelineToDraft(pipeline, randomUUID)
       : starter
-        ? starterToDraft(starter, randomUUID, defaults.runtimeMode)
+        ? starterToDraft(starter, randomUUID, defaults, availableInstanceIds)
         : emptyPipelineDraft(defaults, randomUUID),
   );
   const [draft, setDraft] = useState<PipelineDraft>(baseline);
@@ -457,7 +460,7 @@ function PipelineEditorDialog({
     setDraft(withDefaultModel(draft, defaults.modelSelection));
   }
   const submissionPending = useRef(false);
-  const issues = pipelineDraftIssues(draft);
+  const issues = pipelineDraftIssues(draft, availableInstanceIds);
   const canSubmit = issues.valid && connected && canOperate && !saving;
 
   const updateStep = (key: string, patch: Partial<PipelineStepDraft>) =>

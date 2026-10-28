@@ -2,7 +2,10 @@ import {
   CommandId,
   type ModelSelection,
   PIPELINE_MAX_STEPS,
-  DEFAULT_RUNTIME_MODE,
+  PIPELINE_NAME_MAX_LENGTH,
+  PIPELINE_SKILL_NAME_PATTERN,
+  PIPELINE_STEP_ID_MAX_LENGTH,
+  PIPELINE_STEP_SKILLS_MAX,
   type PipelineDefinition,
   PipelineStepId,
   type PipelineStep,
@@ -17,15 +20,8 @@ import {
  * injected (`newId`) so the module stays pure.
  */
 
-export const PIPELINE_NAME_MAX_LENGTH = 80;
-export const PIPELINE_STEP_SKILLS_MAX = 8;
-const PIPELINE_STEP_ID_MAX_LENGTH = 48;
-
 const FIRST_STEP_TEMPLATE = "{{input}}";
 const FOLLOWING_STEP_TEMPLATE = "{{previous.output}}";
-
-/** Same shape the contract accepts for a `$skill` mention name. */
-const SKILL_NAME_PATTERN = /^(?=[a-zA-Z0-9:_-]*[a-zA-Z])[a-zA-Z0-9][a-zA-Z0-9:_-]*$/;
 
 export interface PipelineStepDraft {
   /** Stable UI key; never sent to the server. */
@@ -129,7 +125,9 @@ export function emptyPipelineDraft(
 }
 
 function stepsToDrafts(
-  steps: PipelineDefinition["steps"],
+  steps: ReadonlyArray<
+    Omit<PipelineStep, "modelSelection"> & Pick<PipelineStepDraft, "modelSelection">
+  >,
   newId: () => string,
 ): ReadonlyArray<PipelineStepDraft> {
   return steps.map((step) => ({
@@ -156,7 +154,8 @@ export function pipelineToDraft(pipeline: PipelineDefinition, newId: () => strin
 /**
  * A new, unsaved pipeline prefilled from a starter. Step ids stay locked to the starter's own,
  * because its prompts reference them (`{{steps.requirements.output}}`) and slugs of the names
- * would not match.
+ * would not match. With `availableInstanceIds`, a step on any other provider instance takes the
+ * default model instead.
  */
 export function starterToDraft(
   starter: {
@@ -164,14 +163,23 @@ export function starterToDraft(
     readonly steps: ReadonlyArray<Omit<PipelineStep, "runtimeMode">>;
   },
   newId: () => string,
-  runtimeMode: RuntimeMode = DEFAULT_RUNTIME_MODE,
+  defaults: PipelineStepDefaults,
+  availableInstanceIds?: ReadonlySet<string>,
 ): PipelineDraft {
   return {
     editingId: null,
     commandId: newId(),
     name: starter.name,
     steps: stepsToDrafts(
-      starter.steps.map((starterStep) => ({ ...starterStep, runtimeMode })),
+      starter.steps.map((starterStep) => ({
+        ...starterStep,
+        runtimeMode: defaults.runtimeMode,
+        modelSelection:
+          availableInstanceIds === undefined ||
+          availableInstanceIds.has(starterStep.modelSelection.instanceId)
+            ? starterStep.modelSelection
+            : defaults.modelSelection,
+      })),
       newId,
     ),
   };
@@ -195,7 +203,7 @@ export function moveStep<T>(
 /** Accepts what a user types or pastes: `$review`, ` review `. Null when it is not a valid skill name. */
 export function normalizeSkillName(raw: string): string | null {
   const name = raw.trim().replace(/^[$/]/, "");
-  return SKILL_NAME_PATTERN.test(name) ? name : null;
+  return PIPELINE_SKILL_NAME_PATTERN.test(name) ? name : null;
 }
 
 export interface PipelineDraftIssues {
@@ -208,7 +216,11 @@ export interface PipelineDraftIssues {
   readonly valid: boolean;
 }
 
-export function pipelineDraftIssues(draft: PipelineDraft): PipelineDraftIssues {
+/** `availableInstanceIds`: the provider instances this draft's environment can run; omit to skip the check. */
+export function pipelineDraftIssues(
+  draft: PipelineDraft,
+  availableInstanceIds?: ReadonlySet<string>,
+): PipelineDraftIssues {
   const name = draft.name.trim()
     ? draft.name.trim().length > PIPELINE_NAME_MAX_LENGTH
       ? `Use at most ${PIPELINE_NAME_MAX_LENGTH} characters.`
@@ -240,6 +252,12 @@ export function pipelineDraftIssues(draft: PipelineDraft): PipelineDraftIssues {
       own(`Use at most ${PIPELINE_NAME_MAX_LENGTH} characters for the name.`);
     }
     if (step.modelSelection === null) own("Choose a model.");
+    else if (
+      availableInstanceIds !== undefined &&
+      !availableInstanceIds.has(step.modelSelection.instanceId)
+    ) {
+      own(`Provider ${step.modelSelection.instanceId} isn't available here.`);
+    }
     if (!step.promptTemplate.trim()) own("Write a prompt template.");
     if (step.skills.length > PIPELINE_STEP_SKILLS_MAX) {
       own(`A step has at most ${PIPELINE_STEP_SKILLS_MAX} skills.`);

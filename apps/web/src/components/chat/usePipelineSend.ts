@@ -1,11 +1,11 @@
 import {
-  CommandId,
   type EnvironmentId,
   type PipelineId,
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { nextPipelineStartAttempt } from "@t3tools/client-runtime/pipeline-start";
 import type { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useNavigate } from "@tanstack/react-router";
@@ -19,7 +19,6 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import type { makeThreadErrorSetter } from "../ChatView.logic";
 import { draftPipelineSelectionAtom, draftSendState } from "./chatViewSend";
-import { commandIdForPipelineSend, pipelineSendRetryKey } from "./composerSend.logic";
 import type { useLocalDispatchState } from "./useLocalDispatchState";
 
 interface PipelineSendInput {
@@ -52,7 +51,7 @@ export function usePipelineSend(input: PipelineSendInput) {
   const startPipelineRun = useOrchestrationCommand(serverEnvironment.startPipelineRun, {
     reportFailure: false,
   });
-  const { sendInFlight: sendInFlightRef, pipelineCommands: pipelineCommandsRef } =
+  const { sendInFlight: sendInFlightRef, pipelineStart: pipelineStartRef } =
     draftSendState(routeThreadKey);
 
   return async ({
@@ -71,21 +70,16 @@ export function usePipelineSend(input: PipelineSendInput) {
     readonly promptAtSend: string;
     readonly workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy;
   }) => {
-    const retryKey = pipelineSendRetryKey({
-      routeKey: routeThreadKey,
-      pipelineId,
-      projectId,
-      workspaceStrategy,
-      text,
-    });
-    const commandId = commandIdForPipelineSend(pipelineCommandsRef.current, retryKey, () =>
-      CommandId.make(randomUUID()),
-    );
+    const attempt = (pipelineStartRef.current = nextPipelineStartAttempt(
+      pipelineStartRef.current,
+      { pipelineId, projectId, input: text, workspace: workspaceStrategy },
+      randomUUID,
+    ));
     setThreadError(threadId, null);
     const result = await startPipelineRun({
       environmentId,
       input: {
-        commandId,
+        commandId: attempt.commandId,
         pipelineId,
         projectId,
         input: text,
@@ -108,7 +102,7 @@ export function usePipelineSend(input: PipelineSendInput) {
       );
       return;
     }
-    pipelineCommandsRef.current.delete(retryKey);
+    pipelineStartRef.current = null;
     const parentRef = scopeThreadRef(environmentId, result.value.run.parentThreadId);
     const stillOnDraft = currentRouteThreadKeyRef.current === routeThreadKey;
     const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);

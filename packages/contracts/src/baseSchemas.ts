@@ -321,8 +321,9 @@ export const PipelineId = makeEntityId("PipelineId");
 export type PipelineId = typeof PipelineId.Type;
 export const PipelineRunId = makeEntityId("PipelineRunId");
 export type PipelineRunId = typeof PipelineRunId.Type;
+export const PIPELINE_STEP_ID_MAX_LENGTH = 48;
 export const PipelineStepId = TrimmedNonEmptyString.check(
-  Schema.isPattern(/^[a-z0-9][a-z0-9_-]{0,47}$/),
+  Schema.isPattern(new RegExp(`^[a-z0-9][a-z0-9_-]{0,${PIPELINE_STEP_ID_MAX_LENGTH - 1}}$`)),
 ).pipe(Schema.brand("PipelineStepId"));
 export type PipelineStepId = typeof PipelineStepId.Type;
 export const ApprovalRequestId = makeEntityId("ApprovalRequestId");

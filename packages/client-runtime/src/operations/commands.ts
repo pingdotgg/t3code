@@ -670,11 +670,6 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
   },
 );
 
-/**
- * Maps a draft's bootstrap (existing branch/worktree) or worktree preparation
- * request to the thread-launch workspace strategy. Shared by thread starts and
- * pipeline run starts so both resolve a draft identically.
- */
 export function draftWorkspaceStrategy(
   bootstrap:
     | Pick<NonNullable<StartThreadBootstrap["createThread"]>, "branch" | "worktreePath">

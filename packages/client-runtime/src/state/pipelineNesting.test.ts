@@ -1,13 +1,20 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PipelineRunId,
+  ThreadId,
+  type PipelineRunSummary,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   aggregatePipelineStepStatus,
+  indexPipelineLiveRuns,
   isPipelineGroupActive,
   mergePipelineParentStatus,
   nestedPipelineStepLabel,
   nestPipelineSteps,
   pipelineParentsOfSteps,
+  pipelineStepLabel,
   pipelineStepsOfParents,
 } from "./pipelineNesting.ts";
 
@@ -21,6 +28,17 @@ function shell(
 ) {
   return { id: ThreadId.make(id), environmentId, createdAt, pipeline: pipeline ?? null };
 }
+
+function liveRun(id: string, status: "running" | "paused", stepNames: ReadonlyArray<string> = []) {
+  return {
+    id: PipelineRunId.make(id),
+    status,
+    steps: stepNames.map((name) => ({ stepId: name.toLowerCase(), name })),
+  } as unknown as PipelineRunSummary;
+}
+const liveRuns = indexPipelineLiveRuns([
+  { environmentId: env, runs: [liveRun("r1", "paused", ["Plan"]), liveRun("r2", "running")] },
+]);
 
 const parent = (id: string, runId: string, createdAt = "2026-01-01T00:00:00Z") =>
   shell(id, createdAt, { runId, stepId: null });
@@ -136,6 +154,26 @@ describe("nestedPipelineStepLabel", () => {
   });
 });
 
+describe("pipelineStepLabel", () => {
+  it.each([
+    ["the live run's step name", step("s1", "r1", "plan", "2026-01-01T00:00:00Z"), "Plan"],
+    ["the title when the run has no such step", step("s2", "r1", "x", "2026-01-01T00:00:00Z"), "X"],
+    ["the title when the run is not live", step("s3", "gone", "plan", "2026-01-01T00:00:00Z"), "X"],
+    [
+      "the title in another environment",
+      shell(
+        "s4",
+        "2026-01-01T00:00:00Z",
+        { runId: "r1", stepId: "plan" },
+        EnvironmentId.make("other"),
+      ),
+      "X",
+    ],
+  ])("uses %s", (_name, target, expected) => {
+    expect(pipelineStepLabel(liveRuns, { ...target, title: "Feature · X" })).toBe(expected);
+  });
+});
+
 describe("pipeline parent status", () => {
   it.each([
     { steps: [], expected: null },
@@ -145,6 +183,16 @@ describe("pipeline parent status", () => {
     { steps: ["working", "request", "approval"], expected: "approval" },
   ])("aggregates $steps to $expected", ({ steps, expected }) => {
     expect(aggregatePipelineStepStatus(steps)).toBe(expected);
+  });
+
+  it.each([
+    { steps: [], run: "paused", expected: "input" },
+    { steps: ["working"], run: "paused", expected: "input" },
+    { steps: ["approval"], run: "paused", expected: "approval" },
+    { steps: ["working"], run: "running", expected: "working" },
+    { steps: [], run: "running", expected: null },
+  ] as const)("a $run run with steps $steps shows $expected", ({ steps, run, expected }) => {
+    expect(aggregatePipelineStepStatus(steps, { status: run })).toBe(expected);
   });
 
   it.each([
@@ -173,10 +221,17 @@ describe("isPipelineGroupActive", () => {
     { name: "only the parent is active", parent: "p", active: ["p"], expected: true },
     { name: "another run's step is active", parent: "idle", active: ["s2"], expected: false },
     { name: "nothing is active", parent: "p", active: [], expected: false },
-  ])("$name", ({ parent: parentId, active, expected }) => {
+    { name: "its run is paused", parent: "p", active: ["s2"], expected: false, live: true },
+    { name: "its run is running", parent: "idle", active: ["t1"], expected: true, live: true },
+  ])("$name", ({ parent: parentId, active, expected, live }) => {
     const target = shells.find((shell) => shell.id === parentId)!;
-    expect(isPipelineGroupActive(target, stepsOfParent, (shell) => active.includes(shell.id))).toBe(
-      expected,
-    );
+    expect(
+      isPipelineGroupActive(
+        target,
+        stepsOfParent,
+        (shell) => active.includes(shell.id),
+        live ? liveRuns : undefined,
+      ),
+    ).toBe(expected);
   });
 });

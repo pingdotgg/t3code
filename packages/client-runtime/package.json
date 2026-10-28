@@ -23,6 +23,10 @@
       "types": "./src/pipelineEditor.ts",
       "default": "./src/pipelineEditor.ts"
     },
+    "./pipeline-start": {
+      "types": "./src/pipelineStart.ts",
+      "default": "./src/pipelineStart.ts"
+    },
     "./pipeline-run-presentation": {
       "types": "./src/pipelineRunPresentation.ts",
       "default": "./src/pipelineRunPresentation.ts"

@@ -7,7 +7,12 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { availablePipelineActions, pipelineFeedingStep } from "./pipelineRunPresentation.ts";
+import {
+  availablePipelineActions,
+  pipelineFeedingStep,
+  pipelineStepBreadcrumbTitle,
+  pipelineStepPosition,
+} from "./pipelineRunPresentation.ts";
 
 const NAMES = ["Plan", "Implement", "Review"] as const;
 
@@ -191,5 +196,22 @@ describe("pipelineFeedingStep", () => {
       [],
     );
     expect(pipelineFeedingStep(run)).toBeNull();
+  });
+});
+
+describe("pipelineStepPosition", () => {
+  const run = {
+    definition: { name: "Review", steps: [{ name: "Plan" }, { name: "Build" }] },
+    steps: [{ stepId: "a" }, { stepId: "b" }],
+  } as unknown as PipelineRun;
+
+  it("numbers a step from one, names it from the snapshot and titles its breadcrumb", () => {
+    expect(pipelineStepPosition(run, "b")).toEqual({ number: 2, total: 2, name: "Build" });
+    expect(pipelineStepBreadcrumbTitle(run, "b")).toBe("Pipeline: Review · step 2/2");
+  });
+
+  it("is null for a step the run does not have", () => {
+    expect(pipelineStepPosition(run, "missing")).toBeNull();
+    expect(pipelineStepBreadcrumbTitle(run, "missing")).toBe("Pipeline: Review");
   });
 });

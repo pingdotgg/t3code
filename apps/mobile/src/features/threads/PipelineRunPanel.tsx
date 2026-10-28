@@ -8,6 +8,7 @@ import type {
 import {
   availablePipelineActions,
   pipelineRunStatusLabel,
+  pipelineStepPosition,
   pipelineStepStatusLabel,
 } from "@t3tools/client-runtime/pipeline-run-presentation";
 import {
@@ -30,7 +31,7 @@ import { useThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { pipelineStepPosition, pipelineStepTone, type PipelineStepTone } from "./pipeline-run-view";
+import { pipelineStepTone, type PipelineStepTone } from "./pipeline-run-view";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 const SYNC_LOCK_MAX_MS = 5_000;

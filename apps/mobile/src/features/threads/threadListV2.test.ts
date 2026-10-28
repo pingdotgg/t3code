@@ -1,6 +1,7 @@
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { indexPipelineLiveRuns } from "@t3tools/client-runtime/state/pipeline-nesting";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
@@ -427,7 +428,7 @@ describe("buildThreadListV2Items", () => {
       createdAt: "2026-06-01T00:01:00.000Z",
       pipeline: { ...run, stepId: "one" as never },
     });
-    const build = (working: ReadonlySet<string>) =>
+    const build = (working: ReadonlySet<string>, status?: "running" | "paused") =>
       buildThreadListV2Items({
         threads: [flow, step],
         environmentId: null,
@@ -436,6 +437,20 @@ describe("buildThreadListV2Items", () => {
         workingShelfEnabled: true,
         workingShelfExpanded: true,
         isWorking: (thread) => working.has(thread.id),
+        pipelineRuns: indexPipelineLiveRuns([
+          {
+            environmentId,
+            runs: status
+              ? [
+                  {
+                    id: "run-1" as never,
+                    status,
+                    steps: [{ stepId: "one" as never, name: "Plan" }],
+                  } as never,
+                ]
+              : [],
+          },
+        ]),
       });
 
     const running = build(new Set(["one"]));
@@ -444,6 +459,14 @@ describe("buildThreadListV2Items", () => {
     expect(running.items.map((item) => item.thread.id)).toEqual(["flow", "one"]);
     // With no step working the group falls back to the parent's own placement.
     expect(build(new Set()).workingCount).toBe(0);
+
+    // A run waiting on the user is attention, not work: the parent shows "needs input" off the shelf.
+    const paused = build(new Set(["one"]), "paused");
+    expect(paused.workingCount).toBe(0);
+    expect(paused.items.map((item) => item.stepStatus)).toEqual(["input", undefined]);
+    // A live run names its steps; without one the title is parsed.
+    expect(paused.items.map((item) => item.stepLabel)).toEqual([undefined, "Plan"]);
+    expect(build(new Set(["one"])).items[1]?.stepLabel).toBe("one");
   });
 
   it("moves a settled pinned thread into the settled shelf — parity with web (#7969)", () => {
