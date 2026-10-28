@@ -368,6 +368,8 @@ export const make = Effect.gen(function* () {
       return {
         ...forgejoChangeRequest(pr),
         headSha: pr.head.sha,
+        mergeCommitSha: pr.merge_commit_sha || null,
+        mergedBy: forgejoActor(pr.merged_by),
         body: pr.body ?? "",
         changedFiles: pr.changed_files ?? 0,
         reviewers: (pr.requested_reviewers ?? []).flatMap((user) => {
