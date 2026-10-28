@@ -67,6 +67,14 @@ async function resolvePreviewItem(
   return { source: { ...item, name, uri: url + (item.srcFragment ?? "") } };
 }
 
+function previewGallery(
+  sources: readonly (ResolvedFilePreviewSource | undefined)[],
+  selectedIndex: number,
+) {
+  const selected = sources[selectedIndex];
+  return selected && { selected, gallery: sources.filter((source) => source !== undefined) };
+}
+
 function ResolvedFilePreview(props: {
   readonly source: FilePreviewSource;
   readonly onRequestClose: () => void;
@@ -75,9 +83,13 @@ function ResolvedFilePreview(props: {
   // Freeze the group at opening; streaming messages and URL refreshes must not reopen the viewer.
   const [items] = useState(() => filePreviewGallery(props.source, []));
   const selectedKey = filePreviewKey(props.source);
-  const [gallery, setGallery] = useState<readonly ResolvedFilePreviewSource[] | null>(() =>
+  const selectedIndex = items.findIndex((item) => filePreviewKey(item) === selectedKey);
+  const [resolved, setResolved] = useState(() =>
     items.every((item) => "uri" in item)
-      ? items.map((item) => ({ ...item, name: filePreviewName(item) }))
+      ? previewGallery(
+          items.map((item) => ({ ...item, name: filePreviewName(item) })),
+          selectedIndex,
+        )
       : null,
   );
   const onResolutionError = useEffectEvent((error: PreviewResolutionError) => {
@@ -90,30 +102,31 @@ function ResolvedFilePreview(props: {
   useEffect(() => {
     if (items.every((item) => "uri" in item)) return;
     const controller = new AbortController();
-    // The first failure closes the preview at once and cancels the rest of the gallery.
-    const fail = (error: unknown) => {
-      if (controller.signal.aborted) return;
-      controller.abort();
-      onResolutionError(
-        error instanceof PreviewResolutionError
-          ? error
-          : new PreviewResolutionError(error, "Try again."),
-      );
-    };
     const resolving = Promise.allSettled(
-      items.map((item) =>
-        resolvePreviewItem(item, controller.signal).catch((error: unknown) => {
-          fail(error);
-          throw error;
-        }),
-      ),
+      items.map((item, index) => {
+        const resolution = resolvePreviewItem(item, controller.signal);
+        // Only the opened item failing closes the preview; a failed sibling leaves the gallery.
+        if (index === selectedIndex)
+          void resolution.catch((error: unknown) => {
+            if (controller.signal.aborted) return;
+            controller.abort();
+            onResolutionError(
+              error instanceof PreviewResolutionError
+                ? error
+                : new PreviewResolutionError(error, "Try again."),
+            );
+          });
+        return resolution;
+      }),
     );
     void resolving.then((settled) => {
       if (controller.signal.aborted) return;
-      const sources = settled.flatMap((item) =>
-        item.status === "fulfilled" && item.value ? [item.value.source] : [],
+      setResolved(
+        previewGallery(
+          settled.map((item) => (item.status === "fulfilled" ? item.value?.source : undefined)),
+          selectedIndex,
+        ),
       );
-      if (sources.length === items.length) setGallery(sources);
     });
     return () => {
       controller.abort();
@@ -121,9 +134,9 @@ function ResolvedFilePreview(props: {
         for (const item of settled) if (item.status === "fulfilled") item.value?.dispose?.();
       });
     };
-  }, [items]);
-  const selected = gallery?.[items.findIndex((item) => filePreviewKey(item) === selectedKey)];
-  if (!gallery || !selected) return null;
+  }, [items, selectedIndex]);
+  if (!resolved) return null;
+  const { selected, gallery } = resolved;
   const onOpenError = (error: unknown) => {
     if (props.onOpenError) return props.onOpenError(error);
     Dialog.alert("Could not open preview", nativeViewerErrorMessage(error), [

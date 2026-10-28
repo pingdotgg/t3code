@@ -8,24 +8,68 @@ private final class FilePreviewItem: NSObject, QLPreviewItem {
   var previewItemTitle: String?
 }
 
+private enum FilePreviewState { case loading, ready, failed }
+
 private final class FilePreviewController: QLPreviewController {
   var onAppear: (() -> Void)?
+  // Quick Look shows a blank page for an item without a file, so loading and failure are ours to show.
+  private let spinner = UIActivityIndicatorView(style: .large)
+  private let failure = UILabel()
+  var state = FilePreviewState.ready {
+    didSet { if isViewLoaded { showState() } }
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    failure.text = "This image could not be loaded."
+    failure.textColor = .secondaryLabel
+    failure.textAlignment = .center
+    failure.numberOfLines = 0
+    for status in [spinner, failure] as [UIView] {
+      status.isUserInteractionEnabled = false
+      status.translatesAutoresizingMaskIntoConstraints = false
+      view.addSubview(status)
+      NSLayoutConstraint.activate([
+        status.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        status.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        status.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -48),
+      ])
+    }
+    showState()
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    view.bringSubviewToFront(spinner)
+    view.bringSubviewToFront(failure)
+  }
 
   override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
     onAppear?()
+  }
+
+  private func showState() {
+    if state == .loading { spinner.startAnimating() } else { spinner.stopAnimating() }
+    failure.isHidden = state != .failed
   }
 }
 
 final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   QLPreviewControllerDelegate, UIAdaptivePresentationControllerDelegate {
   let identifier: String
-  private var controller: UIViewController?
+  private var controller: FilePreviewController?
   private let completion: (Error?) -> Void
   private weak var sources: T3PresentationSources?
   private let sourceIdentifiers: [String]
   private var items: [FilePreviewItem] = []
+  private var states: [FilePreviewState] = []
+  /// Files that arrived while their page was off screen; Quick Look may still hold the blank page.
+  private var staleIndices = Set<Int>()
+  private var currentIndexObservation: NSKeyValueObservation?
   private var loading: Task<Void, Never>?
+  private var placeholder: Task<Void, Never>?
+  private var openError: Error?
   private var dismissRequested = false
   private var finished = false
 
@@ -38,49 +82,108 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     super.init()
   }
 
+  /// Downloads the file before presenting so Quick Look can refuse a format the caller should share instead.
   func present(url: URL, title: String, from presenter: UIViewController) {
-    present(urls: [url], titles: [title], selectedIndex: 0, from: presenter)
+    load(urls: [url], titles: [title], selectedIndex: 0, from: presenter, opensWhileLoading: false)
   }
 
+  /// Opens the selected image once it is ready, or a loading page if it is slow, and loads the rest
+  /// of the gallery behind it so a slow or broken sibling never holds the viewer back.
   func present(urls: [URL], titles: [String], selectedIndex: Int, from presenter: UIViewController) {
-    loading = Task { @MainActor [self] in
-      do {
-        for (index, url) in urls.enumerated() {
-        let title = titles[index]
-        let file = try await Self.prepareFile(url: url, title: title)
-        guard !finished, !Task.isCancelled else {
-          try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
-          return
-        }
-        // Quick Look knows which formats it renders; refuse before presenting so the caller
-        // can fall back instead of showing an "unsupported format" page.
-        guard QLPreviewController.canPreview(file as NSURL) else {
-          try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
-          throw NSError(
-            domain: "T3NativePresentation",
-            code: 3,
-            userInfo: [NSLocalizedDescriptionKey: "This file type cannot be previewed on this device."]
-          )
-        }
-        let item = FilePreviewItem()
-        item.previewItemURL = file
-        item.previewItemTitle = title
-        items.append(item)
-        }
-        let preview = FilePreviewController()
-        preview.delegate = self
-        preview.dataSource = self
-        preview.currentPreviewItemIndex = selectedIndex
-        preview.onAppear = { [weak self] in self?.resumePendingDismissal() }
-        controller = preview
-        presenter.present(preview, animated: !UIAccessibility.isReduceMotionEnabled) { [self] in
-          resumePendingDismissal()
-        }
-        preview.presentationController?.delegate = self
-      } catch {
-        finish(error: error)
+    load(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter, opensWhileLoading: true)
+  }
+
+  private func load(urls: [URL], titles: [String], selectedIndex: Int, from presenter: UIViewController,
+                    opensWhileLoading: Bool) {
+    items = titles.map { title in
+      let item = FilePreviewItem()
+      item.previewItemTitle = title
+      return item
+    }
+    states = Array(repeating: .loading, count: urls.count)
+    if opensWhileLoading {
+      // A short grace keeps the zoom from the thumbnail into a loaded image when the file is quick.
+      placeholder = Task { @MainActor [self] in
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard !Task.isCancelled, !finished, controller == nil else { return }
+        show(selectedIndex: selectedIndex, from: presenter)
       }
     }
+    loading = Task { @MainActor [self] in
+      var pending = Set(urls.indices)
+      // One download at a time, always the one nearest the page on screen.
+      while let index = pending.min(by: { distance($0, selectedIndex) < distance($1, selectedIndex) }) {
+        pending.remove(index)
+        do {
+          let file = try await Self.prepareFile(url: urls[index], title: titles[index])
+          guard !finished, !Task.isCancelled else {
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+            return
+          }
+          // Quick Look knows which formats it renders; refuse before presenting so the caller
+          // can fall back instead of showing an "unsupported format" page.
+          guard QLPreviewController.canPreview(file as NSURL) else {
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+            throw NSError(
+              domain: "T3NativePresentation",
+              code: 3,
+              userInfo: [NSLocalizedDescriptionKey: "This file type cannot be previewed on this device."]
+            )
+          }
+          items[index].previewItemURL = file
+          states[index] = .ready
+          if controller == nil { show(selectedIndex: selectedIndex, from: presenter) } else { refresh(index) }
+        } catch {
+          guard !finished, !Task.isCancelled else { return }
+          guard index != selectedIndex else {
+            openError = error
+            dismiss()
+            return
+          }
+          states[index] = .failed
+          refresh(index)
+        }
+      }
+    }
+  }
+
+  private func distance(_ index: Int, _ selectedIndex: Int) -> Int {
+    abs(index - (controller?.currentPreviewItemIndex ?? selectedIndex))
+  }
+
+  private func show(selectedIndex: Int, from presenter: UIViewController) {
+    placeholder?.cancel()
+    let preview = FilePreviewController()
+    preview.delegate = self
+    preview.dataSource = self
+    preview.currentPreviewItemIndex = selectedIndex
+    preview.onAppear = { [weak self] in self?.resumePendingDismissal() }
+    controller = preview
+    preview.state = states[selectedIndex]
+    currentIndexObservation = preview.observe(\.currentPreviewItemIndex) { [weak self] _, _ in
+      DispatchQueue.main.async { self?.currentItemChanged() }
+    }
+    presenter.present(preview, animated: !UIAccessibility.isReduceMotionEnabled) { [self] in
+      resumePendingDismissal()
+    }
+    preview.presentationController?.delegate = self
+  }
+
+  private func refresh(_ index: Int) {
+    guard let controller else { return }
+    guard controller.currentPreviewItemIndex == index else {
+      if states[index] == .ready { staleIndices.insert(index) }
+      return
+    }
+    if states[index] == .ready { controller.refreshCurrentPreviewItem() }
+    controller.state = states[index]
+  }
+
+  private func currentItemChanged() {
+    guard !finished, let controller, states.indices.contains(controller.currentPreviewItemIndex) else { return }
+    let index = controller.currentPreviewItemIndex
+    if staleIndices.remove(index) != nil { controller.refreshCurrentPreviewItem() }
+    controller.state = states[index]
   }
 
   func dismiss() {
@@ -135,13 +238,18 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     finished = true
     loading?.cancel()
     loading = nil
+    placeholder?.cancel()
+    placeholder = nil
+    currentIndexObservation = nil
     for item in items {
       if let file = item.previewItemURL {
         try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
       }
     }
     items.removeAll()
-    DispatchQueue.main.async { [completion] in completion(error) }
+    states.removeAll()
+    let result = error ?? openError
+    DispatchQueue.main.async { [completion] in completion(result) }
   }
 
   /// Copy original bytes so preview and sharing do not mutate a draft or workspace file.

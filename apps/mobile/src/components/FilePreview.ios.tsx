@@ -26,7 +26,7 @@ function NativeFilePreview(props: {
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
 }) {
-  const { uri, name, sourceIdentifier, gallery } = props.source;
+  const { uri, name, sourceIdentifier, kind, gallery } = props.source;
   const identifier = useId();
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onOpenError = useEffectEvent((error: unknown) => {
@@ -37,16 +37,18 @@ function NativeFilePreview(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- presents the native file preview and dismisses it on cleanup
   useEffect(() => {
     let canceled = false;
+    const images = gallery ?? [{ uri, name, sourceIdentifier }];
+    // Images open while still loading; other files must download first so Quick Look can refuse them.
     const presentation =
-      gallery && gallery.length > 1
+      kind === "image"
         ? NativeControls.presentFiles(
-            gallery.map((item) => item.uri),
-            gallery.map((item) => item.name ?? "Preview"),
+            images.map((item) => item.uri),
+            images.map((item) => item.name ?? "Preview"),
             Math.max(
               0,
-              gallery.findIndex((item) => item.uri === uri),
+              images.findIndex((item) => item.uri === uri),
             ),
-            gallery.map((item) => item.sourceIdentifier ?? ""),
+            images.map((item) => item.sourceIdentifier ?? ""),
             identifier,
           )
         : NativeControls.presentFile(uri, name ?? "Preview", sourceIdentifier ?? "", identifier);
@@ -61,7 +63,7 @@ function NativeFilePreview(props: {
       canceled = true;
       void NativeControls.dismissFile(identifier).catch(() => undefined);
     };
-  }, [uri, name, sourceIdentifier, identifier, gallery]);
+  }, [uri, name, sourceIdentifier, kind, identifier, gallery]);
 
   return null;
 }
