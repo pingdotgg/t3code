@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
 
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { buildFileDiffIdentityKey } from "~/lib/diffRendering";
+import { buildFileDiffContentVersion, buildFileDiffIdentityKey } from "~/lib/diffRendering";
 
 type ViewerProps = Omit<ComponentProps<typeof StyledDiffCodeView<unknown>>, "options"> & {
   options: {
@@ -54,12 +54,7 @@ const target = DraftId.make("diff-draft-test");
 const range: SelectedLineRange = { start: 1, end: 1, side: "additions" };
 let container: HTMLDivElement;
 
-function file(
-  name: string,
-  fileVersion = 1,
-  type: FileDiffMetadata["type"] = "change",
-  prevName?: string,
-) {
+function file(name: string, type: FileDiffMetadata["type"] = "change", prevName?: string) {
   const fileDiff = parsePatchFiles(
     `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n@@ -1 +1 @@\n-old\n+new\n`,
     { cacheKeyPrefix: name },
@@ -70,7 +65,7 @@ function file(
     fileDiff,
     filePath: name,
     fileKey: buildFileDiffIdentityKey(fileDiff),
-    fileVersion,
+    fileVersion: buildFileDiffContentVersion(fileDiff),
     collapsed: false,
   };
 }
@@ -132,11 +127,11 @@ function setup(): Disposable {
 describe("diff comment drafts", () => {
   it("keeps the text and selected line through refresh and a provisional lazy patch", async () => {
     using _drafts = setup();
-    const original = file("shared.ts", 1, "rename-pure", "old.ts");
+    const original = file("shared.ts", "rename-pure", "old.ts");
     await using screen = await render(view([original]), { container });
     await click("Comment on shared.ts");
     await typeComment("Keep this draft");
-    const refreshed = file("shared.ts", 2, "rename-pure", "old.ts");
+    const refreshed = file("shared.ts", "rename-pure", "old.ts");
     await screen.rerender(view([refreshed], "refreshed"));
     expect(editor().value).toBe("Keep this draft");
     expect(container.querySelector("mark")?.textContent).toBe("Line 1");
