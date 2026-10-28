@@ -160,7 +160,20 @@ jobs:
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas env:pull production --non-interactive
+        run: |
+          eas env:pull production --non-interactive
+          # EAS commands skip dotenv, and the Android fingerprint hashes this
+          # file. Without it every merge misses the build's hash and rebuilds.
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { parseEnv } from "node:util";
+          const env = parseEnv(readFileSync(".env.local", "utf8"));
+          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
+          if (!googleServicesFile) {
+            throw new Error("T3CODE_ANDROID_GOOGLE_SERVICES_FILE is missing from the production environment");
+          }
+          appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
+          NODE
 
       - name: Apply manual version override
         if: steps.version_app_token.outcome == 'success'
