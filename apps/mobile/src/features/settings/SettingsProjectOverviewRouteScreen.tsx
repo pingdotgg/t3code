@@ -9,11 +9,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  deriveProjectGroupLabel,
-  type ProjectGroup,
-  type SourceControlAccountsByEnvironment,
-} from "@t3tools/client-runtime/state/project-grouping";
+import type { ProjectGroup } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
@@ -67,7 +63,6 @@ export function SettingsProjectOverviewRouteScreen() {
     availableTargets,
     selectedTargets,
     projectGroups,
-    repositoryAccounts,
     selectedProjectKey,
     selectProject,
     getSelectedProjectKey,
@@ -113,7 +108,6 @@ export function SettingsProjectOverviewRouteScreen() {
               members={members}
               group={group}
               connectedTargets={availableTargets}
-              repositoryAccounts={repositoryAccounts}
               environments={selectedTargets}
               hasOtherMembers={members.length < (group?.members.length ?? 0)}
               isRemoving={isRemoving}
@@ -135,7 +129,6 @@ function ProjectOverviewContent(props: {
   /** Pin and archive belong to the whole project, even when the filter picks one machine. */
   readonly group: ProjectGroup;
   readonly connectedTargets: readonly SettingsTarget[];
-  readonly repositoryAccounts: SourceControlAccountsByEnvironment;
   readonly environments: readonly SettingsTarget[];
   readonly hasOtherMembers: boolean;
   readonly isRemoving: boolean;
@@ -147,11 +140,7 @@ function ProjectOverviewContent(props: {
 }) {
   const { isRemoving, setIsRemoving, startRemoval, finishRemoval } = props;
   const representative = props.members[0]!;
-  const displayName = deriveProjectGroupLabel({
-    representative,
-    members: props.members,
-    repositoryAccounts: props.repositoryAccounts,
-  });
+  const displayName = props.group.label;
   const [draftName, setDraftName] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const threads = useThreadShells();

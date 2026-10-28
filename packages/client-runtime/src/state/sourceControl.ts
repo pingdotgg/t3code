@@ -22,18 +22,15 @@ import { reuseUnchanged } from "./serverConfigProjection.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
 
-/** Logins the server verified: its effective account and each host's active one. */
+/** CLI accounts can remain listed when a token or Settings selects another login. */
 export function verifiedSourceControlAccounts(
   discovery: SourceControlDiscoveryResult,
 ): SourceControlAccount[] {
-  return discovery.sourceControlProviders.flatMap(({ auth }) => [
-    ...(auth.status === "authenticated" && Option.isSome(auth.host) && Option.isSome(auth.account)
+  return discovery.sourceControlProviders.flatMap(({ auth }) =>
+    auth.status === "authenticated" && Option.isSome(auth.host) && Option.isSome(auth.account)
       ? [{ host: auth.host.value, account: auth.account.value }]
-      : []),
-    ...(auth.accounts ?? [])
-      .filter((entry) => entry.active && entry.authenticated)
-      .map(({ host, account }) => ({ host, account })),
-  ]);
+      : [],
+  );
 }
 
 export function createSourceControlEnvironmentAtoms<R, E>(

@@ -15,7 +15,7 @@ const provider = (auth: SourceControlProviderAuth) => ({
 });
 
 describe("verifiedSourceControlAccounts", () => {
-  it("keeps the effective login and each host's active signed-in account only", () => {
+  it("keeps only the authenticated effective login when CLI accounts are overridden", () => {
     const accounts = verifiedSourceControlAccounts({
       versionControlSystems: [],
       sourceControlProviders: [
@@ -25,7 +25,7 @@ describe("verifiedSourceControlAccounts", () => {
           host: Option.some("github.com"),
           detail: Option.none(),
           accounts: [
-            { host: "github.com", account: "EtanHey", active: true, authenticated: true },
+            { host: "github.com", account: "personal", active: true, authenticated: true },
             { host: "github.com", account: "alt", active: false, authenticated: true },
             { host: "ghe.example.com", account: "etan", active: true, authenticated: true },
             { host: "ghe.other.com", account: "expired", active: true, authenticated: false },
@@ -39,10 +39,24 @@ describe("verifiedSourceControlAccounts", () => {
         }),
       ],
     });
-    expect(accounts).toEqual([
-      { host: "github.com", account: "EtanHey" },
-      { host: "github.com", account: "EtanHey" },
-      { host: "ghe.example.com", account: "etan" },
-    ]);
+    expect(accounts).toEqual([{ host: "github.com", account: "EtanHey" }]);
+    for (const status of ["unknown", "unauthenticated"] as const) {
+      expect(
+        verifiedSourceControlAccounts({
+          versionControlSystems: [],
+          sourceControlProviders: [
+            provider({
+              status,
+              account: Option.none(),
+              host: Option.some("github.com"),
+              detail: Option.none(),
+              accounts: [
+                { host: "github.com", account: "personal", active: true, authenticated: true },
+              ],
+            }),
+          ],
+        }),
+      ).toEqual([]);
+    }
   });
 });
