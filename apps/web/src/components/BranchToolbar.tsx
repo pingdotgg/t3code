@@ -258,17 +258,7 @@ const RunContextSelector = memo(function RunContextSelector({
       <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
     </Tooltip>
   );
-  const icon = !showEnvironmentIndicator ? (
-    workspaceIcon
-  ) : isPanel ? (
-    environmentIcon
-  ) : (
-    // Button's SVG margins consume 4px of the gap; mx-0! restores the intended 2px.
-    <span className="inline-flex shrink-0 items-center gap-0.5">
-      {environmentIcon}
-      {workspaceIcon}
-    </span>
-  );
+  const icon = showEnvironmentIndicator ? environmentIcon : workspaceIcon;
   const triggerContent = (
     <>
       {icon}
