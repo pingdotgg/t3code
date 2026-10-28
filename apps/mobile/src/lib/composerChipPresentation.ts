@@ -23,7 +23,7 @@ interface ContextChipPresentation {
  * surface. See `ContextChip.tsx`.
  */
 const CONTEXT_CHIP_PRESENTATIONS = {
-  image: { accent: "#d55665", icon: "image" },
+  image: { accent: "#0090cd", icon: "image" },
   video: { accent: "#d06217", icon: "film" },
   file: { accent: "#0090cd", icon: null },
   mention: { accent: "#0096af", icon: null },
