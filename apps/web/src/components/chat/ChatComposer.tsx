@@ -1140,6 +1140,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [backgroundThread]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- binds voice shortcuts to window keyboard events for the mounted composer
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       const command = resolveShortcutCommand(event, keybindings, {

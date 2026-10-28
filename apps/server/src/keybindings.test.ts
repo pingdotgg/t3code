@@ -355,7 +355,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     );
   });
 
-  it.effect.each([undefined, "(!terminalFocus)"])(
+  it.effect.each([undefined, "(!terminalFocus)", "composerFocus"])(
     "preserves a user voice shortcut with condition %s",
     (when) =>
       Effect.gen(function* () {
@@ -374,7 +374,10 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         });
 
         const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
-        assert.isFalse(persisted.some((entry) => entry.command === "voice.toggle"));
+        assert.equal(
+          persisted.some((entry) => entry.command === "voice.toggle"),
+          when === "composerFocus",
+        );
         assert.isTrue(persisted.some((entry) => entry.command === "navigation.back"));
       }).pipe(Effect.provide(layerKeybindings())),
   );

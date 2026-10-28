@@ -100,4 +100,3 @@ export class ProviderVoiceSessionError extends Schema.TaggedError<ProviderVoiceS
     return this.detail;
   }
 }
-

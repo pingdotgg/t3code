@@ -3874,6 +3874,7 @@ it.effect(
           .startVoiceSession({ threadId, offerSdp: "offer" })
           .pipe(Stream.runDrain, Effect.forkChild);
         yield* Deferred.await(started);
+        assert.equal((yield* Ref.get(state)).resumeCount, 1);
         yield* TestClock.adjust("2 seconds");
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
         assert.equal((yield* Ref.get(state)).closeCount, 0);

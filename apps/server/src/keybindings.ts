@@ -119,18 +119,15 @@ function encodedRuleShortcut(rule: KeybindingRule): string | null {
   return parsed ? encodeShortcut(parsed) : null;
 }
 
-/**
- * Whether appending `rule` after `existing` would shadow it: same shortcut, and
- * either the same `when` or one of them applies in every context.
- */
+// Persisted custom rules follow defaults, so a conditional override leaves the default available elsewhere.
 function shadowsShortcut(existing: KeybindingRule, rule: KeybindingRule): boolean {
   const existingShortcut = encodedRuleShortcut(existing);
   if (!existingShortcut || existingShortcut !== encodedRuleShortcut(rule)) return false;
+  if (existing.when === undefined) return true;
+  if (rule.when === undefined) return false;
   return (
-    existing.when === undefined ||
-    rule.when === undefined ||
     JSON.stringify(parseKeybindingWhenExpression(existing.when)) ===
-      JSON.stringify(parseKeybindingWhenExpression(rule.when))
+    JSON.stringify(parseKeybindingWhenExpression(rule.when))
   );
 }
 
