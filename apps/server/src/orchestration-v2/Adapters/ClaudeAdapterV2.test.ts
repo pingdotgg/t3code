@@ -8002,6 +8002,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.offerAndWait(turnOneResult);
           yield* Queue.take(harness.terminalReceipts);
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          // A denied ExitPlanMode leaves the retained process in plan mode.
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "status",
+              status: null,
+              permissionMode: "plan",
+              uuid: "00000000-0000-4000-8000-000000000601",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
 
           yield* fileSystem.writeFileString(remoteSettings, "{}");
           for (const [ordinal, origin] of [
@@ -8050,6 +8061,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             yield* Queue.take(harness.terminalReceipts);
           }
           assert.strictEqual(harness.getOpenedOptions(), downgradedOptions);
+          assert.deepEqual(harness.permissionModeChanges, ["auto"]);
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
           yield* harness.offerAndWait(wakeNotification);
