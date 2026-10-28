@@ -11,7 +11,13 @@ import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contrac
 import { useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { fnv1a32, resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
+import {
+  buildFileDiffContentVersion,
+  fnv1a32,
+  resolveFileDiffPath,
+  resolveFileDiffPreviousPath,
+} from "~/lib/diffRendering";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   buildDiffReviewComment,
   restoreDiffReviewCommentRange,
@@ -20,6 +26,7 @@ import {
 
 import { nextFileCommentId } from "../files/fileCommentAnnotations";
 import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
+import { isDiffCommentAnchorCurrent, type DiffCommentAnchor } from "./AnnotatableCodeView.logic";
 import { StyledDiffCodeView, type StyledDiffCodeViewOptions } from "./StyledDiffCodeView";
 
 interface DiffCommentAnnotationEntry {
@@ -134,28 +141,25 @@ export function AnnotatableCodeView({
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
     range: SelectedLineRange;
+    anchor: DiffCommentAnchor;
   } | null>(null);
-  const [draft, setDraft] = useState<{
-    fileKey: string;
-    filePath: string;
-    previousFilePath: string;
-    annotation: DiffCommentLineAnnotation;
-  } | null>(null);
+  const [draft, setDraft] = useState<
+    | (DiffCommentAnchor & {
+        annotation: DiffCommentLineAnnotation;
+      })
+    | null
+  >(null);
   const [draftText, setDraftText] = useState("");
 
   const filesByKey = new Map(files.map((file) => [file.fileKey, file]));
-  if (
-    draft !== null &&
-    !filesByKey.has(draft.fileKey) &&
-    // Lazy placeholders have provisional change types, so match both paths instead.
-    !pendingFiles.some(
-      (file) =>
-        resolveFileDiffPath(file) === draft.filePath &&
-        resolveFileDiffPreviousPath(file) === draft.previousFilePath,
-    )
-  ) {
+  if (draft !== null && !isDiffCommentAnchorCurrent(draft, filesByKey, pendingFiles)) {
     setDraft(null);
     setDraftText("");
+  }
+  if (
+    selectedLines !== null &&
+    !isDiffCommentAnchorCurrent(selectedLines.anchor, filesByKey, pendingFiles)
+  ) {
     setSelectedLines(null);
   }
   const items: CodeViewDiffItem<DiffCommentAnnotationGroup>[] = files.map(
@@ -208,10 +212,10 @@ export function AnnotatableCodeView({
     }
   };
 
-  const submitEntry = (entryId: string, text: string) => {
+  const submitEntry = useStableCallback((entryId: string, text: string) => {
     const entry = draft?.annotation.metadata.entries.find((candidate) => candidate.id === entryId);
     const file = draft ? filesByKey.get(draft.fileKey) : undefined;
-    if (!entry || !file) return;
+    if (!entry || !file || draft?.fileVersion !== file.fileVersion) return;
     const comment = buildDiffReviewComment({
       id: entry.id,
       sectionId,
@@ -225,38 +229,43 @@ export function AnnotatableCodeView({
     setSelectedLines(null);
     setDraft(null);
     setDraftText("");
-  };
+  });
 
-  const beginComment = (range: SelectedLineRange | null, context: DiffSelectionContext) => {
-    if (!range) return;
-    const item = context.item;
-    if (item.type !== "diff") return;
-    const id = nextFileCommentId();
-    const filePath = resolveFileDiffPath(item.fileDiff);
-    const comment = buildDiffReviewComment({
-      id,
-      sectionId,
-      sectionTitle,
-      filePath,
-      fileDiff: item.fileDiff,
-      range,
-      text: "",
-    });
-    if (!comment) return;
-    setDraftText("");
-    setDraft({
-      fileKey: item.id,
-      filePath,
-      previousFilePath: resolveFileDiffPreviousPath(item.fileDiff),
-      annotation: {
-        side: annotationSide(range),
-        lineNumber: range.end,
-        metadata: {
-          entries: [{ id, kind: "draft", range, rangeLabel: comment.rangeLabel, text: "" }],
+  const beginComment = useStableCallback(
+    (range: SelectedLineRange | null, context: DiffSelectionContext) => {
+      if (!range) return;
+      const item = context.item;
+      if (item.type !== "diff") return;
+      const file = filesByKey.get(item.id);
+      if (!file || file.fileVersion !== buildFileDiffContentVersion(item.fileDiff)) return;
+      const id = nextFileCommentId();
+      const filePath = resolveFileDiffPath(item.fileDiff);
+      const comment = buildDiffReviewComment({
+        id,
+        sectionId,
+        sectionTitle,
+        filePath,
+        fileDiff: item.fileDiff,
+        range,
+        text: "",
+      });
+      if (!comment) return;
+      setDraftText("");
+      setDraft({
+        fileKey: item.id,
+        fileVersion: file.fileVersion,
+        filePath,
+        previousFilePath: resolveFileDiffPreviousPath(item.fileDiff),
+        annotation: {
+          side: annotationSide(range),
+          lineNumber: range.end,
+          metadata: {
+            entries: [{ id, kind: "draft", range, rangeLabel: comment.rangeLabel, text: "" }],
+          },
         },
-      },
-    });
-  };
+      });
+    },
+  );
 
   return (
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
@@ -274,7 +283,22 @@ export function AnnotatableCodeView({
       {...(renderCodeViewFooter ? { renderCodeViewFooter } : {})}
       items={items}
       selectedLines={selectedLines}
-      onSelectedLinesChange={setSelectedLines}
+      onSelectedLinesChange={(selection) => {
+        const file = selection === null ? undefined : filesByKey.get(selection.id);
+        setSelectedLines(
+          selection !== null && file !== undefined
+            ? {
+                ...selection,
+                anchor: {
+                  fileKey: file.fileKey,
+                  fileVersion: file.fileVersion,
+                  filePath: file.filePath,
+                  previousFilePath: resolveFileDiffPreviousPath(file.fileDiff),
+                },
+              }
+            : null,
+        );
+      }}
       options={{
         ...options,
         enableGutterUtility: draft === null,
