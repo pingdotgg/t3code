@@ -13,9 +13,11 @@ import {
   createPathConfigForStaticNavigation,
   createStaticNavigation,
   getActionFromState,
+  getStateFromPath,
   type NavigationAction,
   type NavigationState,
 } from "@react-navigation/native";
+import { pipe } from "effect/Function";
 
 import { RegistryContext } from "@effect/atom-react";
 import { ProjectChipIconRasterizer } from "./native/ProjectChipIconImages";
@@ -48,12 +50,22 @@ import { subscribeComposerDraftModelReconciliation } from "./state/use-composer-
 import { environmentThreadShells } from "./state/threads";
 import { environmentShell } from "./state/shell";
 import { OverlayPortalHost } from "./components/ui/OverlayPortal";
-import { shouldHandleAppLink } from "./lib/appLinking";
+import { shouldHandleAppLink, restoreDraftLinkState } from "./lib/appLinking";
 import { hasCloudPublicConfig } from "./features/cloud/publicConfig";
-import { pairingFormLinkAction } from "./features/connection/devAutoConnect";
-import { resolvePendingNewTaskPromptLink } from "./features/prompt-links/newTaskPromptLink";
-import { resolvePendingThreadPromptLink } from "./features/prompt-links/threadPromptLink";
-import { getAppStateFromPath } from "./lib/appLinkState";
+import { takeScheduledTaskNewLink } from "./features/settings/scheduled-task-editor-state";
+import {
+  pairingFormLinkAction,
+  startDevAutoConnect,
+  withoutPairingTarget,
+} from "./features/connection/devAutoConnect";
+import {
+  resolvePendingNewTaskPromptLink,
+  takeNewTaskPromptLink,
+} from "./features/prompt-links/newTaskPromptLink";
+import {
+  resolvePendingThreadPromptLink,
+  takeThreadPromptLink,
+} from "./features/prompt-links/threadPromptLink";
 import {
   disposeOnFoundationReplace,
   type FoundationHotModule,
@@ -63,10 +75,12 @@ import { installUiRuntimeMemoryWarningGc } from "./lib/useUiRuntimeMemoryWarning
 import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
 import { installSubscriptionUsageRefresh } from "./widgets/useSubscriptionUsage";
 import { GlobalVoiceInputControl } from "./features/voice-input/GlobalVoiceInputControl";
+import { restoreSettingsLinkState } from "./features/settings/settings-navigation";
 import {
   hydrateWorkspaceSelections,
   launchWorkspaceURL,
   recordWorkspaceSelections,
+  settingsLinkPage,
 } from "./features/workspace/workspace-selection-store";
 import { workspaceDetailLinkAction } from "./features/workspace/workspace-detail-selection";
 import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
@@ -93,6 +107,19 @@ const linkingConfig = {
   initialRouteName: "Home",
   screens: createPathConfigForStaticNavigation(RootStack, { initialRouteName: "Home" }) ?? {},
 } as const;
+
+function getAppStateFromPath(path: string, options: Parameters<typeof getStateFromPath>[1]) {
+  return pipe(
+    getStateFromPath(path, options),
+    (state) => restoreDraftLinkState(state, path),
+    (state) => restoreSettingsLinkState(state, settingsLinkPage()),
+    takeThreadPromptLink,
+    takeNewTaskPromptLink,
+    withoutPairingTarget,
+    startDevAutoConnect,
+    takeScheduledTaskNewLink,
+  );
+}
 
 const appLinking = {
   prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
