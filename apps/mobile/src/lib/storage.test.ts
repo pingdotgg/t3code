@@ -98,22 +98,8 @@ vi.mock("react-native", () => ({
   },
 }));
 
-import { loadPreferences, saveConnection, savePreferencesPatch } from "../persistence/imperative";
-import { toStableSavedRemoteConnection } from "./connection";
+import { loadPreferences, savePreferencesPatch } from "../persistence/imperative";
 import { pullRequestSavedViewPreferences } from "../features/pull-requests/pullRequestSavedViews";
-
-const managedConnection = {
-  environmentId: EnvironmentId.make("environment-1"),
-  environmentLabel: "Desktop",
-  pairingUrl: "https://desktop.example/",
-  displayUrl: "https://desktop.example/",
-  httpBaseUrl: "https://desktop.example/",
-  wsBaseUrl: "wss://desktop.example/",
-  bearerToken: null,
-  authenticationMethod: "dpop",
-  dpopAccessToken: "short-lived-token",
-  relayManaged: true,
-} as const;
 
 describe("mobile connection storage", () => {
   beforeEach(() => {
