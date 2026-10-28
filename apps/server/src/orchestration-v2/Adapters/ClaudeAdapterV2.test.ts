@@ -8016,6 +8016,36 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               "Success",
               `${origin.messageCreationSource} turn must not be refused as a setting change`,
             );
+            const decision = yield* Effect.promise(() =>
+              downgradedOptions!.canUseTool!(
+                "Bash",
+                { command: "git status" },
+                {
+                  signal: new AbortController().signal,
+                  toolUseID: `bypass-recovery-command:${ordinal}`,
+                  requestId: `request-bypass-recovery-command:${ordinal}`,
+                },
+              ),
+            ).pipe(Effect.forkScoped);
+            const first = yield* Effect.raceFirst(
+              Queue.take(harness.runtimeRequestReceipts).pipe(
+                Effect.map((event) => ({ type: "request", event }) as const),
+              ),
+              Fiber.join(decision).pipe(
+                Effect.map((result) => ({ type: "decision", result }) as const),
+              ),
+            );
+            assert.equal(
+              first.type,
+              "request",
+              "the retained downgraded process must still ask for approval",
+            );
+            if (first.type !== "request") return;
+            yield* harness.runtime.respondToRuntimeRequest({
+              requestId: first.event.runtimeRequest.id,
+              decision: "decline",
+            });
+            assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
             yield* harness.offerAndWait(turnOneResult);
             yield* Queue.take(harness.terminalReceipts);
           }
