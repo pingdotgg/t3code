@@ -6,10 +6,12 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as CodexClient from "effect-codex-app-server/client";
+import * as CodexErrors from "effect-codex-app-server/errors";
 
 import {
   CodexVoiceSessionError,
@@ -30,8 +32,11 @@ const makeFakeClient = Effect.gen(function* () {
   const handlers = new Map<string, Array<(payload: unknown) => Effect.Effect<void, Error>>>();
   const requests: Array<{ readonly method: string; readonly params: unknown }> = [];
   let closeOnStop = false;
+  let onStart: Effect.Effect<void, CodexErrors.CodexAppServerError> = Effect.void;
+  let onStop: Effect.Effect<void, CodexErrors.CodexAppServerError> = Effect.void;
   const startRequested = yield* Deferred.make<void>();
   const secondStartRequested = yield* Deferred.make<void>();
+  const thirdStartRequested = yield* Deferred.make<void>();
   const speechRequested = yield* Deferred.make<void>();
   const stopRequested = yield* Deferred.make<void>();
   const client = {
@@ -50,12 +55,16 @@ const makeFakeClient = Effect.gen(function* () {
             yield* Deferred.succeed(startRequested, undefined);
             if (requests.filter((request) => request.method === method).length === 2)
               yield* Deferred.succeed(secondStartRequested, undefined);
+            if (requests.filter((request) => request.method === method).length === 3)
+              yield* Deferred.succeed(thirdStartRequested, undefined);
+            yield* onStart;
           }
           if (method === "thread/realtime/appendSpeech") {
             yield* Deferred.succeed(speechRequested, undefined);
           }
           if (method === "thread/realtime/stop") {
             yield* Deferred.succeed(stopRequested, undefined);
+            yield* onStop;
             if (closeOnStop)
               yield* emit("thread/realtime/closed", {
                 threadId: PROVIDER_THREAD,
@@ -76,7 +85,14 @@ const makeFakeClient = Effect.gen(function* () {
     emit,
     startRequested,
     secondStartRequested,
+    thirdStartRequested,
     speechRequested,
+    setStart: (effect: typeof onStart) => {
+      onStart = effect;
+    },
+    setStop: (effect: typeof onStop) => {
+      onStop = effect;
+    },
     stopRequested,
     closePreviousOnStop: () => {
       closeOnStop = true;
@@ -226,6 +242,194 @@ describe("makeCodexVoice", () => {
           );
         }),
       ),
+  );
+
+  it.effect("serializes concurrent replacements before routing the successor's SDP", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeClient;
+        const voice = yield* makeCodexVoice(fake.client, yield* Effect.scope);
+        const owners: Array<string> = [];
+        const start = (owner: string) =>
+          voice
+            .start(
+              { providerThreadId: PROVIDER_THREAD, offerSdp: "offer" },
+              Effect.sync(() => {
+                owners.push(owner);
+              }),
+            )
+            .pipe(Stream.runCollect, Effect.forkChild({ startImmediately: true }));
+        const first = yield* start("first");
+        yield* Deferred.await(fake.startRequested);
+        const releaseStop = yield* Deferred.make<void>();
+        fake.setStop(Deferred.await(releaseStop));
+        const second = yield* start("second");
+        yield* Deferred.await(fake.stopRequested);
+        const third = yield* start("third");
+        const cancelled = yield* start("cancelled");
+        const cancellation = yield* Fiber.interrupt(cancelled).pipe(Effect.forkChild);
+        const whileStopping = fake.requests.map(({ method }) => method);
+        yield* Deferred.succeed(releaseStop, undefined);
+        NodeAssert.deepEqual(whileStopping, ["thread/realtime/start", "thread/realtime/stop"]);
+        yield* Deferred.await(fake.thirdStartRequested);
+        yield* Fiber.join(cancellation);
+        NodeAssert.deepEqual(owners, ["first", "second", "third"]);
+        yield* fake.emit("thread/realtime/sdp", { threadId: PROVIDER_THREAD, sdp: "third-answer" });
+        yield* fake.emit("thread/realtime/closed", { threadId: PROVIDER_THREAD });
+        NodeAssert.deepEqual(yield* Fiber.join(first), [{ type: "closed", reason: "replaced" }]);
+        NodeAssert.deepEqual(yield* Fiber.join(second), [{ type: "closed", reason: "replaced" }]);
+        NodeAssert.deepEqual(yield* Fiber.join(third), [
+          { type: "answer", sdp: "third-answer" },
+          { type: "closed" },
+        ]);
+        NodeAssert.deepEqual(
+          fake.requests.map(({ method }) => method),
+          [
+            "thread/realtime/start",
+            "thread/realtime/stop",
+            "thread/realtime/start",
+            "thread/realtime/stop",
+            "thread/realtime/start",
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("waits for unsubscribe cleanup before starting another native thread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeClient;
+        const voice = yield* makeCodexVoice(fake.client, yield* Effect.scope);
+        const first = yield* voice
+          .start({ providerThreadId: PROVIDER_THREAD, offerSdp: "offer" })
+          .pipe(Stream.runCollect, Effect.forkChild);
+        yield* Deferred.await(fake.startRequested);
+        const releaseStop = yield* Deferred.make<void>();
+        fake.setStop(Deferred.await(releaseStop));
+        const cleanup = yield* Fiber.interrupt(first).pipe(Effect.forkChild);
+        yield* Deferred.await(fake.stopRequested);
+        const replacement = yield* voice
+          .start({ providerThreadId: "another-thread", offerSdp: "offer" })
+          .pipe(Stream.runCollect, Effect.forkChild({ startImmediately: true }));
+        const whileStopping = fake.requests.map(({ method }) => method);
+        yield* Deferred.succeed(releaseStop, undefined);
+        NodeAssert.deepEqual(whileStopping, ["thread/realtime/start", "thread/realtime/stop"]);
+        yield* Fiber.join(cleanup);
+        yield* Deferred.await(fake.secondStartRequested);
+        yield* fake.emit("thread/realtime/sdp", { threadId: PROVIDER_THREAD, sdp: "ignored" });
+        yield* fake.emit("thread/realtime/sdp", { threadId: "another-thread", sdp: "answer" });
+        yield* fake.emit("thread/realtime/closed", { threadId: "another-thread" });
+        NodeAssert.deepEqual(yield* Fiber.join(replacement), [
+          { type: "answer", sdp: "answer" },
+          { type: "closed" },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect.each(["stop response", "closed notification"] as const)(
+    "retains failed cleanup until a %s confirms termination",
+    (confirmation) => {
+      const messages: Array<unknown> = [];
+      const logger = Logger.make(({ message }) => {
+        messages.push(message);
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeClient;
+          const voice = yield* makeCodexVoice(fake.client, yield* Effect.scope);
+          const start = () =>
+            voice
+              .start({ providerThreadId: PROVIDER_THREAD, offerSdp: "offer" })
+              .pipe(Stream.runCollect, Effect.forkChild);
+          const first = yield* start();
+          yield* Deferred.await(fake.startRequested);
+          const stopFailure = new CodexErrors.CodexAppServerRequestError({
+            code: -32603,
+            errorMessage: "stop failed",
+            method: "thread/realtime/stop",
+          });
+          fake.setStop(Effect.fail(stopFailure));
+          fake.setStart(
+            Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "unexpected start",
+              }),
+            ),
+          );
+          yield* Fiber.interrupt(first);
+          const replacementExit = yield* voice
+            .start({ providerThreadId: PROVIDER_THREAD, offerSdp: "offer" })
+            .pipe(Stream.runCollect, Effect.exit);
+          NodeAssert.ok(Exit.isFailure(replacementExit));
+          NodeAssert.deepEqual(
+            fake.requests.map(({ method }) => method),
+            ["thread/realtime/start", "thread/realtime/stop", "thread/realtime/stop"],
+          );
+          NodeAssert.ok(
+            messages.flat().includes("Codex voice could not stop the realtime session"),
+          );
+          fake.setStop(Effect.void);
+          fake.setStart(Effect.void);
+          if (confirmation === "closed notification")
+            yield* fake.emit("thread/realtime/closed", { threadId: PROVIDER_THREAD });
+          const recovered = yield* start();
+          yield* Deferred.await(fake.secondStartRequested);
+          yield* fake.emit("thread/realtime/closed", { threadId: PROVIDER_THREAD });
+          yield* Fiber.join(recovered);
+          NodeAssert.deepEqual(
+            fake.requests.map(({ method }) => method),
+            [
+              "thread/realtime/start",
+              "thread/realtime/stop",
+              "thread/realtime/stop",
+              ...(confirmation === "stop response" ? ["thread/realtime/stop"] : []),
+              "thread/realtime/start",
+            ],
+          );
+        }),
+      ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+    },
+  );
+
+  it.effect("retries predecessor cleanup after an interrupted replacement", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeClient;
+        const voice = yield* makeCodexVoice(fake.client, yield* Effect.scope);
+        const start = () =>
+          voice
+            .start({ providerThreadId: PROVIDER_THREAD, offerSdp: "offer" })
+            .pipe(Stream.runCollect, Effect.forkChild({ startImmediately: true }));
+        const first = yield* start();
+        yield* Deferred.await(fake.startRequested);
+        const stopInterrupted = yield* Deferred.make<void>();
+        const releaseStop = yield* Deferred.make<void>();
+        fake.setStop(
+          Deferred.await(releaseStop).pipe(
+            Effect.onInterrupt(() => Deferred.succeed(stopInterrupted, undefined)),
+          ),
+        );
+        const replacement = yield* start();
+        yield* Deferred.await(fake.stopRequested);
+        const interrupted = yield* Fiber.interrupt(replacement).pipe(Effect.forkChild);
+        yield* Deferred.await(stopInterrupted);
+        fake.setStop(Effect.void);
+        yield* Deferred.succeed(releaseStop, undefined);
+        yield* Fiber.join(interrupted);
+        yield* Fiber.join(first);
+        NodeAssert.deepEqual(
+          fake.requests.map(({ method }) => method),
+          ["thread/realtime/start", "thread/realtime/stop", "thread/realtime/stop"],
+        );
+        const recovered = yield* start();
+        yield* Deferred.await(fake.secondStartRequested);
+        yield* fake.emit("thread/realtime/closed", { threadId: PROVIDER_THREAD });
+        yield* Fiber.join(recovered);
+      }),
+    ),
   );
 
   it.effect("stops the realtime session when the client unsubscribes", () =>
