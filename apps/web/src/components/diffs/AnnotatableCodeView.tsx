@@ -8,13 +8,12 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
-import { useState, type ReactNode, type Ref } from "react";
+import { useRef, useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import {
   buildFileDiffContentVersion,
   fnv1a32,
-  resolveFileDiffPath,
   resolveFileDiffPreviousPath,
 } from "~/lib/diffRendering";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -90,6 +89,7 @@ interface AnnotatableCodeViewProps {
     collapsed: boolean;
   }>;
   pendingFiles: ReadonlyArray<FileDiffMetadata>;
+  isRefreshingDiff: boolean;
   sectionId: string;
   sectionTitle: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -119,6 +119,7 @@ export function AnnotatableCodeView({
   codeViewKey,
   files,
   pendingFiles,
+  isRefreshingDiff,
   sectionId,
   sectionTitle,
   composerDraftTarget,
@@ -150,8 +151,19 @@ export function AnnotatableCodeView({
     | null
   >(null);
   const [draftText, setDraftText] = useState("");
+  const renderedFiles = useRef(new Map<string, FileDiffMetadata>());
 
   const filesByKey = new Map(files.map((file) => [file.fileKey, file]));
+  const isCurrentFileRendered = (fileKey: string) => {
+    const file = filesByKey.get(fileKey);
+    const rendered = renderedFiles.current.get(fileKey);
+    return (
+      !isRefreshingDiff &&
+      file !== undefined &&
+      rendered !== undefined &&
+      (file.fileDiff === rendered || file.fileVersion === buildFileDiffContentVersion(rendered))
+    );
+  };
   if (draft !== null && !isDiffCommentAnchorCurrent(draft, filesByKey, pendingFiles)) {
     setDraft(null);
     setDraftText("");
@@ -215,7 +227,7 @@ export function AnnotatableCodeView({
   const submitEntry = useStableCallback((entryId: string, text: string) => {
     const entry = draft?.annotation.metadata.entries.find((candidate) => candidate.id === entryId);
     const file = draft ? filesByKey.get(draft.fileKey) : undefined;
-    if (!entry || !file || draft?.fileVersion !== file.fileVersion) return;
+    if (isRefreshingDiff || !entry || !file || draft?.fileVersion !== file.fileVersion) return;
     const comment = buildDiffReviewComment({
       id: entry.id,
       sectionId,
@@ -237,15 +249,15 @@ export function AnnotatableCodeView({
       const item = context.item;
       if (item.type !== "diff") return;
       const file = filesByKey.get(item.id);
-      if (!file || file.fileVersion !== buildFileDiffContentVersion(item.fileDiff)) return;
+      if (!file || !isCurrentFileRendered(item.id)) return;
       const id = nextFileCommentId();
-      const filePath = resolveFileDiffPath(item.fileDiff);
+      const filePath = file.filePath;
       const comment = buildDiffReviewComment({
         id,
         sectionId,
         sectionTitle,
         filePath,
-        fileDiff: item.fileDiff,
+        fileDiff: file.fileDiff,
         range,
         text: "",
       });
@@ -255,7 +267,7 @@ export function AnnotatableCodeView({
         fileKey: item.id,
         fileVersion: file.fileVersion,
         filePath,
-        previousFilePath: resolveFileDiffPreviousPath(item.fileDiff),
+        previousFilePath: resolveFileDiffPreviousPath(file.fileDiff),
         annotation: {
           side: annotationSide(range),
           lineNumber: range.end,
@@ -284,6 +296,7 @@ export function AnnotatableCodeView({
       items={items}
       selectedLines={selectedLines}
       onSelectedLinesChange={(selection) => {
+        if (selection !== null && !isCurrentFileRendered(selection.id)) return;
         const file = selection === null ? undefined : filesByKey.get(selection.id);
         setSelectedLines(
           selection !== null && file !== undefined
@@ -301,10 +314,27 @@ export function AnnotatableCodeView({
       }}
       options={{
         ...options,
-        enableGutterUtility: draft === null,
-        enableLineSelection: draft === null,
+        enableGutterUtility: draft === null && !isRefreshingDiff,
+        enableLineSelection: draft === null && !isRefreshingDiff,
         onGutterUtilityClick: beginComment,
         onRevealSearchMatch: (item) => onRevealSearchMatch(item.id),
+        onPostRender: (node, _instance, phase, context) => {
+          if (context.type === "diff") {
+            if (phase === "unmount") {
+              renderedFiles.current.delete(context.item.id);
+            } else {
+              // At post-render this is the data Pierre just adopted, including retained rows.
+              const { fileDiff } = context.instance.__getNextRenderData({
+                fileDiff: context.item.fileDiff,
+                lineAnnotations: undefined,
+              });
+              renderedFiles.current.set(context.item.id, fileDiff);
+            }
+            options.onPostRender?.(node, context.instance, phase, context);
+          } else {
+            options.onPostRender?.(node, context.instance, phase, context);
+          }
+        },
       }}
       renderHeaderFilenameSuffix={(item) =>
         item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null
@@ -337,6 +367,7 @@ export function AnnotatableCodeView({
                 onTextChange={setDraftText}
                 onCancel={() => removeEntry(entry.id)}
                 onComment={(text) => submitEntry(entry.id, text)}
+                pending={isRefreshingDiff}
                 onDelete={() => removeEntry(entry.id)}
               />
             ))}
