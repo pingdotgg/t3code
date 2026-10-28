@@ -1639,7 +1639,7 @@ describe("groupSidebarThreadsByProject", () => {
       thread("b", remoteEnvironmentId, t3codeRemote),
     ];
     const summarize = (keepEmpty: boolean) =>
-      groupSidebarThreadsByProject(groups, threads, keepEmpty).map((folder) => ({
+      groupSidebarThreadsByProject(groups, threads, () => keepEmpty).map((folder) => ({
         projectKey: folder.group.projectKey,
         threads: folder.threads.map((entry) => entry.id),
       }));

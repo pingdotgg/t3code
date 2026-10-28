@@ -247,12 +247,17 @@ export interface ProjectGroup<TProject extends EnvironmentProject = EnvironmentP
   readonly archived: boolean;
 }
 
+export function pinnedProjectGroupsFirst<TGroup extends { readonly pinned: boolean }>(
+  groups: ReadonlyArray<TGroup>,
+): TGroup[] {
+  return [...groups.filter((group) => group.pinned), ...groups.filter((group) => !group.pinned)];
+}
+
 /** The groups a project picker offers: archived groups left out, pinned ones first. */
 export function pickableProjectGroups<
   TGroup extends { readonly pinned: boolean; readonly archived: boolean },
 >(groups: ReadonlyArray<TGroup>): TGroup[] {
-  const open = groups.filter((group) => !group.archived);
-  return [...open.filter((group) => group.pinned), ...open.filter((group) => !group.pinned)];
+  return pinnedProjectGroupsFirst(groups.filter((group) => !group.archived));
 }
 
 function projectFreshnessTime(project: EnvironmentProject): number {
