@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlError from "effect/sql/SqlError";
-import { T3CHAT_PLAN_TUNNEL_LIMITS } from "@t3tools/contracts/relay";
+import { DEFAULT_MANAGED_TUNNEL_LIMIT, T3CHAT_PLAN_TUNNEL_LIMITS } from "@t3tools/contracts/relay";
 
 import * as RelayDb from "../db.ts";
 import {
@@ -16,7 +16,6 @@ import {
 } from "../persistence/schema.ts";
 import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 
-export const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
 // Reserve-to-tunnel takes two Cloudflare calls capped at 8 seconds each; a reservation older than this was abandoned.
 const MANAGED_TUNNEL_PENDING_WINDOW_MINUTES = 15;
 

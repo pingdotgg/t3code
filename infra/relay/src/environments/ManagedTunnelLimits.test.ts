@@ -9,7 +9,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { ne } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
-import type { RelayT3ChatPlan } from "@t3tools/contracts/relay";
+import { DEFAULT_MANAGED_TUNNEL_LIMIT, type RelayT3ChatPlan } from "@t3tools/contracts/relay";
 
 import * as RelayDb from "../db.ts";
 import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
@@ -124,7 +124,7 @@ const reserve = (
 describe("ManagedTunnelLimits", () => {
   it.effect("rejects concurrent reservations past the limit", () => {
     const reserved: Array<string> = [];
-    const attempts = ManagedTunnelLimits.DEFAULT_MANAGED_TUNNEL_LIMIT + 2;
+    const attempts = DEFAULT_MANAGED_TUNNEL_LIMIT + 2;
 
     return Effect.gen(function* () {
       const limits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
@@ -140,7 +140,7 @@ describe("ManagedTunnelLimits", () => {
         { concurrency: "unbounded" },
       );
 
-      expect(reserved).toHaveLength(ManagedTunnelLimits.DEFAULT_MANAGED_TUNNEL_LIMIT);
+      expect(reserved).toHaveLength(DEFAULT_MANAGED_TUNNEL_LIMIT);
       expect(
         results.filter(
           (result) =>

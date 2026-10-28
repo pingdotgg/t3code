@@ -1058,7 +1058,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "T3 Connect",
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: ["managed tunnel cloud other devices remote"],
+    searchTerms: ["managed tunnel cloud other devices remote tunnels limit t3 chat"],
     desktopOnly: true,
     cloudOnly: true,
   },

@@ -966,6 +966,8 @@ export type RelayOkResponse = typeof RelayOkResponse.Type;
 export const RelayT3ChatPlan = Schema.Literals(["free", "pro", "premier"]);
 export type RelayT3ChatPlan = typeof RelayT3ChatPlan.Type;
 
+export const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
+
 // A linked paid T3 Chat plan raises the default managed tunnel cap.
 export const T3CHAT_PLAN_TUNNEL_LIMITS = { pro: 10, premier: 100 } as const;
 
