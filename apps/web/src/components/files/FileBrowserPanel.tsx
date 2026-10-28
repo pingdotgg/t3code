@@ -90,6 +90,7 @@ function FileSearchField(props: {
         value={props.value}
         aria-label={props.ariaLabel}
         placeholder="Search files"
+        data-workspace-focus-default
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
         onKeyDown={(event) => {

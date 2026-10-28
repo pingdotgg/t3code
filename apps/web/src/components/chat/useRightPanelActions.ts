@@ -15,9 +15,11 @@ import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
   selectActiveRightPanel,
+  selectThreadPanelOpen,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../../rightPanelStore";
+import { requestWorkspaceContentFocus, requestWorkspaceFocus } from "../../lib/workspaceFocus";
 import { setActivePreviewTab } from "../../previewStateStore";
 import { BrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
@@ -224,11 +226,23 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const toggleRightPanelStable = useStableCallback(toggleRightPanel);
   const toggleThreadPanel = () => {
     if (!activeThreadRef) return;
-    useRightPanelStore.getState().toggleThreadPanel(activeThreadRef, threadPanelPresentation);
+    const store = useRightPanelStore.getState();
+    if (threadPanelPresentation === "inline") {
+      const open = selectThreadPanelOpen(
+        store.threadPanelVisibilityByThreadKey,
+        activeThreadRef,
+        "inline",
+      );
+      if (!open) requestWorkspaceFocus({ area: "details" });
+      else if (document.activeElement?.closest('[data-workspace-area="details"]'))
+        requestWorkspaceContentFocus();
+    }
+    store.toggleThreadPanel(activeThreadRef, threadPanelPresentation);
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
   const toggleRightPanelMaximized = () => {
     if (!canMaximizeRightPanel || !activeThreadRef) return;
+    if (!rightPanelMaximized) requestWorkspaceFocus({ area: "panel" });
     useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
   };
   const toggleRightPanelMaximizedStable = useStableCallback(toggleRightPanelMaximized);

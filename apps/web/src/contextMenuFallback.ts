@@ -155,6 +155,7 @@ function createIconElement(name: string, tone: "neutral" | "destructive"): SVGSV
     return null;
   }
   const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("xmlns", SVG_NS);
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
@@ -210,14 +211,14 @@ function isNodeWithinMenuStack(target: EventTarget | null, menuStack: readonly H
   return false;
 }
 
-let activeContextMenuDismiss: (() => void) | null = null;
+let activeContextMenuDismiss: ((restoreFocus?: boolean) => void) | null = null;
 
 export function isContextMenuOpen(): boolean {
   return activeContextMenuDismiss !== null;
 }
 
-export function dismissContextMenu(): void {
-  activeContextMenuDismiss?.();
+export function dismissContextMenu(restoreFocus = true): void {
+  activeContextMenuDismiss?.(restoreFocus);
   activeContextMenuDismiss = null;
 }
 
@@ -225,6 +226,7 @@ export function showContextMenuFallback<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number },
 ): Promise<T | null> {
+  dismissContextMenu();
   return new Promise<T | null>((resolve) => {
     const previouslyFocusedElement =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -233,9 +235,9 @@ export function showContextMenuFallback<T extends string>(
     let isDisposed = false;
     let canDismissFromPointer = false;
 
-    const dismiss = () => cleanup(null);
+    const dismiss = (restoreFocus = true) => cleanup(null, restoreFocus);
 
-    const cleanup = (result: T | null) => {
+    const cleanup = (result: T | null, restoreFocus = true) => {
       if (isDisposed) {
         return;
       }
@@ -246,7 +248,10 @@ export function showContextMenuFallback<T extends string>(
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("contextmenu", onContextMenu, true);
-      const shouldRestoreFocus = isNodeWithinMenuStack(document.activeElement, menuStack);
+      document.removeEventListener("focusin", onFocusIn);
+      window.removeEventListener("blur", onWindowBlur);
+      const shouldRestoreFocus =
+        restoreFocus && isNodeWithinMenuStack(document.activeElement, menuStack);
       for (const menu of menuStack) {
         menu.remove();
       }
@@ -257,11 +262,77 @@ export function showContextMenuFallback<T extends string>(
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        cleanup(null);
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      )
+        return;
+      const level = menuStack.findIndex((menu) =>
+        isNodeWithinMenuStack(document.activeElement, [menu]),
+      );
+      if (level < 0) return;
+      const menu = menuStack[level]!;
+      const buttons = [...menu.querySelectorAll<HTMLButtonElement>("button")].filter(
+        (button) => !button.disabled,
+      );
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      let target: HTMLButtonElement | undefined;
+      switch (event.key) {
+        case "ArrowDown":
+          target = buttons[(index + 1) % buttons.length];
+          break;
+        case "ArrowUp":
+          target =
+            buttons[(index < 0 ? buttons.length - 1 : index - 1 + buttons.length) % buttons.length];
+          break;
+        case "Home":
+          target = buttons[0];
+          break;
+        case "End":
+          target = buttons.at(-1);
+          break;
+        case "ArrowRight":
+          if (buttons[index]?.getAttribute("aria-haspopup") !== "menu") return;
+          buttons[index]?.click();
+          break;
+        case " ":
+        case "Enter":
+          // Keyboard activation must not depend on the opening pointer gesture's frame.
+          canDismissFromPointer = true;
+          buttons[index]?.click();
+          break;
+        case "ArrowLeft":
+          if (level === 0) return;
+        // Fall through to cancel this submenu only.
+        case "Escape": {
+          const parent = submenuTriggerStack[level];
+          if (parent) {
+            parent.focus({ preventScroll: true });
+            closeMenusFromLevel(level);
+          } else cleanup(null);
+          break;
+        }
+        case "Tab":
+          // Tab closes the menu and continues from the element that opened it.
+          cleanup(null);
+          return;
+        default:
+          return;
       }
+      event.preventDefault();
+      event.stopPropagation();
+      if (target && target !== submenuTriggerStack[level + 1]) closeMenusFromLevel(level + 1);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "nearest" });
     };
+
+    const onFocusIn = (event: FocusEvent) => {
+      if (!isNodeWithinMenuStack(event.target, menuStack)) cleanup(null, false);
+    };
+    const onWindowBlur = () => cleanup(null, false);
 
     const onPointerDown = (event: PointerEvent) => {
       if (!canDismissFromPointer || isNodeWithinMenuStack(event.target, menuStack)) {
@@ -302,6 +373,10 @@ export function showContextMenuFallback<T extends string>(
       menu.style.left = `${preferredLeft}px`;
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
+      menu.dataset.contextMenu = "true";
+      menu.setAttribute("role", "menu");
+      menu.setAttribute("aria-label", parentTrigger?.textContent ?? "Context menu");
+      menu.tabIndex = -1;
 
       const inner = document.createElement("div");
       inner.className =
@@ -336,6 +411,9 @@ export function showContextMenuFallback<T extends string>(
         button.type = "button";
         const isDisabled = item.disabled === true;
         button.disabled = isDisabled;
+        button.tabIndex = -1;
+        button.setAttribute("role", "menuitem");
+        button.setAttribute("aria-disabled", String(isDisabled));
         const rowBase =
           "flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left outline-none transition-colors sm:min-h-7 sm:text-sm min-h-8 text-base";
         button.className = isDisabled
@@ -491,11 +569,17 @@ export function showContextMenuFallback<T extends string>(
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("contextmenu", onContextMenu, true);
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);
-    // Dismiss the prior menu before replacing its only cleanup handle, or its DOM and listeners leak.
-    if (activeContextMenuDismiss) {
-      activeContextMenuDismiss();
-    }
     activeContextMenuDismiss = dismiss;
+    // A keyboard-opened menu starts on its first action, a pointer-opened one on the menu itself.
+    // Text fields always match :focus-visible, so they say nothing about how the menu opened.
+    const firstAction =
+      previouslyFocusedElement?.matches(":focus-visible") &&
+      !previouslyFocusedElement.matches('input, textarea, select, [contenteditable="true"]')
+        ? menuStack[0]?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+        : null;
+    (firstAction ?? menuStack[0])?.focus({ preventScroll: true });
+    document.addEventListener("focusin", onFocusIn);
+    window.addEventListener("blur", onWindowBlur);
 
     requestAnimationFrame(() => {
       canDismissFromPointer = true;

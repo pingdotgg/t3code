@@ -4,6 +4,7 @@ import {
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
 import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
+import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
@@ -11,6 +12,9 @@ import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
 interface PreviewPanelShellProps {
+  workspaceArea?: boolean;
+  workspaceFocusKey?: string;
+  workspaceLabel?: string;
   mode: PreviewPanelMode;
   maximized?: boolean;
   inlineSize?: PreviewPanelInlineSize;
@@ -41,6 +45,7 @@ function ResizablePreviewPanelShell(props: PreviewPanelShellProps) {
 function PreviewPanelShellFrame(
   props: PreviewPanelShellProps & { inlineSize: PreviewPanelInlineSize },
 ) {
+  const panelArea = workspaceAreaProps("panel", 4, props.workspaceLabel ?? "Workspace panel");
   const isInline = props.mode === "inline";
   const collapsible = isInline && props.open !== undefined;
   const open = props.open ?? true;
@@ -112,6 +117,9 @@ function PreviewPanelShellFrame(
   return (
     <div
       ref={attachHost}
+      {...(props.workspaceArea ? panelArea : {})}
+      data-workspace-focus-key={props.workspaceFocusKey}
+      data-workspace-unavailable={collapsible && !open ? "true" : undefined}
       className={cn(
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline

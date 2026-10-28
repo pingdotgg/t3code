@@ -1,3 +1,4 @@
+import { attachSidebarTree, SIDEBAR_TREE_PROPS } from "../lib/sidebarTree";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
 import { Spinner } from "~/components/ui/spinner";
@@ -337,6 +338,7 @@ function buildThreadJumpLabelMap(input: {
 }
 
 interface SidebarThreadRowProps {
+  navigationParent?: string | undefined;
   thread: SidebarThreadSummary;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
@@ -542,6 +544,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     startThreadRename(threadKey, thread.title);
   };
   const handleRowKeyDown = (event: React.KeyboardEvent) => {
+    if (event.target !== event.currentTarget) return;
+    if (
+      event.key === "F2" &&
+      renamingThreadKey !== threadKey &&
+      readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)
+    ) {
+      event.preventDefault();
+      startThreadRename(threadKey, thread.title);
+      return;
+    }
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     navigateToThread(threadRef);
@@ -678,8 +690,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     >
       <div
         ref={isActive ? (node) => revealActiveRow(node, threadKey) : undefined}
-        role="button"
-        tabIndex={0}
+        role="treeitem"
+        tabIndex={-1}
+        data-sidebar-row={threadKey}
+        data-sidebar-parent={props.navigationParent}
+        aria-current={isActive ? "page" : undefined}
         data-active={isActive}
         data-slot="sidebar-menu-sub-button"
         data-sidebar="menu-sub-button"
@@ -1002,6 +1017,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
 
   return (
     <SidebarMenuSub
+      role="presentation"
       ref={attachThreadListAutoAnimateRef}
       className="mx-0.5 my-0 w-full translate-x-0 overflow-hidden empty:hidden sm:mx-1"
     >
@@ -1022,6 +1038,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
             <SidebarThreadRow
               key={threadKey}
               thread={thread}
+              navigationParent={projectExpanded ? `project:${projectKey}` : undefined}
               orderedProjectThreadKeys={orderedProjectThreadKeys}
               isActive={activeRouteThreadKey === threadKey}
               openPullRequestsInRightPanel={openPullRequestsInRightPanel}
@@ -1054,6 +1071,10 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         <SidebarMenuSubItem className="w-full">
           <SidebarMenuSubButton
             render={showMoreButtonRender}
+            role="treeitem"
+            tabIndex={-1}
+            data-sidebar-row={`project:${projectKey}:more`}
+            data-sidebar-parent={`project:${projectKey}`}
             data-thread-selection-safe
             size="sm"
             onClick={() => {
@@ -1071,6 +1092,10 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         <SidebarMenuSubItem className="w-full">
           <SidebarMenuSubButton
             render={showLessButtonRender}
+            role="treeitem"
+            tabIndex={-1}
+            data-sidebar-row={`project:${projectKey}:less`}
+            data-sidebar-parent={`project:${projectKey}`}
             data-thread-selection-safe
             size="sm"
             onClick={() => {
@@ -1400,9 +1425,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const handleProjectButtonClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     if (suppressProjectClickForContextMenuRef.current) {
       suppressProjectClickForContextMenuRef.current = false;
-      event.preventDefault();
-      event.stopPropagation();
-      return;
+      // A keyboard-made click (detail 0) never follows a context menu.
+      if (event.detail !== 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
     }
     if (dragInProgressRef.current) {
       event.preventDefault();
@@ -2301,6 +2329,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           className={isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : undefined}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
+          role="treeitem"
+          tabIndex={-1}
+          data-sidebar-row={`project:${project.projectKey}`}
+          aria-expanded={projectExpanded}
+          aria-label={project.displayName}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}
           onClick={handleProjectButtonClick}
           onKeyDown={handleProjectButtonKeyDown}
@@ -2380,6 +2413,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 <button
                   type="button"
                   aria-label={`Create new thread in ${project.displayName}`}
+                  data-sidebar-action-for={`project:${project.projectKey}`}
                   data-testid="new-thread-button"
                   className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
                   onClick={handleCreateThreadClick}
@@ -2878,6 +2912,14 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     projectsLength,
   } = props;
 
+  const attachTreeRef = (node: HTMLUListElement | null) => {
+    attachProjectListAutoAnimateRef(node);
+    const dispose = attachSidebarTree(node);
+    return () => {
+      dispose?.();
+      attachProjectListAutoAnimateRef(null);
+    };
+  };
   const handleProjectSortOrderChange = (sortOrder: SidebarProjectSortOrder) => {
     updateClientSettings({ sidebarProjectSortOrder: sortOrder });
   };
@@ -2970,7 +3012,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             onDragEnd={handleProjectDragEnd}
             onDragCancel={handleProjectDragCancel}
           >
-            <SidebarMenu>
+            <SidebarMenu {...SIDEBAR_TREE_PROPS} ref={attachSidebarTree}>
               <SortableContext items={sortedProjectKeys} strategy={verticalListSortingStrategy}>
                 {sortedProjects.map((project) => (
                   <SortableProjectItem key={project.projectKey} projectId={project.projectKey}>
@@ -3006,7 +3048,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             </SidebarMenu>
           </DndContext>
         ) : (
-          <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+          <SidebarMenu {...SIDEBAR_TREE_PROPS} ref={attachTreeRef}>
             {sortedProjects.map((project) => (
               <SidebarProjectListRow
                 key={project.projectKey}
