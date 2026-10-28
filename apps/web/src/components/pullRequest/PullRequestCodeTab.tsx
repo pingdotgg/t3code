@@ -613,6 +613,7 @@ function PullRequestCodeTab({
     registry,
     refreshFilesViewed,
   ]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates the next cached environment diff page before advancing its refresh walk
   useEffect(() => {
     const last = sliceState.refreshing?.at(-1);
     if (
