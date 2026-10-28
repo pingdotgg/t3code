@@ -60,6 +60,7 @@ type InboxSendSortInput = InboxThreadInput &
 /**
  * Newest first by the last message the user sent. Agent activity never moves
  * a row; creating, un-settling, or (with the Working section) a return does.
+ * Pass `observedReturnAt` only with the Working section on.
  */
 export function sortInboxThreadsBySend<T extends InboxSendSortInput>(
   threads: readonly T[],
@@ -76,6 +77,10 @@ export function sortInboxThreadsBySend<T extends InboxSendSortInput>(
             ? thread.latestUserMessageAt
             : thread.latestUserAuthoredMessageAt) ?? undefined,
         ) ?? 0,
+        // With the Working section, a finished run is a return; the stored time survives reloads.
+        observedReturnAt === undefined
+          ? 0
+          : (toSortableTimestamp(thread.latestRun?.completedAt ?? undefined) ?? 0),
         observedReturnAt?.(thread) ?? 0,
       ),
     ]),
