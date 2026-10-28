@@ -460,6 +460,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "inbox-oldest-first",
     title: "Oldest first",
     to: "/settings/general",
+    targetId: "working-shelf",
     searchTerms: ["sort order reverse queue inbox threads sidebar newest"],
   },
   {

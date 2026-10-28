@@ -912,33 +912,34 @@ export function GeneralSettingsPanel() {
             />
           }
         />
-        <SettingsRow
-          {...searchableSetting("inbox-oldest-first")}
-          description="With the Working section on, the thread that has waited longest stays at the top of the inbox. Threads that come back later join at the bottom."
-          resetAction={
-            settings.sidebarInboxOldestFirst !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarInboxOldestFirst ? (
-              <SettingResetButton
-                label="oldest first"
-                onClick={() =>
-                  updateSettings({
-                    sidebarInboxOldestFirst: DEFAULT_UNIFIED_SETTINGS.sidebarInboxOldestFirst,
-                  })
+        {settings.sidebarWorkingShelfEnabled ? (
+          <SettingsRow
+            title={searchableSetting("inbox-oldest-first").title}
+            description="The thread that has waited longest stays at the top of the inbox. Threads that come back later join at the bottom."
+            resetAction={
+              settings.sidebarInboxOldestFirst !==
+              DEFAULT_UNIFIED_SETTINGS.sidebarInboxOldestFirst ? (
+                <SettingResetButton
+                  label="oldest first"
+                  onClick={() =>
+                    updateSettings({
+                      sidebarInboxOldestFirst: DEFAULT_UNIFIED_SETTINGS.sidebarInboxOldestFirst,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.sidebarInboxOldestFirst}
+                onCheckedChange={(checked) =>
+                  updateSettings({ sidebarInboxOldestFirst: Boolean(checked) })
                 }
+                aria-label="Oldest first"
               />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.sidebarInboxOldestFirst}
-              disabled={!settings.sidebarWorkingShelfEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ sidebarInboxOldestFirst: Boolean(checked) })
-              }
-              aria-label="Oldest first"
-            />
-          }
-        />
+            }
+          />
+        ) : null}
       </SettingsSection>
 
       <SettingsSection id="confirmations" title="Confirmations">

@@ -201,14 +201,15 @@ export function WorkingSectionSettings() {
           value={workingShelfEnabled}
           onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
         />
-        <SettingsSwitchRow
-          icon="arrow.up.circle"
-          label="Oldest first"
-          subtitle="The thread that has waited longest stays at the top."
-          disabled={!workingShelfEnabled}
-          value={inboxOldestFirst}
-          onValueChange={(value) => savePreferences({ inboxOldestFirst: value })}
-        />
+        {workingShelfEnabled ? (
+          <SettingsSwitchRow
+            icon="arrow.up.circle"
+            label="Oldest first"
+            subtitle="The thread that has waited longest stays at the top."
+            value={inboxOldestFirst}
+            onValueChange={(value) => savePreferences({ inboxOldestFirst: value })}
+          />
+        ) : null}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         Fold working and monitoring threads into a Working section. They return to the list when
