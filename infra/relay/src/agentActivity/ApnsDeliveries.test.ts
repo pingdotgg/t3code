@@ -190,6 +190,7 @@ function layerFor(input: {
             }),
         }),
         Layer.succeed(DeliveryAttempts.DeliveryAttempts, {
+          pruneExpired: Effect.succeed(0),
           record: (attempt) =>
             Effect.sync(() => {
               input.attempts.push(attempt);
