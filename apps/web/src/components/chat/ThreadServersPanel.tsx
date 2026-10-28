@@ -11,9 +11,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { GlobeIcon, LoaderCircleIcon, SquareIcon } from "lucide-react";
-import { useState } from "react";
+import { type MouseEvent, useState } from "react";
 
-import { cn } from "../../lib/utils";
+import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
+import { readLocalApi } from "../../localApi";
+import { cn, isMacPlatform } from "../../lib/utils";
 import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
 import { useEnvironment } from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
@@ -48,6 +50,7 @@ export function ThreadServersPanel(props: {
   const [stoppingKey, setStoppingKey] = useState<string | null>(null);
 
   if (servers.length === 0) return null;
+  const externalClickLabel = isMacPlatform(navigator.platform) ? "⌘-click" : "Ctrl-click";
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
 
   const reportFailure = (title: string, error: unknown) => {
@@ -60,7 +63,17 @@ export function ThreadServersPanel(props: {
     );
   };
 
-  const open = async (server: DiscoveredLocalServer) => {
+  const open = async (server: DiscoveredLocalServer, event: MouseEvent<HTMLElement>) => {
+    if (event.button > 1) return;
+    // Like links: modified and middle clicks go to the system browser.
+    if (event.metaKey || event.ctrlKey || event.button === 1) {
+      event.preventDefault();
+      const url = resolveDiscoveredServerUrl(props.environmentId, server.url);
+      await readLocalApi()
+        ?.shell.openExternal(url)
+        .catch((error: unknown) => reportFailure("Unable to open in browser", error));
+      return;
+    }
     const result = await openDiscoveredPort({ threadRef, port: server, openPreview });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       reportFailure("Unable to open preview", squashAtomCommandFailure(result));
@@ -87,7 +100,7 @@ export function ThreadServersPanel(props: {
           const key = serverKey(server);
           const stoppable = canStop && supportsStop && server.pid !== null;
           return (
-            <li key={key} className="group relative flex h-8 items-center rounded-lg">
+            <li key={key} className="group relative flex items-center rounded-lg">
               <Tooltip>
                 <TooltipTrigger
                   delay={200}
@@ -96,29 +109,29 @@ export function ThreadServersPanel(props: {
                       size="sm"
                       variant="ghost"
                       part="row"
+                      multiline
                       disabled={!canOpen}
-                      onClick={() => void open(server)}
+                      onClick={(event) => void open(server, event)}
+                      onAuxClick={(event) => void open(server, event)}
                     />
                   }
                 >
                   <GlobeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-                  <span className="shrink-0 text-sm font-medium leading-4 text-foreground/85">
-                    localhost:{server.port}
-                  </span>
-                  {/* The stop button covers this while it shows. */}
-                  <span
-                    className={cn(
-                      "ms-auto min-w-0 truncate text-2xs font-normal text-muted-foreground",
-                      stoppable &&
-                        "group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0 [@media(hover:none)]:opacity-0",
-                    )}
-                  >
-                    {[server.terminal === null ? "Agent" : "Terminal", server.processName]
-                      .filter(Boolean)
-                      .join(" · ")}
+                  {/* The end padding keeps text clear of the stop button. */}
+                  <span className={cn("flex min-w-0 flex-1 flex-col gap-0.5", stoppable && "pe-6")}>
+                    <span className="truncate text-sm font-medium leading-4 text-foreground/85">
+                      localhost:{server.port}
+                    </span>
+                    <span className="truncate text-2xs font-normal leading-4 text-muted-foreground">
+                      {[server.terminal === null ? "Agent" : "Terminal", server.processName]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
                   </span>
                 </TooltipTrigger>
-                <TooltipPopup side="left">Open in the browser panel</TooltipPopup>
+                <TooltipPopup side="left">
+                  Open in the browser panel. {externalClickLabel} for your browser.
+                </TooltipPopup>
               </Tooltip>
               {stoppable ? (
                 <div className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
