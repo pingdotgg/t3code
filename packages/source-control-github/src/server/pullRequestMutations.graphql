@@ -41,11 +41,23 @@ mutation UnresolveReviewThread($threadId: ID!) {
   }
 }
 
-# Rewrites the pull request's own words. Both are nullable so that one document serves a change to
-# the title, to the description, or to the two together: a variable the request does not send puts
-# no entry in the input at all, which leaves that field as it was rather than clearing it.
-mutation UpdatePullRequest($pullRequestId: ID!, $title: String, $body: String) {
-  updatePullRequest(input: { pullRequestId: $pullRequestId, title: $title, body: $body }) {
+# Rewrites the pull request's own words or its maintainer-edit setting. Every field is nullable so
+# that one document serves any combination: a variable the request does not send puts no entry in
+# the input at all, which leaves that field as it was rather than clearing it.
+mutation UpdatePullRequest(
+  $pullRequestId: ID!
+  $title: String
+  $body: String
+  $maintainerCanModify: Boolean
+) {
+  updatePullRequest(
+    input: {
+      pullRequestId: $pullRequestId
+      title: $title
+      body: $body
+      maintainerCanModify: $maintainerCanModify
+    }
+  ) {
     pullRequest {
       id
     }
