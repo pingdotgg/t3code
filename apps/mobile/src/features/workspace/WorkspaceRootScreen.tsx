@@ -62,7 +62,7 @@ function WorkspaceRootTitle(props: {
   return (
     <View style={{ width: props.maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
-        brand={<CompactBrandTitle accessibilityLabel={`T3 Code, ${tabTitle}`} />}
+        brand={<CompactBrandTitle accessibilityLabel={`T3 Code, ${tabTitle}`} fit />}
         maxWidth={props.maxWidth}
         onPress={props.onOpenEnvironments}
       />
@@ -95,14 +95,15 @@ function WorkspaceRootContent() {
   const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
   const workspace = useWorkspaceTabs()!;
   const { state } = workspace;
+  // Settings is a workspace tab too; its list takes the place of the selected tab's.
+  const settingsOpen = workspace.settingsOpen;
   const renderHeaderTitle = () => (
     <WorkspaceRootTitle
-      maxWidth={Math.max(0, width - 160)}
+      // Settings adds its scope filter beside search.
+      maxWidth={Math.max(0, width - 160 - (settingsOpen ? 44 : 0))}
       onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
     />
   );
-  // Settings is a workspace tab too; its list takes the place of the selected tab's.
-  const settingsOpen = workspace.settingsOpen;
   const tab = state.tabs[settingsOpen ? "settings" : state.selectedTab];
   const bottomClearance =
     layout.primarySidebarOverlaysContent && state.selectedTab === "usage"
