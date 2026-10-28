@@ -268,7 +268,8 @@ export interface ProviderRepositoryRef {
 
 export interface PullRequestProviderApi {
   readonly withVerifiedCredential?: <A, E, R>(
-    input: { readonly cwd: string; readonly host: string },
+    /** `repository` lets a host pick the credential that can reach it. */
+    input: { readonly cwd: string; readonly host: string; readonly repository?: string },
     use: (identity: {
       readonly accountId: string;
       readonly viewer: string;

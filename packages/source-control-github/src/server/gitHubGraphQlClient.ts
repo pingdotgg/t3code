@@ -77,9 +77,18 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
                     headers: responseHeaders,
                     ...(answer.errors === undefined ? {} : { graphqlErrors: answer.errors }),
                   });
+                  const withheld = (answer.errors ?? []).some(
+                    (error) => error["type"] === "NOT_FOUND" || error["type"] === "FORBIDDEN",
+                  );
                   return rateLimited
                     ? { _tag: "RateLimited" as const, status, headers: responseHeaders }
-                    : { _tag: "Ok" as const, value: answer, status, headers: responseHeaders };
+                    : {
+                        _tag: "Ok" as const,
+                        value: answer,
+                        withheld,
+                        status,
+                        headers: responseHeaders,
+                      };
                 }),
                 Effect.catchIf(GraphQLClientError.isGraphQLClientError, (error) =>
                   refused(error, { host, operation: target.operation }),

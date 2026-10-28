@@ -13,6 +13,7 @@ import type {
 import { create } from "zustand";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -143,6 +144,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     setFileCopy(copyKey, null);
     throw new Error(failureMessage(started));
   }
+  void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
   if (reads.length === 0) return;
 
   void (async () => {

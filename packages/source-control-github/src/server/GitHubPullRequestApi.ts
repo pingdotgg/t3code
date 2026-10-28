@@ -45,6 +45,7 @@ import {
   type PullRequestPreview,
 } from "@t3tools/contracts";
 
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
@@ -405,7 +406,7 @@ export class GitHubPullRequestApi extends Context.Service<
   GitHubPullRequestApi,
   {
     readonly withVerifiedCredential: <A, E, R>(
-      input: { readonly cwd: string; readonly host: string },
+      input: { readonly cwd: string; readonly host: string; readonly repository?: string },
       use: (identity: {
         readonly accountId: string;
         readonly viewer: string;
@@ -886,6 +887,7 @@ interface RestReadInput<A> {
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
+  const appAccess = yield* GitHubAppAccess.GitHubAppAccess;
   const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
   const httpClient = yield* HttpClient.HttpClient;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
@@ -909,10 +911,18 @@ export const make = Effect.gen(function* () {
   const decodeRoutingIdentity = Schema.decodeUnknownEffect(Schema.fromJsonString(RoutingIdentity));
   const decodeViewerIdentity = Schema.decodeUnknownEffect(RoutingIdentity);
   const captureVerifiedCredential = Effect.fn("GitHubPullRequestApi.captureVerifiedCredential")(
-    function* (input: { readonly cwd: string; readonly host: string }) {
+    function* (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository?: string;
+    }) {
       const unavailable = () => new GitHubViewerLoginUnavailableError({ cwd: input.cwd });
       const host = input.host.toLowerCase();
-      const { token, fingerprint: key } = yield* api.credential(host);
+      // A pinned credential is never handed on to another, so pick one that reaches the repository.
+      const { token, fingerprint: key } =
+        input.repository === undefined
+          ? yield* api.credential(host)
+          : yield* appAccess.credentialFor(host, input.repository);
       const credential = { host, token, credentialFingerprint: key };
       return yield* Effect.acquireUseRelease(
         Effect.sync(() => {
@@ -2391,6 +2401,7 @@ export const make = Effect.gen(function* () {
       if (input.stackNumber !== undefined)
         return runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
           Effect.provideService(GitHubRest.GitHubRest, api),
+          Effect.provideService(GitHubAppAccess.GitHubAppAccess, appAccess),
           Effect.provideService(GitHubRequestPolicy.GitHubRequestPolicy, policy),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.provideService(SourceControlHost.SourceControlHost, sourceControlHost),

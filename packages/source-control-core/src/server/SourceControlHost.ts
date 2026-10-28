@@ -2,6 +2,7 @@ import type {
   GitCommandError,
   ServerSettings,
   ServerSettingsError,
+  ServerSettingsPatch,
   VcsError,
   VcsListRemotesResult,
   VcsProcessExitFailureKind,
@@ -67,6 +68,10 @@ export class SourceControlHost extends Context.Service<
     readonly settings: {
       /** Read fresh on each call to pick up credential changes. */
       readonly get: Effect.Effect<ServerSettings, ServerSettingsError>;
+      /** For credentials the host obtains itself, such as a sign-in it refreshes. */
+      readonly update: (
+        patch: ServerSettingsPatch,
+      ) => Effect.Effect<ServerSettings, ServerSettingsError>;
     };
     readonly process: {
       readonly run: (

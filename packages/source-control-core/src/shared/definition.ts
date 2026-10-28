@@ -166,6 +166,23 @@ export interface SourceControlHostCredentials {
   /** What a token must be granted, completing "Give it …". */
   readonly tokenAccess: string;
   readonly newTokenUrl: (host: string) => string;
+  /** Signing in through the forge's own app instead of a token or CLI login. */
+  readonly appSignIn?: SourceControlAppSignIn;
+}
+
+/**
+ * A forge app the server signs in to with a device code, on the hosts it is registered on. The
+ * session it keeps is the `signIns` setting, which takes precedence over everything but a saved
+ * token.
+ */
+export interface SourceControlAppSignIn {
+  /** The app's name on the forge, as the consent screen shows it. */
+  readonly appName: string;
+  readonly hosts: ReadonlyArray<string>;
+  /** Where an account or organization installs the app so it can reach its repositories. */
+  readonly installUrl: string;
+  /** Where the user revokes the app's access entirely. */
+  readonly revokeUrl: string;
 }
 
 export const SourceControlHostName = TrimmedNonEmptyString.pipe(
@@ -185,6 +202,12 @@ export const hostCredentialSettingsFields = {
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
   ),
   tokens: Schema.Record(SourceControlHostName, TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+    secretSetting,
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  /** The serialized session of an `appSignIn`, owned by the server's driver. */
+  signIns: Schema.Record(SourceControlHostName, TrimmedString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
     secretSetting,
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),

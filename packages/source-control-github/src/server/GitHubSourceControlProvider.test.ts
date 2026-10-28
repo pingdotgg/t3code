@@ -22,6 +22,13 @@ import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
+
+const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+  enabled: false,
+  token: () => Effect.succeedNone,
+  invalidate: () => Effect.void,
+});
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -220,15 +227,19 @@ function harness(input: {
                 source: "gh" as const,
                 fingerprint: `${host}:token`,
               })),
+          saved: () => Effect.succeedNone,
+          fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
           invalidate: () => Effect.void,
         }),
         GitHubQuota.layer,
         SourceControlRateLimit.layer,
+        appSignedOut,
       ),
     ),
   );
   const layer = Layer.mergeAll(
     host,
+    appSignedOut,
     Layer.mock(GitHubRest.GitHubRest)(input.api ?? {}),
     policy,
     Layer.succeed(HttpClient.HttpClient, graphQlHttp(graphql, graphqlCalls)),
@@ -831,6 +842,7 @@ it("reports every gh login and leads with the account Settings pin", () => {
   const auth = GitHubSourceControlProvider.parseGitHubAuth(multiAccountStatus(), {
     hosts: { "github.com": { account: "work", enabled: true } },
     tokens: {},
+    signIns: {},
   });
   assert.deepStrictEqual(auth.account, Option.some("work"));
   assert.deepStrictEqual(auth.accounts, [
@@ -844,6 +856,7 @@ it("reports unauthenticated when Settings turn off every signed-in host", () => 
   const auth = GitHubSourceControlProvider.parseGitHubAuth(multiAccountStatus(), {
     hosts: { "github.com": { enabled: false } },
     tokens: {},
+    signIns: {},
   });
   assert.strictEqual(auth.status, "unauthenticated");
   assert.deepStrictEqual(
@@ -863,7 +876,7 @@ it("names the environment token that overrides the Settings choice", () => {
         tokenSource: "GH_TOKEN",
       },
     ]),
-    { hosts: { "github.com": { account: "work", enabled: true } }, tokens: {} },
+    { hosts: { "github.com": { account: "work", enabled: true } }, tokens: {}, signIns: {} },
   );
   assert.deepStrictEqual(auth.account, Option.some("bot"));
   assert.deepStrictEqual(
