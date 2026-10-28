@@ -1368,7 +1368,7 @@ describe("sidebarFolderExpansionKeys", () => {
 });
 
 describe("groupSidebarThreadsByProject", () => {
-  it("puts each thread in its project's folder and keeps empty projects", () => {
+  it("puts each thread in its project's folder and drops empty projects unless kept", () => {
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
     const t3code = ProjectId.make("t3code");
     const t3codeRemote = ProjectId.make("t3code-remote");
@@ -1392,21 +1392,22 @@ describe("groupSidebarThreadsByProject", () => {
       },
     ];
 
-    const folders = groupSidebarThreadsByProject(groups, [
+    const threads = [
       thread("a", localEnvironmentId, t3code),
       thread("orphan", localEnvironmentId, ProjectId.make("deleted")),
       thread("b", remoteEnvironmentId, t3codeRemote),
-    ]);
-
-    expect(
-      folders.map((folder) => ({
+    ];
+    const summarize = (keepEmpty: boolean) =>
+      groupSidebarThreadsByProject(groups, threads, keepEmpty).map((folder) => ({
         projectKey: folder.group.projectKey,
         threads: folder.threads.map((entry) => entry.id),
-      })),
-    ).toEqual([
+      }));
+
+    expect(summarize(true)).toEqual([
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
+    expect(summarize(false)).toEqual([{ projectKey: "t3code", threads: ["a", "b"] }]);
   });
 });
 
