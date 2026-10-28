@@ -5,6 +5,14 @@ inputs:
     description: Read-only credential for the private maintainer task cache
     required: false
     default: ""
+  install:
+    description: Set to "false" to set up Vite+ only, with no pnpm store or install
+    required: false
+    default: "true"
+  install-args:
+    description: Arguments for `vp install`, such as filters. Empty installs the whole workspace.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -19,10 +27,11 @@ runs:
         echo "node=$(jq -r '.engines.node' package.json)" >> "$GITHUB_OUTPUT"
         echo "pnpm=$(jq -r '.packageManager' package.json)" >> "$GITHUB_OUTPUT"
 
+    # Pinned because release-desktop.yml signs builds with this action in the job.
     - name: Cache Vite+
       id: vp_cache
       if: steps.vp.outputs.version != ''
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ~/.vite-plus
         key: vite-plus-home-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.vp.outputs.version }}-node${{ steps.vp.outputs.node }}-${{ steps.vp.outputs.pnpm }}
@@ -40,36 +49,66 @@ runs:
 
     - name: Setup Vite+
       if: steps.vp_cache.outputs.cache-hit != 'true'
-      uses: voidzero-dev/setup-vp@v1
+      uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
       with:
         node-version-file: package.json
         cache: false
         run-install: false
 
-    - name: Resolve pnpm store path
+    # A shared key lets whichever install saves first, often a small filtered
+    # one, become every job's store. Each set of install args gets its own.
+    - name: Resolve pnpm store
       id: pnpm_store
+      if: inputs.install == 'true'
       shell: bash
+      env:
+        INSTALL_ARGS: ${{ inputs.install-args }}
       run: |
-        store_path="$(vp pm cache dir)"
-        echo "path=$store_path" >> "$GITHUB_OUTPUT"
+        echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"
+        if [[ -z "$INSTALL_ARGS" ]]; then
+          echo "namespace=full" >> "$GITHUB_OUTPUT"
+        else
+          echo "namespace=filtered-$(printf '%s' "$INSTALL_ARGS" | cksum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+        fi
 
-    # setup-vp's shared cache key ignores install filters. Keep full installs in a
-    # separate namespace, including fallback restores.
+    # Filtered installs prefer the current full store, which holds every package,
+    # over an older store of their own.
     # The pnpm store stays a cache tarball on the runner's own disk. A store on a
     # Blacksmith sticky disk mounts in under a second, but pnpm then copies every
     # package across filesystems instead of hard-linking it: install took 28-49s
     # against 9s plus an 11s restore.
-    - name: Cache full pnpm store
-      uses: actions/cache@v6
+    - name: Restore pnpm store
+      id: pnpm_cache
+      if: inputs.install == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ${{ steps.pnpm_store.outputs.path }}
-        key: pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+        key: pnpm-${{ steps.pnpm_store.outputs.namespace }}-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
         restore-keys: |
+          pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+          pnpm-${{ steps.pnpm_store.outputs.namespace }}-v1-${{ runner.os }}-${{ runner.arch }}-
           pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Install dependencies
+      if: inputs.install == 'true'
       shell: bash
-      run: vp install
+      env:
+        INSTALL_ARGS: ${{ inputs.install-args }}
+      # Unquoted so each filter is its own argument.
+      run: vp install $INSTALL_ARGS
+
+    # A filtered install that started from the current full store adds nothing
+    # worth a second copy of it.
+    - name: Save pnpm store
+      if: >-
+        inputs.install == 'true' &&
+        steps.pnpm_cache.outputs.cache-hit != 'true' &&
+        (steps.pnpm_store.outputs.namespace == 'full' ||
+          steps.pnpm_cache.outputs.cache-matched-key != format('pnpm-full-v1-{0}-{1}-{2}', runner.os, runner.arch, hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json')))
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.pnpm_store.outputs.path }}
+        key: ${{ steps.pnpm_cache.outputs.cache-primary-key }}
 
     - name: Enable shared task cache
       if: >-
