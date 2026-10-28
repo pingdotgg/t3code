@@ -115,9 +115,10 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
       <ComposerBanner.Row>
         <ComposerBanner.Icon>{isActive ? <AudioLinesIcon /> : <Spinner />}</ComposerBanner.Icon>
         <ComposerBanner.Content className="gap-2">
-          <span className="shrink-0 whitespace-nowrap text-muted-foreground" role="status">
-            {status}
+          <span className="sr-only" role="status">
+            {isActive ? "Voice connected" : "Connecting voice…"}
           </span>
+          <span className="shrink-0 whitespace-nowrap text-muted-foreground">{status}</span>
           {isActive ? (
             <span className="flex items-center gap-2 text-muted-foreground">
               <span className="flex items-center gap-1">
@@ -190,7 +191,6 @@ export function ComposerVoiceButton(props: {
             variant="ghost"
             size="sm"
             // aria-disabled rather than disabled keeps the tooltip explaining why.
-            className="aria-disabled:cursor-not-allowed"
             pressed={props.engaged}
             onPointerDown={(event) => event.preventDefault()}
             onPressedChange={() => {

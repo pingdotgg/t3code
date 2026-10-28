@@ -3,7 +3,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-const fixture = vi.hoisted(() => ({ active: true, currentThread: "thread-a", stop: vi.fn() }));
+const fixture = vi.hoisted(() => ({
+  active: true,
+  currentThread: "thread-a",
+  currentEnvironment: "environment",
+  stop: vi.fn(),
+}));
 const RouteName = createContext("Thread");
 const target = {
   environmentId: EnvironmentId.make("environment"),
@@ -12,8 +17,18 @@ const target = {
 vi.mock("@react-navigation/native", () => ({
   useRoute: () => ({ name: useContext(RouteName) }),
   useNavigationState: (
-    select: (state: { routes: Array<{ name: string; params: { threadId: string } }> }) => unknown,
-  ) => select({ routes: [{ name: "Thread", params: { threadId: fixture.currentThread } }] }),
+    select: (state: {
+      routes: Array<{ name: string; params: { threadId: string; environmentId: string } }>;
+    }) => unknown,
+  ) =>
+    select({
+      routes: [
+        {
+          name: "Thread",
+          params: { threadId: fixture.currentThread, environmentId: fixture.currentEnvironment },
+        },
+      ],
+    }),
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("./voiceModePresentation", () => ({ resolveVoiceModeNotice: () => null }));
@@ -37,6 +52,7 @@ let root: Root;
 beforeEach(() => {
   fixture.active = true;
   fixture.currentThread = "thread-a";
+  fixture.currentEnvironment = "environment";
   fixture.stop.mockClear();
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   root = createRoot(document.createElement("div"));
@@ -64,12 +80,16 @@ it("keeps voice running when Files closes and stops when the owning Thread leave
   act(() => root.unmount());
   expect(fixture.stop).toHaveBeenCalledTimes(1);
 });
-it("stops the previous thread when navigation selects a different thread", () => {
-  render(false);
-  fixture.currentThread = "thread-b";
-  render(false);
-  expect(fixture.stop).toHaveBeenCalledTimes(1);
-});
+it.each(["thread", "environment"])(
+  "stops the previous thread when navigation selects a different %s",
+  (changed) => {
+    render(false);
+    if (changed === "thread") fixture.currentThread = "thread-b";
+    else fixture.currentEnvironment = "another-environment";
+    render(false);
+    expect(fixture.stop).toHaveBeenCalledTimes(1);
+  },
+);
 
 it("stops voice when its fullscreen thread closes over the still-mounted thread", () => {
   render(true, "ThreadInspectorFullscreen");
