@@ -244,7 +244,7 @@ function deriveOwnRepositoryName(
   return ownedEverywhere ? displayName.slice(owner.length + 1) : null;
 }
 
-export function deriveProjectGroupLabel(input: {
+function deriveProjectGroupLabel(input: {
   readonly representative: ProjectLabelSource;
   readonly members: ReadonlyArray<ProjectLabelSource>;
   readonly repositoryAccounts?: SourceControlAccountsByEnvironment;
