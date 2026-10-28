@@ -9,13 +9,13 @@ import {
 /** The working row while T3 Code's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
   beforeCacheExpires: "Compacting before the cache expires…",
-  onReturn: "Compacting after being idle…",
+  onReturn: "Compacting…",
 } satisfies Record<OrchestrationV2IdleCompaction, string>;
 
 /** Leads the finished compaction's token counts, in place of "Context compacted". */
 export const IDLE_COMPACTION_TITLES = {
   beforeCacheExpires: "Context automatically compacted before cache expiry",
-  onReturn: "Context compacted after being idle",
+  onReturn: "Context compacted before sending",
 } satisfies Record<OrchestrationV2IdleCompaction, string>;
 
 const LEGACY_AUTOMATION_PREFIX = /^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n/;

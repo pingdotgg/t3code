@@ -359,7 +359,7 @@ export function threadFeedCompactionLabels(feed: ReadonlyArray<ThreadFeedEntry>)
             ? undefined
             : {
                 title: `Context compacted after ${age} idle`,
-                compacting: `Compacting after ${age} idle…`,
+                compacting: "Compacting…",
               });
         if (labels) labelsByEntryId.set(entry.id, labels);
         pendingResumeAgeByRunId.delete(entry.runId);

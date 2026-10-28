@@ -271,12 +271,12 @@ const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
-  const compacting = row.compacting ?? (isCompacting ? "Compacting…" : undefined);
-  const shimmer = isPreparingWorktree || compacting !== undefined;
+  const compacting = row.compacting === true || isCompacting;
+  const shimmer = isPreparingWorktree || compacting;
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
-  ) : compacting !== undefined ? (
-    <CompactingLabel label={compacting} />
+  ) : compacting ? (
+    <CompactingLabel createdAt={row.createdAt} />
   ) : row.createdAt ? (
     <>
       Working for <WorkingTimer createdAt={row.createdAt} />
@@ -336,11 +336,17 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
   );
 }
 
-function CompactingLabel({ label }: { label: string }) {
+function CompactingLabel({ createdAt }: { createdAt: string | null }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <Minimize2Icon aria-hidden="true" className="size-3" />
-      {label}
+      {createdAt ? (
+        <span>
+          Compacting for <WorkingTimer createdAt={createdAt} />
+        </span>
+      ) : (
+        "Compacting…"
+      )}
     </span>
   );
 }
