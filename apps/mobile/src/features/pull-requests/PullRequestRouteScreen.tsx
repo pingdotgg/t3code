@@ -122,7 +122,11 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useNativeReviewDiffBridge } from "../review/useNativeReviewDiffBridge";
 import { pullRequestTimelineRows } from "./PullRequestTimeline";
-import { PullRequestActionToolbar, PullRequestCardGroup } from "./PullRequestControls";
+import {
+  PullRequestActionToolbar,
+  PullRequestCardGroup,
+  PullRequestHeaderToolbar,
+} from "./PullRequestControls";
 import {
   pullRequestTarget as requestTarget,
   usePullRequestDiff,
@@ -613,55 +617,49 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
           visible={commentsOpen}
           onClose={() => setCommentsOpen(false)}
         />
-        <Toolbar placement="right">
-          <Toolbar.Button
-            icon="text.bubble"
-            accessibilityLabel="Comments"
-            onPress={() => setCommentsOpen(true)}
-          />
-          <Toolbar.Menu
-            title={capitalizeTerm(terminology.singular)}
-            accessibilityLabel={`${capitalizeTerm(terminology.singular)} actions`}
-            icon="ellipsis"
-          >
-            {permissions.verdicts.length ? (
-              <Toolbar.MenuAction
-                icon="text.bubble"
-                onPress={() =>
-                  navigation.navigate("PullRequestReview", { ...params, mode: "review" })
-                }
-              >
-                <Toolbar.Label>Submit review</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {permissions.canComment ? (
-              <Toolbar.MenuAction
-                icon="plus.bubble"
-                onPress={() =>
-                  navigation.navigate("PullRequestReview", { ...params, mode: "comment" })
-                }
-              >
-                <Toolbar.Label>Add comment</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {permissions.canEditChangeRequest ? (
-              <Toolbar.MenuAction
-                icon="pencil"
-                onPress={() =>
-                  navigation.navigate("PullRequestEdit", { ...params, field: "title" })
-                }
-              >
-                <Toolbar.Label>Edit title</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {permissions.canEditChangeRequest ? (
-              <Toolbar.MenuAction
-                icon="doc.text"
-                onPress={() => navigation.navigate("PullRequestEdit", { ...params, field: "body" })}
-              >
-                <Toolbar.Label>Edit description</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
+        <PullRequestHeaderToolbar
+          pr={pr}
+          params={params}
+          title={capitalizeTerm(terminology.singular)}
+          accessibilityLabel={`${capitalizeTerm(terminology.singular)} actions`}
+          onOpenComments={() => setCommentsOpen(true)}
+        >
+          {permissions.verdicts.length ? (
+            <Toolbar.MenuAction
+              icon="text.bubble"
+              onPress={() =>
+                navigation.navigate("PullRequestReview", { ...params, mode: "review" })
+              }
+            >
+              <Toolbar.Label>Submit review</Toolbar.Label>
+            </Toolbar.MenuAction>
+          ) : null}
+          {permissions.canComment ? (
+            <Toolbar.MenuAction
+              icon="plus.bubble"
+              onPress={() =>
+                navigation.navigate("PullRequestReview", { ...params, mode: "comment" })
+              }
+            >
+              <Toolbar.Label>Add comment</Toolbar.Label>
+            </Toolbar.MenuAction>
+          ) : null}
+          {permissions.canEditChangeRequest ? (
+            <Toolbar.MenuAction
+              icon="pencil"
+              onPress={() => navigation.navigate("PullRequestEdit", { ...params, field: "title" })}
+            >
+              <Toolbar.Label>Edit title</Toolbar.Label>
+            </Toolbar.MenuAction>
+          ) : null}
+          {permissions.canEditChangeRequest ? (
+            <Toolbar.MenuAction
+              icon="doc.text"
+              onPress={() => navigation.navigate("PullRequestEdit", { ...params, field: "body" })}
+            >
+              <Toolbar.Label>Edit description</Toolbar.Label>
+            </Toolbar.MenuAction>
+          ) : null}
             {maintainerEdits.visible ? (
               <Toolbar.MenuAction
                 icon="pencil"
@@ -673,48 +671,45 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                 <Toolbar.Label>Allow edits from maintainers</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
-            {identity ? (
-              <Toolbar.MenuAction
-                icon="arrow.up.right"
-                onPress={() => void Linking.openURL(identity.url)}
-              >
-                <Toolbar.Label>{openOnProviderLabel(identity.provider)}</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {identity ? (
-              <Toolbar.MenuAction icon="link" onPress={() => copyPullRequestLink(identity)}>
-                <Toolbar.Label>Copy link</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {identity ? (
-              <Toolbar.MenuAction
-                icon="square.and.arrow.up"
-                onPress={() => sharePullRequestLink(identity)}
-              >
-                <Toolbar.Label>Share…</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {showsDeleteBranch ? (
-              <Toolbar.MenuAction
-                icon={PR_ACTION_ICONS["delete-branch"]}
-                destructive
-                disabled={!action.available("delete-branch")}
-                subtitle={
-                  action.busy
-                    ? "Deleting…"
-                    : connected
-                      ? pr.headBranch
-                      : "Reconnect to delete this branch."
-                }
-                onPress={confirmDeleteBranch}
-              >
-                <Toolbar.Label>
-                  {pullRequestActionLabel("delete-branch", terminology)}
-                </Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-          </Toolbar.Menu>
-        </Toolbar>
+          {identity ? (
+            <Toolbar.MenuAction
+              icon="arrow.up.right"
+              onPress={() => void Linking.openURL(identity.url)}
+            >
+              <Toolbar.Label>{openOnProviderLabel(identity.provider)}</Toolbar.Label>
+            </Toolbar.MenuAction>
+          ) : null}
+          {identity ? (
+            <Toolbar.MenuAction icon="link" onPress={() => copyPullRequestLink(identity)}>
+              <Toolbar.Label>Copy link</Toolbar.Label>
+            </Toolbar.MenuAction>
+          ) : null}
+          {identity ? (
+            <Toolbar.MenuAction
+              icon="square.and.arrow.up"
+              onPress={() => sharePullRequestLink(identity)}
+            >
+              <Toolbar.Label>Share…</Toolbar.Label>
+            </Toolbar.MenuAction>
+          ) : null}
+          {showsDeleteBranch ? (
+            <Toolbar.MenuAction
+              icon={PR_ACTION_ICONS["delete-branch"]}
+              destructive
+              disabled={!action.available("delete-branch")}
+              subtitle={
+                action.busy
+                  ? "Deleting…"
+                  : connected
+                    ? pr.headBranch
+                    : "Reconnect to delete this branch."
+              }
+              onPress={confirmDeleteBranch}
+            >
+              <Toolbar.Label>{pullRequestActionLabel("delete-branch", terminology)}</Toolbar.Label>
+            </Toolbar.MenuAction>
+          ) : null}
+        </PullRequestHeaderToolbar>
         <View
           style={{
             flex: 1,
@@ -1052,6 +1047,7 @@ export function PullRequestDiffContent({
   );
   const [filesOpen, setFilesOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const filter = usePullRequestFileFilter(result.parsed, params.focus ? params.path : undefined);
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
@@ -1589,25 +1585,69 @@ export function PullRequestDiffContent({
         />
       ) : null}
       {!embedded ? (
-        <Toolbar placement="right">
-          {commits.length > 0 ? (
-            <Toolbar.Button
-              label={
-                commit === null
-                  ? "All"
-                  : `${selectedCommits.length} ${selectedCommits.length === 1 ? "commit" : "commits"}`
-              }
-              accessibilityLabel="Commit range"
-              icon="arrow.triangle.branch"
-              onPress={() => setCommitPickerOpen(true)}
-            />
-          ) : null}
-          {!isGuideChapter ? (
-            <Toolbar.Custom>
-              <PullRequestFileExpansionActions collapsed={allCollapsed} onToggle={toggleAllFiles} />
-            </Toolbar.Custom>
-          ) : null}
-          <Toolbar.Menu title="Diff options" accessibilityLabel="Diff options" icon="ellipsis">
+        <>
+          <PullRequestCommentsSheet
+            params={params}
+            visible={commentsOpen}
+            onClose={() => setCommentsOpen(false)}
+          />
+          <PullRequestHeaderToolbar
+            pr={detail.data}
+            params={params}
+            filePath={visibleFile?.path}
+            title="Diff options"
+            onOpenComments={() => setCommentsOpen(true)}
+            commentsInHorizontalBar={false}
+            controls={[
+              commits.length > 0 ? (
+                <Toolbar.Button
+                  key="commit-range"
+                  label={
+                    commit === null
+                      ? "All"
+                      : `${selectedCommits.length} ${selectedCommits.length === 1 ? "commit" : "commits"}`
+                  }
+                  accessibilityLabel="Commit range"
+                  icon="arrow.triangle.branch"
+                  onPress={() => setCommitPickerOpen(true)}
+                />
+              ) : null,
+              !isGuideChapter ? (
+                <Toolbar.Custom key="file-expansion">
+                  <PullRequestFileExpansionActions
+                    collapsed={allCollapsed}
+                    onToggle={toggleAllFiles}
+                  />
+                </Toolbar.Custom>
+              ) : null,
+            ]}
+            railMenuItems={
+              <>
+                {commits.length > 0 ? (
+                  <Toolbar.MenuAction
+                    icon="arrow.triangle.branch"
+                    onPress={() => setCommitPickerOpen(true)}
+                  >
+                    <Toolbar.Label>Commit range</Toolbar.Label>
+                  </Toolbar.MenuAction>
+                ) : null}
+                {!isGuideChapter ? (
+                  <Toolbar.MenuAction
+                    icon={
+                      allCollapsed
+                        ? "arrow.up.left.and.arrow.down.right"
+                        : "arrow.down.right.and.arrow.up.left"
+                    }
+                    onPress={toggleAllFiles}
+                  >
+                    <Toolbar.Label>
+                      {allCollapsed ? "Expand all files" : "Collapse all files"}
+                    </Toolbar.Label>
+                  </Toolbar.MenuAction>
+                ) : null}
+              </>
+            }
+          >
             <Toolbar.MenuAction icon="folder" onPress={() => setFilesOpen(true)}>
               <Toolbar.Label>View files</Toolbar.Label>
             </Toolbar.MenuAction>
@@ -1649,8 +1689,8 @@ export function PullRequestDiffContent({
                 <Toolbar.Label>Copy line</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
-          </Toolbar.Menu>
-        </Toolbar>
+          </PullRequestHeaderToolbar>
+        </>
       ) : null}
       {!embedded && !isGuideChapter && Platform.OS === "android" ? (
         <View className="flex-row justify-end px-4">
