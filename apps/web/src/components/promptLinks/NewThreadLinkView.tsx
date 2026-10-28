@@ -175,8 +175,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   };
 
   const openScratchDraft = async () => {
-    const environmentId =
-      scratchEnvironmentId(lastActiveEnvironmentId()) ?? scratchEnvironmentId(null);
+    const environmentId = scratchEnvironmentId(lastActiveEnvironmentId());
     const project = environmentId === null ? null : await openScratchProject(environmentId);
     if (project === null) {
       setState({
