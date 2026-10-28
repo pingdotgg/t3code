@@ -120,7 +120,8 @@ export function installSidebarTree(root: HTMLElement) {
           !rows.includes(document.activeElement as HTMLElement) &&
           document.activeElement?.matches(ROW)))
     ) {
-      focusRow(selected);
+      // A settled row moves to the bottom shelf; scrolling after it fights the route reveal.
+      selected.focus({ preventScroll: true });
     }
     if (ownsFocus && !selected && document.activeElement === document.body) root.focus();
   };
