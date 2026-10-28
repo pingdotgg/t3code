@@ -1,3 +1,4 @@
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AsyncResult } from "effect/reactivity";
@@ -11,7 +12,7 @@ import {
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
 } from "@t3tools/shared/usageLimits";
 import * as Clipboard from "expo-clipboard";
-import { T, useGT } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import { useState } from "react";
 import { Linking, Pressable, View } from "react-native";
@@ -29,6 +30,7 @@ export function UsageLimitRecoveryCard({
   environmentId: EnvironmentId;
 }) {
   const gt = useGT();
+  const resolve = useMessages();
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -168,13 +170,10 @@ export function UsageLimitRecoveryCard({
                 )
             : chatGptLimit
               ? (resetText ?? gt("Review your usage settings in ChatGPT."))
-              : resetDate !== null
-                ? resumes
-                  ? gt("Usage limit reached. Resumes {date}.", { date: resetDate })
-                  : gt("Usage limit reached. Resets {date}.", { date: resetDate })
-                : gt(
-                    "Usage limit reached. The provider did not report a reset time. Retry manually when your limit is available.",
-                  )}
+              : gt("{title}. {resetDescription}", {
+                  title: providerFailureTitle(thread.runtime.lastErrorClass, code, resolve),
+                  resetDescription: resetText ?? gt("No reset time reported; retry manually."),
+                })}
         </Text>
         {chatGptLimit || canSchedule ? (
           // The margins cancel the 44pt touch height so the links sit 8pt under the text.

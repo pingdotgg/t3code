@@ -1,3 +1,4 @@
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
@@ -640,6 +641,9 @@ function itemSummary(
   if (item.type === "notification") return item.summary;
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item, resolve);
+  if (item.type === "error" && item.status === "failed" && item.failure.class === "usage_limit") {
+    return providerFailureTitle(item.failure.class, item.failure.code, resolve);
+  }
   const title =
     (item.type === "dynamic_tool"
       ? dynamicToolTitle(item.toolName, item.input, item.title, resolve)
@@ -677,9 +681,7 @@ function itemSummary(
     case "run_interrupt_result":
       return resolve(msg("Run interrupted"));
     case "error":
-      return item.failure.class === "usage_limit"
-        ? resolve(msg("Usage limit reached"))
-        : resolve(msg("Provider error"));
+      return providerFailureTitle(item.failure.class, item.failure.code, resolve);
     case "handoff":
       return resolve(msg("Context handed off"));
     case "fork":

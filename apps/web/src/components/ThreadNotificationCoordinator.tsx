@@ -1,3 +1,4 @@
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import { msg } from "gt-react";
 import { m } from "../i18n/messages";
 import {
@@ -150,7 +151,7 @@ export function startThreadNotifications(
         : status === "approval"
           ? m(msg("Approval needed"))
           : status === "limited"
-            ? m(msg("Usage limit reached"))
+            ? providerFailureTitle(thread.runtime?.lastErrorClass, thread.runtime?.lastErrorCode, m)
             : status === "failed"
               ? m(msg("Thread failed"))
               : status === "request"

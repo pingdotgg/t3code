@@ -1,3 +1,4 @@
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import { T, msg, useGT } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m, type MessageResolver } from "~/i18n/messages";
@@ -90,14 +91,14 @@ export function usageLimitRecoveryBannerItem(
             ),
           }),
         )
-    : resolve(msg("Reset time unavailable; retry manually"));
+    : resolve(msg("No reset time reported; retry manually"));
   if (!chatGptLimit) {
     return {
       id: `usage-limit-recovery:${runId}`,
       variant: "warning",
       group: "environment",
       icon: <GaugeIcon />,
-      title: resolve(msg("Usage limit reached")),
+      title: providerFailureTitle("usage_limit", errorCode, resolve),
       description: resetDescription,
       actions: recoveryActions,
     };

@@ -1,3 +1,4 @@
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import { Button } from "../../components/ui/Button";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import { ProposedPlanCard } from "./ProposedPlanCard";
@@ -908,21 +909,18 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           minute: "2-digit",
         })} (${new Intl.DateTimeFormat().resolvedOptions().timeZone})`
       : null;
+    const title = providerFailureTitle(failureItem.failure.class, failureItem.failure.code, messages);
     const label = warning
       ? resetTime
-        ? gt("Usage limit reached. Retry after {resetTime}.", { resetTime })
-        : gt("Usage limit reached.")
+        ? gt("{title}. Retry after {resetTime}.", { title, resetTime })
+        : gt("{title}.", { title })
       : row.summary;
     return (
       <WorkLogPressable
-        accessibilityLabel={
-          warning
-            ? label
-            : gt("{summary}: {message}", {
-                summary: row.summary,
-                message: failureItem.failure.message,
-              })
-        }
+        accessibilityLabel={gt("{summary}: {message}", {
+          summary: label,
+          message: failureItem.failure.message,
+        })}
         accessibilityHint={gt("Long press to copy.")}
         onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
       >
@@ -961,11 +959,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               })}
             </Text>
           </View>
-          {!warning ? (
-            <Text selectable className="ml-7 text-sm text-foreground">
-              {failureItem.failure.message}
-            </Text>
-          ) : null}
+          <Text selectable className="ml-7 text-sm text-foreground">
+            {failureItem.failure.message}
+          </Text>
           {failureItem.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE &&
           failureItem.runId !== null ? (
             <WorkspacePreparationRetryButton
