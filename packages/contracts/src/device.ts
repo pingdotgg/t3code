@@ -492,13 +492,14 @@ export class DeviceBootError extends Schema.TaggedError<DeviceBootError>()("Devi
 }) {
   override get message(): string {
     const explanation = {
-      disk_space: "There is not enough free disk space on the environment server.",
+      disk_space: "There is not enough free disk space on its device host.",
       timeout: "The device did not become ready in time.",
-      launch_failed:
-        "The simulator or emulator could not start. Check its configuration on the environment server.",
+      launch_failed: "The simulator or emulator could not start.",
     }[this.reason];
     const summary = `Device ${this.deviceId} failed to boot: ${explanation}`;
-    return this.diagnostics ? `${summary}\n\n${this.diagnostics}` : summary;
+    return this.diagnostics
+      ? `${summary}\n\n${this.diagnostics}`
+      : `${summary} The device host sent no details. Try again or open another device; if it keeps failing, check the device on that host.`;
   }
 }
 
@@ -584,6 +585,7 @@ export const DeviceToolOpenResult = Schema.Struct({
   agentDevice: Schema.Struct({
     command: Schema.String,
     targetArgs: Schema.Array(Schema.String),
+    session: Schema.String,
   }),
   quickStart: Schema.String,
 });

@@ -19,6 +19,8 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -34,6 +36,7 @@ import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
+import { agentDeviceSession } from "./AgentDeviceTarget.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
@@ -603,7 +606,7 @@ it.effect("keeps shutdown successful when subsequent discovery fails", () =>
 );
 
 it.effect.each(["shutdown", "close"] as const)(
-  "%s releases iOS capture so reopening uses a fresh session",
+  "%s releases iOS capture and the session's launcher so reopening uses a fresh session",
   (operation) =>
     Effect.gen(function* () {
       const deviceId = DeviceId.make("11111111-1111-1111-1111-111111111111");
@@ -680,19 +683,107 @@ it.effect.each(["shutdown", "close"] as const)(
         stopAgent: Effect.void,
         stop: Effect.void,
       };
-      const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
-        Effect.provide(NodeCrypto.layer),
-      );
+      const launchers = new Set(["t3-from-a-previous-run"]);
+      const released: Array<[string, boolean]> = [];
+      // Whether the device was still on when each session was released.
+      const releasedWhileBooted: Array<boolean> = [];
+      let pauseBind: { entered: Deferred.Deferred<void>; proceed: Deferred.Deferred<void> } | null =
+        null;
+      const service = yield* DeviceService.makeWithHosts(
+        new Map([[host.id, host]]),
+        undefined,
+        undefined,
+        undefined,
+        {
+          bind: ({ session }) =>
+            Effect.gen(function* () {
+              if (pauseBind) {
+                yield* Deferred.succeed(pauseBind.entered, undefined);
+                yield* Deferred.await(pauseBind.proceed);
+              }
+              launchers.add(session);
+              return session;
+            }),
+          prune: (live) =>
+            Effect.sync(() => {
+              for (const session of launchers) if (!live.has(session)) launchers.delete(session);
+            }),
+          // Records whether the launcher still existed, since its close runs through it.
+          release: (launcher) =>
+            Effect.sync(() => {
+              released.push([launcher, launchers.has(launcher)]);
+              releasedWhileBooted.push(booted);
+            }),
+        },
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      expect(launchers).toEqual(new Set());
       const input = { threadId, deviceId, platform: "ios" as const };
-      yield* service.open(input);
+      const other = { ...input, threadId: ThreadId.make("capture-recovery-other") };
+      const target = (thread: ThreadId) => ({
+        threadId: thread,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId,
+      });
+      const bind = Effect.fnUntraced(function* (open: typeof input) {
+        yield* service.open(open);
+        yield* service.agentLauncher({ ...target(open.threadId), targetArgs: [] });
+        return yield* agentDeviceSession(open.threadId, LOCAL_DEVICE_HOST_ID, deviceId);
+      }, Effect.provide(NodeCrypto.layer));
+      const session = yield* bind(input);
+      yield* bind(other);
       expect(capture).toBe(1);
+      expect(launchers.size).toBe(2);
       if (operation === "shutdown") yield* service.shutdown(input);
       else yield* service.close({ threadId, deviceId, shutdown: true });
       expect(capture).toBeNull();
       expect((yield* service.state).sessions).toEqual([]);
-      yield* service.open(input);
+      expect(launchers).toEqual(new Set());
+      // Retiring a session ends its agent-device session too, which releases the device claim.
+      // Powering the device off retires the other thread's session on it as well.
+      const firstOther = yield* agentDeviceSession(
+        other.threadId,
+        LOCAL_DEVICE_HOST_ID,
+        deviceId,
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      expect(new Set(released.map(([launcher]) => launcher))).toEqual(
+        new Set([session, firstOther]),
+      );
+      expect(released.every(([, existed]) => existed)).toBe(true);
+      // agent-device can close the session's app only while the device is on.
+      expect(releasedWhileBooted).toEqual([true, true]);
+      // A device_open that was still preparing when the close landed.
+      expect(yield* service.agentLauncher({ ...target(threadId), targetArgs: [] })).toEqual(
+        Option.none(),
+      );
+      expect(launchers).toEqual(new Set());
+      expect(yield* bind(input)).toBe(session);
+      // Reopening the same device ends nothing.
+      expect(released).toHaveLength(2);
       expect(capture).toBe(2);
       expect((yield* service.state).sessions).toHaveLength(1);
+      const otherSession = yield* bind(other);
+      yield* service.close({ threadId: other.threadId });
+      expect(launchers).toEqual(new Set([session]));
+      expect(released.slice(2)).toEqual([[otherSession, true]]);
+      expect(otherSession).not.toBe(session);
+      // A caller interrupted after retirement committed, while a bind holds the launcher lock.
+      pauseBind = { entered: yield* Deferred.make<void>(), proceed: yield* Deferred.make<void>() };
+      const binding = yield* Effect.forkChild(
+        service.agentLauncher({ ...target(threadId), targetArgs: [] }),
+      );
+      yield* Deferred.await(pauseBind.entered);
+      const updates = yield* service.subscribe;
+      const retiring = yield* Effect.forkChild(
+        operation === "shutdown" ? service.shutdown(input) : service.close({ threadId }),
+      );
+      expect((yield* PubSub.take(updates)).sessions).toEqual([]);
+      // list writes through the same state lock, so the retirement has committed.
+      expect((yield* service.list).sessions).toEqual([]);
+      yield* Effect.sync(() => retiring.interruptUnsafe());
+      yield* Deferred.succeed(pauseBind.proceed, undefined);
+      yield* Fiber.join(binding);
+      yield* Fiber.await(retiring);
+      expect(launchers).toEqual(new Set());
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 
@@ -1150,3 +1241,191 @@ it.effect("a failed tool update reports npm's exit code but not its output", () 
     Effect.scoped,
   ),
 );
+
+describe("locating a device id across hosts", () => {
+  const threadId = ThreadId.make("thread-locate");
+  const thisMachine = { id: LOCAL_DEVICE_HOST_ID, label: "This machine" };
+  const macMini = { id: "mac-mini", label: "Mac Mini" };
+  const listingHost = (
+    host: { readonly id: string; readonly label: string },
+    ids: ReadonlyArray<string>,
+  ): DeviceHost.DeviceHost["Service"] => {
+    const devices = ids.map((id) => ({
+      id,
+      name: id,
+      platform: id.startsWith("Pixel") ? ("android" as const) : ("ios" as const),
+      version: "test",
+      booted: true,
+      physical: false,
+    }));
+    const ready: DeviceHost.DeviceHostReady = {
+      nodePath: process.execPath,
+      hub: { origin: "http://device.test" },
+      devices: {
+        list: Effect.succeed({ devices, detail: undefined }),
+        boot: (device) => Effect.succeed(device.id),
+        attach: () => Effect.void,
+        shutdown: () => Effect.void,
+        screenshot: () => Effect.succeed(new Uint8Array()),
+      },
+      // Opening an emulator checks its host for ffmpeg's H.264 encoder.
+      run: () => Effect.succeed({ code: 0, stdout: " V....D libx264", stderr: "" }),
+      helpers: { serveSimAxSettings: null, serveSimCli: null },
+    };
+    return {
+      ...host,
+      summary: Effect.succeed({
+        ...host,
+        kind: host.id === LOCAL_DEVICE_HOST_ID ? "local" : "ssh",
+        platforms: [
+          { platform: "ios", available: true },
+          { platform: "android", available: true },
+        ],
+        hubInstalled: true,
+        agentDeviceInstalled: false,
+      }),
+      platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+      ensureReady: () => Effect.succeed(ready),
+      ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+      current: Effect.succeed(ready),
+      stopAgent: Effect.void,
+      stop: Effect.void,
+    };
+  };
+  // An Android AVD name, like Pixel_10 here, can exist on two hosts.
+  const withTwoHosts = <A, E>(
+    test: (service: DeviceService.DeviceService["Service"]) => Effect.Effect<A, E>,
+  ) =>
+    Effect.gen(function* () {
+      const service = yield* DeviceService.makeWithHosts(
+        new Map([
+          [thisMachine.id, listingHost(thisMachine, ["Pixel_10"])],
+          [macMini.id, listingHost(macMini, ["MAC-UDID", "Pixel_10"])],
+        ]),
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      yield* service.list;
+      return yield* test(service);
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped);
+  const open = (
+    service: DeviceService.DeviceService["Service"],
+    hostId: string,
+    deviceId: string,
+    thread = threadId,
+  ) =>
+    service.open({
+      threadId: thread,
+      hostId,
+      deviceId: DeviceId.make(deviceId),
+      platform: deviceId.startsWith("Pixel") ? "android" : "ios",
+    });
+
+  it.effect("finds a device id that exists only on another host", () =>
+    withTwoHosts((service) =>
+      Effect.gen(function* () {
+        const located = yield* service.locateDevice({ deviceId: DeviceId.make("MAC-UDID") });
+        expect(Option.getOrUndefined(located)).toMatchObject({
+          hostId: "mac-mini",
+          id: "MAC-UDID",
+        });
+      }),
+    ),
+  );
+
+  it.effect("refuses a device id that exists on two hosts and names both", () =>
+    withTwoHosts((service) =>
+      Effect.gen(function* () {
+        const error = yield* service
+          .locateDevice({ deviceId: DeviceId.make("Pixel_10") })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "DeviceHostAmbiguousError", deviceId: "Pixel_10" });
+        expect(error.hosts).toHaveLength(2);
+        expect(error.hosts).toEqual(expect.arrayContaining([thisMachine, macMini]));
+      }),
+    ),
+  );
+
+  it.effect("keeps an explicit hostId and says which host has the device", () =>
+    withTwoHosts((service) =>
+      Effect.gen(function* () {
+        const error = yield* service
+          .locateDevice({ deviceId: DeviceId.make("MAC-UDID"), hostId: LOCAL_DEVICE_HOST_ID })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "DeviceOnOtherHostError",
+          deviceId: "MAC-UDID",
+          host: thisMachine,
+          hosts: [macMini],
+        });
+        const onMac = yield* service.locateDevice({
+          deviceId: DeviceId.make("Pixel_10"),
+          hostId: "mac-mini",
+        });
+        expect(Option.getOrUndefined(onMac)).toMatchObject({ hostId: "mac-mini", id: "Pixel_10" });
+      }),
+    ),
+  );
+
+  it.effect("finds nothing for a device id that no host lists", () =>
+    withTwoHosts((service) =>
+      Effect.gen(function* () {
+        const deviceId = DeviceId.make("Pixel_9");
+        expect(yield* service.locateDevice({ deviceId })).toEqual(Option.none());
+        expect(yield* service.locateDevice({ deviceId, hostId: "mac-mini" })).toEqual(
+          Option.none(),
+        );
+        expect(yield* service.locateDevice({ deviceId, hostId: "unknown-host" })).toEqual(
+          Option.none(),
+        );
+      }),
+    ),
+  );
+
+  it.effect("finds an open device by id on whichever host it is on", () =>
+    withTwoHosts((service) =>
+      Effect.gen(function* () {
+        yield* open(service, "mac-mini", "MAC-UDID");
+        const deviceId = DeviceId.make("MAC-UDID");
+        expect(
+          Option.getOrUndefined(yield* service.locateSession({ threadId, deviceId })),
+        ).toMatchObject({ threadId, hostId: "mac-mini", deviceId });
+        const error = yield* service
+          .locateSession({ threadId, deviceId, hostId: LOCAL_DEVICE_HOST_ID })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "DeviceOnOtherHostError",
+          host: thisMachine,
+          hosts: [macMini],
+        });
+      }),
+    ),
+  );
+
+  it.effect("refuses an id open on two hosts unless the hostId picks one", () =>
+    withTwoHosts((service) =>
+      Effect.gen(function* () {
+        yield* open(service, LOCAL_DEVICE_HOST_ID, "Pixel_10");
+        yield* open(service, "mac-mini", "Pixel_10");
+        const deviceId = DeviceId.make("Pixel_10");
+        const error = yield* service.locateSession({ threadId, deviceId }).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "DeviceHostAmbiguousError", deviceId });
+        expect(error.hosts).toEqual(expect.arrayContaining([thisMachine, macMini]));
+        const onMac = yield* service.locateSession({ threadId, deviceId, hostId: "mac-mini" });
+        expect(Option.getOrUndefined(onMac)).toMatchObject({ hostId: "mac-mini", deviceId });
+      }),
+    ),
+  );
+
+  it.effect("finds no session for a device this thread has not opened", () =>
+    withTwoHosts((service) =>
+      Effect.gen(function* () {
+        const deviceId = DeviceId.make("MAC-UDID");
+        expect(yield* service.locateSession({ threadId, deviceId })).toEqual(Option.none());
+        yield* open(service, "mac-mini", "MAC-UDID", ThreadId.make("thread-other"));
+        expect(yield* service.locateSession({ threadId, deviceId })).toEqual(Option.none());
+        expect(
+          yield* service.locateSession({ threadId, deviceId, hostId: LOCAL_DEVICE_HOST_ID }),
+        ).toEqual(Option.none());
+      }),
+    ),
+  );
+});

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Schema } from "effect";
 import {
+  DeviceBootError,
   DeviceServiceState,
   EasDeviceHostConfig,
   EasDeviceHostConfigs,
@@ -77,5 +78,30 @@ describe("device state for clients from before EAS hosts", () => {
     const wire = encodeState(state);
     expect(decodeOlderState(wire).hosts.map((host) => host.id)).toEqual(["local"]);
     expect(decodeState(wire).hosts).toEqual(state.hosts);
+  });
+});
+
+describe("device boot errors", () => {
+  it("gives a next step instead of blaming the environment server when the host sent no details", () => {
+    const message = new DeviceBootError({
+      hostId: "mac",
+      deviceId: "Pixel_10",
+      reason: "launch_failed",
+      cause: null,
+    }).message;
+    expect(message).not.toContain("environment server");
+    expect(message).toContain("Try again or open another device");
+  });
+
+  it("keeps the host's diagnostics when it sent them", () => {
+    const message = new DeviceBootError({
+      hostId: "mac",
+      deviceId: "Pixel_10",
+      reason: "launch_failed",
+      diagnostics: "emulator: PANIC: Missing emulator engine program for 'x86_64' CPU.",
+      cause: null,
+    }).message;
+    expect(message).toContain("PANIC: Missing emulator engine program");
+    expect(message).not.toContain("Try again");
   });
 });

@@ -93,9 +93,24 @@ already-running agent without the CLI.
 
 How to drive a device is returned from `device_open`, not kept in an
 always-loaded prompt or skill: it costs nothing in threads that never open a
-device and cannot drift from the pinned CLI version. The always-on prompt block
-is a few lines that point at the tools and prefer them over raw `simctl` and
-`adb`, which stay available for what the tools do not cover.
+device and cannot drift from the pinned CLI version. `device_open` returns a
+launcher bound to its agent-device session, so agents need no target flags.
+The launcher leaves out the flags a command refuses (`cdp` talks to Metro, not
+to the device), refuses the commands that would replace T3's connection, and
+checks that connection first: agent-device reports a sandboxed shell and a
+dropped tunnel alike as an unreachable daemon, so the launcher names which one it
+is. Ending a session (`device_close`, the Device panel, a shutdown) also closes
+its agent-device session, which quits the app that session opened and releases the CLI's claim on the device.
+
+Agents choose between these tools and ssh before they open anything, so
+sessions that hold `device` get a short block from
+[`orchestrationInstructions.ts`](../../packages/provider-core/src/server/orchestrationInstructions.ts)
+through their adapter's instruction channel. It points simulator and emulator UI
+work on local and SSH hosts at the tools; `simctl`, `adb` and ssh stay
+available for what the tools do not cover. Pi and Muse do not send it yet.
+Claude's native subagents never see the session's system prompt, so a
+`SubagentStart` hook passes them the block, where the runtime runs hooks and the
+subagent's context is not isolated.
 
 ## The viewer decodes both vendored protocols
 
