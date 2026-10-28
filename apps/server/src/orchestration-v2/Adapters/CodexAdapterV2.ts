@@ -7825,15 +7825,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               Effect.gen(function* () {
                 const nativeThreadId = yield* getNativeThreadId(voiceInput.providerThread);
                 yield* ensureInitialized;
-                yield* Ref.set(voiceSession, owner);
-                yield* Ref.set(voiceProviderThread, voiceInput.providerThread);
-                return voice.start({
-                  providerThreadId: nativeThreadId,
-                  offerSdp: voiceInput.offerSdp,
-                  ...(adapterOptions.settings.voice
-                    ? { voice: adapterOptions.settings.voice }
-                    : {}),
-                });
+                return voice.start(
+                  {
+                    providerThreadId: nativeThreadId,
+                    offerSdp: voiceInput.offerSdp,
+                    ...(adapterOptions.settings.voice
+                      ? { voice: adapterOptions.settings.voice }
+                      : {}),
+                  },
+                  Effect.gen(function* () {
+                    yield* Ref.set(voiceSession, owner);
+                    yield* Ref.set(voiceProviderThread, voiceInput.providerThread);
+                  }),
+                );
               }),
             ).pipe(
               // A replaced conversation must not clear its successor's thread.

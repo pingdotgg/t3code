@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as CodexClient from "effect-codex-app-server/client";
@@ -98,6 +99,7 @@ interface ActiveVoice {
   /** Handoffs resubmitted as ordinary runs, awaiting their native turn. */
   readonly expectedHandoffs: Array<string>;
   closed: boolean;
+  stopped: boolean;
 }
 
 export interface CodexVoiceStartInput {
@@ -112,6 +114,7 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
   runtimeScope: Scope.Scope,
 ) {
   const activeRef = yield* Ref.make<ActiveVoice | undefined>(undefined);
+  const transition = yield* Semaphore.make(1);
 
   const withActive = (
     threadId: string,
@@ -163,9 +166,16 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
     ),
   );
   yield* client.handleServerNotification("thread/realtime/closed", (payload) =>
-    withActive(payload.threadId, (active) =>
-      finish(active, { type: "closed", ...(payload.reason ? { reason: payload.reason } : {}) }),
-    ),
+    Effect.flatMap(Ref.get(activeRef), (active) => {
+      if (!active || active.providerThreadId !== payload.threadId) return Effect.void;
+      active.stopped = true;
+      return active.closed
+        ? Effect.void
+        : finish(active, {
+            type: "closed",
+            ...(payload.reason ? { reason: payload.reason } : {}),
+          });
+    }),
   );
 
   yield* client.handleServerNotification("item/started", (payload) =>
@@ -219,12 +229,13 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
   );
 
   const stop = Effect.fn("CodexVoice.stop")(function* (active: ActiveVoice) {
-    yield* Ref.update(activeRef, (current) => (current === active ? undefined : current));
-    if (active.closed) return;
+    if ((yield* Ref.get(activeRef)) !== active) return;
     active.closed = true;
-    yield* client.raw
-      .request("thread/realtime/stop", { threadId: active.providerThreadId })
-      .pipe(Effect.ignore);
+    if (!active.stopped) {
+      yield* client.raw.request("thread/realtime/stop", { threadId: active.providerThreadId });
+      active.stopped = true;
+    }
+    yield* Ref.set(activeRef, undefined);
   });
 
   /**
@@ -233,6 +244,7 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
    */
   const start = (
     input: CodexVoiceStartInput,
+    onAcquired: Effect.Effect<void> = Effect.void,
   ): Stream.Stream<
     ProviderVoiceSessionEvent,
     CodexVoiceSessionError | CodexErrors.CodexAppServerError
@@ -249,26 +261,43 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
           delegatedTurns: new Map(),
           expectedHandoffs: [],
           closed: false,
+          stopped: false,
         };
-        const previous = yield* Ref.get(activeRef);
-        if (previous && !previous.closed) {
-          // One conversation per thread: a newer client takes over.
-          yield* finish(previous, { type: "closed", reason: "replaced" });
-          yield* client.raw
-            .request("thread/realtime/stop", { threadId: previous.providerThreadId })
-            .pipe(Effect.ignore);
-        }
-        yield* Ref.set(activeRef, active);
-        yield* Effect.addFinalizer(() => stop(active));
-        yield* client.raw.request("thread/realtime/start", {
-          threadId: input.providerThreadId,
-          outputModality: "audio",
-          transport: { type: "webrtc", sdp: input.offerSdp },
-          version: "v3",
-          clientManagedHandoffs: true,
-          includeStartupContext: false,
-          ...(input.voice ? { voice: input.voice } : {}),
-        });
+        yield* Effect.addFinalizer(() =>
+          transition
+            .withPermit(stop(active))
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Codex voice could not stop the realtime session", { cause }),
+              ),
+            ),
+        );
+        yield* transition.withPermit(
+          Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const previous = yield* Ref.get(activeRef);
+              if (previous) {
+                // The adapter supports one conversation per provider session, across native threads.
+                if (!previous.closed)
+                  yield* finish(previous, { type: "closed", reason: "replaced" });
+                yield* restore(stop(previous));
+              }
+              yield* Ref.set(activeRef, active);
+              yield* onAcquired;
+              yield* restore(
+                client.raw.request("thread/realtime/start", {
+                  threadId: input.providerThreadId,
+                  outputModality: "audio",
+                  transport: { type: "webrtc", sdp: input.offerSdp },
+                  version: "v3",
+                  clientManagedHandoffs: true,
+                  includeStartupContext: false,
+                  ...(input.voice ? { voice: input.voice } : {}),
+                }),
+              );
+            }),
+          ),
+        );
         return Stream.fromQueue(queue);
       }),
     );
