@@ -1,10 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   createManagedRelayQueryManager,
+  createManagedRelayT3ChatLinkRequest,
   deregisterManagedRelayEnvironment,
   ManagedRelay,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
+  unlinkManagedRelayT3Chat,
 } from "@t3tools/client-runtime/relay";
 import {
   createAtomCommandScheduler,
@@ -13,6 +15,7 @@ import {
 import type {
   RelayClientDeviceRecord,
   RelayClientEnvironmentRecord,
+  RelayT3ChatLinkResponse,
 } from "@t3tools/contracts/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -49,6 +52,50 @@ export const deregisterManagedRelayEnvironmentCommand = createRuntimeCommand(
     execute: (input, registry) => deregisterManagedRelayEnvironment(registry, input),
   },
 );
+
+const accountSerial = {
+  mode: "serial",
+  key: (input: { readonly accountId: string }) => input.accountId,
+} as const;
+
+export const createManagedRelayT3ChatLinkRequestCommand = createRuntimeCommand(
+  managedRelayAtomRuntime,
+  {
+    label: "web:managed-relay:create-t3chat-link-request",
+    scheduler: managedRelayMutationScheduler,
+    concurrency: accountSerial,
+    execute: (input: { readonly accountId: string }, registry) =>
+      createManagedRelayT3ChatLinkRequest(registry, input),
+  },
+);
+
+export const unlinkManagedRelayT3ChatCommand = createRuntimeCommand(managedRelayAtomRuntime, {
+  label: "web:managed-relay:unlink-t3chat",
+  scheduler: managedRelayMutationScheduler,
+  concurrency: accountSerial,
+  execute: (input: { readonly accountId: string }, registry) =>
+    unlinkManagedRelayT3Chat(registry, input),
+});
+
+const EMPTY_T3CHAT_LINK_ATOM = Atom.make(
+  AsyncResult.success<RelayT3ChatLinkResponse>({ available: false, link: null }),
+).pipe(Atom.keepAlive, Atom.withLabel("managed-relay:web:t3chat-link:null"));
+
+export function useManagedRelayT3ChatLink() {
+  const session = useAtomValue(managedRelaySessionAtom);
+  const accountId = session?.accountId ?? null;
+  const atom = accountId
+    ? managedRelayQueryManager.t3ChatLinkAtom(accountId)
+    : EMPTY_T3CHAT_LINK_ATOM;
+  const snapshot = readManagedRelaySnapshotState(useAtomValue(atom));
+  const refresh = () => {
+    if (accountId) {
+      managedRelayQueryManager.refreshT3ChatLink(appAtomRegistry, accountId);
+    }
+  };
+
+  return { ...snapshot, accountId, refresh };
+}
 
 const EMPTY_ENVIRONMENTS_ATOM = Atom.make(
   AsyncResult.success<ReadonlyArray<RelayClientEnvironmentRecord>>([]),

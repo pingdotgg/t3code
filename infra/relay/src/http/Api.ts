@@ -77,6 +77,7 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
+import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import { withSpanAttributes } from "../observability.ts";
 import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
 import * as RelayDb from "../db.ts";
@@ -823,6 +824,7 @@ export const layerClientApi = HttpApiBuilder.group(
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
     const devices = yield* Devices.Devices;
+    const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
     return handlers
       .handle(
         "listEnvironments",
@@ -988,6 +990,41 @@ export const layerClientApi = HttpApiBuilder.group(
             })
             .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")));
           return { ok: released };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "getT3ChatLink",
+        Effect.fn("relay.api.client.getT3ChatLink")(function* () {
+          yield* appendRelayCredentialResponseHeaders;
+          if (!t3Chat.available) return { available: false, link: null };
+          const { userId } = yield* RelayClientPrincipal;
+          const link = yield* t3Chat
+            .getLink({ userId })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")));
+          return { available: true, link };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "createT3ChatLinkRequest",
+        Effect.fn("relay.api.client.createT3ChatLinkRequest")(function* () {
+          const { userId } = yield* RelayClientPrincipal;
+          const url = yield* t3Chat.createLinkUrl({ userId }).pipe(
+            Effect.catchTags({
+              T3ChatNotConfigured: () => relayInternalErrorResponse("internal_error"),
+              ClerkUserLookupFailed: () => relayInternalErrorResponse("upstream_unavailable"),
+            }),
+          );
+          return { url };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "unlinkT3Chat",
+        Effect.fn("relay.api.client.unlinkT3Chat")(function* () {
+          const { userId } = yield* RelayClientPrincipal;
+          yield* t3Chat
+            .unlink({ userId })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")));
+          return { ok: true };
         }, mapRelayCommonApiErrors("not_authorized")),
       );
   }),

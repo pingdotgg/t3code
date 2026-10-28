@@ -148,6 +148,11 @@ Required `production` environment secrets:
 - `CLERK_SECRET_KEY`
 - `APNS_PRIVATE_KEY`
 
+Optional `production` environment secrets:
+
+- `T3CHAT_LINK_SECRET` for the T3 Chat account link. It must match
+  `T3CODE_LINK_SECRET` on T3 Chat.
+
 After changing a variable or secret, run the **Deploy T3 Connect relay** workflow manually from
 `main` with **force** unchecked. Alchemy compares the values the Worker reads and redeploys it when
 one changed. Check **force** only to redeploy resources with no detected change.
