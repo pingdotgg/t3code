@@ -91,8 +91,12 @@ export function readPreparedConnection(environmentId: EnvironmentId) {
 }
 
 /** data survives SWR revalidation; isPending applies only before first resolve. */
-export function useEnvironmentSessionState(environmentId: EnvironmentId) {
-  const result = useAtomValue(environmentSession.sessionStateAtom(environmentId));
+export function useEnvironmentSessionState(environmentId: EnvironmentId | null) {
+  const result = useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+  );
   return {
     data: AsyncResult.getOrElse(result, () => null),
     hasError: result._tag === "Failure",
