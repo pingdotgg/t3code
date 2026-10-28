@@ -759,6 +759,7 @@ const delegateToBox = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>)
           status: string;
           childThreadId: null;
           remoteChild: { environmentId: string; threadId: ThreadId; label: string };
+          link?: string;
         };
       }),
     );
@@ -807,6 +808,10 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       });
       // The box launched it in the project with the same repository.
       expect(yield* Ref.get(thread.launched)).toBe(delegated.remoteChild.threadId);
+      // Its link opens the thread there, so the parent can mention it like any other.
+      expect(delegated.link).toBe(
+        `<t3-thread://v2/${box.environmentId}/${delegated.remoteChild.threadId}>`,
+      );
       // ...naming the parent here, so the thread there links back to it.
       expect(yield* Ref.get(thread.delegatedFrom)).toEqual({
         environmentId: laptop.environmentId,

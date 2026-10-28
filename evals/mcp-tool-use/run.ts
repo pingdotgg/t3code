@@ -33,7 +33,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
-import { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } from "@t3tools/contracts";
+import { EnvironmentId, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT, ThreadId } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
@@ -893,14 +893,24 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
   }
 };
 
+/** The machine the fake threads live on. */
+const EVAL_ENVIRONMENT_ID = EnvironmentId.make("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+
 /** Fields T3 adds to real thread and task results, applied to mocks and defaults alike. */
 const withProductFields = (name: string, value: unknown, child: boolean): unknown => {
   if (!isRecord(value)) return value;
   const linked = (thread: unknown, idKey = "threadId") => {
     if (!isRecord(thread) || thread.link !== undefined) return thread;
     const id = thread[idKey] ?? thread.id;
-    const title = valueText(thread.title) || "Thread";
-    return typeof id === "string" ? { ...thread, link: formatThreadLink(id, title) } : thread;
+    return typeof id === "string"
+      ? {
+          ...thread,
+          link: formatThreadLink({
+            environmentId: EVAL_ENVIRONMENT_ID,
+            threadId: ThreadId.make(id),
+          }),
+        }
+      : thread;
   };
   const listed = (key: string) =>
     Array.isArray(value[key]) ? { ...value, [key]: value[key].map((item) => linked(item)) } : value;
@@ -915,6 +925,7 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
       return { ...value, thread: linked(value.thread) };
     case "t3_thread_launch":
     case "t3_thread_send":
+    case "run_scheduled_task_now":
       return linked(value);
     case "t3_thread_list":
     case "create_threads":
