@@ -161,6 +161,8 @@ export const Project = Schema.Struct({
   // Opt-in because background sync performs network I/O and may move the checkout.
   autoPull: Schema.optional(Schema.Boolean),
   scripts: Schema.Array(ProjectScript),
+  pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  archivedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -191,6 +193,17 @@ export const ProjectUpdatePayload = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  pinned: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Pin (true) or unpin (false). Pinned projects come first in project pickers.",
+    }),
+  ),
+  archived: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Archive (true) or unarchive (false) this environment's record. Threads and files are kept. A project on several machines leaves project pickers once every machine's record is archived.",
+    }),
+  ),
 });
 export type ProjectUpdatePayload = typeof ProjectUpdatePayload.Type;
 
