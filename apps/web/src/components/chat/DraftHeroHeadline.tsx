@@ -33,6 +33,7 @@ import {
   usePrimaryEnvironmentId,
   useEnvironmentProviders,
 } from "~/state/environments";
+import { useSourceControlAccounts } from "~/state/sourceControl";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { isProjectPinShortcut, ProjectPinButton } from "../ProjectPinButton";
@@ -104,11 +105,13 @@ export function DraftHeroHeadline({
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
+  const repositoryAccounts = useSourceControlAccounts(projects);
   const projectGroups = sortLogicalProjectsForSidebar(
     buildSidebarProjectSnapshots({
       projects,
       settings: projectGroupingSettings,
       primaryEnvironmentId,
+      repositoryAccounts,
       resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
     }),
     threads,

@@ -36,6 +36,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects, useNavigationThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
+import { useSourceControlAccounts } from "../../state/sourceControl";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { useThreadListNow } from "./use-thread-list-now";
 import { usePendingThreadOrder } from "../../state/thread-order";
@@ -210,14 +211,16 @@ function ThreadNavigationSidebarPane(
     sidebarProjectGroupingMode: options.projectGroupingMode,
     sidebarProjectGroupingOverrides: {},
   });
+  const repositoryAccounts = useSourceControlAccounts(projects);
   const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
         projects,
         environmentId: options.selectedEnvironmentId,
         projectGroupingMode: options.projectGroupingMode,
+        repositoryAccounts,
       }),
-    [projects, options.selectedEnvironmentId, options.projectGroupingMode],
+    [projects, options.selectedEnvironmentId, options.projectGroupingMode, repositoryAccounts],
   );
   const projectFilterOptions = pickableProjectGroups(projectScopes).map((scope) => ({
     key: scope.key,

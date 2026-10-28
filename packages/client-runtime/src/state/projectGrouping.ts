@@ -198,9 +198,43 @@ export function resolveScratchProjectScopeKey(
     : key;
 }
 
+export interface SourceControlAccount {
+  readonly host: string;
+  readonly account: string;
+}
+
+/** Verified source-control logins per environment; a missing environment is unknown. */
+export type SourceControlAccountsByEnvironment = Readonly<
+  Partial<Record<EnvironmentId, ReadonlyArray<SourceControlAccount>>>
+>;
+
+type ProjectLabelSource = Pick<
+  EnvironmentProject,
+  "environmentId" | "title" | "repositoryIdentity"
+>;
+
+/** Drops the owner only when every member's environment is signed in as it. */
+function deriveOwnRepositoryName(
+  members: ReadonlyArray<ProjectLabelSource>,
+  displayName: string,
+  repositoryAccounts: SourceControlAccountsByEnvironment | undefined,
+): string | null {
+  const identity = members.find((member) => member.repositoryIdentity)?.repositoryIdentity;
+  if (!repositoryAccounts || !identity) return null;
+  const [host, owner] = repositoryGroupingKeyOf(identity).toLowerCase().split("/");
+  if (!host || !owner || !displayName.toLowerCase().startsWith(`${owner}/`)) return null;
+  const ownedEverywhere = members.every((member) =>
+    (repositoryAccounts[member.environmentId] ?? []).some(
+      (entry) => entry.host.toLowerCase() === host && entry.account.toLowerCase() === owner,
+    ),
+  );
+  return ownedEverywhere ? displayName.slice(owner.length + 1) : null;
+}
+
 export function deriveProjectGroupLabel(input: {
-  readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
-  readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
+  readonly representative: ProjectLabelSource;
+  readonly members: ReadonlyArray<ProjectLabelSource>;
+  readonly repositoryAccounts?: SourceControlAccountsByEnvironment;
 }): string {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
@@ -221,7 +255,10 @@ export function deriveProjectGroupLabel(input: {
     return sharedTitle;
   }
   if (sharedDisplayNames.length === 1) {
-    return sharedDisplayNames[0]!;
+    return (
+      deriveOwnRepositoryName(input.members, sharedDisplayNames[0]!, input.repositoryAccounts) ??
+      sharedDisplayNames[0]!
+    );
   }
 
   if (sharedRepositoryNames.length === 1) {
@@ -300,6 +337,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   readonly settings: ProjectGroupingSettings;
   readonly preferredEnvironmentId?: EnvironmentId | null;
   readonly groupScratchProjects?: boolean;
+  readonly repositoryAccounts?: SourceControlAccountsByEnvironment;
 }): ReadonlyArray<ProjectGroup<TProject>> {
   const projectsByPhysicalKey = new Map<string, TProject[]>();
   for (const project of input.projects) {
@@ -355,22 +393,25 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   }
 
   const preferredEnvironmentId = input.preferredEnvironmentId ?? null;
-  return Array.from(groupedMembers, ([key, members]) => {
+  const groups = Array.from(groupedMembers, ([key, members]) => {
     const representative =
       (preferredEnvironmentId
         ? members.find((member) => member.project.environmentId === preferredEnvironmentId)?.project
         : null) ?? members[0]!.project;
+    const labelInput = { representative, members: members.map((member) => member.project) };
+    const isScratchGroup = input.groupScratchProjects && representative.isScratch;
+    const qualifiedLabel = isScratchGroup
+      ? "No project"
+      : members.length > 1
+        ? deriveProjectGroupLabel(labelInput)
+        : representative.title;
     return {
       key,
       label:
-        input.groupScratchProjects && representative.isScratch
-          ? "No project"
-          : members.length > 1
-            ? deriveProjectGroupLabel({
-                representative,
-                members: members.map((member) => member.project),
-              })
-            : representative.title,
+        !isScratchGroup && members.length > 1 && input.repositoryAccounts
+          ? deriveProjectGroupLabel({ ...labelInput, repositoryAccounts: input.repositoryAccounts })
+          : qualifiedLabel,
+      qualifiedLabel,
       representative,
       members,
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
@@ -378,6 +419,19 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       archived: members.every((member) => member.project.archivedAt != null),
     };
   });
+  const labelCounts = new Map<string, number>();
+  for (const group of groups) {
+    const label = group.label.toLowerCase();
+    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  }
+  return groups.map(({ qualifiedLabel, ...group }) => ({
+    ...group,
+    // The owner stays when dropping it would make two groups read the same.
+    label:
+      group.label !== qualifiedLabel && labelCounts.get(group.label.toLowerCase())! > 1
+        ? qualifiedLabel
+        : group.label,
+  }));
 }
 
 export function sortProjectsByGroupOrder<
