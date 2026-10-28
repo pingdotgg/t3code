@@ -97,7 +97,7 @@ import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolb
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigation";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { Tabs } from "../../components/ui/Tabs";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { RelativeTime } from "../../components/RelativeTime";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -745,25 +745,22 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                       }}
                     >
                       <View className="px-4 py-3">
-                        <SegmentedControl
-                          variant="standalone"
+                        <Tabs
                           options={[
-                            { value: "overview", label: "Overview", icon: "doc.text" },
+                            { value: "overview", label: "Overview" },
                             ...(guidesEnabled
                               ? [
                                   {
                                     value: "guide" as const,
                                     label: "Guide",
-                                    icon: "list.number" as const,
                                   },
                                 ]
                               : []),
-                            { value: "diff", label: "Code", icon: "plusminus" },
+                            { value: "diff", label: "Code" },
                           ]}
                           selected={section}
                           onSelect={selectSection}
-                          role="tab"
-                          size="compact"
+                          className="-mx-3.5"
                         />
                       </View>
                       <PullRequestDiffContent params={{ ...params, path: "" }} embedded />
@@ -941,25 +938,22 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                               }}
                             >
                               <PullRequestIdentity pr={identity} params={params} />
-                              <SegmentedControl
-                                variant="standalone"
+                              <Tabs
                                 options={[
-                                  { value: "overview", label: "Overview", icon: "doc.text" },
+                                  { value: "overview", label: "Overview" },
                                   ...(guidesEnabled
                                     ? [
                                         {
                                           value: "guide" as const,
                                           label: "Guide",
-                                          icon: "list.number" as const,
                                         },
                                       ]
                                     : []),
-                                  { value: "diff", label: "Code", icon: "plusminus" },
+                                  { value: "diff", label: "Code" },
                                 ]}
                                 selected={section}
                                 onSelect={selectSection}
-                                role="tab"
-                                size="compact"
+                                className="-mx-3.5"
                               />
                             </View>
                           ) : null}
