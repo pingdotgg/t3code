@@ -15,6 +15,7 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Thread         | The durable conversation and work history for a project. It survives provider process exits.      |
 | Turn           | One user-to-agent cycle, a V2 run. Provider work can end before checkpoint and diff work settles. |
 | Activity       | A non-message timeline item, such as a tool action, approval, or failure.                         |
+| Pipeline       | A saved sequence of agent steps, one thread each. Not a provider-native workflow.                 |
 | T3 home        | The base data directory. Runtime state normally lives under its `userdata` directory.             |
 
 ## Orchestration
