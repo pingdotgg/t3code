@@ -351,6 +351,11 @@ export function getUpdateEverythingToastView(
 
 export interface UpdateEverythingPlan {
   readonly localVersion: string | null;
+  /** Machines whose servers this app hosts; this app's update restarts them. */
+  readonly localMachines: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+  }>;
   readonly servers: ReadonlyArray<
     Pick<ServerUpdateTarget, "environmentId" | "serverLabel" | "selfUpdate" | "targetVersion">
   >;
@@ -359,6 +364,15 @@ export interface UpdateEverythingPlan {
     readonly label: string;
     readonly providers: ReadonlyArray<string>;
   }>;
+  readonly skipped: ReadonlyArray<SkippedMachine>;
+}
+
+export interface UpdateEverythingRow {
+  readonly environmentId: EnvironmentId | null;
+  readonly label: string;
+  readonly app: "this-app" | "server" | "desktop-app" | null;
+  readonly skipped: string | null;
+  readonly providers: ReadonlyArray<string>;
 }
 
 function countLabel(count: number, noun: string): string | null {
@@ -370,9 +384,12 @@ function joinList(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
 
+/** One row per machine: this app's machines first, then servers, provider-only, and skipped. */
 export function describeUpdateEverything(plan: UpdateEverythingPlan): {
   readonly summary: string;
-  readonly lines: ReadonlyArray<string>;
+  readonly version: string | null;
+  readonly providerCount: number;
+  readonly rows: ReadonlyArray<UpdateEverythingRow>;
 } {
   const providerCount = plan.providerMachines.reduce(
     (count, machine) => count + machine.providers.length,
@@ -386,30 +403,46 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
     ].filter((part) => part !== null),
   )}`;
 
-  const machines = new Map<EnvironmentId, { label: string; items: string[] }>();
-  const itemsFor = (environmentId: EnvironmentId, label: string) => {
-    const existing = machines.get(environmentId);
-    if (existing) return existing.items;
-    const items: string[] = [];
-    machines.set(environmentId, { label, items });
-    return items;
+  const rows = new Map<EnvironmentId | null, UpdateEverythingRow>();
+  const update = (
+    environmentId: EnvironmentId | null,
+    label: string,
+    change: Partial<UpdateEverythingRow>,
+  ) => {
+    const row = rows.get(environmentId) ?? {
+      environmentId,
+      label,
+      app: null,
+      skipped: null,
+      providers: [],
+    };
+    rows.set(environmentId, { ...row, ...change });
   };
+  if (plan.localVersion) {
+    if (plan.localMachines.length === 0) update(null, "This app", { app: "this-app" });
+    for (const machine of plan.localMachines) {
+      update(machine.environmentId, machine.label, { app: "this-app" });
+    }
+  }
   for (const server of plan.servers) {
-    itemsFor(server.environmentId, server.serverLabel).push(
-      server.selfUpdate === "desktop-managed"
-        ? "desktop app update"
-        : `server to ${server.targetVersion}`,
-    );
+    update(server.environmentId, server.serverLabel, {
+      app: server.selfUpdate === "desktop-managed" ? "desktop-app" : "server",
+    });
   }
   for (const machine of plan.providerMachines) {
-    itemsFor(machine.environmentId, machine.label).push(...machine.providers);
+    update(machine.environmentId, machine.label, { providers: machine.providers });
+  }
+  for (const machine of plan.skipped) {
+    update(machine.environmentId, machine.label, { skipped: machine.reason });
   }
 
   return {
     summary,
-    lines: [
-      ...(plan.localVersion ? [`This app: ${plan.localVersion}, restarts last`] : []),
-      ...Array.from(machines.values(), ({ label, items }) => `${label}: ${items.join(", ")}`),
-    ],
+    version:
+      plan.localVersion ??
+      plan.servers.find((server) => server.selfUpdate !== "desktop-managed")?.targetVersion ??
+      null,
+    providerCount,
+    rows: Array.from(rows.values()),
   };
 }
