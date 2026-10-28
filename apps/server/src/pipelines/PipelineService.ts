@@ -15,7 +15,9 @@ import {
   type PipelineRunSetPauseBeforeInput,
   type PipelineRunStartInput,
   type PipelineRunStepActionInput,
+  type PipelineRunsLiveResult,
   type PipelineRunSubscribeInput,
+  type PipelineRunSummary,
   type PipelineUpsertInput,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -27,11 +29,16 @@ import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { PIPELINE_STARTERS, type PipelineStarter } from "@t3tools/shared/pipelineStarters";
+import {
+  PIPELINE_STARTERS,
+  withStarterRuntimeMode,
+  type PipelineStarter,
+} from "@t3tools/shared/pipelineStarters";
 
 import type { DispatchModes } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { makePipelineRunner, pipelineError } from "./pipelineRunner.ts";
 import * as PipelineStore from "./PipelineStore.ts";
 
@@ -57,6 +64,8 @@ export class PipelineService extends Context.Service<
     readonly subscribeRun: (
       input: PipelineRunSubscribeInput,
     ) => Stream.Stream<PipelineRunResult, PipelineError>;
+    /** Every running or paused run, re-emitted whenever any run changes. */
+    readonly subscribeLiveRuns: () => Stream.Stream<PipelineRunsLiveResult, PipelineError>;
     readonly continueRun: (
       input: PipelineRunStepActionInput,
     ) => Effect.Effect<PipelineRunResult, PipelineError>;
@@ -85,29 +94,23 @@ export const layerWithStarters = (
   | ThreadLaunchService.ThreadLaunchService
   | ThreadManagementService.ThreadManagementService
   | IdAllocator.IdAllocatorV2
+  | ServerSettings.ServerSettingsService
 > =>
   Layer.effect(
     PipelineService,
     Effect.gen(function* () {
       const store = yield* PipelineStore.PipelineStore;
       const crypto = yield* Crypto.Crypto;
-      const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
-      const threads = yield* ThreadManagementService.ThreadManagementService;
-      const ids = yield* IdAllocator.IdAllocatorV2;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
 
       // Notifications re-emit the full list; slow subscribers need only the newest dirty signal.
       const defsChanged = yield* PubSub.sliding<void>(1);
       const notifyDefsChanged = PubSub.publish(defsChanged, undefined).pipe(Effect.asVoid);
       // Run subscribers filter by id, so every change must be delivered.
       const runChanged = yield* PubSub.unbounded<PipelineRunId>();
-      const runner = yield* makePipelineRunner({
-        store,
-        threadLaunch,
-        threads,
-        ids,
-        crypto,
-        notifyRunChanged: (runId) => PubSub.publish(runChanged, runId).pipe(Effect.asVoid),
-      });
+      const runner = yield* makePipelineRunner((runId) =>
+        PubSub.publish(runChanged, runId).pipe(Effect.asVoid),
+      );
 
       const list: PipelineService["Service"]["list"] = () =>
         store.listDefinitions().pipe(Effect.map((pipelines) => ({ pipelines })));
@@ -171,8 +174,10 @@ export const layerWithStarters = (
       );
 
       // A concurrent replay of the same create can win the insert; fall back to the update path.
-      const insertOrUpdate = (definition: PipelineDefinition) =>
-        store.insertDefinition(definition).pipe(
+      const insertOrUpdate = Effect.fn("PipelineService.insertOrUpdate")(function* (
+        definition: PipelineDefinition,
+      ) {
+        return yield* store.insertDefinition(definition).pipe(
           Effect.as(true),
           Effect.catch((error) =>
             store
@@ -184,6 +189,7 @@ export const layerWithStarters = (
               ),
           ),
         );
+      });
 
       const deleteDefinition: PipelineService["Service"]["delete"] = Effect.fn(
         "PipelineService.delete",
@@ -218,16 +224,67 @@ export const layerWithStarters = (
           }),
         );
 
+      const summarize = (run: PipelineRun): PipelineRunSummary => ({
+        id: run.id,
+        parentThreadId: run.parentThreadId,
+        name: run.definition.name,
+        status: run.status,
+        pauseReason: run.pauseReason,
+        currentStepIndex: run.currentStepIndex,
+        steps: run.steps.map((step) => ({
+          stepId: step.stepId,
+          name:
+            run.definition.steps.find((candidate) => candidate.id === step.stepId)?.name ??
+            step.stepId,
+          status: step.status,
+          childThreadId: step.childThreadId,
+        })),
+      });
+
+      const liveRuns = Effect.fn("PipelineService.liveRuns")(function* () {
+        const runIds = yield* store.listRunIdsByStatus(["running", "paused"]);
+        const runs = yield* Effect.forEach(runIds, (runId) =>
+          store.getRun(runId).pipe(
+            // One corrupt run must not hide the others.
+            Effect.catch((error) =>
+              Effect.logWarning("Skipping unreadable pipeline run", { runId, error }).pipe(
+                Effect.as(null),
+              ),
+            ),
+          ),
+        );
+        return {
+          runs: runs.flatMap((run) =>
+            run !== null && (run.status === "running" || run.status === "paused")
+              ? [summarize(run)]
+              : [],
+          ),
+        } satisfies PipelineRunsLiveResult;
+      });
+
+      const subscribeLiveRuns: PipelineService["Service"]["subscribeLiveRuns"] = () =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            // Subscribe before reading to buffer concurrent changes.
+            const subscription = yield* PubSub.subscribe(runChanged);
+            return Stream.concat(
+              Stream.fromEffect(liveRuns()),
+              Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => liveRuns())),
+            ).pipe(Stream.changes);
+          }),
+        );
+
       // Seeding is best effort: a failure must never keep the server from starting.
       const seeded = yield* Effect.forEach(starters, (starter) =>
         Effect.gen(function* () {
           const now = DateTime.formatIso(yield* DateTime.now);
+          const { defaultRuntimeMode } = yield* serverSettings.getSettings;
           return yield* store.seedStarter({
             key: starter.key,
             definition: {
               id: PipelineId.make(`pipeline:starter:${starter.key}`),
               name: starter.name,
-              steps: starter.steps,
+              steps: withStarterRuntimeMode(starter.steps, defaultRuntimeMode),
               createdAt: now,
               updatedAt: now,
             },
@@ -253,6 +310,7 @@ export const layerWithStarters = (
         start: runner.start,
         getRun,
         subscribeRun,
+        subscribeLiveRuns,
         continueRun: runner.continueRun,
         retryStep: runner.retryStep,
         skipStep: runner.skipStep,

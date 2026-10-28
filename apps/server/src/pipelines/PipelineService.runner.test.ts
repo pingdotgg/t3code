@@ -11,22 +11,26 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
   type PipelineRunId,
+  type PipelineRunSummary,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { ThreadLaunchInput } from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import type { ThreadManagementWaitResult } from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as PipelineService from "./PipelineService.ts";
 import * as PipelineStore from "./PipelineStore.ts";
 
@@ -57,13 +61,17 @@ const twoSteps = (extraBuild: Record<string, unknown> = {}) => [
   step("build", "Build from: {{previous.output}}", extraBuild),
 ];
 
-const startInput = (commandId: string, input = "Fix the bug\nwith details") =>
+const startInput = (
+  commandId: string,
+  input = "Fix the bug\nwith details",
+  workspaceStrategy: typeof PipelineRunStartInput.Encoded.workspaceStrategy = { type: "root" },
+) =>
   decodeStart({
     commandId,
     pipelineId: PIPELINE_ID,
     projectId: "project-1",
     input,
-    workspaceStrategy: { type: "root" },
+    workspaceStrategy,
   });
 
 type RunStatus = "completed" | "failed" | "interrupted";
@@ -79,7 +87,20 @@ const makeHarness = Effect.gen(function* () {
   const waitsStarted = yield* Queue.unbounded<ThreadId>();
   const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const interrupted = yield* Deferred.make<ThreadId>();
+  const subscriptions = yield* Queue.unbounded<number>();
+  const subscribed = yield* Deferred.make<void>();
+  const stopStarted = yield* Queue.unbounded<ThreadId>();
+  const stopGate = yield* Deferred.make<void>();
   const providerEnabled = yield* Ref.make(true);
+  const behavior = {
+    holdStops: false,
+    failFirstSubscription: false,
+    failParentCreate: false,
+    subscriptionCount: 0,
+  };
+  /** Threads whose shell has no workspace, as after a failed worktree setup. */
+  const unrecordedWorkspaces = new Set<ThreadId>();
+  const deletedThreads = new Set<ThreadId>();
   const commands: Array<OrchestrationV2ServerCommand> = [];
   const waits = new Map<ThreadId, Deferred.Deferred<ThreadManagementWaitResult>>();
   const outputs = new Map<ThreadId, CannedOutput>();
@@ -132,13 +153,15 @@ const makeHarness = Effect.gen(function* () {
     return { runs: [], messages, turnItems };
   };
 
-  const shellFor = (threadId: ThreadId) =>
-    ({
+  const shellFor = (threadId: ThreadId) => {
+    const recorded = threadId.startsWith("thread-of:") && !unrecordedWorkspaces.has(threadId);
+    return {
       id: threadId,
-      branch: threadId.startsWith("thread-of:") ? "feature" : null,
-      worktreePath: threadId.startsWith("thread-of:") ? `/wt/${threadId}` : null,
-      deletedAt: null,
-    }) as unknown as OrchestrationV2ThreadShell;
+      branch: recorded ? "feature" : null,
+      worktreePath: recorded ? `/wt/${threadId}` : null,
+      deletedAt: deletedThreads.has(threadId) ? "2026-10-28T10:00:00.000Z" : null,
+    } as unknown as OrchestrationV2ThreadShell;
+  };
 
   const layer = Layer.mergeAll(
     Layer.mock(ThreadLaunchService.ThreadLaunchService)({
@@ -151,8 +174,15 @@ const makeHarness = Effect.gen(function* () {
     }),
     Layer.mock(ThreadManagementService.ThreadManagementService)({
       dispatch: (command) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
+          if (command.type === "thread.create" && behavior.failParentCreate) {
+            return yield* Effect.fail(new Error("parent boom") as never);
+          }
           commands.push(command);
+          if (command.type === "thread.stop") {
+            yield* Queue.offer(stopStarted, command.threadId);
+            if (behavior.holdStops) yield* Deferred.await(stopGate);
+          }
           return { sequence: 0, storedEvents: [] };
         }),
       waitForThread: (input) =>
@@ -161,12 +191,27 @@ const makeHarness = Effect.gen(function* () {
           Effect.onInterrupt(() => Deferred.succeed(interrupted, input.threadId)),
         ),
       getProjectThreadRecords: (input) => Effect.succeed(recordsFor(input.threadId)) as never,
-      getThreadShell: (threadId) => Effect.succeed(shellFor(threadId)),
+      // A recovery sweep that reads a parent before the deletion watcher subscribed would wait forever.
+      getThreadShell: (threadId) =>
+        (threadId.startsWith("parent-") ? Deferred.await(subscribed) : Effect.void).pipe(
+          Effect.as(shellFor(threadId)),
+        ),
       isProviderInstanceEnabledForProject: () => Ref.get(providerEnabled),
-      streamDomainEvents: Stream.fromQueue(events),
+      streamDomainEvents: Stream.unwrap(
+        Effect.gen(function* () {
+          behavior.subscriptionCount += 1;
+          yield* Queue.offer(subscriptions, behavior.subscriptionCount);
+          if (behavior.failFirstSubscription && behavior.subscriptionCount === 1) {
+            return yield* Effect.fail(new Error("stream boom") as never);
+          }
+          yield* Deferred.succeed(subscribed, undefined);
+          return Stream.fromQueue(events);
+        }),
+      ),
     }),
     IdAllocator.layer,
     NodeCrypto.layer,
+    ServerSettings.layerTest(),
   );
 
   return {
@@ -179,6 +224,12 @@ const makeHarness = Effect.gen(function* () {
     commands,
     outputs,
     settle,
+    subscriptions,
+    stopStarted,
+    stopGate,
+    behavior,
+    unrecordedWorkspaces,
+    deletedThreads,
   };
 });
 
@@ -189,10 +240,10 @@ const withService = <A, E>(
   body: (
     harness: Effect.Success<typeof makeHarness>,
     service: PipelineService.PipelineService["Service"],
-    store: PipelineStore.PipelineStoreShape,
+    store: PipelineStore.PipelineStore["Service"],
   ) => Effect.Effect<A, E, PipelineStore.PipelineStore>,
   seed?: (
-    store: PipelineStore.PipelineStoreShape,
+    store: PipelineStore.PipelineStore["Service"],
     harness: Effect.Success<typeof makeHarness>,
   ) => Effect.Effect<void, PipelineError>,
 ) =>
@@ -409,43 +460,44 @@ it.effect("cancel stops the child and the driver, and retry resumes from cancell
   ),
 );
 
+const seedRun = (
+  store: PipelineStore.PipelineStore["Service"],
+  id: string,
+  parent: string,
+  stepPatch?: Parameters<PipelineStore.PipelineStore["Service"]["updateStep"]>[2],
+) => {
+  const { steps: _steps, ...run } = decodeRun({
+    id,
+    pipelineId: PIPELINE_ID,
+    definition: { name: "Review", steps: twoSteps() },
+    projectId: "project-1",
+    parentThreadId: parent,
+    input: "Fix",
+    workspaceStrategy: { type: "root" },
+    status: "running",
+    pauseReason: null,
+    error: null,
+    currentStepIndex: 0,
+    steps: [],
+    createdBy: "user",
+    creationSource: "web",
+    createdAt: NOW,
+    updatedAt: NOW,
+    completedAt: null,
+  });
+  return store
+    .insertRunWithSteps(run, [
+      { index: 0, stepId: "plan" as never, pauseBefore: false },
+      { index: 1, stepId: "build" as never, pauseBefore: false },
+    ])
+    .pipe(
+      Effect.andThen(
+        stepPatch === undefined ? Effect.void : store.updateStep(run.id, 0, stepPatch),
+      ),
+    );
+};
+
 it.effect("startup recovery re-waits running steps and relaunches unlaunched ones", () => {
-  const seedRun = (
-    store: PipelineStore.PipelineStoreShape,
-    id: string,
-    parent: string,
-    stepPatch?: Parameters<PipelineStore.PipelineStoreShape["updateStep"]>[2],
-  ) => {
-    const { steps: _steps, ...run } = decodeRun({
-      id,
-      pipelineId: PIPELINE_ID,
-      definition: { name: "Review", steps: twoSteps() },
-      projectId: "project-1",
-      parentThreadId: parent,
-      input: "Fix",
-      workspaceStrategy: { type: "root" },
-      status: "running",
-      pauseReason: null,
-      error: null,
-      currentStepIndex: 0,
-      steps: [],
-      createdBy: "user",
-      creationSource: "web",
-      createdAt: NOW,
-      updatedAt: NOW,
-      completedAt: null,
-    });
-    return store
-      .insertRunWithSteps(run, [
-        { index: 0, stepId: "plan" as never, pauseBefore: false },
-        { index: 1, stepId: "build" as never, pauseBefore: false },
-      ])
-      .pipe(
-        Effect.andThen(
-          stepPatch === undefined ? Effect.void : store.updateStep(run.id, 0, stepPatch),
-        ),
-      );
-  };
   return withService(
     Effect.fn(function* (harness) {
       // Run "a" waits on its existing child; "b" never launched; "c" stopped between write and launch.
@@ -454,6 +506,13 @@ it.effect("startup recovery re-waits running steps and relaunches unlaunched one
         launched.map((entry) => entry.input.commandId),
         ["pipeline-run:run-b:plan:1", "pipeline-run:run-c:plan:1"],
       );
+      // The interrupted launch resumes from what its running write saved, not from a rebuild.
+      const resumed = launched.find((entry) => entry.input.commandId.includes("run-c"));
+      assert.strictEqual(resumed?.input.initialMessage?.text, "saved prompt");
+      assert.deepStrictEqual(resumed?.input.workspaceStrategy, {
+        type: "existing_worktree",
+        worktreePath: "/saved/wt",
+      });
       const waiting = [
         yield* Queue.take(harness.waitsStarted),
         yield* Queue.take(harness.waitsStarted),
@@ -468,7 +527,14 @@ it.effect("startup recovery re-waits running steps and relaunches unlaunched one
         childThreadId: decodeThreadId("child-a"),
       }).pipe(
         Effect.andThen(seedRun(store, "run-b", "parent-b")),
-        Effect.andThen(seedRun(store, "run-c", "parent-c", { status: "running", attempt: 1 })),
+        Effect.andThen(
+          seedRun(store, "run-c", "parent-c", {
+            status: "running",
+            attempt: 1,
+            prompt: "saved prompt",
+            workspaceStrategy: { type: "existing_worktree", worktreePath: "/saved/wt" },
+          }),
+        ),
       ),
   );
 });
@@ -518,5 +584,218 @@ it.effect("deleting the parent thread cancels the run", () =>
       assert.strictEqual(cancelled.steps[0]?.status, "cancelled");
       assert.strictEqual(yield* Deferred.await(harness.interrupted), first.threadId);
     }),
+  ),
+);
+
+it.effect("a step joins an earlier thread's workspace only when that thread recorded one", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      const worktree = { type: "worktree", baseRef: "main" } as const;
+      const { run } = yield* service.start(startInput("cmd-11", undefined, worktree));
+      const first = yield* Queue.take(harness.launches);
+      assert.deepStrictEqual(first.input.workspaceStrategy, worktree);
+      // The worktree setup failed, so the thread has no path; the root checkout is not a substitute.
+      harness.unrecordedWorkspaces.add(first.threadId);
+      yield* harness.settle(first.threadId, "failed");
+      yield* awaitRun(service, run.id, (current) => current.status === "paused");
+
+      yield* service.retryStep({ runId: run.id, stepIndex: 0 });
+      const retried = yield* Queue.take(harness.launches);
+      assert.deepStrictEqual(retried.input.workspaceStrategy, worktree);
+      harness.unrecordedWorkspaces.add(retried.threadId);
+      yield* harness.settle(retried.threadId, "failed");
+      yield* awaitRun(service, run.id, (current) => current.status === "paused");
+
+      yield* service.skipStep({ runId: run.id, stepIndex: 0 });
+      const next = yield* Queue.take(harness.launches);
+      assert.deepStrictEqual(next.input.workspaceStrategy, worktree);
+    }),
+  ),
+);
+
+it.effect("a completed step without an answer feeds an empty string to the next prompt", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      yield* service.start(startInput("cmd-12"));
+      const first = yield* Queue.take(harness.launches);
+      yield* harness.settle(first.threadId, "completed");
+      const second = yield* Queue.take(harness.launches);
+      assert.strictEqual(second.input.initialMessage?.text, "Build from: ");
+    }),
+  ),
+);
+
+it.effect("retry and skip stop the old thread and are refused without a parent thread", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      const { run } = yield* service.start(startInput("cmd-13"));
+      const first = yield* Queue.take(harness.launches);
+      yield* harness.settle(first.threadId, "failed");
+      yield* awaitRun(service, run.id, (current) => current.status === "paused");
+
+      harness.deletedThreads.add(run.parentThreadId);
+      for (const action of [service.retryStep, service.skipStep]) {
+        const refused = yield* Effect.flip(action({ runId: run.id, stepIndex: 0 }));
+        assert.include(refused.message, "parent thread no longer exists");
+      }
+      assert.strictEqual((yield* service.getRun(run.id)).status, "paused");
+      assert.strictEqual(commandOfType(harness.commands, "thread.stop").length, 0);
+      harness.deletedThreads.delete(run.parentThreadId);
+
+      yield* service.retryStep({ runId: run.id, stepIndex: 0 });
+      const retried = yield* Queue.take(harness.launches);
+      yield* harness.settle(retried.threadId, "failed");
+      yield* awaitRun(service, run.id, (current) => current.steps[0]?.attempt === 2);
+      yield* awaitRun(service, run.id, (current) => current.status === "paused");
+      yield* service.skipStep({ runId: run.id, stepIndex: 0 });
+      assert.deepStrictEqual(
+        commandOfType(harness.commands, "thread.stop").map((stop) => [
+          stop.commandId,
+          stop.threadId,
+        ]),
+        [
+          [`pipeline-run:${run.id}:retry:plan:1`, first.threadId],
+          [`pipeline-run:${run.id}:skip:plan:2`, retried.threadId],
+        ],
+      );
+    }),
+  ),
+);
+
+it.effect("an interrupted retry still stops the old thread and relaunches", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      const { run } = yield* service.start(startInput("cmd-14"));
+      const first = yield* Queue.take(harness.launches);
+      yield* harness.settle(first.threadId, "failed");
+      yield* awaitRun(service, run.id, (current) => current.status === "paused");
+
+      harness.behavior.holdStops = true;
+      const retrying = yield* Effect.forkChild(service.retryStep({ runId: run.id, stepIndex: 0 }));
+      assert.strictEqual(yield* Queue.take(harness.stopStarted), first.threadId);
+      // A client disconnect lands in the middle of the action.
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(retrying));
+      yield* Deferred.succeed(harness.stopGate, undefined);
+      yield* Fiber.join(interrupting);
+      const retried = yield* Queue.take(harness.launches);
+      assert.strictEqual(retried.input.commandId, `pipeline-run:${run.id}:plan:2`);
+    }),
+  ),
+);
+
+it.effect("only steps after the current one can change their pause gate", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      const { run } = yield* service.start(startInput("cmd-15"));
+      yield* Queue.take(harness.launches);
+      const [current, later] = run.steps;
+      const refused = yield* Effect.flip(
+        service.setStepPauseBefore({ runId: run.id, stepId: current!.stepId, pauseBefore: true }),
+      );
+      assert.include(refused.message, "after the current one");
+      const updated = yield* service.setStepPauseBefore({
+        runId: run.id,
+        stepId: later!.stepId,
+        pauseBefore: true,
+      });
+      assert.isTrue(updated.run.steps[1]?.pauseBefore);
+    }),
+  ),
+);
+
+it.effect("start refuses a saved definition that today's rules would reject", () =>
+  withService(
+    Effect.fn(function* (_harness, service, store) {
+      yield* store.updateDefinition(
+        definition([step("plan", "{{steps.build.output}}"), step("build", "x")]),
+      );
+      const refused = yield* Effect.flip(service.start(startInput("cmd-16")));
+      assert.include(refused.message, "does not run before");
+      assert.include(refused.message, '"Review"');
+    }),
+  ),
+);
+
+it.effect("a start replay resumes a run that has no driver and repeats a failed start", () =>
+  withService(
+    Effect.fn(function* (harness, service, store) {
+      yield* seedRun(store, "pipeline-run:cmd-17", "parent-replay");
+      // The run row exists but the process died before it got a parent or a driver.
+      yield* service.start(startInput("cmd-17"));
+      const launched = yield* Queue.take(harness.launches);
+      assert.strictEqual(launched.input.commandId, "pipeline-run:pipeline-run:cmd-17:plan:1");
+      assert.strictEqual(commandOfType(harness.commands, "thread.create").length, 1);
+
+      harness.behavior.failParentCreate = true;
+      const failed = yield* Effect.flip(service.start(startInput("cmd-18")));
+      assert.strictEqual(failed.message, "parent boom");
+      const replayed = yield* Effect.flip(service.start(startInput("cmd-18")));
+      assert.strictEqual(replayed.message, "parent boom");
+    }),
+  ),
+);
+
+it.effect("pipelineRuns live stream lists running and paused runs and drops finished ones", () =>
+  withService(
+    Effect.fn(function* (harness, service, store) {
+      yield* store.updateDefinition(definition(twoSteps({ pauseBefore: true })));
+      const awaitLive = (predicate: (runs: ReadonlyArray<PipelineRunSummary>) => boolean) =>
+        service.subscribeLiveRuns().pipe(
+          Stream.filter((result) => predicate(result.runs)),
+          Stream.runHead,
+          Effect.map((head) => Option.getOrThrow(head).runs),
+        );
+
+      const { run } = yield* service.start(startInput("cmd-19"));
+      const [started] = yield* awaitLive((runs) => runs.length === 1);
+      assert.strictEqual(started?.id, run.id);
+      assert.strictEqual(started?.name, "Review");
+      assert.strictEqual(started?.parentThreadId, run.parentThreadId);
+      assert.deepStrictEqual(
+        started?.steps.map((entry) => [entry.stepId, entry.name]),
+        [
+          ["plan", "Step plan"],
+          ["build", "Step build"],
+        ],
+      );
+
+      const first = yield* Queue.take(harness.launches);
+      yield* harness.settle(first.threadId, "completed");
+      const [paused] = yield* awaitLive((runs) => runs[0]?.status === "paused");
+      assert.strictEqual(paused?.pauseReason, "awaiting_continue");
+
+      yield* service.cancel({ runId: run.id });
+      assert.deepStrictEqual(yield* awaitLive((runs) => runs.length === 0), []);
+
+      const second = yield* service.start(startInput("cmd-20"));
+      const firstOfSecond = yield* Queue.take(harness.launches);
+      yield* harness.settle(firstOfSecond.threadId, "completed");
+      yield* awaitRun(service, second.run.id, (current) => current.status === "paused");
+      yield* service.continueRun({ runId: second.run.id, stepIndex: 1 });
+      const last = yield* Queue.take(harness.launches);
+      yield* harness.settle(last.threadId, "completed");
+      assert.deepStrictEqual(yield* awaitLive((runs) => runs.length === 0), []);
+    }),
+  ),
+);
+
+it.effect("the deletion watcher resubscribes after its stream fails", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      const { run } = yield* service.start(startInput("cmd-21"));
+      yield* Queue.take(harness.launches);
+      assert.strictEqual(yield* Queue.take(harness.subscriptions), 1);
+      yield* TestClock.adjust("1 second");
+      assert.strictEqual(yield* Queue.take(harness.subscriptions), 2);
+      yield* Queue.offer(harness.events, {
+        type: "thread.deleted",
+        threadId: run.parentThreadId,
+      } as unknown as OrchestrationV2DomainEvent);
+      yield* awaitRun(service, run.id, (current) => current.status === "cancelled");
+    }),
+    (_store, harness) =>
+      Effect.sync(() => {
+        harness.behavior.failFirstSubscription = true;
+      }),
   ),
 );

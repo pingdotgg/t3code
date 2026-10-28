@@ -288,8 +288,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// PipelineService sets `cause` only on storage, launch, and id-allocation failures. Its other
+// errors are a request the caller can fix, and their messages are written for the agent.
 function pipelineFailure(error: PipelineError): OrchestratorMcpFailure {
-  return failure("invalid_request", error.message);
+  return error.cause === undefined
+    ? failure("invalid_request", error.message)
+    : failure("orchestration_error", "The pipeline service failed. Try again, or tell the user.");
 }
 
 function pipelineRunSummary(
@@ -2041,6 +2045,41 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /** A worktree strategy based on a checkout's current commit, which the project root must also contain. */
+  const worktreeStrategyFromCheckout = Effect.fn(
+    "OrchestratorMcpService.worktreeStrategyFromCheckout",
+  )(function* (input: {
+    readonly project: { readonly title: string; readonly workspaceRoot: string };
+    readonly checkoutPath: string | null;
+    readonly unresolvedMessage: string;
+    readonly outsideProjectMessage: (where: string) => string;
+  }) {
+    const { project, checkoutPath } = input;
+    const base = yield* gitDriver
+      .resolveCommit({ cwd: checkoutPath ?? project.workspaceRoot, revision: "HEAD" })
+      .pipe(Effect.mapError(() => failure("invalid_request", input.unresolvedMessage)));
+    // Launch preparation creates the worktree from the project root, so a
+    // checkout in another repository (such as a Git folder inside Scratch)
+    // would hand it a commit it cannot find.
+    if (checkoutPath !== null) {
+      yield* gitDriver
+        .resolveCommit({ cwd: project.workspaceRoot, revision: base.commitSha })
+        .pipe(
+          Effect.mapError(() =>
+            failure(
+              "invalid_request",
+              input.outsideProjectMessage(`project "${project.title}" (${project.workspaceRoot})`),
+            ),
+          ),
+        );
+    }
+    return {
+      type: "worktree",
+      baseRef: base.commitSha,
+      startFromOrigin: false,
+    } satisfies OrchestrationV2ThreadLaunchWorkspaceStrategy;
+  });
+
   /** The id when it matches, else the one pipeline with this name, ignoring case. */
   const resolvePipeline = Effect.fn("OrchestratorMcpService.resolvePipeline")(function* (
     key: string,
@@ -2259,32 +2298,26 @@ const make = Effect.gen(function* () {
       yield* assertLiveCallerForOtherProject(scope, parent, projectId);
       const project = yield* requireProject(projectId);
       const pipeline = yield* resolvePipeline(input.pipeline);
-      let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy = { type: "root" };
-      if (input.worktree === true) {
-        // Same base as delegate_task's worktree isolation: the caller's checkout, at its current commit.
-        const sameProject = parent !== undefined && parent.thread.projectId === projectId;
-        const callerWorktree = sameProject ? parent.thread.worktreePath : null;
-        const base = yield* gitDriver
-          .resolveCommit({ cwd: callerWorktree ?? project.workspaceRoot, revision: "HEAD" })
-          .pipe(
-            Effect.mapError(() =>
-              failure("invalid_request", "Unable to resolve the checkout commit for the worktree."),
-            ),
-          );
-        if (callerWorktree !== null) {
-          yield* gitDriver
-            .resolveCommit({ cwd: project.workspaceRoot, revision: base.commitSha })
-            .pipe(
-              Effect.mapError(() =>
-                failure(
-                  "invalid_request",
-                  `The worktree is created in project "${project.title}" (${project.workspaceRoot}), which does not contain this checkout's commit. Omit worktree to run in this checkout.`,
-                ),
-              ),
-            );
-        }
-        workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
-      }
+      const callerWorktree =
+        parent !== undefined && parent.thread.projectId === projectId
+          ? parent.thread.worktreePath
+          : null;
+      const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
+        input.worktree === true
+          ? yield* worktreeStrategyFromCheckout({
+              project,
+              checkoutPath: callerWorktree,
+              unresolvedMessage: "Unable to resolve the checkout commit for the worktree.",
+              outsideProjectMessage: (where) =>
+                `The worktree is created in ${where}, which does not contain this checkout's commit. Omit worktree to run in this checkout.`,
+            })
+          : callerWorktree === null
+            ? { type: "root" }
+            : {
+                type: "existing_worktree",
+                worktreePath: callerWorktree,
+                ...(parent?.thread.branch ? { branch: parent.thread.branch } : {}),
+              };
       const { run } = yield* pipelines
         .start(
           {
@@ -2320,6 +2353,12 @@ const make = Effect.gen(function* () {
           .getRun(input.runId)
           .pipe(Effect.mapError(pipelineFailure));
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
+        if (existing.pauseReason === "awaiting_continue" && existing.createdBy === "user") {
+          return yield* failure(
+            "invalid_request",
+            "The user started this run and set this pause, so only they can continue it. Tell the user it is waiting for them.",
+          );
+        }
         // The run's steps were clamped to whoever started it. Continuing launches them for this caller.
         yield* assertPipelineWithinLimits(limits, existing.definition.steps.slice(input.stepIndex));
         const { run } = yield* pipelines
@@ -2639,32 +2678,13 @@ const make = Effect.gen(function* () {
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
-        const base = yield* gitDriver
-          .resolveCommit({
-            cwd: parent.thread.worktreePath ?? project.workspaceRoot,
-            revision: "HEAD",
-          })
-          .pipe(
-            Effect.mapError(() =>
-              failure("invalid_request", "Unable to resolve the parent checkout commit."),
-            ),
-          );
-        // Launch preparation creates the worktree from the project root, so a
-        // parent checkout in another repository (such as a Git folder inside
-        // Scratch) would hand it a commit it cannot find.
-        if (parent.thread.worktreePath !== null) {
-          yield* gitDriver
-            .resolveCommit({ cwd: project.workspaceRoot, revision: base.commitSha })
-            .pipe(
-              Effect.mapError(() =>
-                failure(
-                  "invalid_request",
-                  `Isolation "worktree" creates the child checkout in project "${project.title}" (${project.workspaceRoot}), which does not contain the parent checkout's commit. Use isolation "shared" to work in the parent's checkout.`,
-                ),
-              ),
-            );
-        }
-        workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
+        workspaceStrategy = yield* worktreeStrategyFromCheckout({
+          project,
+          checkoutPath: parent.thread.worktreePath,
+          unresolvedMessage: "Unable to resolve the parent checkout commit.",
+          outsideProjectMessage: (where) =>
+            `Isolation "worktree" creates the child checkout in ${where}, which does not contain the parent checkout's commit. Use isolation "shared" to work in the parent's checkout.`,
+        });
       }
       // ThreadManagementService.dispatch is the chokepoint for this command
       // type's own enablement check, using the same command id and its

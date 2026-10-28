@@ -321,7 +321,6 @@ export const PipelineId = makeEntityId("PipelineId");
 export type PipelineId = typeof PipelineId.Type;
 export const PipelineRunId = makeEntityId("PipelineRunId");
 export type PipelineRunId = typeof PipelineRunId.Type;
-/** Lives here, not in pipeline.ts, because orchestrationV2.ts needs it and pipeline.ts imports that file. */
 export const PipelineStepId = TrimmedNonEmptyString.check(
   Schema.isPattern(/^[a-z0-9][a-z0-9_-]{0,47}$/),
 ).pipe(Schema.brand("PipelineStepId"));

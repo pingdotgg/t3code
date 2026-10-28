@@ -62,6 +62,7 @@ import {
 } from "lucide-react";
 import {
   memo,
+  useId,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -496,11 +497,17 @@ export function SortableThreadRow(
   // Keyed by variant so a card/slim switch remounts the row.
   return <SidebarThreadRow key={rowProps.variant} {...rowProps} thread={thread} sortable={bag} />;
 }
-/** A pipeline parent's step rows; a list of its own so the tree reads them as the parent's group. */
-export function SidebarPipelineSteps(props: { children: ReactNode }) {
+/** A pipeline parent's step rows: a group its treeitem owns, so the tree reads them as its children. */
+function SidebarPipelineSteps(props: { id: string; steps: ReadonlyArray<PipelineStepRowProps> }) {
   return (
-    <ul role="group" className="flex flex-col">
-      {props.children}
+    <ul id={props.id} role="group" className="flex flex-col">
+      {props.steps.map((step, index) => (
+        <PipelineStepRow
+          key={scopedThreadKey(scopeThreadRef(step.thread.environmentId, step.thread.id))}
+          {...step}
+          isLastStep={index === props.steps.length - 1}
+        />
+      ))}
     </ul>
   );
 }
@@ -528,7 +535,7 @@ function PipelineStepConnector(props: { last: boolean }) {
  * A pipeline step's row. Steps move with their parent, so they are not sortable;
  * like sortable rows they follow the live shell for their own status.
  */
-export const PipelineStepRow = memo(function PipelineStepRow(
+const PipelineStepRow = memo(function PipelineStepRow(
   props: Omit<SidebarThreadRowProps, "sortable" | "variant">,
 ) {
   const thread =
@@ -596,8 +603,11 @@ type SidebarThreadRowProps = {
   stepStatus?: PipelineStepStatus | null | undefined;
   /** Draws the closing connector on the last step of a pipeline. */
   isLastStep?: boolean | undefined;
-  /** A pipeline parent's step rows, drawn inside its row so a drag moves them together. */
-  pipelineSteps?: ReactNode;
+  /**
+   * A pipeline parent's step rows, drawn inside its row so a drag moves them together. Props,
+   * not elements, so the row's memo can compare them.
+   */
+  pipelineSteps?: ReadonlyArray<PipelineStepRowProps> | undefined;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -648,6 +658,37 @@ type SidebarThreadRowProps = {
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
 };
+
+export type PipelineStepRowProps = Omit<
+  SidebarThreadRowProps,
+  "sortable" | "variant" | "pipelineSteps" | "stepStatus"
+>;
+
+const PIPELINE_STEP_HEIGHT_PX = 32;
+
+function shallowEqualProps(left: object, right: object, skip?: string): boolean {
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const keys = Object.keys(leftRecord);
+  if (keys.length !== Object.keys(rightRecord).length) return false;
+  for (const key of keys) {
+    if (key !== skip && !Object.is(leftRecord[key], rightRecord[key])) return false;
+  }
+  return true;
+}
+
+// A parent's step props are rebuilt with the sidebar's rows; compare them by value like any row's props.
+function sidebarThreadRowPropsEqual(
+  previous: SidebarThreadRowProps,
+  next: SidebarThreadRowProps,
+): boolean {
+  if (!shallowEqualProps(previous, next, "pipelineSteps")) return false;
+  const before = previous.pipelineSteps;
+  const after = next.pipelineSteps;
+  if (before === after) return true;
+  if (before === undefined || after === undefined || before.length !== after.length) return false;
+  return before.every((step, index) => shallowEqualProps(step, after[index]!));
+}
 
 // Mounted only while renaming, so each rename starts uncommitted.
 function ThreadRenameInput(props: {
@@ -716,6 +757,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const stepGroupId = useId();
+  const pipelineStepProps = props.pipelineSteps;
+  const pipelineStepGroup =
+    pipelineStepProps === undefined ? null : (
+      <SidebarPipelineSteps id={stepGroupId} steps={pipelineStepProps} />
+    );
+  // The steps always show, so the parent is expanded and the tree never collapses it.
+  const stepGroupProps =
+    pipelineStepProps === undefined
+      ? {}
+      : {
+          "aria-expanded": true,
+          "aria-owns": stepGroupId,
+          "data-sidebar-fixed-expanded": "",
+        };
+  const stepGroupHeightPx =
+    pipelineStepProps === undefined ? 0 : pipelineStepProps.length * PIPELINE_STEP_HEIGHT_PX;
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
@@ -1278,6 +1336,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           isStep && "relative [contain-intrinsic-size:auto_--spacing(8)]",
           sortable?.isDragging && "relative z-20",
         )}
+        style={
+          stepGroupHeightPx === 0
+            ? undefined
+            : {
+                containIntrinsicSize: `auto ${(metaLine !== null && multiline ? 54 : 36) + stepGroupHeightPx}px`,
+              }
+        }
       >
         {isStep ? <PipelineStepConnector last={props.isLastStep === true} /> : null}
         <Tooltip disabled={sortable?.isDragging}>
@@ -1291,6 +1356,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
+                {...stepGroupProps}
                 data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(
@@ -1461,7 +1527,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
-        {props.pipelineSteps}
+        {pipelineStepGroup}
       </li>
     );
   }
@@ -1476,6 +1542,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         metaLineEmpty && "[contain-intrinsic-size:auto_58px]",
         sortable?.isDragging && "relative z-20",
       )}
+      style={
+        stepGroupHeightPx === 0
+          ? undefined
+          : {
+              containIntrinsicSize: `auto ${(metaLineEmpty ? 58 : 78) + stepGroupHeightPx}px`,
+            }
+      }
     >
       <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
         <TooltipTrigger
@@ -1488,6 +1561,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}
               aria-current={accessibility.current}
+              {...stepGroupProps}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
@@ -1664,10 +1738,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
-      {props.pipelineSteps}
+      {pipelineStepGroup}
     </li>
   );
-});
+}, sidebarThreadRowPropsEqual);
 
 function latestRunDiff(
   thread: SidebarThreadSummary,

@@ -10,10 +10,12 @@ import {
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
+  type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import {
   type EnvironmentId,
   type PipelineRun,
+  type PipelineRunResult,
   type PipelineRunStep,
   type PipelineRunStepStatus,
   type ThreadId,
@@ -49,6 +51,7 @@ import { Switch } from "../ui/switch";
 import { AgentElapsed } from "./AgentElapsed";
 import {
   PIPELINE_CHILD_LIVE_STATE_LABEL,
+  newerPipelineRun,
   pipelineChildLiveState,
   pipelineStepModelLabel,
 } from "./PipelineRunView.logic";
@@ -106,7 +109,7 @@ export function PipelineRunView(props: {
             {query.error ?? "Loading pipeline run..."}
           </p>
         ) : (
-          <PipelineRunBody environmentId={props.environmentId} run={run} cwd={props.cwd} />
+          <PipelineRunBody environmentId={props.environmentId} liveRun={run} cwd={props.cwd} />
         )}
       </div>
     </div>
@@ -115,10 +118,14 @@ export function PipelineRunView(props: {
 
 function PipelineRunBody(props: {
   readonly environmentId: EnvironmentId;
-  readonly run: PipelineRun;
+  readonly liveRun: PipelineRun;
   readonly cwd: string | undefined;
 }) {
-  const { environmentId, run } = props;
+  const { environmentId } = props;
+  // The command's own result is the freshest run until the subscription catches up, so the
+  // buttons never render from the pre-command state once the lock releases.
+  const [commandRun, setCommandRun] = useState<PipelineRun | null>(null);
+  const run = newerPipelineRun(props.liveRun, commandRun);
   const actions = availablePipelineActions(run);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
@@ -159,17 +166,16 @@ function PipelineRunBody(props: {
   const perform = async (
     key: string,
     failureTitle: string,
-    execute: () => Promise<{ readonly _tag: string }>,
+    execute: () => Promise<AtomCommandResult<PipelineRunResult, unknown>>,
   ) => {
     if (inFlight !== null) return;
     setInFlight(key);
-    try {
-      const result = await execute();
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result as never)) {
-        reportFailure(failureTitle, squashAtomCommandFailure(result as never));
-      }
-    } finally {
-      setInFlight(null);
+    const result = await execute();
+    setInFlight(null);
+    if (result._tag === "Success") {
+      setCommandRun(result.value.run);
+    } else if (!isAtomCommandInterrupted(result)) {
+      reportFailure(failureTitle, squashAtomCommandFailure(result));
     }
   };
 
@@ -193,7 +199,7 @@ function PipelineRunBody(props: {
         <h1 className="min-w-0 truncate text-lg font-semibold text-foreground">
           {run.definition.name}
         </h1>
-        <p className="text-sm text-muted-foreground">{pipelineRunStatusLabel(run)}</p>
+        <RunStatusLabel environmentId={environmentId} run={run} />
         {run.error ? (
           <p className="text-sm text-destructive-foreground" role="alert">
             {run.error}
@@ -268,8 +274,6 @@ function PipelineRunBody(props: {
         </div>
       </section>
 
-      <FeedingNotice environmentId={environmentId} run={run} />
-
       <ol className="m-0 flex list-none flex-col gap-2 p-0" aria-label="Pipeline steps">
         {run.steps.map((step) => (
           <PipelineStepRow
@@ -301,7 +305,7 @@ function PipelineRunBody(props: {
 }
 
 /** Between steps the run reads `running` with the next step still `pending`. */
-function FeedingNotice(props: {
+function RunStatusLabel(props: {
   readonly environmentId: EnvironmentId;
   readonly run: PipelineRun;
 }) {
@@ -309,13 +313,12 @@ function FeedingNotice(props: {
   const shell = useQuietThreadShell(
     feeding === null ? null : scopeThreadRef(props.environmentId, feeding.childThreadId),
   );
-  if (feeding === null) return null;
-  const active = pipelineChildLiveState(shell) === "working";
   return (
     <p className="text-sm text-muted-foreground" role="status">
-      {active
-        ? `Waiting for ${feeding.name} to finish`
-        : `Starting ${stepName(props.run, props.run.currentStepIndex)}`}
+      {pipelineRunStatusLabel(
+        props.run,
+        feeding !== null && pipelineChildLiveState(shell) === "working",
+      )}
     </p>
   );
 }

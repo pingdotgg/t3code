@@ -1,4 +1,5 @@
 import {
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   PIPELINE_OUTPUT_PREVIEW_CHARS,
   PipelineDefinition,
   PipelineError,
@@ -42,71 +43,90 @@ export interface PipelineStepPatch {
   readonly childThreadId?: ThreadId | null;
   readonly pauseBefore?: boolean;
   readonly prompt?: string | null;
+  /** Where the attempt launches, saved with `prompt` so a restart relaunches the same step. */
+  readonly workspaceStrategy?: OrchestrationV2ThreadLaunchWorkspaceStrategy | null;
   readonly output?: string | null;
   readonly error?: string | null;
   readonly startedAt?: string | null;
   readonly completedAt?: string | null;
 }
 
-export interface PipelineStoreShape {
-  /** All definitions, oldest first; undecodable rows are logged and skipped. */
-  readonly listDefinitions: () => Effect.Effect<ReadonlyArray<PipelineDefinition>, PipelineError>;
-  /** One definition, or null when it does not exist; an undecodable row fails with PipelineError. */
-  readonly getDefinition: (
-    id: PipelineId,
-  ) => Effect.Effect<PipelineDefinition | null, PipelineError>;
-  /** Inserts a new definition; fails when the id already exists. */
-  readonly insertDefinition: (definition: PipelineDefinition) => Effect.Effect<void, PipelineError>;
-  /** Rewrites name, steps and updatedAt (never createdAt); false when the id does not exist. */
-  readonly updateDefinition: (
-    definition: PipelineDefinition,
-  ) => Effect.Effect<boolean, PipelineError>;
-  /** Deletes a definition without touching its runs; false when the id does not exist. */
-  readonly deleteDefinition: (id: PipelineId) => Effect.Effect<boolean, PipelineError>;
-  /**
-   * Inserts a shipped starter and records its seed in one transaction, unless the key was
-   * seeded before (even if the user since deleted it). An existing row with the starter's id
-   * is kept and only the seed is recorded. Returns whether a definition was inserted.
-   */
-  readonly seedStarter: (input: {
-    readonly key: string;
-    readonly definition: PipelineDefinition;
-  }) => Effect.Effect<boolean, PipelineError>;
-  /** Inserts the run and one pending step per entry in a single transaction. */
-  readonly insertRunWithSteps: (
-    run: NewPipelineRun,
-    steps: ReadonlyArray<NewPipelineRunStep>,
-  ) => Effect.Effect<void, PipelineError>;
-  /** The run with steps (output previews truncated), or null; a corrupt run fails with PipelineError. */
-  readonly getRun: (runId: PipelineRunId) => Effect.Effect<PipelineRun | null, PipelineError>;
-  /** Same as getRun, looked up by the run's parent thread. */
-  readonly getRunByParentThreadId: (
-    threadId: ThreadId,
-  ) => Effect.Effect<PipelineRun | null, PipelineError>;
-  /** Ids of runs in any of the given statuses, oldest first. */
-  readonly listRunIdsByStatus: (
-    statuses: ReadonlyArray<PipelineRunStatus>,
-  ) => Effect.Effect<ReadonlyArray<PipelineRunId>, PipelineError>;
-  /** Writes only the supplied run columns; a missing run is a no-op. */
-  readonly updateRun: (
-    runId: PipelineRunId,
-    patch: PipelineRunPatch,
-  ) => Effect.Effect<void, PipelineError>;
-  /** Writes only the supplied step columns; a missing step is a no-op. */
-  readonly updateStep: (
-    runId: PipelineRunId,
-    stepIndex: number,
-    patch: PipelineStepPatch,
-  ) => Effect.Effect<void, PipelineError>;
-  /** Full (untruncated) captured output per step index; steps without output are absent. */
-  readonly getStepOutputs: (
-    runId: PipelineRunId,
-  ) => Effect.Effect<ReadonlyMap<number, string>, PipelineError>;
+export interface StepLaunch {
+  readonly prompt: string;
+  readonly workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy;
 }
 
-export class PipelineStore extends Context.Service<PipelineStore, PipelineStoreShape>()(
-  "t3/pipelines/PipelineStore",
-) {}
+export class PipelineStore extends Context.Service<
+  PipelineStore,
+  {
+    /** All definitions, oldest first; undecodable rows are logged and skipped. */
+    readonly listDefinitions: () => Effect.Effect<ReadonlyArray<PipelineDefinition>, PipelineError>;
+    /** One definition, or null when it does not exist; an undecodable row fails with PipelineError. */
+    readonly getDefinition: (
+      id: PipelineId,
+    ) => Effect.Effect<PipelineDefinition | null, PipelineError>;
+    /** Inserts a new definition; fails when the id already exists. */
+    readonly insertDefinition: (
+      definition: PipelineDefinition,
+    ) => Effect.Effect<void, PipelineError>;
+    /** Rewrites name, steps and updatedAt (never createdAt); false when the id does not exist. */
+    readonly updateDefinition: (
+      definition: PipelineDefinition,
+    ) => Effect.Effect<boolean, PipelineError>;
+    /** Deletes a definition without touching its runs; false when the id does not exist. */
+    readonly deleteDefinition: (id: PipelineId) => Effect.Effect<boolean, PipelineError>;
+    /**
+     * Inserts a shipped starter and records its seed in one transaction, unless the key was
+     * seeded before (even if the user since deleted it). An existing row with the starter's id
+     * is kept and only the seed is recorded. Returns whether a definition was inserted.
+     */
+    readonly seedStarter: (input: {
+      readonly key: string;
+      readonly definition: PipelineDefinition;
+    }) => Effect.Effect<boolean, PipelineError>;
+    /** Inserts the run and one pending step per entry in a single transaction. */
+    readonly insertRunWithSteps: (
+      run: NewPipelineRun,
+      steps: ReadonlyArray<NewPipelineRunStep>,
+    ) => Effect.Effect<void, PipelineError>;
+    /** The run with steps (output previews truncated), or null; a corrupt run fails with PipelineError. */
+    readonly getRun: (runId: PipelineRunId) => Effect.Effect<PipelineRun | null, PipelineError>;
+    /** Same as getRun, looked up by the run's parent thread. */
+    readonly getRunByParentThreadId: (
+      threadId: ThreadId,
+    ) => Effect.Effect<PipelineRun | null, PipelineError>;
+    /** Ids of runs in any of the given statuses, oldest first. */
+    readonly listRunIdsByStatus: (
+      statuses: ReadonlyArray<PipelineRunStatus>,
+    ) => Effect.Effect<ReadonlyArray<PipelineRunId>, PipelineError>;
+    /** Writes only the supplied run columns; a missing run is a no-op. */
+    readonly updateRun: (
+      runId: PipelineRunId,
+      patch: PipelineRunPatch,
+    ) => Effect.Effect<void, PipelineError>;
+    /** Writes only the supplied step columns; a missing step is a no-op. */
+    readonly updateStep: (
+      runId: PipelineRunId,
+      stepIndex: number,
+      patch: PipelineStepPatch,
+    ) => Effect.Effect<void, PipelineError>;
+    /** Applies a run patch and step patches in one transaction. */
+    readonly updateRunWithSteps: (
+      runId: PipelineRunId,
+      run: PipelineRunPatch,
+      steps: ReadonlyArray<{ readonly index: number; readonly patch: PipelineStepPatch }>,
+    ) => Effect.Effect<void, PipelineError>;
+    /** The prompt and workspace saved when the step's latest attempt started; null when absent. */
+    readonly getStepLaunch: (
+      runId: PipelineRunId,
+      stepIndex: number,
+    ) => Effect.Effect<StepLaunch | null, PipelineError>;
+    /** Full (untruncated) captured output per step index; steps without output are absent. */
+    readonly getStepOutputs: (
+      runId: PipelineRunId,
+    ) => Effect.Effect<ReadonlyMap<number, string>, PipelineError>;
+  }
+>()("t3/pipelines/PipelineStore") {}
 
 interface PipelineRow {
   readonly pipeline_id: string;
@@ -152,9 +172,9 @@ const decodeDefinition = Schema.decodeUnknownEffect(PipelineDefinition);
 const decodeRun = Schema.decodeUnknownEffect(PipelineRun);
 const encodeStepsJson = Schema.encodeSync(Schema.fromJsonString(PipelineDefinition.fields.steps));
 const encodeSnapshotJson = Schema.encodeSync(Schema.fromJsonString(PipelineSnapshot));
-const encodeWorkspaceStrategyJson = Schema.encodeSync(
-  Schema.fromJsonString(PipelineRun.fields.workspaceStrategy),
-);
+const workspaceStrategyJson = Schema.fromJsonString(OrchestrationV2ThreadLaunchWorkspaceStrategy);
+const encodeWorkspaceStrategyJson = Schema.encodeSync(workspaceStrategyJson);
+const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(workspaceStrategyJson);
 const parseJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 /** Truncates to the preview limit without splitting a surrogate pair. */
@@ -231,12 +251,41 @@ const decodeRunRow = Effect.fnUntraced(function* (
 const definedColumns = (columns: Record<string, unknown>): Record<string, unknown> =>
   Object.fromEntries(Object.entries(columns).filter(([, value]) => value !== undefined));
 
+const runColumns = (patch: PipelineRunPatch) =>
+  definedColumns({
+    status: patch.status,
+    pause_reason: patch.pauseReason,
+    error: patch.error,
+    current_step_index: patch.currentStepIndex,
+    updated_at: patch.updatedAt,
+    completed_at: patch.completedAt,
+    definition_json:
+      patch.definition === undefined ? undefined : encodeSnapshotJson(patch.definition),
+  });
+
+const stepColumns = (patch: PipelineStepPatch) =>
+  definedColumns({
+    status: patch.status,
+    attempt: patch.attempt,
+    child_thread_id: patch.childThreadId,
+    pause_before: patch.pauseBefore === undefined ? undefined : patch.pauseBefore ? 1 : 0,
+    prompt: patch.prompt,
+    workspace_strategy_json:
+      patch.workspaceStrategy === undefined || patch.workspaceStrategy === null
+        ? patch.workspaceStrategy
+        : encodeWorkspaceStrategyJson(patch.workspaceStrategy),
+    output: patch.output,
+    error: patch.error,
+    started_at: patch.startedAt,
+    completed_at: patch.completedAt,
+  });
+
 export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Layer.effect(
   PipelineStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
-    const listDefinitions: PipelineStoreShape["listDefinitions"] = Effect.fn(
+    const listDefinitions: PipelineStore["Service"]["listDefinitions"] = Effect.fn(
       "PipelineStore.listDefinitions",
     )(function* () {
       const rows = yield* sql<PipelineRow>`
@@ -257,7 +306,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       return definitions;
     });
 
-    const getDefinition: PipelineStoreShape["getDefinition"] = Effect.fn(
+    const getDefinition: PipelineStore["Service"]["getDefinition"] = Effect.fn(
       "PipelineStore.getDefinition",
     )(function* (id) {
       const rows = yield* sql<PipelineRow>`
@@ -273,7 +322,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       );
     });
 
-    const insertDefinition: PipelineStoreShape["insertDefinition"] = Effect.fn(
+    const insertDefinition: PipelineStore["Service"]["insertDefinition"] = Effect.fn(
       "PipelineStore.insertDefinition",
     )(function* (definition) {
       yield* sql`
@@ -288,7 +337,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       `.pipe(storageError("Could not save pipeline.", { pipelineId: definition.id }));
     });
 
-    const updateDefinition: PipelineStoreShape["updateDefinition"] = Effect.fn(
+    const updateDefinition: PipelineStore["Service"]["updateDefinition"] = Effect.fn(
       "PipelineStore.updateDefinition",
     )(function* (definition) {
       const rows = yield* sql<{ readonly pipeline_id: string }>`
@@ -302,7 +351,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       return rows.length > 0;
     });
 
-    const deleteDefinition: PipelineStoreShape["deleteDefinition"] = Effect.fn(
+    const deleteDefinition: PipelineStore["Service"]["deleteDefinition"] = Effect.fn(
       "PipelineStore.deleteDefinition",
     )(function* (id) {
       const rows = yield* sql<{ readonly pipeline_id: string }>`
@@ -311,16 +360,17 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       return rows.length > 0;
     });
 
-    const seedStarter: PipelineStoreShape["seedStarter"] = Effect.fn("PipelineStore.seedStarter")(
-      function* ({ key, definition }) {
-        return yield* sql
-          .withTransaction(
-            Effect.gen(function* () {
-              const seeds = yield* sql<{ readonly starter_key: string }>`
+    const seedStarter: PipelineStore["Service"]["seedStarter"] = Effect.fn(
+      "PipelineStore.seedStarter",
+    )(function* ({ key, definition }) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const seeds = yield* sql<{ readonly starter_key: string }>`
                 SELECT starter_key FROM pipeline_starter_seeds WHERE starter_key = ${key}
               `;
-              if (seeds.length > 0) return false;
-              const inserted = yield* sql<{ readonly pipeline_id: string }>`
+            if (seeds.length > 0) return false;
+            const inserted = yield* sql<{ readonly pipeline_id: string }>`
                 INSERT INTO pipelines (pipeline_id, name, steps_json, created_at, updated_at)
                 VALUES (
                   ${definition.id},
@@ -332,18 +382,17 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
                 ON CONFLICT (pipeline_id) DO NOTHING
                 RETURNING pipeline_id
               `;
-              yield* sql`
+            yield* sql`
                 INSERT INTO pipeline_starter_seeds (starter_key, pipeline_id, seeded_at)
                 VALUES (${key}, ${definition.id}, ${definition.createdAt})
               `;
-              return inserted.length > 0;
-            }),
-          )
-          .pipe(storageError("Could not seed starter pipeline.", { pipelineId: definition.id }));
-      },
-    );
+            return inserted.length > 0;
+          }),
+        )
+        .pipe(storageError("Could not seed starter pipeline.", { pipelineId: definition.id }));
+    });
 
-    const insertRunWithSteps: PipelineStoreShape["insertRunWithSteps"] = Effect.fn(
+    const insertRunWithSteps: PipelineStore["Service"]["insertRunWithSteps"] = Effect.fn(
       "PipelineStore.insertRunWithSteps",
     )(function* (run, steps) {
       yield* sql
@@ -381,6 +430,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
                   child_thread_id: null,
                   pause_before: step.pauseBefore ? 1 : 0,
                   prompt: null,
+                  workspace_strategy_json: null,
                   output: null,
                   error: null,
                   started_at: null,
@@ -424,19 +474,19 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       );
     });
 
-    const getRun: PipelineStoreShape["getRun"] = Effect.fn("PipelineStore.getRun")(
+    const getRun: PipelineStore["Service"]["getRun"] = Effect.fn("PipelineStore.getRun")(
       function* (runId) {
         return yield* readRun("run_id", runId);
       },
     );
 
-    const getRunByParentThreadId: PipelineStoreShape["getRunByParentThreadId"] = Effect.fn(
+    const getRunByParentThreadId: PipelineStore["Service"]["getRunByParentThreadId"] = Effect.fn(
       "PipelineStore.getRunByParentThreadId",
     )(function* (threadId) {
       return yield* readRun("parent_thread_id", threadId);
     });
 
-    const listRunIdsByStatus: PipelineStoreShape["listRunIdsByStatus"] = Effect.fn(
+    const listRunIdsByStatus: PipelineStore["Service"]["listRunIdsByStatus"] = Effect.fn(
       "PipelineStore.listRunIdsByStatus",
     )(function* (statuses) {
       if (statuses.length === 0) return [];
@@ -448,46 +498,68 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       return rows.map((row) => row.run_id);
     });
 
-    const updateRun: PipelineStoreShape["updateRun"] = Effect.fn("PipelineStore.updateRun")(
+    const writeRun = (runId: PipelineRunId, patch: PipelineRunPatch) =>
+      sql`UPDATE pipeline_runs SET ${sql.update(runColumns(patch))} WHERE run_id = ${runId}`;
+
+    const writeStep = (runId: PipelineRunId, stepIndex: number, patch: PipelineStepPatch) => {
+      const columns = stepColumns(patch);
+      if (Object.keys(columns).length === 0) return Effect.void;
+      return sql`
+        UPDATE pipeline_run_steps SET ${sql.update(columns)}
+        WHERE run_id = ${runId} AND step_index = ${stepIndex}
+      `;
+    };
+
+    const updateRun: PipelineStore["Service"]["updateRun"] = Effect.fn("PipelineStore.updateRun")(
       function* (runId, patch) {
-        const columns = definedColumns({
-          status: patch.status,
-          pause_reason: patch.pauseReason,
-          error: patch.error,
-          current_step_index: patch.currentStepIndex,
-          updated_at: patch.updatedAt,
-          completed_at: patch.completedAt,
-          definition_json:
-            patch.definition === undefined ? undefined : encodeSnapshotJson(patch.definition),
-        });
-        yield* sql`
-          UPDATE pipeline_runs SET ${sql.update(columns)} WHERE run_id = ${runId}
-        `.pipe(storageError("Could not update pipeline run.", { runId }));
+        yield* writeRun(runId, patch).pipe(
+          storageError("Could not update pipeline run.", { runId }),
+        );
       },
     );
 
-    const updateStep: PipelineStoreShape["updateStep"] = Effect.fn("PipelineStore.updateStep")(
-      function* (runId, stepIndex, patch) {
-        const columns = definedColumns({
-          status: patch.status,
-          attempt: patch.attempt,
-          child_thread_id: patch.childThreadId,
-          pause_before: patch.pauseBefore === undefined ? undefined : patch.pauseBefore ? 1 : 0,
-          prompt: patch.prompt,
-          output: patch.output,
-          error: patch.error,
-          started_at: patch.startedAt,
-          completed_at: patch.completedAt,
-        });
-        if (Object.keys(columns).length === 0) return;
-        yield* sql`
-          UPDATE pipeline_run_steps SET ${sql.update(columns)}
-          WHERE run_id = ${runId} AND step_index = ${stepIndex}
-        `.pipe(storageError("Could not update pipeline step.", { runId }));
-      },
-    );
+    const updateStep: PipelineStore["Service"]["updateStep"] = Effect.fn(
+      "PipelineStore.updateStep",
+    )(function* (runId, stepIndex, patch) {
+      yield* writeStep(runId, stepIndex, patch).pipe(
+        storageError("Could not update pipeline step.", { runId }),
+      );
+    });
 
-    const getStepOutputs: PipelineStoreShape["getStepOutputs"] = Effect.fn(
+    const updateRunWithSteps: PipelineStore["Service"]["updateRunWithSteps"] = Effect.fn(
+      "PipelineStore.updateRunWithSteps",
+    )(function* (runId, run, steps) {
+      yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            for (const { index, patch } of steps) yield* writeStep(runId, index, patch);
+            yield* writeRun(runId, run);
+          }),
+        )
+        .pipe(storageError("Could not update pipeline run.", { runId }));
+    });
+
+    const getStepLaunch: PipelineStore["Service"]["getStepLaunch"] = Effect.fn(
+      "PipelineStore.getStepLaunch",
+    )(function* (runId, stepIndex) {
+      const rows = yield* sql<{
+        readonly prompt: string | null;
+        readonly workspace_strategy_json: string | null;
+      }>`
+        SELECT prompt, workspace_strategy_json FROM pipeline_run_steps
+        WHERE run_id = ${runId} AND step_index = ${stepIndex}
+      `.pipe(NodeSqliteClient.readOnly, storageError("Could not read step launch.", { runId }));
+      const row = rows[0];
+      if (row === undefined || row.prompt === null || row.workspace_strategy_json === null) {
+        return null;
+      }
+      const workspaceStrategy = yield* decodeWorkspaceStrategyJson(
+        row.workspace_strategy_json,
+      ).pipe(storageError("Could not decode step launch.", { runId }));
+      return { prompt: row.prompt, workspaceStrategy };
+    });
+
+    const getStepOutputs: PipelineStore["Service"]["getStepOutputs"] = Effect.fn(
       "PipelineStore.getStepOutputs",
     )(function* (runId) {
       const rows = yield* sql<{ readonly step_index: number; readonly output: string }>`
@@ -510,6 +582,8 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       listRunIdsByStatus,
       updateRun,
       updateStep,
+      updateRunWithSteps,
+      getStepLaunch,
       getStepOutputs,
     });
   }),

@@ -2,8 +2,10 @@ import {
   CommandId,
   type ModelSelection,
   PIPELINE_MAX_STEPS,
+  DEFAULT_RUNTIME_MODE,
   type PipelineDefinition,
   PipelineStepId,
+  type PipelineStep,
   type PipelineUpsertInput,
   type RuntimeMode,
   pipelineDefinitionIssues,
@@ -157,14 +159,21 @@ export function pipelineToDraft(pipeline: PipelineDefinition, newId: () => strin
  * would not match.
  */
 export function starterToDraft(
-  starter: Pick<PipelineDefinition, "name" | "steps">,
+  starter: {
+    readonly name: string;
+    readonly steps: ReadonlyArray<Omit<PipelineStep, "runtimeMode">>;
+  },
   newId: () => string,
+  runtimeMode: RuntimeMode = DEFAULT_RUNTIME_MODE,
 ): PipelineDraft {
   return {
     editingId: null,
     commandId: newId(),
     name: starter.name,
-    steps: stepsToDrafts(starter.steps, newId),
+    steps: stepsToDrafts(
+      starter.steps.map((starterStep) => ({ ...starterStep, runtimeMode })),
+      newId,
+    ),
   };
 }
 

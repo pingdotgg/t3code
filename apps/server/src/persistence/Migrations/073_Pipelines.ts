@@ -51,6 +51,7 @@ export default Effect.gen(function* () {
       child_thread_id TEXT,
       pause_before INTEGER NOT NULL,
       prompt TEXT,
+      workspace_strategy_json TEXT,
       output TEXT,
       error TEXT,
       started_at TEXT,

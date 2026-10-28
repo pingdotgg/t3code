@@ -794,8 +794,7 @@ export const OrchestratorMcpStartPipelineInput = Schema.Struct({
   projectId: OrchestratorMcpProjectTarget,
   worktree: Schema.optional(
     Schema.Boolean.annotate({
-      description:
-        "Default false: steps share this checkout. True: one new worktree for all steps.",
+      description: "True: one new worktree for all steps instead of your checkout.",
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),

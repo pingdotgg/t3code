@@ -1,7 +1,7 @@
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
-import type { ModelSelection } from "@t3tools/contracts";
+import type { ModelSelection, PipelineRun } from "@t3tools/contracts";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -52,4 +52,13 @@ export function pipelineChildLiveState(
   if (shell.hasPendingApprovals) return "approval";
   if (shell.hasPendingUserInput) return "input";
   return threadRuntimeIsActive(shell.runtime) ? "working" : null;
+}
+
+/** The run with the later `updatedAt`; a command's result can arrive before the subscription's. */
+export function newerPipelineRun(live: PipelineRun, fromCommand: PipelineRun | null): PipelineRun {
+  return fromCommand !== null &&
+    fromCommand.id === live.id &&
+    Date.parse(fromCommand.updatedAt) > Date.parse(live.updatedAt)
+    ? fromCommand
+    : live;
 }

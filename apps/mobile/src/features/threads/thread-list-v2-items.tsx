@@ -1063,6 +1063,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     thread.branch,
     titleMenuItems,
   ]);
+  // A step is part of its run: no archive, delete, settle or auto-settle of its own.
+  const nestedMenuActions = titleMenuItems;
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
@@ -1188,11 +1190,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
-  const swipeAccessibilityHint = !canOperateThread
-    ? "Opens the thread"
-    : secondaryAction === null
-      ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
-      : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
+  const swipeAccessibilityHint =
+    !canOperateThread || nested
+      ? "Opens the thread"
+      : secondaryAction === null
+        ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
+        : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   // The slim row's horizontal padding (px-3 in the sidebar, px-5 on screen).
@@ -1624,6 +1627,33 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   if (!canOperateThread)
     return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+
+  // Steps never swipe to a destructive action; the row only opens the step.
+  if (nested)
+    return (
+      <View style={rowAppearance.swipeContainerStyle}>
+        <Menu
+          actions={[
+            ...(thread.branch
+              ? [
+                  {
+                    id: "new-thread-on-branch",
+                    title: getThreadListV2NewBranchMenuTitle(thread.branch),
+                    image: "square.and.pencil",
+                  },
+                ]
+              : []),
+            { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
+            { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+            ...nestedMenuActions,
+          ]}
+          onPressAction={handleMenuAction}
+          shouldOpenOnLongPress
+        >
+          {rowContent(() => {})}
+        </Menu>
+      </View>
+    );
 
   return (
     <View collapsable={false}>

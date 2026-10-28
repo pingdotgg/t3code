@@ -8,6 +8,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
+  PipelineRunId,
   ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
@@ -277,6 +278,23 @@ it.effect("preserves pull request context without inheriting any watches", () =>
     assert.deepEqual(sourceProjection.thread.pullRequests, watchedLinks);
     assert.deepEqual(sourceProjection.thread.pullRequests[0]?.watch, watch);
     assert.deepEqual(sourceProjection.thread.pullRequests[1]?.watch, watch);
+  }),
+);
+
+it.effect("does not copy the source thread's pipeline membership", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const sourceProjection = {
+      ...makeSourceProjection(sourceRun),
+      thread: {
+        ...makeSourceThread(),
+        pipeline: { runId: PipelineRunId.make("pipeline-run:source"), stepId: null },
+      },
+    };
+    const result = yield* planFork(sourceRun, sourceProjection);
+
+    assert.notProperty(result.targetThread, "pipeline");
+    assert.isDefined(sourceProjection.thread.pipeline);
   }),
 );
 

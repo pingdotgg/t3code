@@ -35,11 +35,15 @@ export function stepName(run: Pick<PipelineRun, "definition">, index: number): s
   return run.definition.steps[index]?.name ?? `Step ${index + 1}`;
 }
 
-export function pipelineRunStatusLabel(run: PipelineRun): string {
+/** `feedingActive`: the step before a still-pending current step is still working. */
+export function pipelineRunStatusLabel(run: PipelineRun, feedingActive = false): string {
   const name = stepName(run, run.currentStepIndex);
   switch (run.status) {
-    case "running":
+    case "running": {
+      const feeding = pipelineFeedingStep(run);
+      if (feeding !== null) return feedingActive ? `Finishing ${feeding.name}` : `Starting ${name}`;
       return `Running step ${run.currentStepIndex + 1} of ${run.definition.steps.length} · ${name}`;
+    }
     case "paused":
       switch (run.pauseReason) {
         case "awaiting_continue":

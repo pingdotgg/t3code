@@ -151,10 +151,11 @@ const PipelineSteps = Schema.Array(PipelineStep)
   .check(Schema.isMinLength(1), Schema.isMaxLength(PIPELINE_MAX_STEPS))
   .check(Schema.makeFilter((steps) => pipelineDefinitionIssues(steps)[0]?.message ?? true));
 
+/** Without the steps filter: a saved definition must keep decoding after the rules change. */
 export const PipelineDefinition = Schema.Struct({
   id: PipelineId,
   name: PipelineName,
-  steps: PipelineSteps,
+  steps: Schema.Array(PipelineStep),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -287,6 +288,34 @@ export type PipelineRunSetPauseBeforeInput = typeof PipelineRunSetPauseBeforeInp
 
 export const PipelineRunResult = Schema.Struct({ run: PipelineRun });
 export type PipelineRunResult = typeof PipelineRunResult.Type;
+
+/** What a sidebar needs to show a live run: its parent thread, status and step names. */
+export const PipelineRunSummary = Schema.Struct({
+  id: PipelineRunId,
+  parentThreadId: ThreadId,
+  name: Schema.String.annotate({ description: "The pipeline's name when the run started." }),
+  status: PipelineRunStatus,
+  pauseReason: Schema.NullOr(PipelinePauseReason),
+  currentStepIndex: NonNegativeInt,
+  steps: Schema.Array(
+    Schema.Struct({
+      stepId: TrimmedNonEmptyString,
+      name: Schema.String,
+      status: PipelineRunStepStatus,
+      childThreadId: Schema.NullOr(ThreadId),
+    }),
+  ),
+});
+export type PipelineRunSummary = typeof PipelineRunSummary.Type;
+
+export const PipelineRunsLiveInput = Schema.Struct({});
+export type PipelineRunsLiveInput = typeof PipelineRunsLiveInput.Type;
+
+/** Every running or paused run, re-sent in full whenever any run changes. */
+export const PipelineRunsLiveResult = Schema.Struct({
+  runs: ForwardCompatibleArray(PipelineRunSummary),
+});
+export type PipelineRunsLiveResult = typeof PipelineRunsLiveResult.Type;
 
 export class PipelineError extends Schema.TaggedError<PipelineError>()("PipelineError", {
   message: Schema.String,

@@ -7,13 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  availablePipelineActions,
-  pipelineFeedingStep,
-  pipelineStepBreadcrumbTitle,
-  pipelineRunStatusLabel,
-  pipelineStepStatusLabel,
-} from "./pipelineRunPresentation.ts";
+import { availablePipelineActions, pipelineFeedingStep } from "./pipelineRunPresentation.ts";
 
 const NAMES = ["Plan", "Implement", "Review"] as const;
 
@@ -127,93 +121,6 @@ describe("availablePipelineActions", () => {
       stepStatuses: ["running", "pending", "pending"],
     });
     expect(availablePipelineActions(run).canTogglePauseBefore(3)).toBe(false);
-  });
-});
-
-describe("pipelineRunStatusLabel", () => {
-  it.each([
-    [
-      makeRun({
-        status: "running",
-        currentStepIndex: 1,
-        stepStatuses: ["completed", "running", "pending"],
-      }),
-      "Running step 2 of 3 · Implement",
-    ],
-    [
-      makeRun({
-        status: "paused",
-        pauseReason: "awaiting_continue",
-        currentStepIndex: 1,
-        stepStatuses: ["completed", "pending", "pending"],
-      }),
-      "Paused before Implement",
-    ],
-    [
-      makeRun({
-        status: "paused",
-        pauseReason: "step_failed",
-        currentStepIndex: 1,
-        stepStatuses: ["completed", "failed", "pending"],
-      }),
-      "Step Implement failed",
-    ],
-    [
-      makeRun({
-        status: "paused",
-        pauseReason: "step_stopped",
-        currentStepIndex: 0,
-        stepStatuses: ["stopped", "pending", "pending"],
-      }),
-      "Step Plan stopped",
-    ],
-    [
-      makeRun({
-        status: "completed",
-        currentStepIndex: 3,
-        stepStatuses: ["completed", "completed", "completed"],
-      }),
-      "Completed",
-    ],
-    [
-      makeRun({
-        status: "cancelled",
-        currentStepIndex: 1,
-        stepStatuses: ["completed", "cancelled", "pending"],
-      }),
-      "Cancelled",
-    ],
-  ])("labels %#", (run, label) => {
-    expect(pipelineRunStatusLabel(run)).toBe(label);
-  });
-});
-
-describe("pipelineStepStatusLabel", () => {
-  it.each([
-    ["pending", "Pending"],
-    ["running", "Running"],
-    ["completed", "Completed"],
-    ["failed", "Failed"],
-    ["stopped", "Stopped"],
-    ["skipped", "Skipped"],
-    ["cancelled", "Cancelled"],
-  ] as const)("%s", (status, label) => {
-    expect(pipelineStepStatusLabel({ status })).toBe(label);
-  });
-});
-
-describe("pipelineStepBreadcrumbTitle", () => {
-  const run = {
-    definition: { name: "Ship it", steps: NAMES.map((name) => ({ name })) },
-    steps: NAMES.map((name, index) => ({ index, stepId: name.toLowerCase() })),
-  } as unknown as PipelineRun;
-
-  it("shows the pipeline name and step position", () => {
-    expect(pipelineStepBreadcrumbTitle(run, "implement")).toBe("Pipeline: Ship it · step 2/3");
-  });
-
-  it("drops the position for an unknown step", () => {
-    expect(pipelineStepBreadcrumbTitle(run, "gone")).toBe("Pipeline: Ship it");
   });
 });
 

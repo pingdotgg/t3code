@@ -215,7 +215,7 @@ const ListPipelinesTool = Tool.make("list_pipelines", {
 
 const StartPipelineTool = Tool.make("start_pipeline", {
   description:
-    "Run a saved pipeline on `prompt` when the user asks for one by name or purpose. Not for ordinary delegation. Steps share this checkout, or one new worktree with `worktree=true`. They run at your runtime mode or narrower. Plan mode cannot start one. Returns `runId`: poll `pipeline_status`. In your reply, name the run as its `link` verbatim.",
+    "Run a saved pipeline on `prompt` when the user asks for one by name or purpose. Not for ordinary delegation. Steps share your checkout (another project's root), or one new worktree with `worktree=true`. They run at your runtime mode or narrower. Plan mode cannot start one. Returns `runId`: poll `pipeline_status`. In your reply, name the run as its `link` verbatim.",
   parameters: OrchestratorMcpStartPipelineInput,
   success: OrchestratorMcpPipelineRun,
   failure: OrchestratorMcpFailure,
@@ -228,7 +228,7 @@ const StartPipelineTool = Tool.make("start_pipeline", {
 
 const PipelineStatusTool = Tool.make("pipeline_status", {
   description:
-    "Status of a pipeline run: each step's status, thread `link`, and output preview. `paused` with `awaiting_continue` waits for `continue_pipeline`. A failed or stopped step needs the user.",
+    "Status of a pipeline run: each step's status, thread `link`, and output preview. `paused` with `awaiting_continue`: `continue_pipeline` if you started the run, else wait for the user. No tool retries or skips a failed or stopped step: tell the user.",
   parameters: OrchestratorMcpPipelineRunInput,
   success: OrchestratorMcpPipelineRun,
   failure: OrchestratorMcpFailure,
@@ -242,7 +242,7 @@ const PipelineStatusTool = Tool.make("pipeline_status", {
 
 const ContinuePipelineTool = Tool.make("continue_pipeline", {
   description:
-    "Resume a paused pipeline run at `stepIndex`, its `currentStepIndex`. Starts the next step. For a failed or stopped step, takes its thread's latest result.",
+    "Resume a paused pipeline run at `stepIndex`, its `currentStepIndex`. Starts the next step. Refused for a user-started run's `awaiting_continue` pause. For a failed or stopped step, takes its thread's latest result: only if the user asks.",
   parameters: OrchestratorMcpContinuePipelineInput,
   success: OrchestratorMcpPipelineRun,
   failure: OrchestratorMcpFailure,

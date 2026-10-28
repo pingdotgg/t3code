@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { useRef, useState } from "react";
 import { Platform, Pressable, TextInput as RNTextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -287,16 +288,35 @@ function SettingsPipelineEditorScreen({ title }: { readonly title: string }) {
             }}
             onChangeEnvironment={(target) => {
               if (target.environmentId === editor.environmentId) return;
-              // Models belong to the environment, so every step takes the new one's default.
+              // Models belong to the environment; everything else in the draft carries over.
               const modelSelection = modelForEnvironment(target.environmentId);
-              setEditor({
-                environmentId: target.environmentId,
-                environmentLabel: target.label,
-                modelStepId: null,
-                draft: {
-                  ...editor.draft,
-                  steps: editor.draft.steps.map((step) => ({ ...step, modelSelection })),
-                },
+              const change = () =>
+                setEditor({
+                  environmentId: target.environmentId,
+                  environmentLabel: target.label,
+                  modelStepId: null,
+                  draft: {
+                    ...editor.draft,
+                    steps: editor.draft.steps.map((step) => ({ ...step, modelSelection })),
+                  },
+                });
+              const currentDefault = modelForEnvironment(editor.environmentId);
+              const customModels = editor.draft.steps.some(
+                (step) =>
+                  step.modelSelection !== null &&
+                  (currentDefault === null ||
+                    !modelSelectionsEqual(step.modelSelection, currentDefault)),
+              );
+              if (!customModels) {
+                change();
+                return;
+              }
+              Dialog.confirm({
+                title: `Save on ${target.label}?`,
+                message: "Step models belong to the machine, so they reset to its default.",
+                confirmText: "Reset models",
+                destructive: true,
+                onConfirm: change,
               });
             }}
           />

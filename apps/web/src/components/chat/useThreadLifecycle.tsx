@@ -657,6 +657,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     "thread.settle": () => {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
+      // A pipeline step settles with its run; the sidebar knows whether it is nested under one.
+      if (
+        activeThreadShell.pipeline?.stepId != null &&
+        !activeThreadSettled &&
+        settleAndAdvance(activeThreadRef)
+      )
+        return;
       if (activeThreadSettled) {
         void handleUnsettleActiveThread();
         return;

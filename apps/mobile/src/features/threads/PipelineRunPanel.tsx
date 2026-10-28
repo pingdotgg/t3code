@@ -1,5 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, PipelineRun, PipelineRunId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PipelineRun,
+  PipelineRunId,
+  PipelineRunResult,
+} from "@t3tools/contracts";
 import {
   availablePipelineActions,
   pipelineRunStatusLabel,
@@ -11,7 +16,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { formatModelSlugName } from "@t3tools/shared/model";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 
 import { StatusPill, type StatusTone } from "../../components/StatusPill";
@@ -27,6 +32,8 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { pipelineStepPosition, pipelineStepTone, type PipelineStepTone } from "./pipeline-run-view";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
+
+const SYNC_LOCK_MAX_MS = 5_000;
 
 const STEP_TONES: Record<PipelineStepTone, Omit<StatusTone, "label">> = {
   active: { pillClassName: "bg-update", textClassName: "text-update-foreground" },
@@ -108,19 +115,40 @@ export function PipelineRunPanel(props: {
     label: "pipeline pause before",
     reportFailure: false,
   });
-  const [busy, setBusy] = useState<string | null>(null);
+  // `requestKey` covers the command in flight; `sync` keeps the action locked afterwards until the
+  // run subscription shows the run the command returned, so a stale panel cannot act twice.
+  const [requestKey, setRequestKey] = useState<string | null>(null);
+  const [sync, setSync] = useState<{ readonly key: string; readonly updatedAt: string } | null>(
+    null,
+  );
+  const inFlightRef = useRef(false);
+  const busy =
+    requestKey ??
+    (sync !== null && (run === null || run.updatedAt < sync.updatedAt) ? sync.key : null);
 
   const perform = async (
     key: string,
     title: string,
-    action: () => Promise<AtomCommandResult<unknown, unknown>>,
+    action: () => Promise<AtomCommandResult<PipelineRunResult, unknown>>,
   ) => {
-    if (busy !== null) return;
-    setBusy(key);
+    if (inFlightRef.current || busy !== null) return;
+    inFlightRef.current = true;
+    setRequestKey(key);
     try {
-      reportFailure(title, await action());
+      const result = await action();
+      reportFailure(title, result);
+      if (result._tag === "Success") {
+        const updatedAt = result.value.run.updatedAt;
+        setSync({ key, updatedAt });
+        // A subscription that never catches up must not lock the run for good.
+        setTimeout(
+          () => setSync((current) => (current?.updatedAt === updatedAt ? null : current)),
+          SYNC_LOCK_MAX_MS,
+        );
+      }
     } finally {
-      setBusy(null);
+      inFlightRef.current = false;
+      setRequestKey(null);
     }
   };
 

@@ -106,6 +106,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pipelinesUpsert]: "pipelines",
   [WS_METHODS.pipelinesDelete]: "pipelines",
   [WS_METHODS.pipelineRunsSubscribe]: "pipelines",
+  [WS_METHODS.pipelineRunsSubscribeLive]: "pipelines",
   [WS_METHODS.pipelineRunsStart]: "pipelines",
   [WS_METHODS.pipelineRunsContinue]: "pipelines",
   [WS_METHODS.pipelineRunsRetryStep]: "pipelines",

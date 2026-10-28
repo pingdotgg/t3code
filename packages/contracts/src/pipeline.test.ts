@@ -35,11 +35,6 @@ describe("PipelineUpsertInput", () => {
     expect(decodeUpsert(input).steps.map((s) => s.id)).toEqual(["plan", "build", "check"]);
   });
 
-  it("ignores the removed per-step interactionMode on rows stored before it was dropped", () => {
-    const decoded = decodeUpsert(upsert([step("a", "x", { interactionMode: "plan" })]));
-    expect(decoded.steps[0]).not.toHaveProperty("interactionMode");
-  });
-
   it.each([
     [
       "a forward reference",
@@ -85,15 +80,22 @@ describe("PipelineUpsertInput", () => {
 });
 
 describe("PipelineDefinition", () => {
+  const stored = {
+    id: "pipeline-1",
+    name: "Review",
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  };
+
   it("decodes a stored definition", () => {
-    const decoded = decodeDefinition({
-      id: "pipeline-1",
-      name: "Review",
-      steps: [step("a", "{{input}}")],
-      createdAt: "2026-10-01T00:00:00.000Z",
-      updatedAt: "2026-10-01T00:00:00.000Z",
-    });
+    const decoded = decodeDefinition({ ...stored, steps: [step("a", "{{input}}")] });
     expect(decoded.steps).toHaveLength(1);
+  });
+
+  it("still decodes a stored definition that today's upsert rules would reject", () => {
+    const steps = [step("a", "{{steps.b.output}}"), step("b", "x")];
+    expect(decodeDefinition({ ...stored, steps }).steps).toHaveLength(2);
+    expect(() => decodeUpsert(upsert(steps))).toThrow("does not run before");
   });
 });
 

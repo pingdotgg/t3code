@@ -68,6 +68,11 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { nextPipelineStartAttempt, type PipelineStartAttempt } from "./pipeline-run-view";
 import { waitForThreadShell } from "./wait-for-thread-shell";
+import {
+  activeDraftPipelineId,
+  draftPipelineSelectionAtom,
+  NO_DRAFT_PIPELINE_SELECTION_ATOM,
+} from "./draft-pipeline-selection";
 
 import {
   clearComposerDraftContent,
@@ -206,9 +211,13 @@ export function NewTaskDraftScreen(props: {
     selectedProject?.environmentId ?? null,
   );
   const environmentConnected = connectionState === "connected";
-  // Pipelines are an opt-in server capability; older servers never see the selector.
+  // Pipelines are an opt-in server capability the connection must also be allowed to start.
+  const canStartPipelines = useAtomValue(
+    serverEnvironment.startPipelineRun.permissionAtom(selectedProject?.environmentId ?? null),
+  );
   const supportsPipelines =
     environmentConnected &&
+    canStartPipelines &&
     selectedEnvironmentServerConfig?.environment.capabilities.pipelines === true;
   const pipelinesQuery = useEnvironmentQuery(
     supportsPipelines && selectedProject
@@ -219,8 +228,25 @@ export function NewTaskDraftScreen(props: {
       : null,
   );
   const pipelines = supportsPipelines ? (pipelinesQuery.data?.pipelines ?? []) : [];
-  const [pipelineId, setPipelineId] = useState<string | null>(null);
+  // The choice outlives the loaded list: while disconnected or re-subscribing `pipelines` is
+  // empty, and Send must not fall back to a normal thread.
+  const pipelineSelectionAtom =
+    flow.draftKey === null
+      ? NO_DRAFT_PIPELINE_SELECTION_ATOM
+      : draftPipelineSelectionAtom(flow.draftKey);
+  const pipelineSelection = useAtomValue(pipelineSelectionAtom);
+  const pipelineId = activeDraftPipelineId(
+    pipelineSelection,
+    selectedProject?.environmentId ?? null,
+  );
   const selectedPipeline = pipelines.find((pipeline) => pipeline.id === pipelineId) ?? null;
+  const setPipelineId = (next: string | null) => {
+    const environmentId = selectedProject?.environmentId;
+    appAtomRegistry.set(
+      pipelineSelectionAtom,
+      next === null || !environmentId ? null : { environmentId, pipelineId: next },
+    );
+  };
   const startPipelineRun = useAtomCommand(serverEnvironment.startPipelineRun, {
     label: "pipeline start",
     reportFailure: false,
@@ -626,8 +652,18 @@ export function NewTaskDraftScreen(props: {
     const selectedBranchName = workspaceSelection.branch;
     const initialMessageText = draft.text.trim();
 
-    if (selectedPipeline !== null) {
-      // A pipeline run starts on the server: no outbox, no model, text only.
+    if (pipelineId !== null) {
+      // A pipeline run starts on the server: no outbox, no model, text only. A chosen pipeline
+      // never degrades to a normal thread: block when it cannot be started right now.
+      if (!selectedPipeline) {
+        Dialog.alert(
+          "Pipeline unavailable",
+          environmentConnected
+            ? "This pipeline is not available on the connected machine. Choose another pipeline or No pipeline."
+            : "Reconnect to the machine to start a pipeline, or choose No pipeline.",
+        );
+        return null;
+      }
       if (draft.attachments.length > 0 || draft.context?.records?.length) {
         Dialog.alert(
           "Pipelines take text only",
@@ -635,7 +671,7 @@ export function NewTaskDraftScreen(props: {
         );
         return null;
       }
-      if (initialMessageText.length === 0 || !environmentConnected) return null;
+      if (initialMessageText.length === 0) return null;
       if (workspaceSelection.pullRequestReference) {
         Dialog.alert(
           "Pipelines cannot start from a pull request",
@@ -708,15 +744,25 @@ export function NewTaskDraftScreen(props: {
       };
       // The shell follows the command on the shell stream; the thread route needs it to open.
       flow.setSubmitting(true);
-      await waitForThreadShell(parentThread, 5_000);
+      const shellReady = await waitForThreadShell(parentThread, 5_000);
       flow.setSubmitting(false);
       setPipelineId(null);
-      promptInputRef.current?.blur();
-      navigation.dispatch(
-        CommonActions.setParams(
-          submittedThreadParams(String(parentThread.environmentId), String(parentThread.threadId)),
-        ),
-      );
+      // The user may have selected another thread (split view) while the shell was arriving.
+      const latestRoute = navigation
+        .getState()
+        ?.routes.find((route) => route.key === currentRoute.key);
+      const stillOnDraft = latestRoute !== undefined && newTaskFlowKey(latestRoute) === flowKey;
+      if (stillOnDraft && shellReady) {
+        promptInputRef.current?.blur();
+        navigation.dispatch(
+          CommonActions.setParams(
+            submittedThreadParams(
+              String(parentThread.environmentId),
+              String(parentThread.threadId),
+            ),
+          ),
+        );
+      }
       abortComposerDraftOperations(draftKey);
       const startedDraft = getComposerDraftSnapshot(draftKey);
       clearComposerDraftContent(draftKey, {
@@ -725,6 +771,12 @@ export function NewTaskDraftScreen(props: {
         deferAttachmentCleanup: true,
       });
       scheduleUnusedComposerAttachmentCleanup(startedDraft.attachments);
+      if (!(stillOnDraft && shellReady)) {
+        // Opening the thread now would land on an unavailable route and lose the draft, so
+        // the run is announced and found in the thread list once its shell arrives.
+        if (stillOnDraft) navigation.dispatch(StackActions.replace("Home"));
+        Dialog.alert("Pipeline started", "The run will appear in your thread list shortly.");
+      }
       return null;
     }
 
@@ -998,13 +1050,15 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const pipelineLabel =
+    selectedPipeline?.name ?? (pipelineId === null ? null : "Selected pipeline");
   const pipelineControl =
-    pipelines.length === 0 ? null : (
+    pipelines.length === 0 && pipelineId === null ? null : (
       <View className="min-w-0 shrink">
         <Menu
           title="Pipeline"
           actions={[
-            { id: "none", title: "No pipeline", state: selectedPipeline === null ? "on" : "off" },
+            { id: "none", title: "No pipeline", state: pipelineId === null ? "on" : "off" },
             ...pipelines.map((pipeline) => ({
               id: pipeline.id,
               title: pipeline.name,
@@ -1016,12 +1070,12 @@ export function NewTaskDraftScreen(props: {
           }
         >
           <ComposerInlineControl
-            accessibilityLabel={`Pipeline: ${selectedPipeline?.name ?? "none"}`}
+            accessibilityLabel={`Pipeline: ${pipelineLabel ?? "none"}`}
             disabled={isComposerInteractionLocked}
             icon="list.number"
-            label={selectedPipeline?.name ?? "Pipeline"}
+            label={pipelineLabel ?? "Pipeline"}
             maxWidth="100%"
-            selected={selectedPipeline !== null}
+            selected={pipelineId !== null}
           />
         </Menu>
       </View>
@@ -1137,7 +1191,7 @@ export function NewTaskDraftScreen(props: {
           editorRef: promptInputRef,
           sendBlockedReason: setupBlockReason,
           interactionLocked: isComposerInteractionLocked,
-          pipelineSelected: selectedPipeline !== null,
+          pipelineSelected: pipelineId !== null,
         }}
         canOperateThread={canOperate}
         selectedThread={thread}

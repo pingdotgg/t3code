@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   aggregatePipelineStepStatus,
-  flattenPipelineNesting,
   isPipelineGroupActive,
   mergePipelineParentStatus,
   nestedPipelineStepLabel,
@@ -122,20 +121,6 @@ describe("nestPipelineSteps", () => {
     },
   ])("$name", ({ shells, expected, anchored }) => {
     expect(layout(shells, anchored ? () => true : undefined)).toEqual(expected);
-  });
-
-  it("flattens to the visual order and indexes steps by their parent", () => {
-    const shells = [
-      step("s1", "r1", "plan", "2026-01-01T00:01:00Z"),
-      shell("a", "2026-01-01T00:00:00Z"),
-      parent("p", "r1"),
-    ];
-    expect(flattenPipelineNesting(nestPipelineSteps(shells)).map((s) => s.id)).toEqual([
-      "p",
-      "s1",
-      "a",
-    ]);
-    expect([...pipelineParentsOfSteps(shells).keys()]).toEqual(["env-1:s1"]);
   });
 });
 

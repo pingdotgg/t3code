@@ -146,17 +146,6 @@ export function nestPipelineSteps<T extends PipelineNestable>(
   return { rows, stepsByParentKey };
 }
 
-/** Rows with each run's steps right after its parent, the order a nested list reads in. */
-export function flattenPipelineNesting<T extends PipelineNestable>(
-  nesting: PipelineNesting<T>,
-): T[] {
-  if (nesting.stepsByParentKey.size === 0) return [...nesting.rows];
-  return nesting.rows.flatMap((row) => [
-    row,
-    ...(nesting.stepsByParentKey.get(shellKey(row)) ?? []),
-  ]);
-}
-
 /**
  * A step's title under its parent. Server titles read "<Pipeline> · <Step>"
  * (plus " (attempt n)" on retries); the parent row already names the pipeline,

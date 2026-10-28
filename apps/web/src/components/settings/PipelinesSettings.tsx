@@ -8,6 +8,7 @@ import { dedupeProviderSkillsByName } from "@t3tools/client-runtime/providerSkil
 import {
   draftToUpsertInput,
   emptyPipelineDraft,
+  hasPipelineDraftChanges,
   moveStep,
   newStepDraft,
   normalizeSkillName,
@@ -72,7 +73,6 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   Dialog,
-  DialogClose,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -243,9 +243,7 @@ export function PipelinesSettings() {
       </SettingsSection>
       {editor ? (
         <PipelineEditorDialog
-          // The environment is part of the key: switching it starts a fresh draft with that
-          // environment's providers.
-          key={`${editor.environmentId}:${editor.pipeline?.id ?? editor.starter?.key ?? "new"}`}
+          key={editor.pipeline?.id ?? editor.starter?.key ?? "new"}
           environmentId={editor.environmentId}
           pipeline={editor.pipeline}
           starter={editor.starter}
@@ -411,7 +409,14 @@ function PipelineRow({
   );
 }
 
-function PipelineEditorDialog(props: {
+function PipelineEditorDialog({
+  environmentId,
+  pipeline,
+  starter,
+  capableEnvironments,
+  onEnvironmentChange,
+  onClose,
+}: {
   readonly environmentId: EnvironmentId;
   readonly pipeline: PipelineDefinition | null;
   readonly starter: PipelineStarter | null;
@@ -420,40 +425,6 @@ function PipelineEditorDialog(props: {
   readonly onClose: () => void;
 }) {
   const [saving, setSaving] = useState(false);
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open && !saving) props.onClose();
-      }}
-    >
-      {/* The form owns the draft so a keystroke re-renders it, not the dialog chrome. */}
-      <DialogPopup className="max-w-2xl">
-        <PipelineEditorForm {...props} saving={saving} onSavingChange={setSaving} />
-      </DialogPopup>
-    </Dialog>
-  );
-}
-
-function PipelineEditorForm({
-  environmentId,
-  pipeline,
-  starter,
-  capableEnvironments,
-  onEnvironmentChange,
-  onClose,
-  saving,
-  onSavingChange: setSaving,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly pipeline: PipelineDefinition | null;
-  readonly starter: PipelineStarter | null;
-  readonly capableEnvironments: ReadonlyArray<EnvironmentPresentation>;
-  readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
-  readonly onClose: () => void;
-  readonly saving: boolean;
-  readonly onSavingChange: (saving: boolean) => void;
-}) {
   const environment = useEnvironment(environmentId);
   const connected = environment !== null && supportsPipelines(environment);
   const settings = useEnvironmentSettings(environmentId);
@@ -469,13 +440,22 @@ function PipelineEditorForm({
     modelSelection: scheduledTaskDefaultModel(settings, null, instanceEntries),
     runtimeMode: settings.defaultRuntimeMode,
   };
-  const [draft, setDraft] = useState<PipelineDraft>(() =>
+  const [baseline, setBaseline] = useState<PipelineDraft>(() =>
     pipeline
       ? pipelineToDraft(pipeline, randomUUID)
       : starter
-        ? starterToDraft(starter, randomUUID)
+        ? starterToDraft(starter, randomUUID, defaults.runtimeMode)
         : emptyPipelineDraft(defaults, randomUUID),
   );
+  const [draft, setDraft] = useState<PipelineDraft>(baseline);
+  // Another environment has other providers, so only the model choices start over; the baseline
+  // follows so switching alone is not an unsaved change.
+  const [draftEnvironmentId, setDraftEnvironmentId] = useState(environmentId);
+  if (draftEnvironmentId !== environmentId) {
+    setDraftEnvironmentId(environmentId);
+    setBaseline(withDefaultModel(baseline, defaults.modelSelection));
+    setDraft(withDefaultModel(draft, defaults.modelSelection));
+  }
   const submissionPending = useRef(false);
   const issues = pipelineDraftIssues(draft);
   const canSubmit = issues.valid && connected && canOperate && !saving;
@@ -485,6 +465,18 @@ function PipelineEditorForm({
       ...current,
       steps: current.steps.map((step) => (step.key === key ? { ...step, ...patch } : step)),
     }));
+
+  const requestClose = async () => {
+    if (saving) return;
+    if (hasPipelineDraftChanges(baseline, draft)) {
+      const message = "Discard your changes to this pipeline?";
+      const confirmed =
+        (await requestConfirmDialog(message, { variant: "destructive" })) ??
+        window.confirm(message);
+      if (!confirmed) return;
+    }
+    onClose();
+  };
 
   const submit = async () => {
     const input = draftToUpsertInput(draft);
@@ -511,132 +503,146 @@ function PipelineEditorForm({
   };
 
   return (
-    <>
-      <DialogHeader>
-        <DialogTitle>{pipeline ? "Edit pipeline" : "New pipeline"}</DialogTitle>
-        <DialogDescription>
-          Run steps one after another, each in its own thread with its own model and prompt.
-        </DialogDescription>
-      </DialogHeader>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) void requestClose();
+      }}
+    >
+      <DialogPopup className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{pipeline ? "Edit pipeline" : "New pipeline"}</DialogTitle>
+          <DialogDescription>
+            Run steps one after another, each in its own thread with its own model and prompt.
+          </DialogDescription>
+        </DialogHeader>
 
-      <DialogPanel>
-        {/* Fieldsets default to min-width: min-content, which lets one wide control widen the form past the dialog. */}
-        <fieldset disabled={saving} className="min-w-0 space-y-5">
-          {!connected ? (
-            <p className="text-sm text-destructive">
-              Reconnect this environment, on a server that supports pipelines, before saving.
-            </p>
-          ) : null}
-          {capableEnvironments.length > 1 ? (
-            <Field label="Runs on" htmlFor="pipeline-environment">
-              <Select
-                value={environmentId}
-                disabled={pipeline !== null || saving}
-                onValueChange={(id) => {
-                  const next = capableEnvironments.find((entry) => entry.environmentId === id);
-                  if (next) onEnvironmentChange(next.environmentId);
-                }}
-              >
-                <SelectTrigger id="pipeline-environment" size="sm">
-                  <SelectValue>{environment?.label ?? "Unavailable environment"}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  {capableEnvironments.map((entry) => (
-                    <SelectItem
-                      key={entry.environmentId}
-                      value={entry.environmentId}
-                      label={entry.label}
-                    >
-                      {entry.label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </Field>
-          ) : null}
-          <Field label="Name" htmlFor="pipeline-name">
-            <Input
-              id="pipeline-name"
-              placeholder="e.g. Plan, implement, review"
-              maxLength={PIPELINE_NAME_MAX_LENGTH}
-              aria-invalid={issues.name !== null && draft.name.length > 0 ? true : undefined}
-              value={draft.name}
-              onChange={(event) => {
-                const name = event.target.value;
-                setDraft((current) => ({ ...current, name }));
-              }}
-            />
-          </Field>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <Label>
-                Steps{" "}
-                <span className="font-normal text-muted-foreground">
-                  ({draft.steps.length}/{PIPELINE_MAX_STEPS})
-                </span>
-              </Label>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={draft.steps.length >= PIPELINE_MAX_STEPS}
-                onClick={() =>
-                  setDraft((current) => ({
-                    ...current,
-                    steps: [...current.steps, newStepDraft(current.steps, defaults, randomUUID)],
-                  }))
-                }
-              >
-                <PlusIcon />
-                Add step
-              </Button>
-            </div>
-            {issues.stepCount ? (
-              <p className="text-xs text-destructive" role="status">
-                {issues.stepCount}
+        <DialogPanel>
+          {/* Fieldsets default to min-width: min-content, which lets one wide control widen the form past the dialog. */}
+          <fieldset disabled={saving} className="min-w-0 space-y-5">
+            {!connected ? (
+              <p className="text-sm text-destructive">
+                Reconnect this environment, on a server that supports pipelines, before saving.
               </p>
             ) : null}
-            {draft.steps.map((step, index) => (
-              <PipelineStepEditor
-                key={step.key}
-                environmentId={environmentId}
-                step={step}
-                index={index}
-                count={draft.steps.length}
-                issues={issues.steps.get(step.key) ?? []}
-                instanceEntries={instanceEntries}
-                providers={providers}
-                settings={settings}
-                disabled={saving || !connected}
-                onChange={(patch) => updateStep(step.key, patch)}
-                onMove={(delta) =>
-                  setDraft((current) => ({
-                    ...current,
-                    steps: moveStep(current.steps, index, delta),
-                  }))
-                }
-                onRemove={() =>
-                  setDraft((current) => ({
-                    ...current,
-                    steps: current.steps.filter((entry) => entry.key !== step.key),
-                  }))
-                }
+            {capableEnvironments.length > 1 ? (
+              <Field label="Runs on" htmlFor="pipeline-environment">
+                <Select
+                  value={environmentId}
+                  disabled={pipeline !== null || saving}
+                  onValueChange={(id) => {
+                    const next = capableEnvironments.find((entry) => entry.environmentId === id);
+                    if (next) onEnvironmentChange(next.environmentId);
+                  }}
+                >
+                  <SelectTrigger id="pipeline-environment" size="sm">
+                    <SelectValue>{environment?.label ?? "Unavailable environment"}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {capableEnvironments.map((entry) => (
+                      <SelectItem
+                        key={entry.environmentId}
+                        value={entry.environmentId}
+                        label={entry.label}
+                      >
+                        {entry.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </Field>
+            ) : null}
+            <Field label="Name" htmlFor="pipeline-name">
+              <Input
+                id="pipeline-name"
+                placeholder="e.g. Plan, implement, review"
+                maxLength={PIPELINE_NAME_MAX_LENGTH}
+                aria-invalid={issues.name !== null && draft.name.length > 0 ? true : undefined}
+                value={draft.name}
+                onChange={(event) => {
+                  const name = event.target.value;
+                  setDraft((current) => ({ ...current, name }));
+                }}
               />
-            ))}
-          </div>
-        </fieldset>
-      </DialogPanel>
+            </Field>
 
-      <DialogFooter>
-        <DialogClose render={<Button variant="outline" size="sm" disabled={saving} />}>
-          Cancel
-        </DialogClose>
-        <Button size="sm" disabled={!canSubmit} onClick={() => void submit()}>
-          {pipeline ? "Save pipeline" : "Create pipeline"}
-        </Button>
-      </DialogFooter>
-    </>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <Label>
+                  Steps{" "}
+                  <span className="font-normal text-muted-foreground">
+                    ({draft.steps.length}/{PIPELINE_MAX_STEPS})
+                  </span>
+                </Label>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={draft.steps.length >= PIPELINE_MAX_STEPS}
+                  onClick={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      steps: [...current.steps, newStepDraft(current.steps, defaults, randomUUID)],
+                    }))
+                  }
+                >
+                  <PlusIcon />
+                  Add step
+                </Button>
+              </div>
+              {issues.stepCount ? (
+                <p className="text-xs text-destructive" role="status">
+                  {issues.stepCount}
+                </p>
+              ) : null}
+              {draft.steps.map((step, index) => (
+                <PipelineStepEditor
+                  key={step.key}
+                  environmentId={environmentId}
+                  step={step}
+                  index={index}
+                  count={draft.steps.length}
+                  issues={issues.steps.get(step.key) ?? []}
+                  instanceEntries={instanceEntries}
+                  providers={providers}
+                  settings={settings}
+                  disabled={saving || !connected}
+                  onChange={(patch) => updateStep(step.key, patch)}
+                  onMove={(delta) =>
+                    setDraft((current) => ({
+                      ...current,
+                      steps: moveStep(current.steps, index, delta),
+                    }))
+                  }
+                  onRemove={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      steps: current.steps.filter((entry) => entry.key !== step.key),
+                    }))
+                  }
+                />
+              ))}
+            </div>
+          </fieldset>
+        </DialogPanel>
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" disabled={saving} onClick={() => void requestClose()}>
+            Cancel
+          </Button>
+          <Button size="sm" disabled={!canSubmit} onClick={() => void submit()}>
+            {pipeline ? "Save pipeline" : "Create pipeline"}
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
+}
+
+function withDefaultModel(draft: PipelineDraft, modelSelection: ModelSelection | null) {
+  return {
+    ...draft,
+    steps: draft.steps.map((step) => ({ ...step, modelSelection })),
+  };
 }
 
 function PipelineStepEditor({

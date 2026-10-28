@@ -3,7 +3,11 @@ import {
   ProviderInstanceId,
   type ModelSelection,
   type PipelineStep,
+  type RuntimeMode,
 } from "@t3tools/contracts";
+
+/** A starter step has no runtime mode: each server seeds the one its owner configured. */
+type PipelineStarterStep = Omit<PipelineStep, "runtimeMode">;
 
 /** A pipeline shipped with T3 Code. Servers seed each one once; editors offer them as templates. */
 export interface PipelineStarter {
@@ -12,7 +16,7 @@ export interface PipelineStarter {
   readonly name: string;
   /** One line shown next to the name when offering the starter as a template. */
   readonly description: string;
-  readonly steps: ReadonlyArray<PipelineStep>;
+  readonly steps: ReadonlyArray<PipelineStarterStep>;
 }
 
 const claude = (model: string, effort: string): ModelSelection => ({
@@ -30,11 +34,11 @@ const GIT_AND_TRACKING = `Git and tracking:
 - If you lack access for any of this, skip it and say so at the end.`;
 
 const step = (
-  input: Omit<PipelineStep, "id" | "skills" | "pauseBefore"> & {
+  input: Omit<PipelineStarterStep, "id" | "skills" | "pauseBefore"> & {
     readonly id: string;
     readonly pauseBefore?: boolean;
   },
-): PipelineStep => ({
+): PipelineStarterStep => ({
   ...input,
   id: PipelineStepId.make(input.id),
   skills: [],
@@ -50,7 +54,6 @@ export const FEATURE_DELIVERY_PIPELINE: PipelineStarter = {
       id: "requirements",
       name: "Refine requirements",
       modelSelection: claude("claude-opus-5-5", "medium"),
-      runtimeMode: "full-access",
       promptTemplate: `You are the first step of a delivery pipeline. Later steps (implementation, QA, review) only see what you write, so make the requirements unambiguous.
 
 Request:
@@ -66,7 +69,6 @@ Finish with the refined requirements: goal, scope and non-goals, user-visible be
       id: "implement",
       name: "Implement",
       modelSelection: claude("claude-sonnet-5-5", "medium"),
-      runtimeMode: "full-access",
       pauseBefore: true,
       promptTemplate: `Implement these requirements:
 
@@ -86,7 +88,6 @@ Finish with: what you built, the areas you changed, how to run and try it, test 
       id: "qa-prep",
       name: "Prepare QA",
       modelSelection: claude("claude-sonnet-5-5", "medium"),
-      runtimeMode: "full-access",
       promptTemplate: `Prepare a hands-on QA run for this change.
 
 Requirements:
@@ -105,7 +106,6 @@ Do not change code. Finish with the environment details (URLs, PIDs, where crede
       id: "qa",
       name: "QA",
       modelSelection: claude("claude-sonnet-5-5", "high"),
-      runtimeMode: "full-access",
       promptTemplate: `Execute this QA plan against the running app and fix what you find.
 
 Environment and QA plan:
@@ -128,7 +128,6 @@ Finish with a QA report: a table of tasks marked pass, fixed or open; each issue
       id: "review",
       name: "Review",
       modelSelection: claude("claude-opus-5-5", "high"),
-      runtimeMode: "full-access",
       promptTemplate: `You coordinate the code review of this change.
 
 Requirements:
@@ -153,7 +152,6 @@ Finish with: confirmed findings and how each was resolved, rejected findings and
       id: "guide",
       name: "Visual review guide",
       modelSelection: claude("claude-sonnet-5-5", "medium"),
-      runtimeMode: "full-access",
       promptTemplate: `Prepare a visual review guide for me, as if a coworker walks me through this change at their desk.
 
 Requirements:
@@ -176,3 +174,8 @@ Do not change code. Finish with the path to the guide and a three-line summary.`
 };
 
 export const PIPELINE_STARTERS: ReadonlyArray<PipelineStarter> = [FEATURE_DELIVERY_PIPELINE];
+
+export const withStarterRuntimeMode = (
+  steps: ReadonlyArray<PipelineStarterStep>,
+  runtimeMode: RuntimeMode,
+): ReadonlyArray<PipelineStep> => steps.map((starterStep) => ({ ...starterStep, runtimeMode }));

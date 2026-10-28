@@ -14,11 +14,16 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { FEATURE_DELIVERY_PIPELINE, type PipelineStarter } from "@t3tools/shared/pipelineStarters";
+import {
+  FEATURE_DELIVERY_PIPELINE,
+  withStarterRuntimeMode,
+  type PipelineStarter,
+} from "@t3tools/shared/pipelineStarters";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as PipelineService from "./PipelineService.ts";
 import * as PipelineStore from "./PipelineStore.ts";
 
@@ -44,10 +49,14 @@ const upsertInput = (overrides: Partial<typeof PipelineUpsertInput.Encoded> = {}
     ...overrides,
   });
 
-const serviceLayer = (starters: ReadonlyArray<PipelineStarter>) =>
+const serviceLayer = (
+  starters: ReadonlyArray<PipelineStarter>,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
   PipelineService.layerWithStarters(starters).pipe(
     Layer.provide(
       Layer.mergeAll(
+        ServerSettings.layerTest(settings),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           streamDomainEvents: Stream.never,
@@ -176,16 +185,26 @@ it.effect("seeds each starter once and never brings a deleted one back", () =>
     const start = <A, E>(
       starterList: ReadonlyArray<PipelineStarter>,
       body: (service: PipelineService.PipelineService["Service"]) => Effect.Effect<A, E>,
+      settings?: Parameters<typeof ServerSettings.layerTest>[0],
     ) =>
       PipelineService.PipelineService.pipe(
         Effect.flatMap(body),
-        Effect.provide(serviceLayer(starterList).pipe(Layer.provide(storeLayer))),
+        Effect.provide(serviceLayer(starterList, settings).pipe(Layer.provide(storeLayer))),
       );
 
-    const first = yield* start(starters, (service) => service.list());
+    // Starter steps take the server's configured default runtime mode when they are seeded.
+    const first = yield* start(starters, (service) => service.list(), {
+      defaultRuntimeMode: "approval-required",
+    });
     assert.deepStrictEqual(
       first.pipelines.map((pipeline) => [pipeline.id, pipeline.name, pipeline.steps]),
-      [["pipeline:starter:feature-delivery", "Feature delivery", FEATURE_DELIVERY_PIPELINE.steps]],
+      [
+        [
+          "pipeline:starter:feature-delivery",
+          "Feature delivery",
+          withStarterRuntimeMode(FEATURE_DELIVERY_PIPELINE.steps, "approval-required"),
+        ],
+      ],
     );
 
     const second = yield* start(starters, (service) => service.list());

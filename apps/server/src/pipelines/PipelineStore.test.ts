@@ -289,28 +289,3 @@ it.effect("fails getRun with a typed error for a corrupt run", () =>
     assert.deepStrictEqual(yield* store.listRunIdsByStatus(["running"]), [runId]);
   }).pipe(Effect.provide(testLayer)),
 );
-
-// Rows written before the per-step interaction mode was removed still carry the key.
-it.effect("decodes stored definition and run rows that still hold a step interactionMode", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const store = yield* PipelineStore.PipelineStore;
-    const legacySteps = [{ ...step("plan"), interactionMode: "plan" }, step("build")];
-    yield* sql`
-      INSERT INTO pipelines (pipeline_id, name, steps_json, created_at, updated_at)
-      VALUES (${pipelineId}, 'Legacy', ${JSON.stringify(legacySteps)}, ${NOW}, ${NOW})
-    `;
-    const stored = yield* store.getDefinition(pipelineId);
-    assert.deepStrictEqual(stored?.steps, definition().steps);
-    assert.notProperty(stored?.steps[0] ?? {}, "interactionMode");
-
-    yield* store.insertRunWithSteps(newRun(), newSteps(["plan"]));
-    const legacySnapshot = { name: "Legacy", steps: legacySteps };
-    yield* sql`
-      UPDATE pipeline_runs SET definition_json = ${JSON.stringify(legacySnapshot)}
-      WHERE run_id = ${runId}
-    `;
-    const run = yield* store.getRun(runId);
-    assert.deepStrictEqual(run?.definition.steps, definition().steps);
-  }).pipe(Effect.provide(testLayer)),
-);

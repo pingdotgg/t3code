@@ -25,6 +25,7 @@ const NO_PIPELINE_VALUE = "";
  */
 export const ComposerPipelinePicker = memo(function ComposerPipelinePicker(props: {
   pipelines: ReadonlyArray<PipelineDefinition>;
+  pipelinesLoaded: boolean;
   selectedPipelineId: PipelineId | null;
   disabled: boolean;
   size: ComposerControlSize;
@@ -33,13 +34,18 @@ export const ComposerPipelinePicker = memo(function ComposerPipelinePicker(props
   const navigate = useNavigate();
   const composerFloatingLayerProps = useComposerMenuProps();
   const selected = props.pipelines.find((pipeline) => pipeline.id === props.selectedPipelineId);
+  const pending = props.selectedPipelineId !== null && !selected && !props.pipelinesLoaded;
   const label =
-    props.selectedPipelineId === null ? "Pipeline" : (selected?.name ?? "Pipeline unavailable");
+    props.selectedPipelineId === null
+      ? "Pipeline"
+      : (selected?.name ?? (pending ? "Loading pipeline" : "Pipeline unavailable"));
   const tooltip = selected
     ? `${selected.name}: ${describePipelineSteps(selected.steps)}. The run takes text only.`
     : props.selectedPipelineId === null
       ? "Run a pipeline of agent steps instead of one model"
-      : "This pipeline no longer exists. Choose another or none.";
+      : pending
+        ? "Loading pipelines"
+        : "This pipeline no longer exists. Choose another or none.";
 
   return (
     <div data-resting-controls-fixed className="flex shrink-0 items-center">

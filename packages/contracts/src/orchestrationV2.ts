@@ -27,7 +27,6 @@ import {
   isUnknownUnionMember,
   NonNegativeInt,
   PipelineRunId,
-  PipelineStepId,
   PlanId,
   PositiveInt,
   ProjectId,
@@ -141,10 +140,13 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
-/** Set by the server on a pipeline's parent thread (`stepId: null`) and on each step's thread. */
+/**
+ * Set by the server on a pipeline's parent thread (`stepId: null`) and on each step's thread.
+ * `stepId` is deliberately looser than `PipelineStepId` so a future id rule cannot break decoding.
+ */
 export const OrchestrationV2ThreadPipeline = Schema.Struct({
   runId: PipelineRunId,
-  stepId: Schema.NullOr(PipelineStepId),
+  stepId: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type OrchestrationV2ThreadPipeline = typeof OrchestrationV2ThreadPipeline.Type;
 

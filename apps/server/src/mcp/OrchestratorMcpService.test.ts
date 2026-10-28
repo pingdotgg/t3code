@@ -9,6 +9,7 @@ import {
   MessageId,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+  PipelineError,
   PipelineId,
   PipelineRunId,
   PipelineStepId,
@@ -3884,13 +3885,25 @@ describe("OrchestratorMcpService pipelines", () => {
     ...overrides,
   });
 
-  const harness = (modes: {
-    readonly runtimeMode: "approval-required" | "full-access";
-    readonly interactionMode: "default" | "plan";
-  }) => {
+  const harness = (
+    modes: {
+      readonly runtimeMode: "approval-required" | "full-access";
+      readonly interactionMode: "default" | "plan";
+    },
+    extra: {
+      readonly run?: Partial<PipelineRun>;
+      readonly getRunError?: PipelineError;
+      readonly checkout?: { readonly worktreePath: string; readonly branch: string };
+      /** The commit sha a checkout resolves to, or undefined when git cannot resolve it. */
+      readonly resolveCommit?: (cwd: string, revision: string) => string | undefined;
+    } = {},
+  ) => {
     const started: Array<{ input: unknown; options: unknown }> = [];
     const continued: Array<unknown> = [];
-    const shell = liveThreadShell(callerThreadId, modes);
+    const shell = {
+      ...liveThreadShell(callerThreadId, modes),
+      ...extra.checkout,
+    };
     const pipelines = Layer.mock(PipelineService.PipelineService)({
       list: () => Effect.succeed({ pipelines: [definition] }),
       start: (input, options) =>
@@ -3898,7 +3911,10 @@ describe("OrchestratorMcpService pipelines", () => {
           started.push({ input, options });
           return { run: run({ status: "running", pauseReason: null, currentStepIndex: 0 }) };
         }),
-      getRun: () => Effect.succeed(run()),
+      getRun: () =>
+        extra.getRunError === undefined
+          ? Effect.succeed(run(extra.run))
+          : Effect.fail(extra.getRunError),
       continueRun: (input) =>
         Effect.sync(() => {
           continued.push(input);
@@ -3945,7 +3961,20 @@ describe("OrchestratorMcpService pipelines", () => {
       started,
       continued,
       scope,
-      layer: layerOrchestratorService.pipe(Layer.provide(dependencies)),
+      layer: OrchestratorMcpService.layer.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+        Layer.provide(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolveCommit: (input) => {
+              const commitSha = extra.resolveCommit?.(input.cwd, input.revision);
+              return commitSha === undefined
+                ? Effect.fail(new Error("git cannot resolve this") as never)
+                : Effect.succeed({ commitSha } as never);
+            },
+          }),
+        ),
+        Layer.provide(dependencies),
+      ),
     };
   };
 
@@ -4146,6 +4175,112 @@ describe("OrchestratorMcpService pipelines", () => {
       assert.deepEqual(wide.continued, [
         { runId: PipelineRunId.make("pipeline-run:one"), stepIndex: 1 },
       ]);
+    }),
+  );
+
+  it.effect("refuses to continue a user's awaiting_continue pause but not a failed step", () =>
+    Effect.gen(function* () {
+      const gated = harness(
+        { runtimeMode: "full-access", interactionMode: "default" },
+        { run: { createdBy: "user" } },
+      );
+      const refused = yield* withService(gated, (service) =>
+        service
+          .continuePipeline(gated.scope, {
+            runId: PipelineRunId.make("pipeline-run:one"),
+            stepIndex: 1,
+          })
+          .pipe(Effect.flip),
+      );
+      assert.equal(refused.code, "invalid_request");
+      assert.include(refused.message, "only they can continue it");
+      assert.equal(gated.continued.length, 0);
+
+      const failed = harness(
+        { runtimeMode: "full-access", interactionMode: "default" },
+        { run: { createdBy: "user", pauseReason: "step_failed" } },
+      );
+      yield* withService(failed, (service) =>
+        service.continuePipeline(failed.scope, {
+          runId: PipelineRunId.make("pipeline-run:one"),
+          stepIndex: 1,
+        }),
+      );
+      assert.equal(failed.continued.length, 1);
+    }),
+  );
+
+  it.effect("starts a pipeline in the caller's worktree, or its own worktree on request", () =>
+    Effect.gen(function* () {
+      const modes = { runtimeMode: "full-access", interactionMode: "default" } as const;
+      const checkout = { worktreePath: "/home/user/acme-wt", branch: "feat/dark" };
+      const shared = harness(modes, { checkout });
+      yield* withService(shared, (service) =>
+        service.startPipeline(shared.scope, { pipeline: definition.id, prompt: "Go" }),
+      );
+      assert.deepEqual(
+        (shared.started[0] as { input: { workspaceStrategy: unknown } }).input.workspaceStrategy,
+        { type: "existing_worktree", worktreePath: "/home/user/acme-wt", branch: "feat/dark" },
+      );
+
+      const isolated = harness(modes, {
+        checkout,
+        resolveCommit: () => "abc123",
+      });
+      yield* withService(isolated, (service) =>
+        service.startPipeline(isolated.scope, {
+          pipeline: definition.id,
+          prompt: "Go",
+          worktree: true,
+        }),
+      );
+      assert.deepEqual(
+        (isolated.started[0] as { input: { workspaceStrategy: unknown } }).input.workspaceStrategy,
+        { type: "worktree", baseRef: "abc123", startFromOrigin: false },
+      );
+
+      // A checkout whose commit the project root lacks cannot seed the worktree.
+      const foreign = harness(modes, {
+        checkout,
+        resolveCommit: (cwd) => (cwd === "/home/user/acme-wt" ? "abc123" : undefined),
+      });
+      const error = yield* withService(foreign, (service) =>
+        service
+          .startPipeline(foreign.scope, { pipeline: definition.id, prompt: "Go", worktree: true })
+          .pipe(Effect.flip),
+      );
+      assert.equal(error.code, "invalid_request");
+      assert.include(error.message, 'project "Acme" (/home/user/acme)');
+      assert.include(error.message, "Omit worktree");
+      assert.equal(foreign.started.length, 0);
+    }),
+  );
+
+  it.effect("maps fixable pipeline errors to invalid_request and hides internal causes", () =>
+    Effect.gen(function* () {
+      const modes = { runtimeMode: "full-access", interactionMode: "default" } as const;
+      const runId = PipelineRunId.make("pipeline-run:one");
+      const stale = harness(modes, {
+        getRunError: new PipelineError({ message: "Pipeline run not found.", runId }),
+      });
+      const notFound = yield* withService(stale, (service) =>
+        service.pipelineStatus(stale.scope, { runId }).pipe(Effect.flip),
+      );
+      assert.equal(notFound.code, "invalid_request");
+      assert.equal(notFound.message, "Pipeline run not found.");
+
+      const broken = harness(modes, {
+        getRunError: new PipelineError({
+          message: "Could not read pipeline run.",
+          runId,
+          cause: new Error("SQLITE_BUSY at /home/user/.t3/statev2.sqlite"),
+        }),
+      });
+      const internal = yield* withService(broken, (service) =>
+        service.pipelineStatus(broken.scope, { runId }).pipe(Effect.flip),
+      );
+      assert.equal(internal.code, "orchestration_error");
+      assert.notInclude(internal.message, "SQLITE");
     }),
   );
 });

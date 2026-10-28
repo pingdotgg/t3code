@@ -5,7 +5,10 @@ import {
   ProviderInstanceId,
   type PipelineDefinition,
 } from "@t3tools/contracts";
-import { FEATURE_DELIVERY_PIPELINE } from "@t3tools/shared/pipelineStarters";
+import {
+  FEATURE_DELIVERY_PIPELINE,
+  withStarterRuntimeMode,
+} from "@t3tools/shared/pipelineStarters";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -190,10 +193,14 @@ describe("form and input conversion", () => {
   });
 
   it("turns a starter into a create input that keeps the step ids its prompts reference", () => {
-    const input = draftToUpsertInput(starterToDraft(FEATURE_DELIVERY_PIPELINE, idSequence()));
+    const input = draftToUpsertInput(
+      starterToDraft(FEATURE_DELIVERY_PIPELINE, idSequence(), "approval-required"),
+    );
     expect(input).toMatchObject({ commandId: "id-1", name: FEATURE_DELIVERY_PIPELINE.name });
     expect(input).not.toHaveProperty("id");
-    expect(input?.steps).toEqual(FEATURE_DELIVERY_PIPELINE.steps);
+    expect(input?.steps).toEqual(
+      withStarterRuntimeMode(FEATURE_DELIVERY_PIPELINE.steps, "approval-required"),
+    );
   });
 
   it("returns null while the draft has issues", () => {

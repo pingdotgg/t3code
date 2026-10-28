@@ -1,8 +1,12 @@
-import type { ModelSelection } from "@t3tools/contracts";
+import type { ModelSelection, PipelineRun } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
-import { pipelineChildLiveState, pipelineStepModelLabel } from "./PipelineRunView.logic";
+import {
+  newerPipelineRun,
+  pipelineChildLiveState,
+  pipelineStepModelLabel,
+} from "./PipelineRunView.logic";
 
 type LiveShell = Parameters<typeof pipelineChildLiveState>[0];
 
@@ -53,5 +57,18 @@ describe("pipelineStepModelLabel", () => {
     expect(label.entry).toBe(entry);
     expect(label.model).toContain("Frontier Model");
     expect(label.effort).toBeNull();
+  });
+});
+
+describe("newerPipelineRun", () => {
+  const run = (id: string, updatedAt: string) => ({ id, updatedAt }) as unknown as PipelineRun;
+  const live = run("r1", "2026-01-01T00:00:01.000Z");
+
+  it("prefers the command result only while the subscription is behind", () => {
+    expect(newerPipelineRun(live, null)).toBe(live);
+    const ahead = run("r1", "2026-01-01T00:00:02.000Z");
+    expect(newerPipelineRun(live, ahead)).toBe(ahead);
+    expect(newerPipelineRun(ahead, live)).toBe(ahead);
+    expect(newerPipelineRun(live, run("r2", "2026-01-01T00:00:09.000Z"))).toBe(live);
   });
 });
