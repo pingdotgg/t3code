@@ -1,11 +1,20 @@
+import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
+import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { RunId, ScopedThreadRef } from "@t3tools/contracts";
+import type { RunId, ScopedThreadRef, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
+export interface ToolCallDiffTarget {
+  readonly threadId: ThreadId;
+  readonly itemId: TurnItemId;
+  readonly revision: string;
+}
+
 export type DiffPanelSelection =
+  | ({ kind: "tool-call" } & ToolCallDiffTarget)
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
   | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
@@ -17,6 +26,7 @@ interface DiffPanelStoreState {
   branchBaseRefByThreadKey: Record<string, string | null>;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
+  selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
@@ -69,6 +79,13 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
             },
           };
         }),
+      selectToolCall: (ref, target) =>
+        set((state) => ({
+          byThreadKey: {
+            ...state.byThreadKey,
+            [scopedThreadKey(ref)]: { kind: "tool-call", ...target },
+          },
+        })),
       selectTurn: (ref, turnId, filePath) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -159,4 +176,16 @@ export function selectThreadDiffPanelSelection(
 ): DiffPanelSelection {
   if (!ref) return DEFAULT_SELECTION;
   return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
+}
+
+export function resolveToolCallDiffTarget(
+  target: ToolCallDiffTarget,
+  items: ReadonlyArray<ThreadStructureVisibleTurnItem>,
+): ToolCallDiffTarget {
+  const row = items.find(
+    (row) => row.sourceThreadId === target.threadId && row.sourceItemId === target.itemId,
+  );
+  if (row?.item.type !== "file_change") return target;
+  const revision = turnItemDetailRevision(row.item);
+  return revision === target.revision ? target : { ...target, revision };
 }

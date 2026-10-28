@@ -275,6 +275,15 @@ describe("orchestration V2 wire projection", () => {
     expect(projected).not.toHaveProperty("newStr");
     expect(projected).toMatchObject({ fileName: "src/main.ts", additions: 3, deletions: 1 });
     expect(item.diffStr).toBe("+new code");
+    expect(projectTurnItemForDetail(item)).toMatchObject({ diffStr: "+new code" });
+    expect(projectTurnItemForDetail(item)).not.toHaveProperty("oldStr");
+    expect(projectTurnItemForDetail(item)).not.toHaveProperty("newStr");
+    const { diffStr: _diff, ...contentOnly } = item;
+    expect(projectTurnItemForDetail(contentOnly)).toMatchObject({
+      oldStr: "old code",
+      newStr: "new code",
+    });
+    expect(projectTurnItemForWire(contentOnly)).not.toHaveProperty("newStr");
     const failed = projectTurnItemForWire({
       ...item,
       status: "failed",

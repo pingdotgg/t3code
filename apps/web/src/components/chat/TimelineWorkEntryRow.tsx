@@ -536,7 +536,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               environmentId={ctx.activeThreadEnvironmentId}
               cwd={ctx.markdownCwd}
               workspaceRoot={workspaceRoot}
-              onOpenTurnDiff={ctx.onOpenTurnDiff}
+              onOpenToolDiff={ctx.onOpenToolDiff}
               onImageExpand={ctx.onImageExpand}
               source={ctx.turnItemSource}
             />
