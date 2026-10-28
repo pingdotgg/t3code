@@ -50,6 +50,7 @@ function setup() {
     <StrictMode>
       <AnnotatableCodeView
         viewerRef={viewerRef}
+        className="h-full min-h-0 overflow-auto"
         codeViewKey={codeViewKey}
         files={files}
         pendingFiles={pendingFiles}
@@ -114,7 +115,8 @@ describe("diff comment drafts", () => {
     using test = setup();
     const original = file("shared.ts", "rename-pure", "old.ts");
     await using screen = await render(test.view([original]), { container: test.container });
-    await vi.waitFor(() => expect(test.renderedFile().instance.getLineIndex(1)).toBeDefined());
+    await expect.element(screen.getByText("new", { exact: true })).toBeVisible();
+    expect(test.renderedFile().instance.getLineIndex(1)).toBeDefined();
     await test.select();
     await vi.waitFor(() => expect(test.editor().value).toBe(""));
     await test.typeComment("Keep this draft");
@@ -179,10 +181,12 @@ describe("diff comment drafts", () => {
         return highlight.call(this, instance, diff);
       });
     await using screen = await render(test.view([original]), { container: test.container });
-    await vi.waitFor(() => {
-      expect(pool?.getDiffResultCache(original.fileDiff)).toBeDefined();
-      expect(test.renderedFile().instance.getLineIndex(1)).toBeDefined();
-    });
+    await expect.element(screen.getByText("new", { exact: true })).toBeVisible();
+    const initialPool = pool;
+    if (!initialPool) throw new Error("Diff worker pool is unavailable");
+    await act(() => initialPool.primeDiffHighlightCache(original.fileDiff));
+    expect(initialPool.getDiffResultCache(original.fileDiff)).toBeDefined();
+    expect(test.renderedFile().instance.getLineIndex(1)).toBeDefined();
     await act(() => test.viewerRef.current?.getInstance()?.render(true));
     await test.select();
     await vi.waitFor(() => expect(test.editor().value).toBe(""));
