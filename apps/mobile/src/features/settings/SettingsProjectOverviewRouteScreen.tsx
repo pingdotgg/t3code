@@ -190,7 +190,16 @@ function ProjectOverviewContent(props: {
         environmentId: member.environmentId,
         input: { projectId: member.id, ...input },
       });
-      if (result._tag === "Failure") break;
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          Dialog.alert(
+            `Failed to update "${member.title}"`,
+            error instanceof Error ? error.message : "An error occurred.",
+          );
+        }
+        break;
+      }
     }
     setIsOrganizing(false);
   };

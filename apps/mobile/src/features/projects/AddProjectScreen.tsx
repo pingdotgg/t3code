@@ -738,13 +738,18 @@ function useCreateProject(environment: EnvironmentOption | null) {
     });
     if (existing) {
       // Adding an archived project's folder again brings the project back.
-      if (existing.archivedAt != null) {
-        void updateProject({
-          environmentId: existing.environmentId,
-          input: { projectId: existing.id, archived: false },
-        });
-      }
-      Dialog.alert("Project already exists", existing.title);
+      const unarchived =
+        existing.archivedAt == null ||
+        (
+          await updateProject({
+            environmentId: existing.environmentId,
+            input: { projectId: existing.id, archived: false },
+          })
+        )._tag === "Success";
+      Dialog.alert(
+        "Project already exists",
+        unarchived ? existing.title : `${existing.title} is still archived. Try again later.`,
+      );
       openNewTaskDraft(
         {
           environmentId: existing.environmentId,
