@@ -70,6 +70,9 @@ runs:
         INSTALL_ARGS: ${{ inputs.install-args }}
       run: |
         echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"
+        metadata_dir="${pnpm_config_cache_dir:-$RUNNER_TEMP/pnpm-metadata}"
+        echo "pnpm_config_cache_dir=$metadata_dir" >> "$GITHUB_ENV"
+        echo "verified=$metadata_dir/lockfile-verified.jsonl" >> "$GITHUB_OUTPUT"
         if [[ -z "$INSTALL_ARGS" ]]; then
           echo "namespace=full" >> "$GITHUB_OUTPUT"
         else
@@ -94,6 +97,16 @@ runs:
           pnpm-${{ steps.pnpm_store.outputs.namespace }}-v1-${{ runner.os }}-${{ runner.arch }}-
           pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-
 
+    # pnpm accepts an earlier pass for the same lockfile and policy at any age, so
+    # a cached record skips fetching registry metadata for every package.
+    - name: Restore lockfile verification
+      id: pnpm_verified
+      if: inputs.install == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.pnpm_store.outputs.verified }}
+        key: pnpm-verified-v1-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+
     - name: Install dependencies
       if: inputs.install == 'true'
       shell: bash
@@ -101,6 +114,13 @@ runs:
         INSTALL_ARGS: ${{ inputs.install-args }}
       # Unquoted so each filter is its own argument.
       run: vp install $INSTALL_ARGS
+
+    - name: Save lockfile verification
+      if: inputs.install == 'true' && steps.pnpm_verified.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.pnpm_store.outputs.verified }}
+        key: ${{ steps.pnpm_verified.outputs.cache-primary-key }}
 
     # A filtered install that started from the current full store adds nothing
     # worth a second copy of it.
