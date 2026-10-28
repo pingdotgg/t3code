@@ -13,6 +13,8 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type OrchestrationV2TurnItem,
+  type PipelineError,
+  type PipelineRun,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
@@ -26,7 +28,12 @@ import {
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
+  type OrchestratorMcpContinuePipelineInput,
+  type OrchestratorMcpListPipelinesResult,
   type OrchestratorMcpListScheduledTasksResult,
+  type OrchestratorMcpPipelineRun,
+  type OrchestratorMcpPipelineRunInput,
+  type OrchestratorMcpStartPipelineInput,
   type OrchestratorMcpScheduledTask,
   type OrchestratorMcpScheduleTaskInput,
   type OrchestratorMcpScheduleTaskResult,
@@ -106,6 +113,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
+import * as PipelineService from "../pipelines/PipelineService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -192,6 +200,26 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDeleteScheduledTaskInput,
   ) => Effect.Effect<OrchestratorMcpDeleteScheduledTaskResult, OrchestratorMcpFailure>;
+  readonly listPipelines: (
+    scope: McpInvocationScope,
+  ) => Effect.Effect<OrchestratorMcpListPipelinesResult, OrchestratorMcpFailure>;
+  /** Steps run at the caller's runtime mode or narrower. A plan-mode caller is refused. */
+  readonly startPipeline: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpStartPipelineInput,
+  ) => Effect.Effect<OrchestratorMcpPipelineRun, OrchestratorMcpFailure>;
+  readonly pipelineStatus: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpPipelineRunInput,
+  ) => Effect.Effect<OrchestratorMcpPipelineRun, OrchestratorMcpFailure>;
+  readonly continuePipeline: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpContinuePipelineInput,
+  ) => Effect.Effect<OrchestratorMcpPipelineRun, OrchestratorMcpFailure>;
+  readonly cancelPipeline: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpPipelineRunInput,
+  ) => Effect.Effect<OrchestratorMcpPipelineRun, OrchestratorMcpFailure>;
   /** Only status reaches the agent, never this value. */
   readonly requestSecret: (
     scope: McpInvocationScope,
@@ -258,6 +286,44 @@ function agentStopReason(reason: string | undefined): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function pipelineFailure(error: PipelineError): OrchestratorMcpFailure {
+  return failure("invalid_request", error.message);
+}
+
+function pipelineRunSummary(
+  environmentId: EnvironmentId,
+  run: PipelineRun,
+): OrchestratorMcpPipelineRun {
+  return {
+    runId: run.id,
+    pipelineId: run.pipelineId,
+    name: run.definition.name,
+    projectId: run.projectId,
+    threadId: run.parentThreadId,
+    link: formatThreadLink({ environmentId, threadId: run.parentThreadId }),
+    status: run.status,
+    pauseReason: run.pauseReason,
+    error: run.error,
+    currentStepIndex: run.currentStepIndex,
+    steps: run.steps.map((step) => ({
+      index: step.index,
+      stepId: step.stepId,
+      name: run.definition.steps[step.index]?.name ?? step.stepId,
+      status: step.status,
+      attempt: step.attempt,
+      threadId: step.childThreadId,
+      ...(step.childThreadId === null
+        ? {}
+        : { link: formatThreadLink({ environmentId, threadId: step.childThreadId }) }),
+      outputPreview: step.outputPreview,
+      error: step.error,
+    })),
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    completedAt: run.completedAt,
+  };
 }
 
 function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
@@ -864,6 +930,7 @@ function threadDetail(
     worktreePath: projection.thread.worktreePath,
     parentThreadId: projection.thread.lineage.parentThreadId,
     relationshipToParent: projection.thread.lineage.relationshipToParent,
+    ...(projection.thread.pipeline === undefined ? {} : { pipeline: projection.thread.pipeline }),
     runCount: projection.runs.length,
     itemCount,
     pendingRequestCount: projection.runtimeRequests.filter(
@@ -1034,6 +1101,7 @@ const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
+  const pipelines = yield* PipelineService.PipelineService;
   const projects = yield* ProjectService.ProjectService;
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
@@ -1954,6 +2022,47 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  /** Pipelines have no plan mode, and a step never runs broader than the caller's runtime mode. */
+  const assertPipelineWithinLimits = Effect.fn("OrchestratorMcpService.assertPipelineWithinLimits")(
+    function* (
+      limits: {
+        readonly runtimeMode: RuntimeMode;
+        readonly interactionMode: ProviderInteractionMode;
+      },
+      steps: ReadonlyArray<Pick<PipelineRun["definition"]["steps"][number], "runtimeMode">>,
+    ) {
+      if (limits.interactionMode === "plan") {
+        return yield* failure(
+          "interaction_mode_escalation_denied",
+          "Pipelines cannot run in plan mode, and this thread is in plan mode. Leave plan mode first, or ask the user to run the pipeline.",
+        );
+      }
+      for (const step of steps) yield* resolveRuntimeMode(limits.runtimeMode, step.runtimeMode);
+    },
+  );
+
+  /** The id when it matches, else the one pipeline with this name, ignoring case. */
+  const resolvePipeline = Effect.fn("OrchestratorMcpService.resolvePipeline")(function* (
+    key: string,
+  ) {
+    const { pipelines: all } = yield* pipelines.list().pipe(Effect.mapError(pipelineFailure));
+    const byId = all.find((pipeline) => pipeline.id === key);
+    if (byId !== undefined) return byId;
+    const wanted = key.trim().toLowerCase();
+    const byName = all.filter((pipeline) => pipeline.name.trim().toLowerCase() === wanted);
+    if (byName.length === 1 && byName[0] !== undefined) return byName[0];
+    if (byName.length > 1) {
+      return yield* failure(
+        "invalid_request",
+        `More than one pipeline is named "${key}". Pass one of these ids: ${byName.map((pipeline) => pipeline.id).join(", ")}.`,
+      );
+    }
+    return yield* failure(
+      "invalid_request",
+      `Pipeline "${key}" was not found. Call list_pipelines for the available ids and names.`,
+    );
+  });
+
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       const { parent, limits } = yield* loadCaller(scope, ["runs"]);
@@ -2125,6 +2234,109 @@ const make = Effect.gen(function* () {
         return { scheduledTaskId: existing.id, deleted: true };
       },
     ),
+    listPipelines: Effect.fn("OrchestratorMcpService.listPipelines")(function* (scope) {
+      yield* loadCaller(scope);
+      const { pipelines: all } = yield* pipelines.list().pipe(Effect.mapError(pipelineFailure));
+      return {
+        pipelines: all.map((pipeline) => ({
+          pipelineId: pipeline.id,
+          name: pipeline.name,
+          steps: pipeline.steps.map((step) => ({
+            stepId: step.id,
+            name: step.name,
+            providerInstanceId: step.modelSelection.instanceId,
+            model: step.modelSelection.model,
+            runtimeMode: step.runtimeMode,
+            pauseBefore: step.pauseBefore,
+          })),
+        })),
+      };
+    }),
+    startPipeline: Effect.fn("OrchestratorMcpService.startPipeline")(function* (scope, input) {
+      const { parent, limits } = yield* loadCaller(scope);
+      yield* assertPipelineWithinLimits(limits, []);
+      const projectId = yield* resolveProjectTarget(parent, input.projectId);
+      yield* assertLiveCallerForOtherProject(scope, parent, projectId);
+      const project = yield* requireProject(projectId);
+      const pipeline = yield* resolvePipeline(input.pipeline);
+      let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy = { type: "root" };
+      if (input.worktree === true) {
+        // Same base as delegate_task's worktree isolation: the caller's checkout, at its current commit.
+        const sameProject = parent !== undefined && parent.thread.projectId === projectId;
+        const callerWorktree = sameProject ? parent.thread.worktreePath : null;
+        const base = yield* gitDriver
+          .resolveCommit({ cwd: callerWorktree ?? project.workspaceRoot, revision: "HEAD" })
+          .pipe(
+            Effect.mapError(() =>
+              failure("invalid_request", "Unable to resolve the checkout commit for the worktree."),
+            ),
+          );
+        if (callerWorktree !== null) {
+          yield* gitDriver
+            .resolveCommit({ cwd: project.workspaceRoot, revision: base.commitSha })
+            .pipe(
+              Effect.mapError(() =>
+                failure(
+                  "invalid_request",
+                  `The worktree is created in project "${project.title}" (${project.workspaceRoot}), which does not contain this checkout's commit. Omit worktree to run in this checkout.`,
+                ),
+              ),
+            );
+        }
+        workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
+      }
+      const { run } = yield* pipelines
+        .start(
+          {
+            ...(input.clientRequestId === undefined
+              ? {}
+              : {
+                  commandId: stableCommandId({
+                    scope,
+                    requestKey: input.clientRequestId,
+                    operation: "start-pipeline",
+                  }),
+                }),
+            pipelineId: pipeline.id,
+            projectId,
+            input: input.prompt,
+            workspaceStrategy,
+            creationSource: "mcp",
+          },
+          { createdBy: "agent", modeLimit: limits },
+        )
+        .pipe(Effect.mapError(pipelineFailure));
+      return pipelineRunSummary(scope.environmentId, run);
+    }),
+    pipelineStatus: Effect.fn("OrchestratorMcpService.pipelineStatus")(function* (scope, input) {
+      yield* loadCaller(scope);
+      const run = yield* pipelines.getRun(input.runId).pipe(Effect.mapError(pipelineFailure));
+      return pipelineRunSummary(scope.environmentId, run);
+    }),
+    continuePipeline: Effect.fn("OrchestratorMcpService.continuePipeline")(
+      function* (scope, input) {
+        const { parent, limits } = yield* loadCaller(scope);
+        const existing = yield* pipelines
+          .getRun(input.runId)
+          .pipe(Effect.mapError(pipelineFailure));
+        yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
+        // The run's steps were clamped to whoever started it. Continuing launches them for this caller.
+        yield* assertPipelineWithinLimits(limits, existing.definition.steps.slice(input.stepIndex));
+        const { run } = yield* pipelines
+          .continueRun({ runId: input.runId, stepIndex: input.stepIndex })
+          .pipe(Effect.mapError(pipelineFailure));
+        return pipelineRunSummary(scope.environmentId, run);
+      },
+    ),
+    cancelPipeline: Effect.fn("OrchestratorMcpService.cancelPipeline")(function* (scope, input) {
+      const { parent } = yield* loadCaller(scope);
+      const existing = yield* pipelines.getRun(input.runId).pipe(Effect.mapError(pipelineFailure));
+      yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
+      const { run } = yield* pipelines
+        .cancel({ runId: input.runId })
+        .pipe(Effect.mapError(pipelineFailure));
+      return pipelineRunSummary(scope.environmentId, run);
+    }),
     requestSecret: Effect.fn("OrchestratorMcpService.requestSecret")(function* (scope, input) {
       const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_secret");
       const threadId = threadScope.thread.threadId;
@@ -3313,6 +3525,7 @@ export const layer: Layer.Layer<
   | ProviderRegistry.ProviderRegistry
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ScheduledTaskService.ScheduledTaskService
+  | PipelineService.PipelineService
   | ProjectService.ProjectService
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService

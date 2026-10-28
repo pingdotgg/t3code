@@ -69,5 +69,8 @@ describe("resolveT3McpSummaryAction", () => {
       "schedule-update",
     );
     expect(resolveT3McpSummaryAction("delegate_task", { task: "x" })).toBe("delegate");
+    expect(resolveT3McpSummaryAction("mcp__t3-code__start_pipeline", {})).toBe("pipeline-start");
+    expect(resolveT3McpSummaryAction("pipeline_status", {})).toBe("pipeline-status");
+    expect(resolveT3McpToolPresentation("list_pipelines")?.displayName).toBe("List pipelines");
   });
 });

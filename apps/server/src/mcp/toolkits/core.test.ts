@@ -50,6 +50,7 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
+import * as PipelineService from "../../pipelines/PipelineService.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
@@ -79,6 +80,7 @@ const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadR
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+  Layer.provide(Layer.mock(PipelineService.PipelineService)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
   Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
@@ -681,6 +683,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+        Layer.provide(Layer.mock(PipelineService.PipelineService)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
@@ -726,6 +729,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+        Layer.provide(Layer.mock(PipelineService.PipelineService)({})),
         Layer.provide(
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({
             list: () =>
@@ -812,6 +816,112 @@ it.effect.each([
   ),
 );
 
+it.effect(
+  "pipeline tools: a read-only client lists and checks runs but cannot start, continue or cancel",
+  () =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const call = (
+        access: McpInvocationContext.McpClientCaller["access"],
+        name: string,
+        args: Record<string, unknown>,
+      ) =>
+        server
+          .callTool({ name, arguments: args })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope(access)),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+      const runId = "pipeline-run:core";
+
+      expect((yield* call("read-only", "list_pipelines", {})).isError).toBe(false);
+      expect((yield* call("read-only", "pipeline_status", { runId })).isError).toBe(false);
+      for (const [name, args] of [
+        [
+          "start_pipeline",
+          { pipeline: "Feature delivery", prompt: "Add dark mode", projectId: "project-a" },
+        ],
+        ["continue_pipeline", { runId, stepIndex: 0 }],
+        ["cancel_pipeline", { runId }],
+      ] as const) {
+        expect(declaredFailure(yield* call("read-only", name, args)), name).toMatchObject({
+          code: "capability_denied",
+        });
+      }
+      expect(started).toEqual([]);
+
+      // A client's approval is the step limit: the service passes it to the runner as `modeLimit`.
+      const result = yield* call("auto", "start_pipeline", {
+        pipeline: "pipeline:feature-delivery",
+        prompt: "Add dark mode",
+        projectId: "project-a",
+      });
+      expect(result.isError).toBe(false);
+      expect(started).toEqual([
+        { createdBy: "agent", modeLimit: { runtimeMode: "auto", interactionMode: "default" } },
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerOrchestratorToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+          Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+          Layer.provide(
+            Layer.mock(PipelineService.PipelineService)({
+              list: () =>
+                Effect.succeed({
+                  pipelines: [
+                    { id: "pipeline:feature-delivery", name: "Feature delivery", steps: [] },
+                  ],
+                } as never),
+              getRun: () => Effect.succeed(pipelineRun as never),
+              start: (_input, options) =>
+                Effect.sync(() => {
+                  started.push(options);
+                  return { run: pipelineRun } as never;
+                }),
+            }),
+          ),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({
+                  id: "project-a",
+                  title: "Acme",
+                  workspaceRoot: "/home/user/acme",
+                } as never),
+            }),
+          ),
+          Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        ),
+      ),
+    ),
+);
+const started: Array<unknown> = [];
+const pipelineRun = {
+  id: "pipeline-run:core",
+  pipelineId: "pipeline:feature-delivery",
+  definition: { name: "Feature delivery", steps: [] },
+  projectId: "project-a",
+  parentThreadId: "thread-pipeline-parent",
+  status: "running",
+  pauseReason: null,
+  error: null,
+  currentStepIndex: 0,
+  steps: [],
+  createdAt: "2026-10-28T10:00:00.000Z",
+  updatedAt: "2026-10-28T10:00:00.000Z",
+  completedAt: null,
+};
+
 function scheduledTask(id: string, runtimeMode: "auto" | "full-access"): never {
   return {
     id,
@@ -888,6 +998,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
           Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+          Layer.provide(Layer.mock(PipelineService.PipelineService)({})),
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
@@ -984,6 +1095,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+        Layer.provide(Layer.mock(PipelineService.PipelineService)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),

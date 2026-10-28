@@ -9,6 +9,11 @@ import {
   MessageId,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+  PipelineId,
+  PipelineRunId,
+  PipelineStepId,
+  type PipelineDefinition,
+  type PipelineRun,
   type OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
@@ -60,6 +65,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as PipelineService from "../pipelines/PipelineService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -204,6 +210,7 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -312,6 +319,7 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -415,6 +423,7 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -511,6 +520,7 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -611,6 +621,7 @@ describe("OrchestratorMcpService", () => {
           Layer.mock(ProjectService.ProjectService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(PipelineService.PipelineService)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
         const scope: McpInvocationScope = {
@@ -706,6 +717,7 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -795,6 +807,7 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -885,6 +898,7 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -1071,6 +1085,7 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -1499,6 +1514,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           Layer.mock(ProjectService.ProjectService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(PipelineService.PipelineService)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
 
@@ -1683,6 +1699,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Layer.mock(ProjectService.ProjectService)({}),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                Layer.mock(PipelineService.PipelineService)({}),
                 Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
               ),
             ),
@@ -1811,6 +1828,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
 
@@ -1925,6 +1943,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         ServerSettings.layerTest(),
       );
@@ -2035,6 +2054,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           Layer.mock(ProjectService.ProjectService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(PipelineService.PipelineService)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           ServerSettings.layerTest(),
         );
@@ -2132,6 +2152,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Layer.mock(ProjectService.ProjectService)({}),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                Layer.mock(PipelineService.PipelineService)({}),
                 Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
               ),
             ),
@@ -2398,6 +2419,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(PipelineService.PipelineService)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           );
 
@@ -2564,6 +2586,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(PipelineService.PipelineService)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks }),
               upsert: () =>
@@ -2636,6 +2659,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(ProjectService.ProjectService)({}),
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                  Layer.mock(PipelineService.PipelineService)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
                     list: () => Effect.succeed({ tasks: [task({})] }),
                   }),
@@ -2726,6 +2750,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(ProjectService.ProjectService)({}),
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                  Layer.mock(PipelineService.PipelineService)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
                     list: () => Effect.succeed({ tasks: [bound] }),
                     upsert: () =>
@@ -3111,6 +3136,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           Layer.mock(ProjectService.ProjectService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(PipelineService.PipelineService)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
         yield* Effect.gen(function* () {
@@ -3259,6 +3285,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(PipelineService.PipelineService)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           );
           yield* Effect.gen(function* () {
@@ -3433,6 +3460,7 @@ describe("OrchestratorMcpService thread lookup", () => {
           Layer.mock(ProjectService.ProjectService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(PipelineService.PipelineService)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         ),
       ),
@@ -3579,6 +3607,7 @@ describe("OrchestratorMcpService thread list", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PipelineService.PipelineService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       ),
     ),
@@ -3721,6 +3750,7 @@ describe("OrchestratorMcpService thread stop", () => {
               Layer.mock(ProjectService.ProjectService)({}),
               Layer.mock(SecretRequests.SecretRequests)({}),
               Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+              Layer.mock(PipelineService.PipelineService)({}),
               Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
             ),
           ),
@@ -3785,5 +3815,337 @@ describe("OrchestratorMcpService thread stop", () => {
         }).pipe(Effect.provide(layerTest));
       }),
     ),
+  );
+});
+
+describe("OrchestratorMcpService pipelines", () => {
+  const projectId = ProjectId.make("project:mcp-test");
+  const callerThreadId = ThreadId.make("thread:mcp-pipeline-caller");
+  const at = "2026-10-28T10:00:00.000Z";
+  const step = (id: string, name: string, runtimeMode: "approval-required" | "full-access") => ({
+    id: PipelineStepId.make(id),
+    name,
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+    runtimeMode,
+    skills: [],
+    promptTemplate: "{{input}}",
+    pauseBefore: false,
+  });
+  const definition: PipelineDefinition = {
+    id: PipelineId.make("pipeline:feature-delivery"),
+    name: "Feature delivery",
+    steps: [step("plan", "Plan", "approval-required"), step("build", "Build", "full-access")],
+    createdAt: at,
+    updatedAt: at,
+  };
+  const run = (overrides: Partial<PipelineRun> = {}): PipelineRun => ({
+    id: PipelineRunId.make("pipeline-run:one"),
+    pipelineId: definition.id,
+    definition: { name: definition.name, steps: definition.steps },
+    projectId,
+    parentThreadId: ThreadId.make("thread:pipeline-parent"),
+    input: "Add dark mode",
+    workspaceStrategy: { type: "root" },
+    status: "paused",
+    pauseReason: "awaiting_continue",
+    error: null,
+    currentStepIndex: 1,
+    steps: [
+      {
+        index: 0,
+        stepId: definition.steps[0]!.id,
+        status: "completed",
+        attempt: 1,
+        childThreadId: ThreadId.make("thread:pipeline-step-0"),
+        pauseBefore: false,
+        outputPreview: "Plan: add a theme toggle.",
+        error: null,
+        startedAt: at,
+        completedAt: at,
+      },
+      {
+        index: 1,
+        stepId: definition.steps[1]!.id,
+        status: "pending",
+        attempt: 0,
+        childThreadId: null,
+        pauseBefore: true,
+        outputPreview: null,
+        error: null,
+        startedAt: null,
+        completedAt: null,
+      },
+    ],
+    createdBy: "agent",
+    creationSource: "mcp",
+    createdAt: at,
+    updatedAt: at,
+    completedAt: null,
+    ...overrides,
+  });
+
+  const harness = (modes: {
+    readonly runtimeMode: "approval-required" | "full-access";
+    readonly interactionMode: "default" | "plan";
+  }) => {
+    const started: Array<{ input: unknown; options: unknown }> = [];
+    const continued: Array<unknown> = [];
+    const shell = liveThreadShell(callerThreadId, modes);
+    const pipelines = Layer.mock(PipelineService.PipelineService)({
+      list: () => Effect.succeed({ pipelines: [definition] }),
+      start: (input, options) =>
+        Effect.sync(() => {
+          started.push({ input, options });
+          return { run: run({ status: "running", pauseReason: null, currentStepIndex: 0 }) };
+        }),
+      getRun: () => Effect.succeed(run()),
+      continueRun: (input) =>
+        Effect.sync(() => {
+          continued.push(input);
+          return { run: run({ status: "running", pauseReason: null }) };
+        }),
+    });
+    const dependencies = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(idleThreadProjection(shell)),
+        getThreadShell: () => Effect.succeed(shell),
+      }),
+      ServerSettings.layerTest(),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+        list: () => Effect.succeed([]),
+      }),
+      Layer.mock(ProjectService.ProjectService)({
+        getById: () =>
+          Effect.succeedSome({
+            id: projectId,
+            title: "Acme",
+            workspaceRoot: "/home/user/acme",
+          } as never),
+      }),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+      Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      pipelines,
+    );
+    const scope: McpInvocationScope = {
+      environmentId: EnvironmentId.make("environment:mcp-pipeline"),
+      requestNamespace: "provider-session:mcp-pipeline",
+      thread: {
+        threadId: callerThreadId,
+        providerSessionId: "provider-session:mcp-pipeline",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: undefined,
+      capabilities: new Set(["orchestration"]),
+      issuedAt: 1,
+    };
+    return {
+      started,
+      continued,
+      scope,
+      layer: layerOrchestratorService.pipe(Layer.provide(dependencies)),
+    };
+  };
+
+  const withService = <A, E>(
+    h: ReturnType<typeof harness>,
+    use: (service: OrchestratorMcpService.OrchestratorMcpServiceShape) => Effect.Effect<A, E>,
+  ) =>
+    Effect.gen(function* () {
+      return yield* use(yield* OrchestratorMcpService.OrchestratorMcpService);
+    }).pipe(Effect.provide(h.layer));
+
+  it.effect(
+    "starts a pipeline by exact name with the caller's mode limits and agent provenance",
+    () =>
+      Effect.gen(function* () {
+        const h = harness({ runtimeMode: "approval-required", interactionMode: "default" });
+        const result = yield* withService(h, (service) =>
+          service.startPipeline(h.scope, {
+            pipeline: "feature delivery",
+            prompt: "Add dark mode",
+            clientRequestId: "start-1",
+          }),
+        );
+        assert.equal(h.started.length, 1);
+        const call = h.started[0] as {
+          input: Record<string, unknown>;
+          options: Record<string, unknown>;
+        };
+        assert.equal(call.input.pipelineId, definition.id);
+        assert.equal(call.input.projectId, projectId);
+        assert.equal(call.input.input, "Add dark mode");
+        assert.deepEqual(call.input.workspaceStrategy, { type: "root" });
+        assert.equal(call.input.creationSource, "mcp");
+        assert.equal(
+          call.input.commandId,
+          "command:mcp:provider-session%3Amcp-pipeline:start-pipeline:start-1",
+        );
+        // The runner clamps each step's runtime mode to this limit.
+        assert.deepEqual(call.options, {
+          createdBy: "agent",
+          modeLimit: { runtimeMode: "approval-required", interactionMode: "default" },
+        });
+        assert.equal(result.runId, "pipeline-run:one");
+        assert.equal(result.status, "running");
+      }),
+  );
+
+  it.effect("starts a pipeline by id", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "full-access", interactionMode: "default" });
+      yield* withService(h, (service) =>
+        service.startPipeline(h.scope, { pipeline: definition.id, prompt: "Go" }),
+      );
+      const call = h.started[0] as { input: Record<string, unknown> };
+      assert.equal(call.input.pipelineId, definition.id);
+      assert.isUndefined(call.input.commandId);
+    }),
+  );
+
+  it.effect("refuses to start a pipeline from a plan-mode thread", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "full-access", interactionMode: "plan" });
+      const error = yield* withService(h, (service) =>
+        service
+          .startPipeline(h.scope, { pipeline: "Feature delivery", prompt: "Add dark mode" })
+          .pipe(Effect.flip),
+      );
+      assert.equal(error.code, "interaction_mode_escalation_denied");
+      assert.include(error.message, "plan mode");
+      assert.equal(h.started.length, 0);
+    }),
+  );
+
+  it.effect("names the available pipelines when the requested one does not exist", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "full-access", interactionMode: "default" });
+      const error = yield* withService(h, (service) =>
+        service.startPipeline(h.scope, { pipeline: "Nightly", prompt: "x" }).pipe(Effect.flip),
+      );
+      assert.equal(error.code, "invalid_request");
+      assert.include(error.message, 'Pipeline "Nightly" was not found');
+      assert.include(error.message, "list_pipelines");
+      assert.equal(h.started.length, 0);
+    }),
+  );
+
+  it.effect("lists pipelines with their steps", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "full-access", interactionMode: "default" });
+      const result = yield* withService(h, (service) => service.listPipelines(h.scope));
+      assert.deepEqual(result as unknown, {
+        pipelines: [
+          {
+            pipelineId: definition.id,
+            name: "Feature delivery",
+            steps: [
+              {
+                stepId: "plan",
+                name: "Plan",
+                providerInstanceId: "codex",
+                model: "gpt-5",
+                runtimeMode: "approval-required",
+                pauseBefore: false,
+              },
+              {
+                stepId: "build",
+                name: "Build",
+                providerInstanceId: "codex",
+                model: "gpt-5",
+                runtimeMode: "full-access",
+                pauseBefore: false,
+              },
+            ],
+          },
+        ],
+      });
+    }),
+  );
+
+  it.effect("reports a run's status with each step's thread link and output preview", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "full-access", interactionMode: "default" });
+      const status = yield* withService(h, (service) =>
+        service.pipelineStatus(h.scope, { runId: PipelineRunId.make("pipeline-run:one") }),
+      );
+      assert.equal(status.name, "Feature delivery");
+      assert.equal(status.status, "paused");
+      assert.equal(status.pauseReason, "awaiting_continue");
+      assert.equal(status.currentStepIndex, 1);
+      assert.equal(status.threadId, "thread:pipeline-parent");
+      assert.isString(status.link);
+      assert.deepEqual<unknown>(
+        status.steps.map((entry) => ({
+          index: entry.index,
+          name: entry.name,
+          status: entry.status,
+          threadId: entry.threadId,
+          hasLink: entry.link !== undefined,
+          outputPreview: entry.outputPreview,
+        })),
+        [
+          {
+            index: 0,
+            name: "Plan",
+            status: "completed",
+            threadId: "thread:pipeline-step-0",
+            hasLink: true,
+            outputPreview: "Plan: add a theme toggle.",
+          },
+          {
+            index: 1,
+            name: "Build",
+            status: "pending",
+            threadId: null,
+            hasLink: false,
+            outputPreview: null,
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect("continues a run only when the remaining steps fit the caller's modes", () =>
+    Effect.gen(function* () {
+      // Step 1 runs at full-access, which an approval-required caller could not have started.
+      const narrow = harness({ runtimeMode: "approval-required", interactionMode: "default" });
+      const denied = yield* withService(narrow, (service) =>
+        service
+          .continuePipeline(narrow.scope, {
+            runId: PipelineRunId.make("pipeline-run:one"),
+            stepIndex: 1,
+          })
+          .pipe(Effect.flip),
+      );
+      assert.equal(denied.code, "runtime_mode_escalation_denied");
+      assert.equal(narrow.continued.length, 0);
+
+      const plan = harness({ runtimeMode: "full-access", interactionMode: "plan" });
+      const planDenied = yield* withService(plan, (service) =>
+        service
+          .continuePipeline(plan.scope, {
+            runId: PipelineRunId.make("pipeline-run:one"),
+            stepIndex: 1,
+          })
+          .pipe(Effect.flip),
+      );
+      assert.equal(planDenied.code, "interaction_mode_escalation_denied");
+      assert.equal(plan.continued.length, 0);
+
+      const wide = harness({ runtimeMode: "full-access", interactionMode: "default" });
+      const resumed = yield* withService(wide, (service) =>
+        service.continuePipeline(wide.scope, {
+          runId: PipelineRunId.make("pipeline-run:one"),
+          stepIndex: 1,
+        }),
+      );
+      assert.equal(resumed.status, "running");
+      assert.deepEqual(wide.continued, [
+        { runId: PipelineRunId.make("pipeline-run:one"), stepIndex: 1 },
+      ]);
+    }),
   );
 });

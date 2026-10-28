@@ -131,6 +131,49 @@ const handlers = {
       return yield* service.deleteScheduledTask(scope, input);
     }),
   ),
+  list_pipelines: McpToolAccess.reads(() =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.listPipelines(scope);
+    }),
+  ),
+  start_pipeline: McpToolAccess.startsThreads(
+    () => ({}),
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.startPipeline(scope, input);
+      }),
+    // A run's threads carry no link origin, so a linked caller could not be fenced to its own runs.
+    { refused: "start pipelines in this environment" },
+  ),
+  pipeline_status: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.pipelineStatus(scope, input);
+    }),
+  ),
+  continue_pipeline: McpToolAccess.writes(
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.continuePipeline(scope, input);
+      }),
+    { refusedWhenLinked: "continue this environment's pipelines" },
+  ),
+  cancel_pipeline: McpToolAccess.writes(
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.cancelPipeline(scope, input);
+      }),
+    { refusedWhenLinked: "cancel this environment's pipelines" },
+  ),
   request_secret: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

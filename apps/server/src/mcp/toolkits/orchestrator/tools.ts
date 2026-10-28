@@ -13,14 +13,19 @@ import {
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpDeleteScheduledTaskInput,
   OrchestratorMcpDeleteScheduledTaskResult,
+  OrchestratorMcpContinuePipelineInput,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
   OrchestratorMcpFailure,
+  OrchestratorMcpListPipelinesResult,
   OrchestratorMcpListScheduledTasksInput,
   OrchestratorMcpListScheduledTasksResult,
+  OrchestratorMcpPipelineRun,
+  OrchestratorMcpPipelineRunInput,
   OrchestratorMcpSaveScheduledTaskInput,
   OrchestratorMcpScheduleTaskResult,
+  OrchestratorMcpStartPipelineInput,
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpTaskStatusInput,
@@ -195,6 +200,71 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   .annotate(Tool.Title, "Delete a scheduled task")
   .annotate(Tool.Destructive, true);
 
+const ListPipelinesTool = Tool.make("list_pipelines", {
+  description:
+    "List the user's pipelines: saved chains of agent steps, each step in its own thread, each step's output feeding the next. Pass an id or exact name to `start_pipeline`.",
+  success: OrchestratorMcpListPipelinesResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "List pipelines")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const StartPipelineTool = Tool.make("start_pipeline", {
+  description:
+    "Run a saved pipeline on `prompt` when the user asks for one by name or purpose. Not for ordinary delegation. Steps share this checkout, or one new worktree with `worktree=true`. They run at your runtime mode or narrower. Plan mode cannot start one. Returns `runId`: poll `pipeline_status`. In your reply, name the run as its `link` verbatim.",
+  parameters: OrchestratorMcpStartPipelineInput,
+  success: OrchestratorMcpPipelineRun,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Start a pipeline")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
+const PipelineStatusTool = Tool.make("pipeline_status", {
+  description:
+    "Status of a pipeline run: each step's status, thread `link`, and output preview. `paused` with `awaiting_continue` waits for `continue_pipeline`. A failed or stopped step needs the user.",
+  parameters: OrchestratorMcpPipelineRunInput,
+  success: OrchestratorMcpPipelineRun,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Pipeline run status")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const ContinuePipelineTool = Tool.make("continue_pipeline", {
+  description:
+    "Resume a paused pipeline run at `stepIndex`, its `currentStepIndex`. Starts the next step. For a failed or stopped step, takes its thread's latest result.",
+  parameters: OrchestratorMcpContinuePipelineInput,
+  success: OrchestratorMcpPipelineRun,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Continue a pipeline")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
+const CancelPipelineTool = Tool.make("cancel_pipeline", {
+  description:
+    "Cancel a pipeline run: stops its running step and starts no more. Finished steps and their threads stay.",
+  parameters: OrchestratorMcpPipelineRunInput,
+  success: OrchestratorMcpPipelineRun,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Cancel a pipeline")
+  .annotate(Tool.Destructive, true);
+
 const RequestSecretTool = Tool.make("request_secret", {
   description:
     'Ask for one secret per single-line card; never combine values. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Sign-in link: `url`. Pasted secret for child/script: `value`. Never from an old thread.',
@@ -359,6 +429,11 @@ export const OrchestratorToolkit = Toolkit.make(
   ScheduleTaskTool,
   ListScheduledTasksTool,
   DeleteScheduledTaskTool,
+  ListPipelinesTool,
+  StartPipelineTool,
+  PipelineStatusTool,
+  ContinuePipelineTool,
+  CancelPipelineTool,
   RequestSecretTool,
   CreateThreadsTool,
   ThreadListTool,

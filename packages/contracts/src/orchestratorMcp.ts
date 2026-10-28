@@ -10,6 +10,9 @@ import {
   MessageId,
   NodeId,
   NonNegativeInt,
+  PipelineId,
+  PipelineRunId,
+  PipelineStepId,
   PositiveInt,
   ProjectId,
   RunId,
@@ -20,6 +23,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
+import { PipelinePauseReason, PipelineRunStatus, PipelineRunStepStatus } from "./pipeline.ts";
 import {
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
@@ -39,6 +43,7 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
+  OrchestrationV2ThreadPipeline,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
@@ -451,6 +456,10 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  pipeline: Schema.optional(OrchestrationV2ThreadPipeline).annotate({
+    description:
+      "Set on a pipeline's parent thread (`stepId` null) and on each step's thread. Use `pipeline_status` with its `runId`.",
+  }),
   runCount: NonNegativeInt,
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,
@@ -755,6 +764,87 @@ export type OrchestratorMcpUpdateScheduledTaskInput =
 const PastedSecretValue = Schema.String.check(
   Schema.makeFilter((value: string) => value.length > 0, { expected: "a non-empty string" }),
 );
+export const OrchestratorMcpListPipelinesResult = Schema.Struct({
+  pipelines: Schema.Array(
+    Schema.Struct({
+      pipelineId: PipelineId,
+      name: Schema.String,
+      steps: Schema.Array(
+        Schema.Struct({
+          stepId: PipelineStepId,
+          name: Schema.String,
+          providerInstanceId: ProviderInstanceId,
+          model: Schema.String,
+          runtimeMode: RuntimeMode,
+          pauseBefore: Schema.Boolean,
+        }),
+      ),
+    }),
+  ),
+});
+export type OrchestratorMcpListPipelinesResult = typeof OrchestratorMcpListPipelinesResult.Type;
+
+export const OrchestratorMcpStartPipelineInput = Schema.Struct({
+  pipeline: TrimmedNonEmptyString.annotate({
+    description: "Pipeline id or exact name, from `list_pipelines`.",
+  }),
+  prompt: OrchestratorMcpPrompt.annotate({
+    description: "The pipeline's input: what the first step works on.",
+  }),
+  projectId: OrchestratorMcpProjectTarget,
+  worktree: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Default false: steps share this checkout. True: one new worktree for all steps.",
+    }),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpStartPipelineInput = typeof OrchestratorMcpStartPipelineInput.Type;
+
+export const OrchestratorMcpPipelineRunInput = Schema.Struct({
+  runId: PipelineRunId,
+});
+export type OrchestratorMcpPipelineRunInput = typeof OrchestratorMcpPipelineRunInput.Type;
+
+export const OrchestratorMcpContinuePipelineInput = Schema.Struct({
+  runId: PipelineRunId,
+  stepIndex: NonNegativeInt.annotate({
+    description: "The run's `currentStepIndex`. A stale index is rejected.",
+  }),
+});
+export type OrchestratorMcpContinuePipelineInput = typeof OrchestratorMcpContinuePipelineInput.Type;
+
+export const OrchestratorMcpPipelineStep = Schema.Struct({
+  index: NonNegativeInt,
+  stepId: PipelineStepId,
+  name: Schema.String,
+  status: PipelineRunStepStatus,
+  attempt: NonNegativeInt,
+  threadId: Schema.NullOr(ThreadId),
+  link: Schema.optional(Schema.String),
+  outputPreview: Schema.NullOr(Schema.String),
+  error: Schema.NullOr(Schema.String),
+});
+export type OrchestratorMcpPipelineStep = typeof OrchestratorMcpPipelineStep.Type;
+
+export const OrchestratorMcpPipelineRun = Schema.Struct({
+  runId: PipelineRunId,
+  pipelineId: Schema.NullOr(PipelineId),
+  name: Schema.String,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  status: PipelineRunStatus,
+  pauseReason: Schema.NullOr(PipelinePauseReason),
+  error: Schema.NullOr(Schema.String),
+  currentStepIndex: NonNegativeInt,
+  steps: Schema.Array(OrchestratorMcpPipelineStep),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestratorMcpPipelineRun = typeof OrchestratorMcpPipelineRun.Type;
 
 export const OrchestratorMcpRequestSecretInput = Schema.Struct({
   label: TrimmedNonEmptyString.annotate({

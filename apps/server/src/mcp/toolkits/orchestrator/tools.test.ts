@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
@@ -26,4 +27,43 @@ it("refuses a t3_thread_update whose fields do not fit its action", () => {
   expect(Exit.isSuccess(decode({ action: "rename", title: "New", environmentId: undefined }))).toBe(
     true,
   );
+});
+
+it("decodes pipeline tool inputs and refuses empty or stale-shaped ones", () => {
+  const decodeStart = Schema.decodeUnknownExit(
+    OrchestratorToolkit.tools.start_pipeline.parametersSchema,
+  );
+  expect(
+    Exit.isSuccess(decodeStart({ pipeline: "Feature delivery", prompt: "Add dark mode" })),
+  ).toBe(true);
+  expect(
+    Exit.isSuccess(
+      decodeStart({
+        pipeline: "pipeline:starter:feature-delivery",
+        prompt: "Add dark mode",
+        worktree: true,
+        clientRequestId: "start-1",
+      }),
+    ),
+  ).toBe(true);
+  expect(Exit.isFailure(decodeStart({ pipeline: "Feature delivery", prompt: "  " }))).toBe(true);
+  expect(Exit.isFailure(decodeStart({ prompt: "Add dark mode" }))).toBe(true);
+
+  const decodeContinue = Schema.decodeUnknownExit(
+    OrchestratorToolkit.tools.continue_pipeline.parametersSchema,
+  );
+  expect(Exit.isSuccess(decodeContinue({ runId: "pipeline-run:one", stepIndex: 1 }))).toBe(true);
+  expect(Exit.isFailure(decodeContinue({ runId: "pipeline-run:one" }))).toBe(true);
+  expect(Exit.isFailure(decodeContinue({ runId: "pipeline-run:one", stepIndex: -1 }))).toBe(true);
+});
+
+// The Claude read-only allowlist is derived from these annotations (ClaudeAdapterV2.test.ts checks it).
+it("marks only the pipeline reads as read-only", () => {
+  const readonly = (name: keyof typeof OrchestratorToolkit.tools) =>
+    Context.get(OrchestratorToolkit.tools[name].annotations, Tool.Readonly);
+  expect(readonly("list_pipelines")).toBe(true);
+  expect(readonly("pipeline_status")).toBe(true);
+  expect(readonly("start_pipeline")).toBe(false);
+  expect(readonly("continue_pipeline")).toBe(false);
+  expect(readonly("cancel_pipeline")).toBe(false);
 });

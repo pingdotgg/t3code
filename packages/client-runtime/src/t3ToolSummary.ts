@@ -229,6 +229,29 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("scheduledTaskId")), "scheduled task"),
       );
       break;
+    case "pipeline-list":
+      label = phrase("Listed", "list", `pipelines ${times}`);
+      break;
+    case "pipeline-start":
+      label = phrase("Started", "start", quantity(countEntities(entityIds("runId")), "pipeline"));
+      break;
+    case "pipeline-status":
+      label = phrase("Checked", "check", `pipeline status ${times}`);
+      break;
+    case "pipeline-continue":
+      label = phrase(
+        "Continued",
+        "continue",
+        quantity(countEntities(entityIds("runId")), "pipeline run"),
+      );
+      break;
+    case "pipeline-cancel":
+      label = phrase(
+        "Requested cancellation of",
+        "cancel",
+        quantity(countEntities(entityIds("runId")), "pipeline run"),
+      );
+      break;
     case "schedule-run":
       label = phrase("Requested", "request", quantity(selected.length, "scheduled task run"));
       break;

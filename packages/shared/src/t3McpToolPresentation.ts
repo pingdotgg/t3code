@@ -15,6 +15,11 @@ export type T3McpToolSummaryAction =
   | "schedule-list"
   | "schedule-update"
   | "schedule-delete"
+  | "pipeline-list"
+  | "pipeline-start"
+  | "pipeline-status"
+  | "pipeline-continue"
+  | "pipeline-cancel"
   | "thread-create"
   | "thread-list"
   | "thread-read"
@@ -160,6 +165,17 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   delete_scheduled_task: tool(
     ["Delete", "Deleting", "Requested deletion of", "a scheduled task"],
     "schedule-delete",
+  ),
+  list_pipelines: tool(["List", "Listing", "Listed", "pipelines"], "pipeline-list"),
+  start_pipeline: tool(["Start", "Starting", "Started", "a pipeline"], "pipeline-start"),
+  pipeline_status: tool(["Check", "Checking", "Checked", "a pipeline run"], "pipeline-status"),
+  continue_pipeline: tool(
+    ["Continue", "Continuing", "Continued", "a pipeline run"],
+    "pipeline-continue",
+  ),
+  cancel_pipeline: tool(
+    ["Cancel", "Canceling", "Requested cancellation of", "a pipeline run"],
+    "pipeline-cancel",
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
   create_threads: tool(["Create", "Creating", "Created", "T3 threads"], "thread-create"),
