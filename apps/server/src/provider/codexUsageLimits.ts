@@ -135,8 +135,20 @@ export function codexRateLimitsToLimits(input: {
 
 export function codexRateLimitsToUpdate(
   snapshot: CodexRateLimitSnapshot,
+  previous?: CodexRateLimitSnapshot,
 ): ProviderUsageLimitsUpdate | undefined {
-  const windows = codexRateLimitsToWindows(snapshot);
+  const previousWindows = previous ? codexRateLimitsToWindows(previous) : [];
+  // Token ticks repeat session-cached limits that may predate an account probe or reset.
+  const windows = codexRateLimitsToWindows(snapshot).filter((window) => {
+    const existing = previousWindows.find((candidate) => candidate.id === window.id);
+    return (
+      !existing ||
+      existing.kind !== window.kind ||
+      existing.usedPercent !== window.usedPercent ||
+      existing.resetsAt !== window.resetsAt ||
+      existing.windowDurationMins !== window.windowDurationMins
+    );
+  });
   return windows.length > 0 ? { windows } : undefined;
 }
 
