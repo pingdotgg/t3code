@@ -254,14 +254,13 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { Kbd } from "../ui/kbd";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { useAtomValue } from "@effect/atom-react";
 import type { PipelineId } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { ComposerPipelinePicker } from "./ComposerPipelinePicker";
 import { draftPipelineSelectionAtom } from "./chatViewSend";
-import { activeDraftPipelineId, PIPELINE_TEXT_ONLY_HINT } from "./composerSend.logic";
-import { useDraftPipelines } from "./useDraftPipelines";
+import { PIPELINE_TEXT_ONLY_HINT } from "./composerSend.logic";
+import { useDraftPipelines, useSelectedDraftPipelineId } from "./useDraftPipelines";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
@@ -890,14 +889,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Pipelines start from new threads only (same gate as multiple models), and a pipeline and
   // several models exclude each other.
   const pipelineSelectionAtom = draftPipelineSelectionAtom(scopedThreadKey(routeThreadRef));
-  const draftPipelineSelection = useAtomValue(pipelineSelectionAtom);
-  const draftPipelines = useDraftPipelines(
+  const pipelinesEnabled = routeKind === "draft" && multipleModelSelections === null;
+  const draftPipelines = useDraftPipelines(environmentId, pipelinesEnabled);
+  const selectedPipelineId = useSelectedDraftPipelineId(
+    scopedThreadKey(routeThreadRef),
     environmentId,
-    routeKind === "draft" && multipleModelSelections === null,
+    pipelinesEnabled,
   );
-  const selectedPipelineId = draftPipelines.available
-    ? activeDraftPipelineId(draftPipelineSelection, environmentId)
-    : null;
   const pipelineActive = selectedPipelineId !== null;
   const selectedPipelineMissing =
     pipelineActive &&

@@ -49,7 +49,8 @@ export const ComposerPipelinePicker = memo(function ComposerPipelinePicker(props
 
   return (
     <div data-resting-controls-fixed className="flex shrink-0 items-center">
-      <Menu>
+      {/* Non-modal like the model picker: a modal menu locks page scroll and lays a backdrop over the composer. */}
+      <Menu modal={false}>
         <Tooltip>
           <TooltipTrigger
             render={

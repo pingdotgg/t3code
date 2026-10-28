@@ -6,6 +6,7 @@ import {
   newerPipelineRun,
   pipelineChildLiveState,
   pipelineStepModelLabel,
+  pipelineStepStatusDisplay,
 } from "./PipelineRunView.logic";
 
 type LiveShell = Parameters<typeof pipelineChildLiveState>[0];
@@ -34,6 +35,30 @@ describe("pipelineChildLiveState", () => {
     ).toBe("approval");
     expect(pipelineChildLiveState(shell({ hasPendingUserInput: true, runtime }))).toBe("input");
     expect(pipelineChildLiveState(shell({ runtime }))).toBe("working");
+  });
+});
+
+describe("pipelineStepStatusDisplay", () => {
+  it("shows one status: the thread's live state for a running step", () => {
+    expect(pipelineStepStatusDisplay({ status: "running" }, "working")).toEqual({
+      label: "Working",
+      tone: "working",
+    });
+    expect(pipelineStepStatusDisplay({ status: "running" }, "approval")).toEqual({
+      label: "Needs approval",
+      tone: "attention",
+    });
+  });
+
+  it("falls back to the step's own status", () => {
+    expect(pipelineStepStatusDisplay({ status: "running" }, null)).toEqual({
+      label: "Running",
+      tone: "default",
+    });
+    expect(pipelineStepStatusDisplay({ status: "completed" }, "working")).toEqual({
+      label: "Completed",
+      tone: "default",
+    });
   });
 });
 

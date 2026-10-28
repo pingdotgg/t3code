@@ -4,7 +4,6 @@ import {
   availablePipelineActions,
   pipelineFeedingStep,
   pipelineRunStatusLabel,
-  pipelineStepStatusLabel,
   stepName,
 } from "@t3tools/client-runtime/pipeline-run-presentation";
 import {
@@ -49,11 +48,12 @@ import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { AgentElapsed } from "./AgentElapsed";
+import { useChatCanvas } from "./ChatCanvasContext";
 import {
-  PIPELINE_CHILD_LIVE_STATE_LABEL,
   newerPipelineRun,
   pipelineChildLiveState,
   pipelineStepModelLabel,
+  pipelineStepStatusDisplay,
 } from "./PipelineRunView.logic";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 
@@ -101,9 +101,15 @@ export function PipelineRunView(props: {
     }),
   );
   const run = query.data?.run ?? null;
+  // The same scroller as the message timeline, so the chat canvas insets it beside the details card.
+  const registerTimeline = useChatCanvas()?.registerTimeline;
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto" data-testid="pipeline-run-view">
-      <div className="chat-content-lane px-4 py-6 sm:px-0">
+    <div
+      ref={registerTimeline}
+      className="messages-timeline-scroll scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto"
+      data-testid="pipeline-run-view"
+    >
+      <div className="chat-content-lane py-6">
         {run === null ? (
           <p className="text-sm text-muted-foreground">
             {query.error ?? "Loading pipeline run..."}
@@ -346,7 +352,7 @@ function PipelineStepRow(props: {
       ? null
       : pipelineStepModelLabel(definitionStep.modelSelection, props.providerEntries);
   const isCurrent = step.index === run.currentStepIndex && run.status !== "completed";
-  const statusLabel = pipelineStepStatusLabel(step);
+  const status = pipelineStepStatusDisplay(step, liveState);
   const childThreadId = step.childThreadId;
 
   return (
@@ -367,12 +373,15 @@ function PipelineStepRow(props: {
             Attempt {step.attempt}
           </Badge>
         ) : null}
-        {liveState === null ? null : (
-          <Badge variant={liveState === "working" ? "info" : "warning"} size="sm">
-            {PIPELINE_CHILD_LIVE_STATE_LABEL[liveState]}
-          </Badge>
-        )}
-        <span className="shrink-0 text-xs text-muted-foreground">{statusLabel}</span>
+        <span
+          className={cn(
+            "shrink-0 text-xs text-muted-foreground",
+            status.tone === "working" && "text-info-foreground",
+            status.tone === "attention" && "text-warning-foreground",
+          )}
+        >
+          {status.label}
+        </span>
         {step.startedAt ? (
           <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
             <AgentElapsed

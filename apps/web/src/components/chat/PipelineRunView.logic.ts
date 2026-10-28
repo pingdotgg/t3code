@@ -1,7 +1,8 @@
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
-import type { ModelSelection, PipelineRun } from "@t3tools/contracts";
+import { pipelineStepStatusLabel } from "@t3tools/client-runtime/pipeline-run-presentation";
+import type { ModelSelection, PipelineRun, PipelineRunStep } from "@t3tools/contracts";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -35,7 +36,7 @@ export function pipelineStepModelLabel(
 
 export type PipelineChildLiveState = "approval" | "input" | "working";
 
-export const PIPELINE_CHILD_LIVE_STATE_LABEL: Record<PipelineChildLiveState, string> = {
+const PIPELINE_CHILD_LIVE_STATE_LABEL: Record<PipelineChildLiveState, string> = {
   approval: "Needs approval",
   input: "Needs input",
   working: "Working",
@@ -52,6 +53,29 @@ export function pipelineChildLiveState(
   if (shell.hasPendingApprovals) return "approval";
   if (shell.hasPendingUserInput) return "input";
   return threadRuntimeIsActive(shell.runtime) ? "working" : null;
+}
+
+export interface PipelineStepStatusDisplay {
+  readonly label: string;
+  readonly tone: "default" | "working" | "attention";
+}
+
+/**
+ * The one status a step row shows. A running step reports what its thread is doing, with the
+ * sidebar's wording; every other step, and a running step whose thread is idle or not loaded,
+ * reports the step's own status.
+ */
+export function pipelineStepStatusDisplay(
+  step: Pick<PipelineRunStep, "status">,
+  liveState: PipelineChildLiveState | null,
+): PipelineStepStatusDisplay {
+  if (step.status === "running" && liveState !== null) {
+    return {
+      label: PIPELINE_CHILD_LIVE_STATE_LABEL[liveState],
+      tone: liveState === "working" ? "working" : "attention",
+    };
+  }
+  return { label: pipelineStepStatusLabel(step), tone: "default" };
 }
 
 /** The run with the later `updatedAt`; a command's result can arrive before the subscription's. */

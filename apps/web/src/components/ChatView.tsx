@@ -370,6 +370,7 @@ import {
 import { useDraftHeroLayoutTransition } from "./chat/useDraftHeroLayoutTransition";
 import { useLocalDispatchState } from "./chat/useLocalDispatchState";
 import { draftFanoutSelectionsAtom, draftSendState } from "./chat/chatViewSend";
+import { useSelectedDraftPipelineId } from "./chat/useDraftPipelines";
 import {
   isCompactCommandMessage,
   type LocalThreadErrorEntry,
@@ -724,6 +725,12 @@ export default function ChatView(props: ChatViewProps) {
   const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
   const multipleModelSelections = useAtomValue(fanoutSelectionsAtom);
+  const draftPipelineSelected =
+    useSelectedDraftPipelineId(
+      routeThreadKey,
+      environmentId,
+      routeKind === "draft" && multipleModelSelections === null,
+    ) !== null;
   const setMultipleModelSelections = (
     selections: SetStateAction<ReadonlyArray<ModelSelection> | null>,
   ) => {
@@ -3804,7 +3811,8 @@ export default function ChatView(props: ChatViewProps) {
                                       : undefined
                                   }
                                   availableEnvironments={logicalProjectEnvironments}
-                                  {...(isServerThread
+                                  // Each pipeline step carries its own permissions.
+                                  {...(isServerThread || draftPipelineSelected
                                     ? {}
                                     : {
                                         trailing: (
