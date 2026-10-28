@@ -1,5 +1,6 @@
 import * as Dialog from "./ui/Dialog";
 import { useContext, useEffect, useEffectEvent, useState } from "react";
+import { Platform } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import {
@@ -68,6 +69,7 @@ function ResolvedFilePreview(props: {
   const [items] = useState(() => filePreviewGallery(props.source, []));
   const selectedKey = filePreviewKey(props.source);
   const selectedIndex = items.findIndex((item) => filePreviewKey(item) === selectedKey);
+  const progressiveGallery = Platform.OS === "ios";
   // Undefined while resolving, null once it cannot be.
   const [uris, setUris] = useState<readonly (string | null | undefined)[]>(() =>
     items.map((item) => ("uri" in item ? item.uri : undefined)),
@@ -94,8 +96,7 @@ function ResolvedFilePreview(props: {
         },
         (error: unknown) => {
           if (controller.signal.aborted) return;
-          // Only the opened item failing closes the preview; a failed sibling shows as failed.
-          if (index !== selectedIndex) return settle(index, null);
+          if (progressiveGallery && index !== selectedIndex) return settle(index, null);
           controller.abort();
           onResolutionError(
             error instanceof PreviewResolutionError
@@ -109,10 +110,11 @@ function ResolvedFilePreview(props: {
       controller.abort();
       for (const dispose of leases) dispose();
     };
-  }, [items, selectedIndex]);
+  }, [items, selectedIndex, progressiveGallery]);
   const selected = { ...items[selectedIndex]!, name: filePreviewName(items[selectedIndex]!) };
   if (selected.kind === "image") {
-    // Images open at once so the viewer shows progress and a close button while URLs resolve.
+    // Android's viewer resets image gestures when its sources change during a presentation.
+    if (!progressiveGallery && uris.some((uri) => uri === undefined)) return null;
     const images = items.map((item, index) => {
       const uri = uris[index];
       return {

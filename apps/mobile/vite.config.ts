@@ -54,6 +54,7 @@ const babel: {
   ) => Promise<{ code?: string | null; map?: object | null } | null>;
 } = require("@babel/core");
 const babelConfig = require("./babel.config.js")({ cache: () => {} });
+const testPlatform = process.env.T3_MOBILE_TEST_PLATFORM === "android" ? "android" : "ios";
 
 export default defineConfig({
   test: {
@@ -76,7 +77,7 @@ export default defineConfig({
         extends: true,
         plugins: [
           {
-            name: "mobile-release-react-compiler",
+            name: `mobile-release-react-compiler-${testPlatform}`,
             enforce: "pre",
             async transform(code, id) {
               if (
@@ -100,7 +101,7 @@ export default defineConfig({
                 caller: {
                   name: "metro",
                   bundler: "metro",
-                  platform: "ios",
+                  platform: testPlatform,
                   isDev: false,
                   isServer: false,
                   isNodeModule: false,

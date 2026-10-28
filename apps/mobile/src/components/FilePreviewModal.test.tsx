@@ -8,8 +8,10 @@ const harness = vi.hoisted(() => ({
   alert: vi.fn(),
   previews: [] as unknown[],
   mounts: 0,
+  platform: { OS: process.env.T3_MOBILE_TEST_PLATFORM === "android" ? "android" : "ios" },
 }));
 
+vi.mock("react-native", () => ({ Platform: harness.platform }));
 vi.mock("../state/assets", () => ({ refreshAssetUrl: harness.refreshAssetUrl }));
 vi.mock("../lib/localAttachmentPreview", () => ({ loadLocalAttachmentPreview: vi.fn() }));
 vi.mock("../lib/attachmentDownload", () => ({
@@ -40,7 +42,12 @@ const image = (url: string): FilePreviewItem => ({
   resource: { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: "/repo", url },
 });
 
-async function openGallery(selected: FilePreviewItem, gallery: readonly FilePreviewItem[]) {
+async function openGallery(
+  selected: FilePreviewItem,
+  gallery: readonly FilePreviewItem[],
+  platform = harness.platform.OS,
+) {
+  harness.platform.OS = platform;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   harness.previews.length = 0;
   harness.mounts = 0;
@@ -55,25 +62,31 @@ async function openGallery(selected: FilePreviewItem, gallery: readonly FilePrev
   return { onRequestClose, [Symbol.asyncDispose]: () => act(async () => root.unmount()) };
 }
 
-it("opens the selected image while a gallery sibling is still resolving", async () => {
+it("keeps the gallery stable while a sibling is still resolving", async () => {
+  const platform = harness.platform.OS;
   const slow = Promise.withResolvers<string>();
   harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) =>
     resource.url.endsWith("slow.png") ? slow.promise : "https://signed.test/a.png",
   );
   const selected = image("https://github.com/a.png");
-  await using _preview = await openGallery(selected, [
-    image("https://github.com/slow.png"),
+  await using _preview = await openGallery(
     selected,
-  ]);
+    [image("https://github.com/slow.png"), selected],
+    platform,
+  );
 
-  expect(harness.previews.at(-1)).toMatchObject({
-    kind: "image",
-    selectedIndex: 1,
-    images: [
-      expect.not.objectContaining({ uri: expect.anything() }),
-      { uri: "https://signed.test/a.png" },
-    ],
-  });
+  if (platform === "ios") {
+    expect(harness.previews.at(-1)).toMatchObject({
+      kind: "image",
+      selectedIndex: 1,
+      images: [
+        expect.not.objectContaining({ uri: expect.anything() }),
+        { uri: "https://signed.test/a.png" },
+      ],
+    });
+  } else {
+    expect(harness.previews).toEqual([]);
+  }
   await act(async () => slow.resolve("https://signed.test/slow.png"));
   expect(harness.previews.at(-1)).toMatchObject({
     selectedIndex: 1,
@@ -82,17 +95,25 @@ it("opens the selected image while a gallery sibling is still resolving", async 
   expect(harness.mounts).toBe(1);
 });
 
-it("opens the selected image when a gallery sibling cannot be resolved", async () => {
+it("handles a failed sibling without leaving a pending page", async () => {
+  const platform = harness.platform.OS;
   harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) => {
     if (resource.url.endsWith("missing.png")) throw new Error("not found");
     return `https://signed.test/${resource.url.split("/").pop()}`;
   });
   const selected = image("https://github.com/a.png");
-  await using preview = await openGallery(selected, [
+  await using preview = await openGallery(
     selected,
-    image("https://github.com/missing.png"),
-    image("https://github.com/c.png"),
-  ]);
+    [selected, image("https://github.com/missing.png"), image("https://github.com/c.png")],
+    platform,
+  );
+
+  if (platform === "android") {
+    expect(preview.onRequestClose).toHaveBeenCalledOnce();
+    expect(harness.alert).toHaveBeenCalledOnce();
+    expect(harness.previews).toEqual([]);
+    return;
+  }
 
   expect(preview.onRequestClose).not.toHaveBeenCalled();
   expect(harness.alert).not.toHaveBeenCalled();
