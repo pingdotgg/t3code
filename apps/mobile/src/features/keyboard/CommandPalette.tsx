@@ -393,7 +393,7 @@ export function CommandPalette(props: {
         ["files", "Go to file", ["open", "files", "browse", "search"]],
         ["terminal", "Open terminal", ["shell", "console"]],
         ["review", "Review changes", ["diff", "git", "pull request"]],
-        ["copyThreadReference", "Copy PR link or thread ID", ["reference", "clipboard"]],
+        ["copyThreadReference", "Copy PR link or thread", ["reference", "clipboard"]],
       ] as const;
       actions.push(
         ...threadActions.map(([command, title, searchTerms]) => ({

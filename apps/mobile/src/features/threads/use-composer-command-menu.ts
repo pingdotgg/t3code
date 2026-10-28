@@ -18,12 +18,11 @@ const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
 const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
-import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import {
-  environmentComposerContext,
-  pullRequestComposerContext,
-  threadComposerContext,
-} from "../../lib/composerContext";
+  formatComposerContextReference,
+  threadContextRecord,
+} from "@t3tools/shared/composerContextReferences";
+import { environmentComposerContext, pullRequestComposerContext } from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
   getComposerDraftSnapshot,
@@ -528,7 +527,7 @@ export function useComposerCommandMenu({
           candidate.id === item.thread.threadId,
       );
       if (!shell) return;
-      const record = threadComposerContext(item.thread, shell.title);
+      const record = threadContextRecord(item.thread, shell.title);
       const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
       const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
       if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {

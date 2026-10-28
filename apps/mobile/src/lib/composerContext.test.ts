@@ -4,8 +4,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   ComposerContextId,
-  EnvironmentId,
-  ThreadId,
   type OrchestrationMessageContext,
   type ServerProviderSkill,
 } from "@t3tools/contracts";
@@ -28,7 +26,6 @@ import {
   uploadedComposerContext,
   serializeComposerMessageForServer,
   pullRequestComposerContext,
-  threadComposerContext,
 } from "./composerContext";
 
 const terminal = {
@@ -395,22 +392,5 @@ describe("host context compatibility", () => {
     expect(message.text).toContain(pr.pullRequest!.url);
     expect(serializeComposerMessageForServer(text, context, true)).toEqual({ text, context });
     expect(context.records).toEqual([terminal, review, pr]);
-  });
-});
-
-describe("threadComposerContext", () => {
-  it("mints a schema-valid, stable id for agent-spawned thread ids", () => {
-    const environmentId = EnvironmentId.make("env-1");
-    const ref = {
-      environmentId,
-      threadId: ThreadId.make(`thread:mcp:${encodeURIComponent("3f2b:delegate")}:review:0`),
-    };
-    const contextId = threadComposerContext(ref, "Review").contextId;
-
-    expect(() => ComposerContextId.make(contextId)).not.toThrow();
-    expect(threadComposerContext(ref, "Renamed").contextId).toBe(contextId);
-    expect(
-      threadComposerContext({ environmentId, threadId: ThreadId.make("abc-123") }, "t").contextId,
-    ).toBe("thread_abc-123");
   });
 });

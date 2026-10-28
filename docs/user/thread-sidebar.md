@@ -210,8 +210,11 @@ palette.
 
 Use **Settings → Keybindings** to find or customize shortcuts for searching files
 and copying a thread reference. A copied reference uses the thread's pull request
-link when available, otherwise its thread ID. See [keybindings](./keybindings.md)
-for custom configuration.
+link when available, otherwise the thread itself, which pastes into a composer as
+a thread chip. To copy the thread even when it has a PR, choose **Copy → Thread**
+from its context menu, or **Copy thread** from its long-press menu on mobile.
+**Thread ID** copies the bare ID for scripts and the `t3` CLI. See
+[keybindings](./keybindings.md) for custom configuration.
 
 ## Inspect agent work
 

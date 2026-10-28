@@ -6,6 +6,7 @@ import {
   type ElementContextDetails,
   type EnvironmentId,
   type KnownComposerContextRecord,
+  type ScopedThreadRef,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
@@ -72,6 +73,20 @@ export function sanitizeComposerContextLabel(label: string, kind: ComposerContex
     .trim()
     .slice(0, COMPOSER_CONTEXT_LABEL_MAX_CHARS);
   return cleaned.length > 0 ? cleaned : kind;
+}
+
+/** One record per thread, so re-attaching a renamed thread reuses its chip. */
+export function threadContextRecord(ref: ScopedThreadRef, title: string): ThreadContextRecord {
+  const label = sanitizeComposerContextLabel(title, "thread");
+  return {
+    version: 1,
+    kind: "thread",
+    contextId: toKindScopedComposerContextId("thread", ref.threadId),
+    label,
+    environmentId: ref.environmentId,
+    threadId: ref.threadId,
+    title: label,
+  };
 }
 
 export function formatComposerContextReference(reference: {

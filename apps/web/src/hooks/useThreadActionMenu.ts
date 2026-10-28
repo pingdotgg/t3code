@@ -22,6 +22,8 @@ import {
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { copyThreadReference } from "../lib/copyThreadReference";
+import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
@@ -268,6 +270,9 @@ export function useThreadActionMenu(input: {
           if (thread.branch) {
             copyBranchToClipboard(thread.branch, { branch: thread.branch });
           }
+          return;
+        case "copy-thread":
+          void copyThreadReference(threadChipCopyTarget(threadRef, thread.title));
           return;
         case "copy-thread-id":
           copyThreadIdToClipboard(thread.id, { threadId: thread.id });

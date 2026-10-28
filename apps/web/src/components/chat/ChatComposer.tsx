@@ -134,7 +134,10 @@ import {
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../../lib/terminalContext";
-import { toKindScopedComposerContextId } from "@t3tools/shared/composerContextReferences";
+import {
+  threadContextRecord,
+  toKindScopedComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 import {
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
@@ -168,7 +171,6 @@ import {
   reviewCommentContextRecord,
   terminalContextReference,
   terminalContextRecord,
-  threadContextRecord,
   threadContextReference,
   environmentContextRecord,
   environmentContextReference,

@@ -99,8 +99,8 @@ import {
   buildMessageContext,
   environmentContextRecord,
   terminalContextReference,
-  threadContextRecord,
 } from "./lib/composerContextRecords";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   copiedComposerAttachmentFile,
   rememberCopiedComposerAttachments,
