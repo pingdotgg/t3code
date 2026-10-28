@@ -314,7 +314,7 @@ function pullRequestWatchTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
   return (pullRequests ?? []).flatMap((link) =>
-    // The watch reactor ends a merged PR's watch without waking the agent, so it holds nothing.
+    // A merged PR's watch ends at the next sweep, whose wake starts its own run, so it holds nothing.
     link.watch === undefined ||
     link.source === "stack-dismissed" ||
     link.snapshot?.state === "merged"
