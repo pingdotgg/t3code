@@ -63,7 +63,6 @@ import {
   readTimelinePosition,
   type RememberedTimelinePosition,
   rememberTimelinePosition,
-  timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -289,8 +288,6 @@ interface MessagesTimelineProps {
   onIsAtEndChange: (isAtEnd: boolean) => void;
   /** Disable while reading history to prevent LegendList re-pinning near the bottom. */
   liveFollowEnabled: boolean;
-  onContentOverflowChange?: (overflows: boolean) => void;
-  onToolOutputCollapsedAtEnd?: () => void;
   /** Receives the list's viewport when it mounts; the returned cleanup runs when it goes away. */
   onViewportAttach?: (viewport: TimelineViewport) => () => void;
   /** The footer's content grew, such as a new queued turn or status line. */
@@ -388,9 +385,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
   onIsAtEndChange,
-  onContentOverflowChange,
   liveFollowEnabled,
-  onToolOutputCollapsedAtEnd,
   onViewportAttach,
   onFooterGrow,
   hideEmptyPlaceholder = false,
@@ -465,7 +460,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const findActive = findExpanded;
 
   const disclosurePinsEndRef = useRef(false);
-  const disclosureCollapsedRef = useRef(false);
   const pinDisclosureToEnd = () => {
     if (!disclosurePinsEndRef.current) return;
     const element = listRef.current?.getScrollableNode();
@@ -488,19 +482,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
         setDisclosureToggleSettling(false);
         disclosureSettleFrameRef.current = null;
         disclosureSettleSecondFrameRef.current = null;
-        if (
-          disclosureCollapsedRef.current &&
-          resolveTimelineIsAtEnd(listRef.current?.getState()) === true
-        ) {
-          onToolOutputCollapsedAtEnd?.();
-        }
       });
     });
   };
 
-  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string, collapsed = false) => {
+  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string) => {
     disclosureAnchorKeyRef.current = anchorKey;
-    disclosureCollapsedRef.current = collapsed;
     disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
@@ -525,7 +512,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
-    suspendEndScrollMaintenanceForDisclosure(anchorKey, expandedWorkGroupIds.has(groupId));
+    suspendEndScrollMaintenanceForDisclosure(anchorKey);
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
       if (next.has(groupId)) {
@@ -847,26 +834,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     size: true,
     shouldRestorePosition: shouldRestoreVisibleContentPosition,
   };
-  const measureContentOverflow = () =>
-    timelineContentOverflowsViewport(listRef.current?.getState?.(), {
-      composerInset: contentInsetEndAdjustment,
-      anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
-    });
-  // Read next frame, after LegendList's layout effects settle row positions.
-  const contentOverflowFrameRef = useRef<number | null>(null);
-  const cancelContentOverflowFrame = () => {
-    if (contentOverflowFrameRef.current !== null) {
-      cancelAnimationFrame(contentOverflowFrameRef.current);
-      contentOverflowFrameRef.current = null;
-    }
-  };
-  const reportContentOverflow = () => {
-    if (!onContentOverflowChange || contentOverflowFrameRef.current !== null) return;
-    contentOverflowFrameRef.current = requestAnimationFrame(() => {
-      contentOverflowFrameRef.current = null;
-      onContentOverflowChange(measureContentOverflow());
-    });
-  };
 
   const refreshMinimap = useStableCallback(() => {
     const state = listRef.current?.getState?.();
@@ -972,7 +939,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (isAtEnd !== undefined && !citationPositioning) {
       onIsAtEndChange(isAtEnd);
     }
-    reportContentOverflow();
     scheduleMinimapRefresh();
   };
 
@@ -981,7 +947,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       queueMicrotask(pinDisclosureToEnd);
       scheduleDisclosureSettle();
     }
-    reportContentOverflow();
     scheduleMinimapRefresh();
   };
 
@@ -1149,8 +1114,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
-  // Stable so the list attaches once per mount. A re-attach reports no overflow for a frame,
-  // which flips the resting composer, resizes it, and re-renders this list again.
+  // Stable so the list attaches once per mount, not on every render.
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
@@ -1182,14 +1146,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return () => {
       stopListeningToContentSize?.();
       stopRememberingRelease?.();
-      onContentOverflowChange?.(false);
       if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);
       detachViewport?.();
       viewport?.dispose();
       if (viewportRef.current === viewport) viewportRef.current = null;
       // Refresh frames only read the list; disclosure frames still run so the
       // settle flag clears.
-      cancelContentOverflowFrame();
       if (minimapRefreshFrameRef.current !== null) {
         cancelAnimationFrame(minimapRefreshFrameRef.current);
         minimapRefreshFrameRef.current = null;
@@ -1378,8 +1340,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
               maintainScrollAtEndThreshold={1}
               onScroll={handleScroll}
               onItemSizeChanged={handleItemSizeChanged}
-              // A viewport resize changes how much of the content fits.
-              onLayout={reportContentOverflow}
               className={cn(
                 "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
                 topFadeEnabled && "topbar-scroll-fade",

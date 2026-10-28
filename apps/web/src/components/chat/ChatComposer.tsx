@@ -1,7 +1,11 @@
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
-import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
+import {
+  resolveCompatibleRuntimeMode,
+  runtimeModeConfig,
+  runtimeModeOptions as runtimeModes,
+} from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -56,7 +60,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal, flushSync } from "react-dom";
+import { flushSync } from "react-dom";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -86,6 +90,7 @@ import {
 import {
   isInsideCollapsedComposerControls,
   isInsideRestingComposerControlScope,
+  markOpenToPermissions,
 } from "./composerEventScope";
 import {
   type ComposerFileAttachment,
@@ -102,7 +107,6 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
-import { useComposerFocusState } from "./useComposerFocusState";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   reconcileAttachmentContextReferences,
@@ -140,7 +144,6 @@ import {
 import {
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
-  shouldUseRestingComposerLayout,
 } from "../composerFooterLayout";
 import {
   type ComposerCitationCommentRequest,
@@ -221,20 +224,9 @@ import {
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
-import { isTimelineScrollTarget } from "./timelineScrollTarget";
-import {
-  createComposerScrollGestureState,
-  recordComposerScrollGestureEvent,
-  shouldCollapseComposerForScrollKey,
-  resetComposerScrollGesture,
-  suppressActiveComposerScrollGesture,
-} from "./composerScrollGesture";
 import { observeResize } from "~/lib/observeResize";
 
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
-
-const COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX = 24;
-const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
 import { toastManager } from "../ui/toast";
 import { PlayIcon } from "lucide-react";
 import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
@@ -297,8 +289,6 @@ const runtimeModeOptions = runtimeModes.map((mode) => ({ mode, ...runtimeModeCon
 export interface ChatComposerHandle {
   focusAtEnd: () => void;
   focusAt: (cursor: number) => void;
-  restoreAfterTimelineReachedEnd: () => void;
-  collapseForTimelineScrollKey: (key: string) => void;
   addDroppedFiles: (files: File[]) => void;
   addDroppedFolders: (folders: File[]) => void;
   hasPendingAttachments: () => boolean;
@@ -424,6 +414,7 @@ export interface ChatComposerProps {
   threadSyncPhase: ThreadSyncPhase | null;
 
   runtimeMode: RuntimeMode;
+  defaultRuntimeMode?: RuntimeMode;
   interactionMode: ProviderInteractionMode;
 
   lockedProvider: ProviderDriverKind | null;
@@ -447,14 +438,9 @@ export interface ChatComposerProps {
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
-  restingControlsHost: HTMLDivElement | null;
-  restingControlsHaveLeadingContext: boolean;
-  onRestingControlsVisibilityChange: (visible: boolean) => void;
-  getTimelineScrollableNode: () => HTMLElement | null;
-  isTimelineAtLogicalEnd: () => boolean;
-  timelineOverflows: boolean;
   onComposerOverlayHeightChange: (height: number) => void;
-  onRestingChange: (resting: boolean) => void;
+  /** The new-thread strip names the permissions, so the controls row hides its chip. */
+  permissionsShownInStrip: boolean;
 
   promptRef: React.RefObject<string>;
   composerImagesRef: React.RefObject<ComposerImageAttachment[]>;
@@ -575,14 +561,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestProjectId,
     pullRequestRepository,
     threadPullRequests,
-    restingControlsHost,
-    restingControlsHaveLeadingContext,
-    onRestingControlsVisibilityChange,
-    getTimelineScrollableNode,
-    isTimelineAtLogicalEnd,
-    timelineOverflows,
     onComposerOverlayHeightChange,
-    onRestingChange,
     promptRef,
     composerRef,
     composerImagesRef,
@@ -725,7 +704,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const {
     pendingSnapShotAnimations,
     pendingSnapShotIds,
-    pendingSnapShotIdSet,
     uncommittedSnapShotIds,
     standaloneComposerImages,
   } = useComposerImageGroups(attachmentDraftTarget, composerImages, composerPreviewAnnotations);
@@ -923,16 +901,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : undefined;
   const resolvedCompactDisabledReason =
     compactDisabledReason ?? (noProviderAvailable ? "Compacting is unavailable right now" : null);
-  const supportedRuntimeModes = selectedProviderEntry?.snapshot.supportedRuntimeModes;
-  const compatibleRuntimeModeOptions =
-    supportedRuntimeModes && supportedRuntimeModes.length > 0
-      ? runtimeModeOptions.filter((option) => supportedRuntimeModes.includes(option.mode))
-      : runtimeModeOptions;
-  const compatibleRuntimeMode = compatibleRuntimeModeOptions.some(
-    (option) => option.mode === runtimeMode,
-  )
-    ? runtimeMode
-    : (compatibleRuntimeModeOptions[0]?.mode ?? runtimeMode);
+  const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
+    resolveCompatibleRuntimeMode(
+      runtimeMode,
+      selectedProviderEntry?.snapshot.supportedRuntimeModes,
+    );
+  const compatibleRuntimeModeOptions = runtimeModeOptions.filter((option) =>
+    compatibleRuntimeModes.includes(option.mode),
+  );
 
   const providerSendBlockReason = getAntigravitySendBlockReason(
     selectedProviderEntry?.snapshot,
@@ -1029,18 +1005,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
-  const {
-    isComposerFocused,
-    setIsComposerFocused,
-    isComposerScrollCollapsed,
-    setIsComposerScrollCollapsed,
-    restoreAfterTimelineReachedEnd,
-  } = useComposerFocusState();
+  const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
     null,
@@ -1070,10 +1039,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandFrameRef = useRef<number | null>(null);
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
-  const composerScrollCollapseTimeoutRef = useRef<number | null>(null);
-  const composerScrollCollapseEligibleRef = useRef(false);
-  const windowRefocusInFlightRef = useRef(false);
-  const composerScrollGestureRef = useRef(createComposerScrollGestureState());
   const pendingThreadImportsRef = useRef<Map<string, number>>(new Map());
   const isRevertingCheckpointRef = useRef(isRevertingCheckpoint);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed checkpoint revert flag to a ref read by async handlers
@@ -1183,8 +1148,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeComposerMenuItemRef.current = activeComposerMenuItem;
   });
 
-  const nonPersistedComposerImageIdSet = new Set(nonPersistedComposerImageIds);
-
   const isComposerApprovalState = activePendingApproval !== null;
   // A send declines the approvals shown here to redirect the agent, so it steers the waiting
   // turn instead of queueing behind it. Approvals the typing guard holds stay unseen and pending.
@@ -1236,7 +1199,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hiddenBlockCount: restingControlsHiddenBlockCount,
     iconOnlyBlockCount: restingControlsIconOnlyBlockCount,
     controlsVisible: restingControlsVisible,
-  } = useRestingComposerControlsLayout(restingControlsHost ?? inlineRestingControlsHost);
+  } = useRestingComposerControlsLayout(inlineRestingControlsHost);
   const {
     attachControls: attachExpandedComposerControls,
     hiddenBlockCount: expandedControlsHiddenBlockCount,
@@ -1524,43 +1487,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
     setIsDragOverComposer(false);
-    setIsComposerScrollCollapsed(false);
   }
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes composer form resizes to switch the footer and primary actions between compact layouts
   useLayoutEffect(() => {
     const composerForm = composerFormRef.current;
     if (!composerForm) return;
-    const measureComposerFormWidth = () => composerForm.clientWidth;
-    const measureFooterCompactness = () => {
-      const composerFormWidth = measureComposerFormWidth();
-      const footerCompact = shouldUseCompactComposerFooter(composerFormWidth, {
-        hasWideActions: composerFooterHasWideActions,
-      });
-      const primaryActionsCompact =
-        footerCompact &&
-        shouldUseCompactComposerPrimaryActions(composerFormWidth, {
-          hasWideActions: composerFooterHasWideActions,
-        });
-      return {
-        primaryActionsCompact,
-        footerCompact,
-      };
+    const measurePrimaryActionsCompact = () => {
+      const composerFormWidth = composerForm.clientWidth;
+      const options = { hasWideActions: composerFooterHasWideActions };
+      return (
+        shouldUseCompactComposerFooter(composerFormWidth, options) &&
+        shouldUseCompactComposerPrimaryActions(composerFormWidth, options)
+      );
     };
 
-    const initialCompactness = measureFooterCompactness();
-    setIsComposerPrimaryActionsCompact(initialCompactness.primaryActionsCompact);
-    setIsComposerFooterCompact(initialCompactness.footerCompact);
+    setIsComposerPrimaryActionsCompact(measurePrimaryActionsCompact());
     return observeResize(composerForm, () => {
-      const nextCompactness = measureFooterCompactness();
-      setIsComposerPrimaryActionsCompact((previous) =>
-        previous === nextCompactness.primaryActionsCompact
-          ? previous
-          : nextCompactness.primaryActionsCompact,
-      );
-      setIsComposerFooterCompact((previous) =>
-        previous === nextCompactness.footerCompact ? previous : nextCompactness.footerCompact,
-      );
+      setIsComposerPrimaryActionsCompact(measurePrimaryActionsCompact());
     });
   }, [composerFooterHasWideActions]);
 
@@ -1631,16 +1575,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     syncComposerDraftPersistedAttachments,
   ]);
 
-  const expandComposerForEditorChange = () => {
-    suppressActiveComposerScrollGesture(
-      composerScrollGestureRef.current,
-      window.performance.now(),
-      COMPOSER_SCROLL_GESTURE_RESET_MS,
-    );
-    setIsComposerScrollCollapsed(false);
-  };
-  const expandComposerForEditorChangeStable = useStableCallback(expandComposerForEditorChange);
-
   const retainedContextPayloads = useRetainedContextPayloads(composerDraftTargetKey);
 
   const onPromptChange = (
@@ -1650,7 +1584,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cursorAdjacentToMention: boolean,
     contextIds: string[],
   ) => {
-    expandComposerForEditorChange();
     refreshWorkspaceSnapshotOnTyping();
     if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
@@ -2319,72 +2252,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     expandMobileComposer: expandMobileComposerStable,
   });
   const hasBlockingComposerTopDrawer = pendingUserInputs.length > 0;
-  const hasImageAttachmentAttention = standaloneComposerImages.some((image) => {
-    const upload = uploadsByImageId[image.id];
-    const failedInCurrentEnvironment =
-      supportsAttachmentUploads &&
-      upload?.status === "failed" &&
-      upload.environmentId === environmentId;
-    return nonPersistedComposerImageIdSet.has(image.id) && !failedInCurrentEnvironment;
-  });
-  const composerHasExpandedChrome =
-    showComposerTopDrawer ||
-    composerMenuOpen ||
-    isStashMenuOpen ||
-    isDragOverComposer ||
-    isPreparingWorktree ||
-    showProviderUnavailable ||
-    projectSelectionRequired ||
-    environmentUnavailable !== null ||
-    composerSubmissionError !== null ||
-    providerInputSubmissionError !== null ||
-    hasImageAttachmentAttention ||
-    preparingComposerImages.length > 0;
-  const isComposerResting = shouldUseRestingComposerLayout({
-    isExistingThread: routeKind === "server" && activeThreadId !== null,
-    isMobileViewport,
-    isScrollCollapsed: isComposerScrollCollapsed,
-    hasExpandedChrome: composerHasExpandedChrome,
-    hasMultilinePrompt,
-    timelineOverflows,
-  });
-  const expandedComposerImages = isComposerResting
-    ? standaloneComposerImages.filter((image) => pendingSnapShotIdSet.has(image.id))
-    : standaloneComposerImages;
-  const composerControlsCollapsed = isComposerResting || isComposerCollapsedMobile;
-  const showInlineRestingControls = composerControlsCollapsed && restingControlsHost === null;
-  const composerControlsVisibleInStrip =
-    composerControlsCollapsed && restingControlsHost !== null && restingControlsVisible;
-  const composerControlsHidden = composerControlsCollapsed && !restingControlsVisible;
+  const composerControlsCollapsed = isComposerCollapsedMobile;
+  // The collapsed mobile web composer keeps a second controls row inside the card.
+  const showInlineRestingControls = isComposerCollapsedMobile;
+  const composerControlsHidden = showInlineRestingControls && !restingControlsVisible;
   if (composerControlsHidden && isComposerModelPickerOpen) {
     setIsComposerModelPickerOpen(false);
   }
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports whether resting controls show in the strip to ChatView before paint
-  useLayoutEffect(() => {
-    onRestingControlsVisibilityChange(composerControlsVisibleInStrip);
-  }, [composerControlsVisibleInStrip, onRestingControlsVisibilityChange]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the resting state to ChatView's ref before paint
-  useLayoutEffect(() => {
-    onRestingChange(isComposerResting);
-  }, [isComposerResting, onRestingChange]);
-  const [restingActionsElement, setRestingActionsElement] = useState<HTMLDivElement | null>(null);
-  const [restingActionsWidth, setRestingActionsWidth] = useState<number | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes resizes of the resting actions DOM node to measure its width
-  useLayoutEffect(() => {
-    if (!isComposerResting || !restingActionsElement) return;
-    const measure = () => setRestingActionsWidth(restingActionsElement.offsetWidth);
-    measure();
-    return observeResize(restingActionsElement, measure);
-  }, [isComposerResting, restingActionsElement]);
-  const showMoreRestingImages = () => {
-    if (isComposerCollapsedMobile) {
-      expandMobileComposer();
-      return;
-    }
-    setIsComposerScrollCollapsed(false);
-    setIsComposerFocused(true);
-    scheduleComposerFocus();
-  };
   const collapsedComposerImagePreviews =
     standaloneComposerImages.length > 0 ? (
       <ComposerRestingImagePreviews
@@ -2392,136 +2266,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         allImages={composerImages}
         resolvedTheme={resolvedTheme}
         onExpandImage={onExpandImage}
-        onShowMore={showMoreRestingImages}
+        onShowMore={expandMobileComposer}
       />
     ) : null;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const composerMainSurfaceRef = useComposerRestingTransition(
     composerControlsCollapsed,
-    isComposerResting,
     restingComposerControlsRef,
     onComposerOverlayHeightChange,
     panelAnimationsActive,
     panelAnimationDurationMs,
   );
-  const canTrackComposerScrollGesture =
-    routeKind === "server" && activeThreadId !== null && !isMobileViewport;
-  const canScrollCollapseComposer =
-    canTrackComposerScrollGesture &&
-    settings.composerCollapseOnScroll &&
-    !hasMultilinePrompt &&
-    !composerHasExpandedChrome;
-  // Clear rather than mask: once eligibility drops, the composer stays expanded until the next
-  // scroll gesture even if it becomes eligible again.
-  if (!canScrollCollapseComposer && isComposerScrollCollapsed) {
-    setIsComposerScrollCollapsed(false);
-  }
-  const composerScrollCollapseEligible = canScrollCollapseComposer && !isComposerResting;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed scroll-collapse eligibility to a ref read by the wheel listener
-  useLayoutEffect(() => {
-    composerScrollCollapseEligibleRef.current = composerScrollCollapseEligible;
-  });
-
-  // Window activation re-fires focus; ignore that frame to keep the composer collapsed.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener and animation frame that ignore activation focus while the composer is collapsed
-  useEffect(() => {
-    if (!isComposerScrollCollapsed) return;
-    let frame: number | null = null;
-    const onWindowFocus = () => {
-      windowRefocusInFlightRef.current = true;
-      if (frame !== null) window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        frame = null;
-        windowRefocusInFlightRef.current = false;
-      });
-    };
-    window.addEventListener("focus", onWindowFocus);
-    return () => {
-      window.removeEventListener("focus", onWindowFocus);
-      if (frame !== null) window.cancelAnimationFrame(frame);
-      windowRefocusInFlightRef.current = false;
-    };
-  }, [isComposerScrollCollapsed]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a capture-phase document wheel listener that collapses the composer on timeline scroll
-  useEffect(() => {
-    if (!canTrackComposerScrollGesture) return;
-
-    const finishScrollGesture = () => {
-      if (composerScrollCollapseTimeoutRef.current !== null) {
-        window.clearTimeout(composerScrollCollapseTimeoutRef.current);
-      }
-      composerScrollCollapseTimeoutRef.current = null;
-      resetComposerScrollGesture(composerScrollGestureRef.current);
-    };
-    const handleTimelineWheel = (event: WheelEvent) => {
-      if (event.ctrlKey || !(event.target instanceof Element)) {
-        return;
-      }
-
-      const scrollNode = getTimelineScrollableNode();
-      if (!scrollNode) return;
-      const targetsTimeline = isTimelineScrollTarget(event.target, scrollNode, event.deltaY);
-      if (
-        !scrollNode.contains(event.target) &&
-        !composerScrollGestureRef.current.collapseSuppressed
-      )
-        return;
-
-      if (composerScrollCollapseTimeoutRef.current !== null) {
-        window.clearTimeout(composerScrollCollapseTimeoutRef.current);
-      }
-      composerScrollCollapseTimeoutRef.current = window.setTimeout(
-        finishScrollGesture,
-        COMPOSER_SCROLL_GESTURE_RESET_MS,
-      );
-
-      const canScrollInGestureDirection =
-        targetsTimeline &&
-        (event.deltaY < 0
-          ? scrollNode.scrollTop > 0
-          : scrollNode.scrollTop < scrollNode.scrollHeight - scrollNode.clientHeight);
-      const deltaPx =
-        Math.abs(event.deltaY) *
-        (event.deltaMode === WheelEvent.DOM_DELTA_LINE
-          ? 16
-          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-            ? scrollNode.clientHeight
-            : 1);
-      const shouldCollapse = recordComposerScrollGestureEvent(composerScrollGestureRef.current, {
-        now: window.performance.now(),
-        deltaPx,
-        collapseThresholdPx: COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX,
-        collapseEligible: targetsTimeline && composerScrollCollapseEligibleRef.current,
-        canScrollInGestureDirection,
-        scrollsTowardLogicalEnd: event.deltaY > 0 && isTimelineAtLogicalEnd(),
-      });
-      if (!shouldCollapse) {
-        return;
-      }
-
-      setIsComposerScrollCollapsed(true);
-    };
-
-    document.addEventListener("wheel", handleTimelineWheel, { capture: true, passive: true });
-    return () => {
-      document.removeEventListener("wheel", handleTimelineWheel, true);
-      finishScrollGesture();
-    };
-  }, [
-    canTrackComposerScrollGesture,
-    getTimelineScrollableNode,
-    isTimelineAtLogicalEnd,
-    setIsComposerScrollCollapsed,
-  ]);
-
-  const restingHiddenBlockCount = composerControlsCollapsed
+  const restingHiddenBlockCount = showInlineRestingControls
     ? restingControlsHiddenBlockCount
-    : expandedControlsHiddenBlockCount;
-  const iconOnlyBlockCount = composerControlsCollapsed
+    : composerControlsCollapsed
+      ? 0
+      : expandedControlsHiddenBlockCount;
+  const iconOnlyBlockCount = showInlineRestingControls
     ? restingControlsIconOnlyBlockCount
-    : expandedControlsIconOnlyBlockCount;
+    : composerControlsCollapsed
+      ? 0
+      : expandedControlsIconOnlyBlockCount;
   const composerControls = (
     <ComposerControlsBar
       environmentId={environmentId}
@@ -2540,19 +2306,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       planModeUiEnabled={planModeUiEnabled}
       interactionMode={interactionMode}
       compatibleRuntimeMode={compatibleRuntimeMode}
+      defaultRuntimeMode={props.defaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
       toggleInteractionMode={toggleInteractionMode}
       handleRuntimeModeChange={handleRuntimeModeChange}
       composerControlsCollapsed={composerControlsCollapsed}
+      effortDisplay={settings.effortDisplay}
+      permissionsShownInStrip={props.permissionsShownInStrip}
       composerControlsHidden={composerControlsHidden}
       restingHiddenBlockCount={restingHiddenBlockCount}
       iconOnlyBlockCount={iconOnlyBlockCount}
-      showInlineRestingControls={showInlineRestingControls}
-      showLeadingSeparator={
-        composerControlsCollapsed &&
-        restingControlsHost !== null &&
-        restingControlsHaveLeadingContext
-      }
       showProviderUnavailable={showProviderUnavailable}
       providerSetupInstanceId={providerSetupInstanceId}
       onOpenProviderSetup={onOpenProviderSetup}
@@ -3003,7 +2766,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         window.cancelAnimationFrame(composerBlurFrameRef.current);
         composerBlurFrameRef.current = null;
       }
-      setIsComposerScrollCollapsed(false);
       setIsComposerFocused(true);
     }
     setIsComposerModelPickerOpen(true);
@@ -3018,23 +2780,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       focusAt: (cursor: number) => {
         composerEditorRef.current?.focusAt(cursor);
-      },
-      restoreAfterTimelineReachedEnd,
-      collapseForTimelineScrollKey: (key) => {
-        const scrollNode = getTimelineScrollableNode();
-        if (
-          composerScrollCollapseEligibleRef.current &&
-          scrollNode &&
-          shouldCollapseComposerForScrollKey({
-            key,
-            scrollTop: scrollNode.scrollTop,
-            scrollHeight: scrollNode.scrollHeight,
-            clientHeight: scrollNode.clientHeight,
-            isAtLogicalEnd: isTimelineAtLogicalEnd(),
-          })
-        ) {
-          setIsComposerScrollCollapsed(true);
-        }
       },
       addDroppedFiles: (files: File[]) => {
         void addComposerAttachments(files).then((inserted) => {
@@ -3112,10 +2857,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           window.cancelAnimationFrame(composerBlurFrameRef.current);
           composerBlurFrameRef.current = null;
         }
-        flushSync(() => {
-          setIsComposerScrollCollapsed(false);
-          setIsComposerFocused(true);
-        });
+        flushSync(() => setIsComposerFocused(true));
         const shell = composerFormRef.current?.closest('[data-slot="composer-shell"]');
         const trigger = Array.from(
           shell?.querySelectorAll<HTMLButtonElement>(
@@ -3127,6 +2869,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         if (!trigger) return;
         trigger.focus({ preventScroll: true });
+        if (command === "composer.mode") markOpenToPermissions(trigger);
         trigger.click();
       },
       compactContext: compactThreadContextStable,
@@ -3290,10 +3033,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       interactionMode,
       planModeUiEnabled,
       compactThreadContextStable,
-      restoreAfterTimelineReachedEnd,
-      getTimelineScrollableNode,
-      isTimelineAtLogicalEnd,
-      setIsComposerScrollCollapsed,
     ],
   );
 
@@ -3302,11 +3041,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     !isComposerCollapsedMobile &&
     (uncommittedSnapShotIds.length > 0 ||
       composerVideos.length > 0 ||
-      expandedComposerImages.length > 0 ||
+      standaloneComposerImages.length > 0 ||
       preparingComposerImages.length > 0) ? (
       <ComposerAttachmentMediaRow
         images={composerImages}
-        expandedImages={expandedComposerImages}
+        expandedImages={standaloneComposerImages}
         preparingImages={preparingComposerImages}
         videos={composerVideos}
         pendingSnapShotAnimations={pendingSnapShotAnimations}
@@ -3350,23 +3089,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     <form
       ref={composerFormRef}
       onSubmit={submitComposerStable}
-      onPointerDownCapture={(event) => {
-        const target = event.target;
-        if (isInsideRestingComposerControlScope(target)) return;
-        if (isInsideCollapsedComposerControls(target)) return;
-        if (!(target instanceof Element)) return;
-        const isInteractive = Boolean(
-          target.closest('button, a, input, select, [role="button"], [role="menuitem"]'),
-        );
-        if (isInteractive) return;
-
-        setIsComposerScrollCollapsed(false);
-        if (isComposerResting && !target.closest('[data-testid="composer-editor"]')) {
-          event.preventDefault();
-          setIsComposerFocused(true);
-          scheduleComposerFocus();
-        }
-      }}
       onFocusCapture={(event) => {
         const activeElement = event.target;
         if (
@@ -3380,9 +3102,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         if (isInsideCollapsedComposerControls(activeElement)) {
           return;
-        }
-        if (!windowRefocusInFlightRef.current) {
-          setIsComposerScrollCollapsed(false);
         }
         if (composerBlurFrameRef.current !== null) {
           window.cancelAnimationFrame(composerBlurFrameRef.current);
@@ -3419,23 +3138,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       data-chat-composer-form="true"
       {...threadContextDropTargetProps()}
     >
-      {composerControlsCollapsed && restingControlsHost
-        ? createPortal(
-            <div
-              ref={attachRestingComposerControls}
-              data-chat-composer-resting-controls="true"
-              aria-hidden={restingControlsVisible ? undefined : true}
-              inert={restingControlsVisible ? undefined : true}
-              className={cn(
-                "relative flex w-max min-w-0 max-w-full items-center gap-1 font-normal text-muted-foreground/70 [&_button]:text-xs!",
-                !restingControlsVisible && "invisible",
-              )}
-            >
-              {composerControls}
-            </div>,
-            restingControlsHost,
-          )
-        : null}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack items={shelfItems} />
@@ -3479,10 +3181,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
-          data-inline-resting-controls={restingControlsHost === null ? "true" : undefined}
-          data-model-only-strip={
-            restingControlsHost?.closest("[data-composer-model-strip]") ? "true" : undefined
-          }
+          data-inline-resting-controls="true"
           className={composerProviderState.composerFrameClassName}
         >
           <div
@@ -3557,10 +3256,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               }}
               data-chat-composer-body="true"
               className={cn(
-                "relative px-3 pb-2 sm:px-4",
+                "relative px-4 pb-2",
                 "pt-3.5 sm:pt-4",
                 isComposerCollapsedMobile && "hidden",
-                isComposerResting && "py-2 sm:py-2",
               )}
             >
               {isStashMenuOpen && !composerMenuOpen && (
@@ -3621,14 +3319,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
               {composerAttachmentFileList}
 
-              <div
-                className={cn("relative", isComposerResting && "flex min-w-0 items-center gap-1")}
-                style={
-                  isComposerResting && restingActionsWidth !== null
-                    ? { paddingRight: `calc(${restingActionsWidth}px + 1rem)` }
-                    : undefined
-                }
-              >
+              <div className="relative">
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
@@ -3660,18 +3351,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     buildContextClipboardFragment={buildContextClipboardFragmentStable}
                     importContextFragment={importContextFragmentStable}
                     skills={selectedProviderSkills}
-                    containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
-                    className={cn(
-                      showMobilePendingAnswerActions && "max-sm:pb-12",
-                      isComposerResting &&
-                        "my-0 max-h-8 min-h-8 overflow-hidden py-0 whitespace-pre! leading-8",
-                    )}
-                    placeholderClassName={cn(
-                      isComposerResting &&
-                        "flex items-center overflow-hidden whitespace-nowrap leading-8",
-                    )}
+                    className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
                     onChange={onPromptChangeStable}
-                    onVisibleSelectionChange={expandComposerForEditorChangeStable}
                     onCommandKeyDown={onComposerCommandKeyStable}
                     onPageScrollKeyDown={onPageScrollKeyDown}
                     onPageScrollKeyUp={onPageScrollKeyUp}
@@ -3703,7 +3384,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                   />
                 </ComposerContextActionsContext>
-                {isComposerResting ? collapsedComposerImagePreviews : null}
                 {showMobilePendingAnswerActions ? (
                   <div
                     data-chat-composer-mobile-pending-actions="true"
@@ -3743,42 +3423,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {isComposerCollapsedMobile ? null : (
               <div
                 data-chat-composer-footer="true"
-                data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                 className={cn(
-                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-3 pb-3 sm:px-4 sm:pb-4",
+                  "flex min-w-0 flex-nowrap items-center overflow-visible px-2 pb-2",
                   pendingUserInputs.length > 0 && "pt-2",
-                  isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                   showMobilePendingAnswerActions && "hidden sm:flex",
-                  isComposerResting &&
-                    "absolute right-px z-10 h-12 w-auto gap-0 py-0 sm:gap-0 sm:py-0",
-                  isComposerResting &&
-                    (showInlineRestingControls ? "bottom-[calc(2rem+1px)]" : "bottom-px"),
                 )}
               >
+                {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
                 <div
-                  ref={attachExpandedComposerControls}
-                  data-chat-composer-controls="left"
-                  data-chat-composer-footer-controls="true"
-                  className={cn(
-                    "relative -m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-0 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-                    isComposerResting && "hidden",
-                  )}
-                >
-                  {composerControlsCollapsed ? null : composerControls}
-                </div>
-
-                <div
-                  ref={setRestingActionsElement}
                   data-chat-composer-actions="right"
                   data-chat-composer-transition-actions="true"
                   data-chat-composer-primary-actions-compact={
                     isComposerPrimaryActionsCompact ? "true" : "false"
                   }
-                  className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                  className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2"
                 >
-                  {composerAttachButton}
+                  <div
+                    ref={attachExpandedComposerControls}
+                    data-chat-composer-controls="footer"
+                    data-chat-composer-footer-controls="true"
+                    className="relative flex min-w-0 flex-1 items-center justify-end gap-0.5"
+                  >
+                    {composerControls}
+                  </div>
                   <ComposerFooterPrimaryActions
-                    compact={isComposerResting || isComposerPrimaryActionsCompact}
+                    compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null
@@ -3819,7 +3488,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
                     canResume={showResumeAction}
-                    preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
+                    preserveComposerFocusOnPointerDown={isMobileViewport}
                     isEditingQueuedMessage={isEditingQueuedMessage}
                     onSubmitMessage={handleSubmitMessageStable}
                     onResume={onResume}
@@ -3845,7 +3514,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className="absolute bottom-2 inset-x-4 min-w-0"
                 >
                   <div
-                    ref={restingComposerControlsRef}
+                    ref={attachRestingComposerControls}
                     data-chat-composer-resting-controls="true"
                     aria-hidden={restingControlsVisible ? undefined : true}
                     inert={restingControlsVisible ? undefined : true}

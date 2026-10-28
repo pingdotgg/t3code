@@ -24,7 +24,6 @@ import {
 import { createQuestionHistoryProjector } from "@t3tools/client-runtime/state/thread-requests";
 import { ArrowUpIcon, PaperclipIcon, XIcon } from "lucide-react";
 import {
-  createRef,
   useEffect,
   useReducer,
   useRef,
@@ -41,7 +40,6 @@ import { useTheme } from "~/hooks/useTheme";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { deriveActiveWorkStartedAt, derivePhase } from "~/session-logic";
-import type { ChatComposerHandle } from "../chat/ChatComposer";
 import { ComposerControl, ComposerControlIcon } from "../chat/ComposerControl";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
 import { GuestMessageAttachments } from "../chat/GuestMessageAttachments";
@@ -348,7 +346,6 @@ function NameForm({
 // The timeline needs an environment id to key its rows. Nothing behind it loads on this page;
 // see isGuestPage.
 const GUEST_ENVIRONMENT_ID = EnvironmentId.make("guest");
-const NO_COMPOSER = createRef<ChatComposerHandle>();
 const NO_TURN_DIFFS: ReadonlyArray<never> = [];
 const NO_OPTIMISTIC_MESSAGES: ReadonlyArray<never> = [];
 const ignore = () => {};
@@ -399,7 +396,6 @@ function GuestThread({
   const runningRunId = runtime?.activeRunId ?? null;
   const follow = useTimelineFollow({
     legendListRef: listRef,
-    composerRef: NO_COMPOSER,
     composerTimelineInset: 0,
     routeThreadKey: threadKey,
     activeThreadKey: threadKey,

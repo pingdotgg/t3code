@@ -205,29 +205,6 @@ describe("MessagesTimeline messages", () => {
     expect(maxNestedCommits).toBeLessThan(20);
   });
 
-  it("keeps reporting overflow while the composer inset changes", async () => {
-    setup();
-    const props = baseProps();
-    const overflowReports: boolean[] = [];
-    const replies = Array.from({ length: 40 }, (_, index) =>
-      message(`Reply ${index}\n\n${"line\n\n".repeat(8)}`, { role: "assistant" }, `r-${index}`),
-    );
-    const timeline = (inset: number) => (
-      <MessagesTimeline
-        {...props}
-        timelineEntries={replies}
-        contentInsetEndAdjustment={inset}
-        onContentOverflowChange={(overflows) => overflowReports.push(overflows)}
-      />
-    );
-    await using screen = await renderElement(timeline(110));
-    await vi.waitFor(() => expect(overflowReports.at(-1)).toBe(true));
-    overflowReports.length = 0;
-    // The resting composer resizes with overflow; a false report here flips it back.
-    await screen.rerender(timeline(148));
-    expect(overflowReports).not.toContain(false);
-  });
-
   it("keeps the first and last message headings reachable from either end", async () => {
     setup();
     const props = baseProps();
