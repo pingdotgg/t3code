@@ -5,7 +5,7 @@ import { AppText as Text } from "../../../../components/ui/AppText";
 import { ListRowLayout } from "../../../../components/ui/ListRowLayout";
 import { Menu } from "../../../../components/ui/Menu";
 import { SettingsSection } from "../../components/SettingsSection";
-import { SettingsActionRow } from "../../components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../../../components/ui/ListActionRow";
 import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";

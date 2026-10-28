@@ -276,6 +276,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     new Map(),
   );
   const [unavailableFonts, setUnavailableFonts] = useState<readonly string[]>([]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reloads native installed font faces when selections change or the app returns to the foreground
   useEffect(() => {
     let cancelled = false;
     let generation = 0;
