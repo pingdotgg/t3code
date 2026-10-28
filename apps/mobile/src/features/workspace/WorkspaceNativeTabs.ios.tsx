@@ -169,7 +169,11 @@ export function WorkspaceNativeTabs(props: {
             position: "absolute",
             left: 0,
             bottom: 0,
-            width: layout.listPaneWidth ?? width,
+            // UIKit can shrink the sidebar to 280pt independently of its preferred width.
+            width:
+              deviceType === "pad"
+                ? Math.min(280, layout.listPaneWidth ?? width, width)
+                : (layout.listPaneWidth ?? width),
             height: 128,
           }}
         >
