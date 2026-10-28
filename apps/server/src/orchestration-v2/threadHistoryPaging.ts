@@ -19,6 +19,8 @@ export const THREAD_HISTORY_PAGE_POLICY = {
   maxEncodedBytes: 1_048_576,
 } as const;
 
+export const THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT = 150;
+
 export const OLDER_THREAD_USER_TURN_LIMIT = 20;
 
 export function isConversationHistoryItem(item: Pick<OrchestrationV2TurnItem, "type">): boolean {
@@ -46,6 +48,7 @@ export type ThreadHistoryCursorPayload = {
   readonly st: string;
   readonly si: string;
   readonly p: number;
+  readonly inclusive?: boolean;
 };
 
 type HistoryRow = Pick<
@@ -58,6 +61,14 @@ type HistoryRow = Pick<
     readonly inputIntent?: string;
     readonly createdBy?: string;
     readonly runId?: string | null;
+    readonly status?: OrchestrationV2TurnItem["status"];
+    readonly parentItemId?: string | null;
+    readonly ordinal?: number;
+    readonly runStatus?: string | undefined;
+    readonly attemptId?: string | null | undefined;
+    readonly attemptStatus?: string | null | undefined;
+    readonly persistentOutput?: boolean;
+    readonly deferredWork?: OrchestrationV2TurnItem["deferredWork"];
   };
 };
 export type SelectTimelinePageResult<Row extends HistoryRow = OrchestrationV2ProjectedTurnItem> = {
@@ -114,6 +125,7 @@ export function encodeThreadHistoryCursor(input: {
   readonly sourceThreadId: ThreadId | string;
   readonly sourceItemId: TurnItemId | string;
   readonly position: number;
+  readonly inclusive?: boolean;
 }): string {
   return encodeCursorPayload({
     v: 1,
@@ -121,6 +133,7 @@ export function encodeThreadHistoryCursor(input: {
     st: String(input.sourceThreadId),
     si: String(input.sourceItemId),
     p: input.position,
+    ...(input.inclusive ? { inclusive: true } : {}),
   });
 }
 
@@ -153,7 +166,8 @@ export function decodeThreadHistoryCursor(cursor: string): ThreadHistoryCursorPa
     !("p" in parsed) ||
     typeof parsed.p !== "number" ||
     !Number.isInteger(parsed.p) ||
-    parsed.p < 0
+    parsed.p < 0 ||
+    ("inclusive" in parsed && typeof parsed.inclusive !== "boolean")
   ) {
     throw new InvalidThreadHistoryCursorError();
   }
@@ -165,6 +179,109 @@ function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
     item.type === "user_message" &&
     (item.inputIntent === "turn_start" || item.inputIntent === "queued_turn")
   );
+}
+
+const DEFERRED_WORK_ITEM_TYPES = [
+  "command_execution",
+  "reasoning",
+  "file_change",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+] as const;
+
+function isDeferrableWorkItem(item: HistoryRow["item"]): boolean {
+  return (
+    item.status === "completed" &&
+    item.persistentOutput !== true &&
+    DEFERRED_WORK_ITEM_TYPES.some((type) => type === item.type)
+  );
+}
+
+export function deferWorkHistoryRows<Row extends HistoryRow>(items: ReadonlyArray<Row>): Row[] {
+  const blocked = new Set(
+    items.flatMap(({ item }) =>
+      item.runId != null &&
+      (item.type === "run_interrupt_request" ||
+        item.type === "run_interrupt_result" ||
+        (item.type === "error" && item.status === "failed" && item.parentItemId == null))
+        ? [item.runId]
+        : [],
+    ),
+  );
+  const segments = new Map<string, number>();
+  const groups = new Map<string, Row[]>();
+  for (const row of items) {
+    const item = row.item;
+    if (item.runId == null) continue;
+    if (item.type === "user_message") segments.set(item.runId, (segments.get(item.runId) ?? 0) + 1);
+    if (
+      (item.runStatus !== "completed" && item.attemptStatus !== "superseded") ||
+      blocked.has(item.runId) ||
+      !isDeferrableWorkItem(item)
+    )
+      continue;
+    const key = `${row.sourceThreadId}:${item.runId}:${segments.get(item.runId) ?? 0}:${item.attemptId ?? ""}`;
+    const group = groups.get(key) ?? [];
+    group.push(row);
+    groups.set(key, group);
+  }
+  const omitted = new Set<Row>();
+  const anchors = new Map<Row, Row>();
+  for (const group of groups.values()) {
+    if (group.length <= THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT) continue;
+    const first = group[0]!;
+    const last = group.at(-1)!;
+    for (const row of group.slice(1)) omitted.add(row);
+    anchors.set(first, {
+      ...first,
+      item: {
+        ...first.item,
+        deferredWork: {
+          cursor: encodeThreadHistoryCursor({
+            snapshotSequence: 0,
+            sourceThreadId: last.sourceThreadId,
+            sourceItemId: last.sourceItemId,
+            position: last.item.ordinal ?? last.position,
+            inclusive: true,
+          }),
+          itemCount: group.length,
+          lastOrdinal: last.item.ordinal ?? last.position,
+        },
+      },
+    });
+  }
+  return items.flatMap((row) => (omitted.has(row) ? [] : [anchors.get(row) ?? row]));
+}
+
+export function selectDeferredWorkPage<Row extends HistoryRow>(input: {
+  readonly items: ReadonlyArray<Row>;
+  readonly cursor: string;
+  readonly throughEntryId?: string | undefined;
+  readonly snapshotSequence: number;
+  readonly rowEncodedBytes?: ((row: Row) => number) | undefined;
+}): SelectTimelinePageResult<Row> {
+  const cursor = decodeThreadHistoryCursor(input.cursor);
+  const end = findCursorEndIndex(input.items, cursor);
+  const start = input.items.findIndex((row) => row.sourceItemId === input.throughEntryId);
+  if (start < 0 || start >= end) throw new InvalidThreadHistoryCursorError();
+  const anchor = input.items[start]!;
+  const items = input.items
+    .slice(start, end)
+    .filter(
+      (row) =>
+        row.sourceThreadId === anchor.sourceThreadId &&
+        row.item.runId === anchor.item.runId &&
+        row.item.attemptId === anchor.item.attemptId &&
+        isDeferrableWorkItem(row.item),
+    );
+  return selectOlderTimelinePage({
+    items,
+    exclusiveEndIndex: items.length,
+    snapshotSequence: input.snapshotSequence,
+    rowEncodedBytes: input.rowEncodedBytes,
+    policy: THREAD_HISTORY_PAGE_POLICY,
+  });
 }
 
 /** Notifications can start wake turns when they are the run's first input; match ProjectionStore run_starts. */
@@ -275,17 +392,23 @@ export function selectRecentTimelineWindow(input: {
   });
 }
 
-function findCursorIndex(
-  items: ReadonlyArray<Pick<HistoryRow, "sourceThreadId" | "sourceItemId">>,
+function findCursorEndIndex(
+  items: ReadonlyArray<HistoryRow>,
   cursor: ThreadHistoryCursorPayload,
 ): number {
   const byIdentity = items.findIndex(
     (row) => String(row.sourceThreadId) === cursor.st && String(row.sourceItemId) === cursor.si,
   );
   if (byIdentity !== -1) {
-    return byIdentity;
+    return byIdentity + (cursor.inclusive ? 1 : 0);
   }
-  return Math.min(cursor.p, items.length);
+  // Inclusive deferred cursors carry source ordinals; ordinary cursors carry visible positions.
+  const byPosition = items.findIndex((row) =>
+    cursor.inclusive
+      ? String(row.sourceThreadId) === cursor.st && (row.item.ordinal ?? row.position) > cursor.p
+      : row.position >= cursor.p,
+  );
+  return byPosition === -1 ? items.length : byPosition;
 }
 
 /**
@@ -304,7 +427,7 @@ export function olderHistoryPagePolicy<Row extends HistoryRow>(input: {
     maxUserTurns: OLDER_THREAD_USER_TURN_LIMIT,
   };
   if (input.throughEntryId === undefined) return policy;
-  const anchorIndex = findCursorIndex(input.items, decodeThreadHistoryCursor(input.cursor));
+  const anchorIndex = findCursorEndIndex(input.items, decodeThreadHistoryCursor(input.cursor));
   const targetIndex = input.items.findIndex(
     (row) => (row.item.messageId ?? row.item.id) === input.throughEntryId,
   );
@@ -337,7 +460,7 @@ export function selectHistoryPageFromCursor<Row extends HistoryRow>(input: {
   const decoded = decodeThreadHistoryCursor(input.cursor);
   return selectOlderTimelinePage({
     items: input.items,
-    exclusiveEndIndex: findCursorIndex(input.items, decoded),
+    exclusiveEndIndex: findCursorEndIndex(input.items, decoded),
     snapshotSequence: input.snapshotSequence,
     ...(input.rowEncodedBytes === undefined ? {} : { rowEncodedBytes: input.rowEncodedBytes }),
     policy: olderHistoryPagePolicy(input),
@@ -351,7 +474,7 @@ export function selectHistoryPageFromCursor<Row extends HistoryRow>(input: {
  */
 export function missingInterruptRequests<Row extends HistoryRow>(
   items: ReadonlyArray<Row>,
-  page: ReadonlyArray<Pick<HistoryRow, "item" | "sourceThreadId" | "sourceItemId">>,
+  page: ReadonlyArray<Pick<HistoryRow, "item" | "sourceThreadId" | "sourceItemId" | "position">>,
 ): Row[] {
   const runs = new Set<string>();
   for (const row of page) {
@@ -407,16 +530,7 @@ function localTurnItemsForVisibleWindow(
   projection: OrchestrationV2ThreadProjection,
   visible: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
 ): OrchestrationV2TurnItem[] {
-  const localIds = new Set<string>();
-  for (const row of visible) {
-    if (isLocalProjectedRow(projection, row)) {
-      localIds.add(String(row.sourceItemId));
-    }
-  }
-  if (localIds.size === 0) {
-    return [];
-  }
-  return projection.turnItems.filter((item) => localIds.has(String(item.id)));
+  return visible.filter((row) => isLocalProjectedRow(projection, row)).map((row) => row.item);
 }
 
 function messagesForBoundedProjection(

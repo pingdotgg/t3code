@@ -658,29 +658,40 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
   const loadEarlier = Effect.fn("EnvironmentThreadState.loadEarlier")(function* (
     throughEntryId?: string,
-  ) {
+    workAnchorId?: string,
+  ): Effect.fn.Return<ThreadHistoryController.ThreadHistoryLoadEarlierResult> {
+    const workCursor = (latest: EnvironmentThreadState) =>
+      Option.getOrNull(latest.data)?.visibleTurnItems.find(
+        (row) => row.sourceItemId === workAnchorId,
+      )?.item.deferredWork?.cursor ?? null;
     const current = yield* SubscriptionRef.get(state);
+    const initialCursor =
+      workAnchorId === undefined ? current.history.historyCursor : workCursor(current);
     if (
       current.status === "deleted" ||
       Option.isNone(current.data) ||
-      !current.history.hasMoreHistory ||
-      current.history.historyCursor === null
-    ) {
-      return { _tag: "noop" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
-    }
-    if (current.history.loading) {
-      return { _tag: "busy" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
-    }
-
-    // Capture the cursor that initiated this request. Completions/failures must
-    // no-op if a socket or new bounded snapshot replaced progressive meta mid-flight.
-    const requestCursor = current.history.historyCursor;
-    yield* patchHistoryMeta((history) =>
-      isActiveHistoryRequestCursor(requestCursor, history)
-        ? { ...history, loading: true, error: null }
-        : history,
-    );
-
+      initialCursor === null ||
+      (workAnchorId === undefined && !current.history.hasMoreHistory)
+    )
+      return { _tag: "noop" };
+    if (workAnchorId === undefined && current.history.loading) return { _tag: "busy" };
+    let requestCursor = initialCursor;
+    const isCurrent = (latest: EnvironmentThreadState) =>
+      workAnchorId === undefined
+        ? isActiveHistoryRequestCursor(requestCursor, latest.history)
+        : workCursor(latest) === requestCursor;
+    const staleResult = (
+      latest: EnvironmentThreadState,
+    ): ThreadHistoryController.ThreadHistoryLoadEarlierResult =>
+      workAnchorId !== undefined && workCursor(latest) !== null
+        ? { _tag: "error", message: "Work history changed. Retry loading it." }
+        : { _tag: "noop" };
+    if (workAnchorId === undefined)
+      yield* patchHistoryMeta((history) =>
+        isActiveHistoryRequestCursor(requestCursor, history)
+          ? { ...history, loading: true, error: null }
+          : history,
+      );
     const failLoad = (message: string) =>
       SubscriptionRef.modify(
         state,
@@ -690,72 +701,108 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ThreadHistoryController.ThreadHistoryLoadEarlierResult,
           EnvironmentThreadState,
         ] =>
-          isActiveHistoryRequestCursor(requestCursor, latest.history)
+          isCurrent(latest)
             ? [
                 { _tag: "error", message },
                 {
                   ...latest,
-                  history: { ...latest.history, loading: false, error: message },
+                  history:
+                    workAnchorId === undefined
+                      ? { ...latest.history, loading: false, error: message }
+                      : latest.history,
                 },
               ]
-            : [{ _tag: "noop" }, latest],
+            : [staleResult(latest), latest],
       );
 
     const runLoad = Effect.gen(function* () {
-      const preparedOption = yield* SubscriptionRef.get(supervisor.prepared);
-      if (Option.isNone(preparedOption) || Option.isNone(httpClient))
-        return yield* failLoad("Environment is not connected.");
-
-      const views =
-        throughEntryId === undefined ? [undefined] : ["conversation" as const, undefined];
-      for (const view of views) {
-        const pageResult = yield* fetchEnvironmentThreadHistoryPage({
-          prepared: preparedOption.value,
-          threadId,
-          cursor: requestCursor,
-          throughEntryId,
-          view,
-          signer: dpopSigner,
-          remoteAuthorization,
-        }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient.value), Effect.result);
-        if (Result.isFailure(pageResult))
-          return yield* failLoad(formatHistoryError(pageResult.failure));
-        const page = pageResult.success;
-        const complete = view === undefined;
-        const waiting = yield* Ref.get(awaitingCompletion);
-        const result = yield* applyLock.withPermits(1)(
-          SubscriptionRef.modify(
-            state,
-            (
-              latest,
-            ): readonly [
-              ThreadHistoryController.ThreadHistoryLoadEarlierResult,
-              EnvironmentThreadState,
-            ] => {
-              if (!isActiveHistoryRequestCursor(requestCursor, latest.history))
-                return [{ _tag: "noop" }, latest];
-              if (Option.isNone(latest.data) || latest.status === "deleted")
-                return [{ _tag: "noop" }, { ...latest, history: EMPTY_THREAD_HISTORY_META }];
-              return [
-                { _tag: "loaded" },
-                {
-                  ...latest,
-                  data: Option.some(mergeOlderHistoryIntoProjection(latest.data.value, page.items)),
-                  status: complete && waiting ? "synchronizing" : latest.status,
-                  history: complete
-                    ? applyHistoryPageMeta(latest.history, page)
-                    : { ...latest.history, expanded: true },
-                },
-              ];
-            },
-          ),
-        );
-        if (result._tag !== "loaded") return result;
-        if (complete) yield* remember;
+      while (true) {
+        const preparedOption = yield* SubscriptionRef.get(supervisor.prepared);
+        if (Option.isNone(preparedOption) || Option.isNone(httpClient))
+          return yield* failLoad("Environment is not connected.");
+        const views =
+          workAnchorId !== undefined
+            ? ["work" as const]
+            : throughEntryId === undefined
+              ? [undefined]
+              : ["conversation" as const, undefined];
+        let nextCursor: string | null = null;
+        for (const view of views) {
+          const pageResult = yield* fetchEnvironmentThreadHistoryPage({
+            prepared: preparedOption.value,
+            threadId,
+            cursor: requestCursor,
+            throughEntryId: workAnchorId ?? throughEntryId,
+            view,
+            signer: dpopSigner,
+            remoteAuthorization,
+          }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient.value), Effect.result);
+          if (Result.isFailure(pageResult))
+            return yield* failLoad(formatHistoryError(pageResult.failure));
+          const page = pageResult.success;
+          const complete = view !== "conversation";
+          const keepPaging =
+            complete &&
+            (workAnchorId !== undefined
+              ? page.nextCursor !== null
+              : throughEntryId === undefined &&
+                page.hasMoreHistory &&
+                !page.items.some(
+                  ({ item }) => item.type === "user_message" && item.createdBy === "user",
+                ));
+          if (keepPaging && (page.nextCursor === null || page.nextCursor === requestCursor))
+            return yield* failLoad(
+              workAnchorId === undefined
+                ? "History did not advance."
+                : "Work history did not advance.",
+            );
+          const waiting = yield* Ref.get(awaitingCompletion);
+          const result = yield* applyLock.withPermits(1)(
+            SubscriptionRef.modify(
+              state,
+              (
+                latest,
+              ): readonly [
+                ThreadHistoryController.ThreadHistoryLoadEarlierResult,
+                EnvironmentThreadState,
+              ] => {
+                if (!isCurrent(latest)) return [staleResult(latest), latest];
+                if (Option.isNone(latest.data) || latest.status === "deleted")
+                  return [{ _tag: "noop" }, { ...latest, history: EMPTY_THREAD_HISTORY_META }];
+                return [
+                  { _tag: "loaded" },
+                  {
+                    ...latest,
+                    data: Option.some(
+                      mergeOlderHistoryIntoProjection(
+                        latest.data.value,
+                        page.items,
+                        workAnchorId === undefined
+                          ? undefined
+                          : { anchorId: workAnchorId, nextCursor: page.nextCursor },
+                      ),
+                    ),
+                    status:
+                      workAnchorId === undefined && complete && waiting
+                        ? "synchronizing"
+                        : latest.status,
+                    history:
+                      workAnchorId === undefined && complete
+                        ? { ...applyHistoryPageMeta(latest.history, page), loading: keepPaging }
+                        : { ...latest.history, expanded: true },
+                  },
+                ];
+              },
+            ),
+          );
+          if (result._tag !== "loaded") return result;
+          if (complete) yield* remember;
+          nextCursor = keepPaging ? page.nextCursor : null;
+        }
+        if (nextCursor === null) return { _tag: "loaded" } as const;
+        requestCursor = nextCursor;
       }
-      return { _tag: "loaded" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
     });
-
     return yield* runLoad.pipe(
       Effect.onInterrupt(() =>
         SubscriptionRef.update(state, (latest) => ({
@@ -832,8 +879,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   if (Option.isSome(historyController)) {
     const scope = yield* Scope.Scope;
     const registration = yield* historyController.value.register(environmentId, threadId, {
-      loadEarlier: (throughEntryId) =>
-        loadEarlier(throughEntryId).pipe(Effect.forkIn(scope), Effect.flatMap(Fiber.join)),
+      loadEarlier: (throughEntryId, workAnchorId) =>
+        loadEarlier(throughEntryId, workAnchorId).pipe(
+          Effect.forkIn(scope),
+          Effect.flatMap(Fiber.join),
+        ),
       reconcilePendingWork: () =>
         reconcilePendingWork().pipe(
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
@@ -962,6 +1012,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ...(acceptBoundedSnapshot
             ? {
                 acceptBoundedSnapshot: true as const,
+                acceptDeferredWork: true as const,
                 acceptCompactTurnItems: true as const,
                 acceptCompactIds: true as const,
               }

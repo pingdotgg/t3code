@@ -2693,6 +2693,13 @@ describe("v2 run and attempt history", () => {
           runId,
           label: "Old command",
           tone: "tool" as const,
+          projectedItem: {
+            sourceItemId: "old-work-anchor",
+            item: {
+              type: "command_execution",
+              deferredWork: { cursor: "old-work", itemCount: 200, lastOrdinal: 200 },
+            },
+          } as never,
         },
       },
       {
@@ -2765,6 +2772,7 @@ describe("v2 run and attempt history", () => {
       runId,
       label: "Superseded attempt",
       expanded: false,
+      deferredWorkItemIds: ["old-work-anchor"],
     });
 
     const expandedRows = deriveMessagesTimelineRows({
@@ -2781,6 +2789,52 @@ describe("v2 run and attempt history", () => {
       "steer-user-entry",
       "active-assistant-entry",
     ]);
+    const settledRows = deriveMessagesTimelineRows({
+      ...common,
+      latestRun: { ...common.latestRun, status: "completed", completedAt: "2026-01-01T00:00:08Z" },
+      timelineEntries: timelineEntries.map((entry) =>
+        entry.kind === "message" && entry.id === "active-assistant-entry"
+          ? { ...entry, message: { ...entry.message, streaming: false } }
+          : entry,
+      ),
+      expandedRunIds: new Set([runId]),
+    });
+    expect(settledRows.find((row) => row.kind === "attempt-fold")).toMatchObject({
+      deferredWorkItemIds: ["old-work-anchor"],
+    });
+    expect(
+      settledRows
+        .filter((row) => row.kind === "turn-fold")
+        .flatMap((row) => row.deferredWorkItemIds ?? []),
+    ).not.toContain("old-work-anchor");
+    const deferredTailRows = deriveMessagesTimelineRows({
+      ...common,
+      timelineEntries: [
+        timelineEntries[0]!,
+        timelineEntries[2]!,
+        timelineEntries[1]!,
+        ...timelineEntries.slice(3),
+      ].map((entry) => ({
+        ...entry,
+        attempt:
+          entry.attempt.id === supersededAttemptId
+            ? { ...entry.attempt, completedAt: DateTime.makeUnsafe("2026-01-01T00:00:08Z") }
+            : entry.attempt,
+        ...(entry.id === "superseded-assistant-entry"
+          ? {
+              projectedItem: {
+                item: {
+                  type: "assistant_message",
+                  ordinal: 2,
+                  status: "completed",
+                  completedAt: DateTime.makeUnsafe("2026-01-01T00:00:03Z"),
+                },
+              } as never,
+            }
+          : {}),
+      })),
+    });
+    expect(deferredTailRows.some((row) => row.kind === "attempt-fold")).toBe(true);
   });
 
   describe("a steer that supersedes an attempt", () => {
@@ -3013,6 +3067,35 @@ describe("v2 run and attempt history", () => {
       displayLabel: "sleep 90 && echo slept",
     });
   });
+});
+
+it.each([
+  [undefined, ["first"]],
+  [["first"], ["second"]],
+  [["first"], []],
+  [
+    ["first", "second"],
+    ["second", "first"],
+  ],
+  [undefined, []],
+] as const)("keeps deferred fold anchors current from %j to %j", (before, after) => {
+  const row: Extract<MessagesTimelineRow, { kind: "turn-fold" }> = {
+    kind: "turn-fold",
+    id: "fold",
+    runId: RunId.make("run"),
+    createdAt: "2026-01-01T00:00:00Z",
+    label: "Worked for 1m",
+    expanded: true,
+    ...(before === undefined ? {} : { deferredWorkItemIds: before }),
+  };
+  const previous = computeStableMessagesTimelineRows([row], { result: [], byId: new Map() });
+  const nextRow = { ...row, deferredWorkItemIds: after };
+  const next = computeStableMessagesTimelineRows([nextRow], previous);
+  const fold = next.result[0];
+  expect(fold?.kind === "turn-fold" ? (fold.deferredWorkItemIds ?? []) : null).toEqual(after);
+  expect(
+    computeStableMessagesTimelineRows([{ ...nextRow, deferredWorkItemIds: [...after] }], next),
+  ).toBe(next);
 });
 
 describe("streaming v2 row projection", () => {
