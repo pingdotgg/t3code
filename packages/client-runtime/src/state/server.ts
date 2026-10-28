@@ -1310,7 +1310,8 @@ export function createServerEnvironmentAtoms<R, E>(
     searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:acp-registry:search",
       tag: WS_METHODS.serverSearchAcpRegistry,
-      // Reopening Add provider reuses recent results; submitting the same search refreshes it.
+      // Reopening Add provider reuses recent results. Submitting the same search asks the
+      // server again, which reuses a Registry index fetched in the last five minutes.
       staleTimeMs: 5 * 60_000,
     }),
     configProjection,
