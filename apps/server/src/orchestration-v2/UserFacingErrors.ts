@@ -70,9 +70,6 @@ function policyRejectionMessage(value: unknown): string | undefined {
     const capability = typeof value.capability === "string" ? value.capability : "";
     return CAPABILITY_REJECTION_MESSAGES[capability]?.(provider);
   }
-  if (value._tag === "CommandPolicyUnsupportedError") {
-    return `${provider} cannot deliver a message that way right now.`;
-  }
   return undefined;
 }
 

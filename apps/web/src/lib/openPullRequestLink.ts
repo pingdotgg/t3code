@@ -24,7 +24,7 @@ export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null,
   return resolvePullRequestPreviewTarget({
     environmentId,
     projects,
-    pullRequestsEnabled: serverConfig?.environment.capabilities.pullRequests === true,
+    pullRequestsEnabled: serverConfig !== null,
     url,
   });
 }
@@ -62,7 +62,7 @@ export function useOpenChangeRequestLink(
     const target = resolveChangeRequestLinkTarget({
       url: targetUrl,
       projects: readProjects(),
-      capabilities: (environmentId) => serverConfigs.get(environmentId)?.environment.capabilities,
+      configLoaded: (environmentId) => serverConfigs.has(environmentId),
       environmentId: resolvedThreadRef?.environmentId ?? targetEnvironmentId,
       primaryEnvironmentId,
       lendHostProject: resolvedPanelRef !== undefined,

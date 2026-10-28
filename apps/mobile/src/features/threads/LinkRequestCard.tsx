@@ -34,7 +34,7 @@ import { mintPairingCodeOn } from "../../state/peerPairingCode";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SettingsChoiceRow } from "../settings/components/SettingsChoiceRow";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { Button } from "../../components/ui/Button";
 import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";

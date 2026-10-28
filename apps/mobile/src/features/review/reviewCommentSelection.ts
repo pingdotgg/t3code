@@ -178,7 +178,7 @@ export function getReviewUnifiedLineNumber(line: ReviewRenderableLineRow): numbe
   return line.newLineNumber ?? line.oldLineNumber;
 }
 
-export function getReviewChangeMarker(change: ReviewRenderableLineRow["change"]): string {
+function getReviewChangeMarker(change: ReviewRenderableLineRow["change"]): string {
   if (change === "add") return "+";
   if (change === "delete") return "-";
   return " ";

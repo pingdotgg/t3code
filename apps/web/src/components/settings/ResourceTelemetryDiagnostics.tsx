@@ -53,6 +53,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
+  processIdentityKey,
   resourceHistoryBarHeight,
   resourceHistoryCpuScaleMax,
   shouldShowResourceMonitorRetry,
@@ -91,14 +92,6 @@ function formatSampleInterval(valueMs: number): string {
   return `${seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${
     seconds === 1 ? "second" : "seconds"
   }`;
-}
-
-function processIdentityKey(process: ResourceTelemetryProcess): string {
-  return `${process.identity.pid}:${process.identity.startTimeMs}`;
-}
-
-function processSummaryIdentityKey(process: ResourceTelemetryProcessSummary): string {
-  return `${process.identity.pid}:${process.identity.startTimeMs}`;
 }
 
 function formatProcessName(process: Pick<ResourceTelemetryProcess, "command" | "name">): string {
@@ -703,7 +696,7 @@ function HistoryProcessTable({
               </tr>
             ) : null}
             {processes.map((process) => (
-              <tr key={processSummaryIdentityKey(process)} className="hover:bg-muted/20">
+              <tr key={processIdentityKey(process)} className="hover:bg-muted/20">
                 <td className="px-4 py-2 sm:pl-5">
                   <Tooltip>
                     <TooltipTrigger

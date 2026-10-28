@@ -1,4 +1,4 @@
-export type ComposerScrollGestureState = {
+type ComposerScrollGestureState = {
   accumulatedDeltaPx: number;
   collapseSuppressed: boolean;
   lastEventAt: number;

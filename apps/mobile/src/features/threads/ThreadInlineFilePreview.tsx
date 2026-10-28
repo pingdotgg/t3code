@@ -1,7 +1,7 @@
 import { useIsFocused } from "@react-navigation/native";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useAudioPlayerStatus } from "expo-audio";
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { AppState, Pressable, View } from "react-native";
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { filePreviewKey } from "../../lib/filePreviewGallery";
@@ -70,7 +70,7 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
   const playRequested = useRef(false);
   const audioToken = useRef<ReturnType<typeof acquireAudioSession> | null>(null);
   const [playbackRequested, setPlaybackRequested] = useState(false);
-  const requestPlayback = useCallback((requested: boolean) => {
+  const requestPlayback = (requested: boolean) => {
     playRequested.current = requested;
     setPlaybackRequested(requested);
     if (!requested) {
@@ -81,7 +81,7 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
         audioToken.current = null;
       }
     }
-  }, []);
+  };
   useMediaAudioSessionHold(status.playing);
   const fullscreenVideoOpen = useFullscreenVideoOpen();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the play request on fullscreen video, finish or error, and pauses the player for fullscreen
@@ -228,10 +228,7 @@ function VisibleFilePreview(props: PreviewProps) {
     "environmentId" in source ? source.environmentId : null,
     "resource" in source ? source.resource : null,
   );
-  const resolveUri = useCallback(
-    () => ("uri" in source ? Promise.resolve(source.uri) : refresh()),
-    [source, refresh],
-  );
+  const resolveUri = () => ("uri" in source ? Promise.resolve(source.uri) : refresh());
   return <InlineAudio {...props} resolveUri={resolveUri} />;
 }
 

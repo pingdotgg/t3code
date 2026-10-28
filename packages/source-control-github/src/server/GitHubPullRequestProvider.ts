@@ -365,25 +365,13 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          Effect.flatMap((page) =>
-            cli
-              .listActorAvatars({
-                cwd: input.cwd,
-                repository: input.repository,
-                host: input.host,
-                ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
-              })
-              .pipe(
-                Effect.orElseSucceed(() => new Map<string, string>()),
-                Effect.map((avatarsByLogin) => ({
-                  ...page,
-                  items: page.items.map((item) => ({
-                    ...item,
-                    author: withAvatar(item.author, avatarsByLogin, input.host),
-                  })),
-                })),
-              ),
-          ),
+          Effect.map((page) => ({
+            ...page,
+            items: page.items.map((item) => ({
+              ...item,
+              author: withAvatar(item.author, new Map<string, string>(), input.host),
+            })),
+          })),
         ),
 
     listChangeRequestsAcross: (input) =>

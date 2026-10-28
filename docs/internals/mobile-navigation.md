@@ -33,7 +33,7 @@ and would unmount its header configuration, which hides the navigation bar.
 
 ## UIKit constraints
 
-The [react-native-screens patch](../../patches/react-native-screens@4.26.2.patch)
+The [react-native-screens fork](../operations/mobile-screens-fork.md)
 preserves behavior that is easy to break when changing native headers:
 
 - The brand belongs in `headerTitle`. On iOS 26.5, UIKit morphs a background-free
@@ -60,9 +60,8 @@ preserves behavior that is easy to break when changing native headers:
   passes, which left threads shifted under the bar. Lint rejects
   `ScrollViewMarker` imported anywhere else.
 
-The patch adds native header props that require code generation and a new binary.
-Patch rebuild guidance lives in the
-[mobile development README](../../apps/mobile/README.md#development).
+The fork adds native header props that require code generation and a new binary.
+See the [fork build instructions](../operations/mobile-screens-fork.md).
 
 ## Native media presentations
 

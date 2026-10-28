@@ -204,21 +204,18 @@ describe("settings search targets", () => {
 });
 
 describe("auto-settlement search availability", () => {
-  function environment(id: string, { connected = true, loaded = true, supported = true } = {}) {
+  function environment(id: string, { connected = true, loaded = true } = {}) {
     return {
       environmentId: EnvironmentId.make(id),
       connection: { phase: connected ? ("connected" as const) : ("offline" as const) },
-      serverConfig: loaded
-        ? { environment: { capabilities: { threadAutoSettlement: supported } } }
-        : null,
+      serverConfig: loaded ? { environment: { capabilities: {} } } : null,
     };
   }
 
   const capable = environment("capable");
-  const unsupported = environment("unsupported", { supported: false });
   const offline = environment("offline", { connected: false });
   const loading = environment("loading", { loaded: false });
-  const environments = [capable, unsupported, offline, loading];
+  const environments = [capable, offline, loading];
 
   it("keeps results discoverable when one connected environment supports them", () => {
     const availability = getThreadAutoSettlementSearchAvailability(environments);
@@ -240,16 +237,7 @@ describe("auto-settlement search availability", () => {
     ]);
   });
 
-  it("offers only capable environments when an aggregate has mixed capabilities", () => {
-    expect(
-      getThreadAutoSettlementSearchAvailability(environments, {
-        kind: "all",
-        environmentIds: environments.map((entry) => entry.environmentId),
-      }),
-    ).toEqual({ eligibleEnvironmentIds: [capable.environmentId], isTargetAvailable: false });
-  });
-
-  it.each([unsupported, offline, loading])(
+  it.each([offline, loading])(
     "does not render the target on $environmentId or silently fall back",
     (selected) => {
       expect(

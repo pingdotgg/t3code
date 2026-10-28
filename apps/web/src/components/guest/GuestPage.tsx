@@ -452,7 +452,6 @@ function GuestThread({
           listRef={listRef}
           timelineEntries={entries}
           isWorking={isWorking}
-          activeTurnInProgress={isWorking}
           activeTurnStartedAt={workStartedAt}
           latestRun={activityRun}
           runningRunId={runningRunId}
@@ -460,7 +459,6 @@ function GuestThread({
           runs={projection.runs}
           routeThreadKey={threadKey}
           onOpenThread={ignore}
-          onRollbackCheckpoint={ignore}
           supportsConversationRollback={false}
           onRevertToTurnCount={ignore}
           isRevertingCheckpoint={false}

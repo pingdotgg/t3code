@@ -128,7 +128,6 @@ function layerBackgroundPolicy(shouldRunScopeWork: (scope: BackgroundScope) => b
   return Layer.mock(BackgroundPolicy.BackgroundPolicy)({
     reportClientActivity: () => Effect.void,
     removeRpcClient: () => Effect.void,
-    reportHostPowerState: () => Effect.void,
     snapshot: Effect.succeed({
       hostPower: {
         source: "unknown",
@@ -148,8 +147,6 @@ function layerBackgroundPolicy(shouldRunScopeWork: (scope: BackgroundScope) => b
       shouldRunOpportunisticWork: false,
       updatedAt: TEST_EPOCH,
     }),
-    streamChanges: Stream.empty,
-    hasDemand: () => Effect.succeed(true),
     shouldRunScopeWork: (scope) => Effect.sync(() => shouldRunScopeWork(scope)),
     shouldRunOpportunisticWork: Effect.succeed(true),
   });

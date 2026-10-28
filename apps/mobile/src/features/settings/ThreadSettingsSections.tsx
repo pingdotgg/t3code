@@ -97,12 +97,7 @@ export function AutoSettleSettingsRows(props: {
     })),
   );
 
-  const supportsProjectOverrides = displayTargets.every(
-    (target) =>
-      target.environment.serverConfig.environment.capabilities.projectSettingsOverrides === true,
-  );
-  const disabled =
-    !canWriteSettings || props.pending || (projectSelected && !supportsProjectOverrides);
+  const disabled = !canWriteSettings || props.pending;
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
 
   return (

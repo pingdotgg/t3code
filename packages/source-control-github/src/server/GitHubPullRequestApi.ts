@@ -1,3 +1,4 @@
+import { isCommitSha, normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
@@ -67,7 +68,6 @@ import {
   LenientPullRequestSearch,
   pageRows,
   pullRequestLookup,
-  toActorAvatars,
   toLabelCandidates,
   toRepositoryAuthors,
   toRepositoryLabels,
@@ -136,19 +136,6 @@ export class GitHubViewerLoginUnavailableError extends Schema.TaggedError<GitHub
 ) {
   override get message(): string {
     return "GitHub returned no login for the authenticated account.";
-  }
-}
-
-export class GitHubPullRequestUpdatedAtUnavailableError extends Schema.TaggedError<GitHubPullRequestUpdatedAtUnavailableError>()(
-  "GitHubPullRequestUpdatedAtUnavailableError",
-  {
-    cwd: Schema.String,
-    repository: Schema.String,
-    number: Schema.Int,
-  },
-) {
-  override get message(): string {
-    return `Pull request ${this.repository}#${this.number} reported no update time.`;
   }
 }
 
@@ -317,8 +304,7 @@ export type GitHubPullRequestApiError =
   | GitHubWorkflowApprovalHeadUnavailableError
   | GitHubWorkflowApprovalHeadChangedError
   | SourceControlRateLimit.SourceControlRateLimitPausedError
-  | GitHubViewerLoginUnavailableError
-  | GitHubPullRequestUpdatedAtUnavailableError;
+  | GitHubViewerLoginUnavailableError;
 
 const isGraphQlClientError = (error: unknown): error is GraphQLClientError.GraphQLClientError =>
   GraphQLClientError.isGraphQLClientError(error);
@@ -588,13 +574,6 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<GitHubReviewThreadComments, GitHubPullRequestApiError>;
 
-    readonly listActorAvatars: (input: {
-      readonly cwd: string;
-      readonly repository: string;
-      readonly host: string;
-      readonly ids: ReadonlyArray<string>;
-    }) => Effect.Effect<ReadonlyMap<string, string>, GitHubPullRequestApiError>;
-
     readonly getReviewThreadComments: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -756,10 +735,6 @@ function parseRepositorySelector(value: string): {
 /** Bound decimal length to prevent exponential notation in request paths. */
 function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
-}
-
-function isCommitSha(value: string): boolean {
-  return /^[0-9a-f]{7,64}$/i.test(value);
 }
 
 /** Quote user text so GitHub cannot interpret it as qualifiers that widen the listing. */
@@ -1058,7 +1033,7 @@ export const make = Effect.gen(function* () {
       value === null
         ? Effect.fail(
             new GitHubRequestPolicy.GitHubApiNotFoundError({
-              host: GitHubRequestPolicy.normalizeHost(input.host),
+              host: normalizeHost(input.host),
               operation: input.operation,
             }),
           )
@@ -1189,7 +1164,7 @@ export const make = Effect.gen(function* () {
   const revalidatedRestRead = Effect.fn("GitHubPullRequestApi.revalidatedRestRead")(function* <A>(
     input: RestReadInput<A>,
   ) {
-    const host = GitHubRequestPolicy.normalizeHost(input.host);
+    const host = normalizeHost(input.host);
     const { token, fingerprint } = yield* api.credential(host);
     const key = `${fingerprint}\0${host}\0${input.path}`;
     const previous = yield* Cache.get(validators, key);
@@ -2228,15 +2203,6 @@ export const make = Effect.gen(function* () {
         };
       },
     ),
-
-    listActorAvatars: Effect.fn("GitHubPullRequestApi.listActorAvatars")(function (input) {
-      if (input.ids.length === 0) {
-        return Effect.succeed(new Map<string, string>());
-      }
-      return client
-        .ActorAvatars({ ids: input.ids })
-        .pipe(graphql({ ...input, operation: "listActorAvatars" }), Effect.map(toActorAvatars));
-    }),
 
     getViewerAccess: Effect.fn("GitHubPullRequestApi.getViewerAccess")(function (input) {
       const { owner, name } = parseRepositorySelector(input.repository);

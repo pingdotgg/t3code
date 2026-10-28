@@ -11,7 +11,8 @@ import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
 import { createWorkspaceConnectionAtoms } from "./workspace-connection-atoms";
-import { projectWorkspaceEnvironment, projectWorkspaceState } from "./workspaceModel";
+import { projectWorkspaceState } from "./workspaceModel";
+import { projectEnvironmentConnectionSummary as projectWorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
 
 const ID = EnvironmentId.make("environment-1");
 function presentation(): EnvironmentPresentation {
@@ -52,8 +53,6 @@ describe("workspace connection subscriptions", () => {
     const shell = Atom.make<EnvironmentShellSummary>({
       hasSnapshot: true,
       hasSynchronizingShell: false,
-      hasCachedShell: false,
-      hasLiveShell: true,
       firstError: null,
     });
     const broadState = Atom.make((get) =>

@@ -131,7 +131,6 @@ export function selectIncomingShareAttachmentsForServer(input: {
   readonly serverConfig: {
     readonly environment: {
       readonly capabilities: {
-        readonly attachmentUploads?: boolean;
         readonly fileAttachments?: { readonly maxUploadBytes: number };
       };
     };
@@ -148,10 +147,7 @@ export function selectIncomingShareAttachmentsForServer(input: {
     return { status: "pending" };
   }
   const capabilities = input.serverConfig?.environment.capabilities;
-  const maxFileAttachmentBytes =
-    capabilities?.attachmentUploads === true
-      ? (capabilities.fileAttachments?.maxUploadBytes ?? null)
-      : null;
+  const maxFileAttachmentBytes = capabilities?.fileAttachments?.maxUploadBytes ?? null;
   return {
     status: "ready",
     ...selectIncomingShareAttachments({

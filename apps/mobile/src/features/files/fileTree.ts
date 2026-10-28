@@ -90,16 +90,6 @@ export function buildFileTree(entries: ReadonlyArray<ProjectEntry>): ReadonlyArr
   return [...root.children.values()].sort(compareNodes).map(freezeNode);
 }
 
-export function defaultExpandedTreePaths(nodes: ReadonlyArray<FileTreeNode>): ReadonlySet<string> {
-  const expanded = new Set<string>();
-  for (const node of nodes) {
-    if (node.kind === "directory") {
-      expanded.add(node.path);
-    }
-  }
-  return expanded;
-}
-
 function flattenNode(
   output: VisibleFileTreeNode[],
   node: FileTreeNode,

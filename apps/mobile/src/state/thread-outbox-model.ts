@@ -174,7 +174,6 @@ export function resolveThreadOutboxDeliveryAction(input: {
   readonly threadExists: boolean;
   readonly shellStatus: EnvironmentShellStatus;
   readonly environmentConnected: boolean;
-  readonly threadBusy: boolean;
   /**
    * Set when the shell can leave idle subagent children out: absence alone is not deletion there,
    * only a settled family read without the row is.

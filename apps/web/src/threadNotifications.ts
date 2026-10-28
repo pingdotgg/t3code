@@ -41,7 +41,7 @@ let badgeFavicon: HTMLLinkElement | undefined;
 export function setNotificationBadge(count: number) {
   const bridge = window.desktopBridge;
   let image: string | null = null;
-  if (count > 0 && (!bridge || bridge.getClientPlatform?.() === "win32")) {
+  if (count > 0 && (!bridge || bridge.getClientPlatform() === "win32")) {
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 64;
     const context = canvas.getContext("2d");
@@ -77,7 +77,7 @@ export function setNotificationBadge(count: number) {
       originalFavicon = undefined;
     }
   }
-  void bridge?.setNotificationBadge?.({ count, image }).catch(() => undefined);
+  void bridge?.setNotificationBadge({ count, image }).catch(() => undefined);
 }
 
 let audioContext: AudioContext | undefined;

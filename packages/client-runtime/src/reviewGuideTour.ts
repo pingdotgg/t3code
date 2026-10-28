@@ -171,11 +171,6 @@ export function excerptExpansionOldContents(
   return [...oldPrefix, ...oldRows, ...newLines.slice(before + newCount)].join("");
 }
 
-export interface LetteredNote<Note> {
-  readonly marker: string;
-  readonly note: Note;
-}
-
 export function letterStopNotes(stop: PullRequestReviewGuideStop) {
   const lettered = stop.notes.map((note, index) => ({ marker: noteMarker(index), note }));
   const byExcerpt = stop.excerpts.map((excerpt) => {

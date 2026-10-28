@@ -35,7 +35,7 @@ export interface PendingDraftTask {
   readonly draft: ComposerDraft;
 }
 
-export function composerDraftHasUserContent(draft: ComposerDraft): boolean {
+function composerDraftHasUserContent(draft: ComposerDraft): boolean {
   return draft.text.trim().length > 0 || draft.attachments.length > 0;
 }
 

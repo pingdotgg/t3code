@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Keyboard, type TextInputInstance, View } from "react-native";
 
 import {
@@ -23,11 +23,11 @@ export function FilesHeader(props: {
   const [searchOpen, setSearchOpen] = useState(false);
   const searching = searchOpen || props.searchQuery.length > 0;
   const { onSearchQueryChange } = props;
-  const closeSearch = useCallback(() => {
+  const closeSearch = () => {
     onSearchQueryChange("");
     setSearchOpen(false);
     Keyboard.dismiss();
-  }, [onSearchQueryChange]);
+  };
 
   useHardwareBack(searching, () => {
     closeSearch();

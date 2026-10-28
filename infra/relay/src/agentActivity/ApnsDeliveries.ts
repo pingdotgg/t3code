@@ -18,8 +18,6 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import {
-  isExpiredAgentActivityState,
-  isTerminalPhase,
   notificationForActivity,
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
@@ -51,12 +49,6 @@ import {
   rowPhasesChanged,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
-export {
-  alertForAttentionTransition,
-  alertForNewlyTerminal,
-  alertForTerminalAggregate,
-} from "./agentActivityAlerts.ts";
-
 const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
 const FRESHLY_ARMED_GRACE_MS = 2 * 60 * 1_000;
 const PERMANENT_APNS_TOKEN_REASONS = new Set([
@@ -67,12 +59,12 @@ const PERMANENT_APNS_TOKEN_REASONS = new Set([
 
 type LiveActivityDeliveryKind = Extract<
   RelayDeliveryKind,
-  "live_activity_start" | "live_activity_update" | "live_activity_end"
+  "live_activity_update" | "live_activity_end"
 >;
 
 type ChosenLiveActivityDelivery =
   | {
-      readonly kind: "live_activity_start" | "live_activity_update";
+      readonly kind: "live_activity_update";
       readonly token: string;
       readonly aggregate: RelayAgentActivityAggregateState;
       readonly alert: ApnsLiveActivityAlert | null;
@@ -130,8 +122,6 @@ export class ApnsDeliveryTransportError extends Schema.TaggedError<ApnsDeliveryT
     return `APNs ${this.kind} delivery failed for device ${this.deviceId}.`;
   }
 }
-
-export const isApnsDeliveryTransportError = Schema.is(ApnsDeliveryTransportError);
 
 const decodeRelayAgentActivityAggregateStateJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentActivityAggregateStateSchema),
@@ -311,8 +301,6 @@ function chooseDelivery(input: {
 
 function deliveryEvent(kind: LiveActivityDeliveryKind): Apns.ApnsLiveActivityEvent {
   switch (kind) {
-    case "live_activity_start":
-      return "start";
     case "live_activity_update":
       return "update";
     case "live_activity_end":
@@ -424,11 +412,9 @@ function credentialsForTarget(
 
 function expectedCurrentToken(input: {
   readonly target: LiveActivities.TargetRow;
-  readonly kind: RelayDeliveryKind;
+  readonly kind: Exclude<RelayDeliveryKind, "live_activity_start">;
 }): string | null {
   switch (input.kind) {
-    case "live_activity_start":
-      return input.target.push_to_start_token;
     case "live_activity_update":
     case "live_activity_end":
       return input.target.activity_push_token;
@@ -440,12 +426,12 @@ function expectedCurrentToken(input: {
 interface SendLiveActivityDeliveryInputBase {
   readonly target: LiveActivityDeliveryTarget;
   readonly token: string;
-  readonly sourceJobId?: string | null;
+  readonly sourceJobId: string;
 }
 
 export type SendLiveActivityDeliveryInput =
   | (SendLiveActivityDeliveryInputBase & {
-      readonly kind: "live_activity_start" | "live_activity_update";
+      readonly kind: "live_activity_update";
       readonly aggregate: RelayAgentActivityAggregateState;
       readonly alert?: ApnsLiveActivityAlert | null;
     })
@@ -467,7 +453,6 @@ function makeLiveActivityDeliveryRequest(
     nowIso: DateTime.formatIso(now),
   };
   switch (input.kind) {
-    case "live_activity_start":
     case "live_activity_update":
       return {
         epochSeconds,
@@ -515,37 +500,19 @@ export class ApnsDeliveries extends Context.Service<
     readonly sendPushNotification: (input: {
       readonly target: LiveActivityDeliveryTarget;
       readonly token: string;
-      readonly sourceJobId?: string | null;
+      readonly sourceJobId: string;
       readonly notification: ApnsNotificationPayload;
     }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
   }
 >()("t3code-relay/agentActivity/ApnsDeliveries") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const attempts = yield* DeliveryAttempts.DeliveryAttempts;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const deliveryQueue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;
   const config = yield* RelayConfiguration.RelayConfiguration;
   const apns = yield* Apns.ApnsClient;
   const activityRows = yield* AgentActivityRows.AgentActivityRows;
-
-  // Recheck queued starts against newer terminal publishes. Fail open on database errors.
-  const userStillHasLiveWork = Effect.fnUntraced(function* (userId: string) {
-    const now = yield* DateTime.now;
-    return yield* activityRows.listForUser({ userId }).pipe(
-      Effect.map((states) =>
-        states.some(
-          (state) =>
-            !isTerminalPhase(state) && !isExpiredAgentActivityState(state, now.epochMilliseconds),
-        ),
-      ),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("live-work recheck failed; allowing queued start", { cause }).pipe(
-          Effect.as(true),
-        ),
-      ),
-    );
-  });
 
   const userHasContentToShow = Effect.fnUntraced(function* (userId: string) {
     const now = yield* DateTime.now;
@@ -645,7 +612,7 @@ export const make = Effect.gen(function* () {
 
   const currentSignedJobTarget = Effect.fnUntraced(function* (input: {
     readonly target: LiveActivityDeliveryTarget;
-    readonly kind: RelayDeliveryKind;
+    readonly kind: Exclude<RelayDeliveryKind, "live_activity_start">;
     readonly token: string;
   }) {
     return yield* liveActivities.listTargets({ userId: input.target.user_id }).pipe(
@@ -691,97 +658,78 @@ export const make = Effect.gen(function* () {
         },
         cause,
       );
-    if (input.sourceJobId) {
-      const claim = yield* attempts.claimSourceJob({
-        userId: input.target.user_id,
-        environmentId: null,
-        threadId: null,
-        deviceId: input.target.device_id,
-        kind: input.kind,
+    const claim = yield* attempts.claimSourceJob({
+      userId: input.target.user_id,
+      environmentId: null,
+      threadId: null,
+      deviceId: input.target.device_id,
+      kind: input.kind,
+      sourceJobId: input.sourceJobId,
+      token: input.token,
+    });
+    if (claim === "completed") {
+      return duplicateJobResult({ deviceId: input.target.device_id, kind: input.kind });
+    }
+    if (claim === "in_flight") {
+      return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
+    }
+    const currentTarget = yield* currentSignedJobTarget({
+      target: input.target,
+      kind: input.kind,
+      token: input.token,
+    });
+    if (!currentTarget) {
+      yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,
-        token: input.token,
+        apnsReason: "Stale APNs delivery job skipped.",
       });
-      if (claim === "completed") {
-        return duplicateJobResult({ deviceId: input.target.device_id, kind: input.kind });
-      }
-      if (claim === "in_flight") {
-        return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
-      }
-      const currentTarget = yield* currentSignedJobTarget({
-        target: input.target,
-        kind: input.kind,
-        token: input.token,
-      });
-      if (!currentTarget) {
-        yield* attempts.completeSourceJob({
-          sourceJobId: input.sourceJobId,
-          apnsReason: "Stale APNs delivery job skipped.",
-        });
-        return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
-      }
-      deliveryTarget = currentTarget;
-      if (alert) {
-        const preferences = parsePreferences(currentTarget.preferences_json);
-        const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
-        alert =
-          !preferences?.notificationsEnabled || !aggregate
-            ? null
-            : (alertForAttentionTransition({
-                previousAggregate,
-                nextAggregate: aggregate,
-                preferences,
-              }) ??
-              alertForNewlyTerminal({
-                previousAggregate,
-                nextAggregate: aggregate,
-                preferences,
-                nowMs: now.epochMilliseconds,
-                includeUnobserved: true,
-              }));
-      }
-      if (
-        input.kind !== "live_activity_start" &&
-        aggregate !== null &&
-        !(yield* aggregateRowsAreCurrent({
-          userId: input.target.user_id,
-          aggregate,
-        }))
-      ) {
-        yield* attempts.completeSourceJob({
-          sourceJobId: input.sourceJobId,
-          apnsReason: "Stale agent activity state skipped.",
-        });
-        return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
-      }
-      // A contentless end must not retire a card that newer work now owns. An
-      // end for a device that turned Live Activities off still goes out.
-      if (
-        input.kind === "live_activity_end" &&
-        aggregate === null &&
-        parsePreferences(currentTarget.preferences_json)?.liveActivitiesEnabled !== false &&
-        (yield* userHasContentToShow(input.target.user_id))
-      ) {
-        yield* attempts.completeSourceJob({
-          sourceJobId: input.sourceJobId,
-          apnsReason: "Stale APNs end job skipped.",
-        });
-        return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
-      }
+      return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
+    }
+    deliveryTarget = currentTarget;
+    if (alert) {
+      const preferences = parsePreferences(currentTarget.preferences_json);
+      const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
+      alert =
+        !preferences?.notificationsEnabled || !aggregate
+          ? null
+          : (alertForAttentionTransition({
+              previousAggregate,
+              nextAggregate: aggregate,
+              preferences,
+            }) ??
+            alertForNewlyTerminal({
+              previousAggregate,
+              nextAggregate: aggregate,
+              preferences,
+              nowMs: now.epochMilliseconds,
+              includeUnobserved: true,
+            }));
     }
     if (
-      input.kind === "live_activity_start" &&
-      !(yield* userStillHasLiveWork(input.target.user_id))
-    ) {
-      yield* liveActivities.clearStartQueued({
+      aggregate !== null &&
+      !(yield* aggregateRowsAreCurrent({
         userId: input.target.user_id,
-        deviceId: input.target.device_id,
+        aggregate,
+      }))
+    ) {
+      yield* attempts.completeSourceJob({
+        sourceJobId: input.sourceJobId,
+        apnsReason: "Stale agent activity state skipped.",
       });
-      if (input.sourceJobId) {
-        yield* attempts.completeSourceJob({
-          sourceJobId: input.sourceJobId,
-          apnsReason: "Stale APNs start job skipped.",
-        });
-      }
+      return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
+    }
+    // A contentless end must not retire a card that newer work now owns. An
+    // end for a device that turned Live Activities off still goes out.
+    if (
+      input.kind === "live_activity_end" &&
+      aggregate === null &&
+      parsePreferences(currentTarget.preferences_json)?.liveActivitiesEnabled !== false &&
+      (yield* userHasContentToShow(input.target.user_id))
+    ) {
+      yield* attempts.completeSourceJob({
+        sourceJobId: input.sourceJobId,
+        apnsReason: "Stale APNs end job skipped.",
+      });
       return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
     const { epochSeconds, iso, request } = makeLiveActivityDeliveryRequest(
@@ -817,28 +765,11 @@ export const make = Effect.gen(function* () {
         kind: input.kind,
         invalidatedAt: iso,
       });
-    } else if (input.kind === "live_activity_start") {
-      yield* liveActivities.clearStartQueued({
-        userId: input.target.user_id,
-        deviceId: input.target.device_id,
-      });
     }
-    if (input.sourceJobId) {
-      yield* attempts.completeSourceJob({
-        sourceJobId: input.sourceJobId,
-        ...deliveryAttemptOutcome(result),
-      });
-    } else {
-      yield* attempts.record({
-        userId: input.target.user_id,
-        environmentId: null,
-        threadId: null,
-        deviceId: input.target.device_id,
-        kind: input.kind,
-        token: input.token,
-        ...deliveryAttemptOutcome(result),
-      });
-    }
+    yield* attempts.completeSourceJob({
+      sourceJobId: input.sourceJobId,
+      ...deliveryAttemptOutcome(result),
+    });
     return {
       deviceId: input.target.device_id,
       kind: input.kind,
@@ -888,74 +819,72 @@ export const make = Effect.gen(function* () {
         },
         cause,
       );
-    if (input.sourceJobId) {
-      const claim = yield* attempts.claimSourceJob({
-        userId: input.target.user_id,
-        environmentId: notification.environmentId,
-        threadId: notification.threadId,
+    const claim = yield* attempts.claimSourceJob({
+      userId: input.target.user_id,
+      environmentId: notification.environmentId,
+      threadId: notification.threadId,
+      deviceId: input.target.device_id,
+      kind: "push_notification",
+      sourceJobId: input.sourceJobId,
+      token: input.token,
+    });
+    if (claim === "completed") {
+      return duplicateJobResult({
         deviceId: input.target.device_id,
         kind: "push_notification",
+      });
+    }
+    if (claim === "in_flight") {
+      return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
+    }
+    const currentTarget = yield* currentSignedJobTarget({
+      target: input.target,
+      kind: "push_notification",
+      token: input.token,
+    });
+    if (!currentTarget) {
+      yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,
-        token: input.token,
+        apnsReason: "Stale APNs delivery job skipped.",
       });
-      if (claim === "completed") {
-        return duplicateJobResult({
-          deviceId: input.target.device_id,
-          kind: "push_notification",
-        });
-      }
-      if (claim === "in_flight") {
-        return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
-      }
-      const currentTarget = yield* currentSignedJobTarget({
-        target: input.target,
+      return staleJobResult({
+        deviceId: input.target.device_id,
         kind: "push_notification",
-        token: input.token,
       });
-      if (!currentTarget) {
-        yield* attempts.completeSourceJob({
-          sourceJobId: input.sourceJobId,
-          apnsReason: "Stale APNs delivery job skipped.",
-        });
-        return staleJobResult({
-          deviceId: input.target.device_id,
-          kind: "push_notification",
-        });
-      }
-      if (
-        !(yield* notificationStateIsCurrent({
-          userId: input.target.user_id,
-          notification,
-        }))
-      ) {
-        yield* attempts.completeSourceJob({
-          sourceJobId: input.sourceJobId,
-          apnsReason: "Stale agent activity state skipped.",
-        });
-        return staleJobResult({
-          deviceId: input.target.device_id,
-          kind: "push_notification",
-        });
-      }
-      deliveryTarget = currentTarget;
-      const preferences = parsePreferences(currentTarget.preferences_json);
-      const alertAllowed =
-        notification.phase !== undefined && notification.updatedAt !== undefined
-          ? shouldAlertForActivity({
-              ...notification,
-              phase: notification.phase,
-              updatedAt: notification.updatedAt,
-              preferences,
-              nowMs: now.epochMilliseconds,
-            })
-          : preferences?.notificationsEnabled === true;
-      if (!alertAllowed) {
-        yield* attempts.completeSourceJob({
-          sourceJobId: input.sourceJobId,
-          apnsReason: "Notification is disabled or no longer fresh.",
-        });
-        return staleJobResult({ deviceId: input.target.device_id, kind: "push_notification" });
-      }
+    }
+    if (
+      !(yield* notificationStateIsCurrent({
+        userId: input.target.user_id,
+        notification,
+      }))
+    ) {
+      yield* attempts.completeSourceJob({
+        sourceJobId: input.sourceJobId,
+        apnsReason: "Stale agent activity state skipped.",
+      });
+      return staleJobResult({
+        deviceId: input.target.device_id,
+        kind: "push_notification",
+      });
+    }
+    deliveryTarget = currentTarget;
+    const preferences = parsePreferences(currentTarget.preferences_json);
+    const alertAllowed =
+      notification.phase !== undefined && notification.updatedAt !== undefined
+        ? shouldAlertForActivity({
+            ...notification,
+            phase: notification.phase,
+            updatedAt: notification.updatedAt,
+            preferences,
+            nowMs: now.epochMilliseconds,
+          })
+        : preferences?.notificationsEnabled === true;
+    if (!alertAllowed) {
+      yield* attempts.completeSourceJob({
+        sourceJobId: input.sourceJobId,
+        apnsReason: "Notification is disabled or no longer fresh.",
+      });
+      return staleJobResult({ deviceId: input.target.device_id, kind: "push_notification" });
     }
     const result = yield* apns
       .sendPushNotificationRequest({
@@ -978,22 +907,10 @@ export const make = Effect.gen(function* () {
         invalidatedAt: DateTime.formatIso(now),
       });
     }
-    if (input.sourceJobId) {
-      yield* attempts.completeSourceJob({
-        sourceJobId: input.sourceJobId,
-        ...deliveryAttemptOutcome(result),
-      });
-    } else {
-      yield* attempts.record({
-        userId: input.target.user_id,
-        environmentId: notification.environmentId,
-        threadId: notification.threadId,
-        deviceId: input.target.device_id,
-        kind: "push_notification",
-        token: input.token,
-        ...deliveryAttemptOutcome(result),
-      });
-    }
+    yield* attempts.completeSourceJob({
+      sourceJobId: input.sourceJobId,
+      ...deliveryAttemptOutcome(result),
+    });
     return {
       deviceId: input.target.device_id,
       kind: "push_notification" as const,
@@ -1032,7 +949,6 @@ export const make = Effect.gen(function* () {
     });
     return yield* Effect.suspend(() => {
       switch (payload.kind) {
-        case "live_activity_start":
         case "live_activity_update":
           if (payload.aggregate === null) {
             return Effect.fail(
@@ -1178,14 +1094,6 @@ export const make = Effect.gen(function* () {
           bundleId: input.target.bundle_id,
           apsEnvironment: input.target.aps_environment,
           notification,
-        });
-      }
-      if (delivery.kind === "live_activity_start") {
-        const now = yield* DateTime.now;
-        yield* liveActivities.markStartQueued({
-          userId: input.target.user_id,
-          deviceId: input.target.device_id,
-          queuedAt: DateTime.formatIso(now),
         });
       }
       return result;

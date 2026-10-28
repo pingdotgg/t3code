@@ -38,7 +38,7 @@ export function useLinkedPullRequestLines(
   thread: EnvironmentThreadShell | null,
   runtime: EnvironmentRuntimeState | null,
 ) {
-  const supported = runtime?.serverConfig?.environment.capabilities.threadPullRequests === true;
+  const supported = (runtime?.serverConfig ?? null) !== null;
   const pullRequests = thread?.pullRequests;
   return useMemo(() => {
     const chains = resolveThreadPullRequestChains(supported ? (pullRequests ?? []) : []);

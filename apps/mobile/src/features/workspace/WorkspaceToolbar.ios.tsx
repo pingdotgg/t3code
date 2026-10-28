@@ -52,11 +52,9 @@ export function WorkspaceToolbar(props: {
   const tab = workspace.state.tabs[selectedTab];
   const searchLabel = SEARCH_LABELS[selectedTab === "usage" ? "threads" : selectedTab];
   const { isTabActive: isListTabActive } = workspace;
-  const isTabActive = useCallback(
-    // A retained tab slot stays mounted while another is shown.
-    (tab: typeof selectedTab) => (tab === "settings" ? tabActive : isListTabActive(tab)),
-    [tabActive, isListTabActive],
-  );
+  // A retained tab slot stays mounted while another is shown.
+  const isTabActive = (tab: typeof selectedTab) =>
+    tab === "settings" ? tabActive : isListTabActive(tab);
   const foldedSearch = deviceType === "duo-folded";
   const primaryColumn = use(NativePrimaryColumnContext);
   // UIKit hosts integrated search outside the sidebar's sliding content.
@@ -73,27 +71,24 @@ export function WorkspaceToolbar(props: {
     workspace.dispatch({ type: "search", tab: selectedTab });
     if (props.sidebar && !panes.primarySidebarVisible) togglePrimarySidebar();
   }, [workspace, selectedTab, props.sidebar, panes.primarySidebarVisible, togglePrimarySidebar]);
-  const focusSearch = useCallback(() => {
+  const focusSearch = () => {
     if (!isTabActive(selectedTab)) return false;
     if (duoSearch || !NATIVE_LIQUID_GLASS_SUPPORTED) enterSearch();
     searchRef.current?.focus();
     return true;
-  }, [isTabActive, selectedTab, enterSearch, duoSearch]);
-  const cancelSearch = useCallback(() => {
+  };
+  const cancelSearch = () => {
     workspace.recordScrollOffset(selectedTab, tab.searchEntryOffset);
     workspace.dispatch({ type: "cancel", tab: selectedTab });
-  }, [workspace, selectedTab, tab.searchEntryOffset]);
-  const searchFocused = useCallback(
-    () =>
-      tab.searchMode === "resting"
-        ? enterSearch()
-        : workspace.dispatch({ type: "search", tab: selectedTab }),
-    [tab.searchMode, enterSearch, workspace, selectedTab],
-  );
+  };
+  const searchFocused = () =>
+    tab.searchMode === "resting"
+      ? enterSearch()
+      : workspace.dispatch({ type: "search", tab: selectedTab });
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   // The sidebar remains visible while its detail owns navigation focus.
   const searchHostVisible = focused || primaryColumn?.presented === true;
-  const restoreSearch = useCallback(() => {
+  const restoreSearch = () => {
     if (
       searchHostVisible &&
       searchVisible &&
@@ -108,7 +103,7 @@ export function WorkspaceToolbar(props: {
         if (tab.searchMode === "active") searchRef.current?.focus();
       }
     }
-  }, [searchHostVisible, isTabActive, selectedTab, tab.searchMode, tab.query, searchVisible]);
+  };
   useFocusEffect(
     useCallback(() => {
       const frame = requestAnimationFrame(restoreSearch);

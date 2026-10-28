@@ -5,17 +5,14 @@ import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import {
   extractAntigravityUserInputQuestion,
-  isAntigravityOpenCommand,
   antigravityApprovalOptions,
   antigravitySubagentOutput,
-  isAntigravitySubagentReplayStart,
   classifyAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravitySessionUpdate,
   normalizeAntigravityToolCall,
   sanitizeAntigravityToolPayload,
-  selectAntigravityPermissionOptionId,
 } from "./AntigravityProtocol.ts";
 import {
   mergeToolCallState,
@@ -53,21 +50,6 @@ describe("native Antigravity subagent tools", () => {
   });
 
   it("recognizes history starts and bounds the launch output", () => {
-    expect(
-      isAntigravitySubagentReplayStart({
-        update: { sessionUpdate: "tool_call", status: "completed", rawOutput: "Done." },
-      }),
-    ).toBe(false);
-    expect(
-      isAntigravitySubagentReplayStart({
-        update: { sessionUpdate: "tool_call", status: "completed" },
-      }),
-    ).toBe(true);
-    expect(
-      isAntigravitySubagentReplayStart({
-        update: { sessionUpdate: "tool_call_update", status: "completed" },
-      }),
-    ).toBe(false);
     expect(
       antigravitySubagentOutput({
         toolCallId: "trajectory:4",
@@ -149,20 +131,6 @@ describe("Antigravity permissions and questions", () => {
     ],
   } satisfies EffectAcpSchema.RequestPermissionRequest;
 
-  it("uses only the option IDs offered for each approval decision", () => {
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "accept")).toBe("run-this-time");
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "acceptForSession")).toBe(
-      "remember-this-command",
-    );
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "acceptAlways")).toBe(
-      "remember-this-command",
-    );
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "decline")).toBe(
-      "stop-this-command",
-    );
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "cancel")).toBeUndefined();
-  });
-
   it("surfaces the agent's prompt injection warning on the remembered approval", () => {
     const risky = {
       ...permissionRequest,
@@ -197,22 +165,8 @@ describe("Antigravity permissions and questions", () => {
     expect(antigravityApprovalOptions(permissionRequest)[1]).not.toHaveProperty("warning");
   });
 
-  it("does not replace unsupported remembered approval with a single approval", () => {
-    const request = {
-      ...permissionRequest,
-      options: permissionRequest.options.filter((option) => option.kind !== "allow_always"),
-    };
-    expect(selectAntigravityPermissionOptionId(request, "acceptAlways")).toBeUndefined();
-    expect(selectAntigravityPermissionOptionId(request, "acceptForSession")).toBeUndefined();
-    expect(selectAntigravityPermissionOptionId(request, "accept")).toBe("run-this-time");
-    expect(
-      selectAntigravityPermissionOptionId({ ...request, options: [] }, "decline"),
-    ).toBeUndefined();
-  });
-
   it("routes the captured native question to single-choice input, not approval", () => {
     expect(isAntigravityUserInputRequest(questionRequest)).toBe(true);
-    expect(selectAntigravityPermissionOptionId(questionRequest, "accept")).toBeUndefined();
     expect(extractAntigravityUserInputQuestion(questionRequest)).toEqual({
       id: "interaction_9960062f",
       header: "Question",
@@ -452,16 +406,5 @@ describe("Antigravity tool results", () => {
     expect(serialized).not.toContain("image-blob");
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");
-  });
-
-  it("tracks only commands that have passed approval and are still running", () => {
-    const running = normalizeAntigravityToolCall(parseToolUpdate(commandStarted).toolCall);
-    expect(isAntigravityOpenCommand(running)).toBe(true);
-    expect(isAntigravityOpenCommand({ ...running, status: "pending" })).toBe(false);
-    expect(isAntigravityOpenCommand({ ...running, kind: "read" })).toBe(false);
-    const completed = normalizeAntigravityToolCall(
-      mergeToolCallState(running, parseToolUpdate(commandCompleted).toolCall),
-    );
-    expect(isAntigravityOpenCommand(completed)).toBe(false);
   });
 });

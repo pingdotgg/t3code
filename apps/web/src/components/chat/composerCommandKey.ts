@@ -4,7 +4,7 @@ import {
   type ComposerDispatchMode,
   resolveComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
-import { type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
+import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import {
   type ComposerPromptHistoryPosition,
   buildComposerPromptHistoryEntries,

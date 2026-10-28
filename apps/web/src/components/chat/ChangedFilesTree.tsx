@@ -26,7 +26,7 @@ interface ChangedFileRow {
   depth: number;
 }
 
-export type ChangedFileContextMenuHandler = (filePath: string, event: MouseEvent) => void;
+type ChangedFileContextMenuHandler = (filePath: string, event: MouseEvent) => void;
 
 export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   runId: RunId;

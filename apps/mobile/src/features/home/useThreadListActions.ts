@@ -2,7 +2,7 @@ import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
-import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -33,33 +33,8 @@ import { getThreadListV2OrderedSection } from "../threads/threadListV2";
 import { threadCanArchive } from "./threadArchive";
 import { resolveThreadTitleRename } from "../threads/thread-title-rename";
 
-/** Older servers default the settlement capability to false; never send them settle/unsettle. */
-function environmentSupportsSettlement(environmentId: EnvironmentThreadShell["environmentId"]) {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadSettlement === true
-  );
-}
-
-function environmentSupportsSnooze(environmentId: EnvironmentThreadShell["environmentId"]) {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadSnooze === true
-  );
-}
-
-function environmentSupportsPinning(environmentId: EnvironmentThreadShell["environmentId"]) {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadPinning === true
-  );
-}
-
-function environmentSupportsPinReorder(environmentId: EnvironmentThreadShell["environmentId"]) {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadPinReorder === true
-  );
+function environmentConfigLoaded(environmentId: EnvironmentThreadShell["environmentId"]) {
+  return appAtomRegistry.get(environmentServerConfigsAtom).has(environmentId);
 }
 
 function environmentSupportsAutoSettleOptOut(
@@ -68,15 +43,6 @@ function environmentSupportsAutoSettleOptOut(
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadAutoSettleOptOut === true
-  );
-}
-
-function environmentSupportsTitleRegeneration(
-  environmentId: EnvironmentThreadShell["environmentId"],
-) {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadTitleRegeneration === true
   );
 }
 
@@ -142,7 +108,7 @@ function useThreadActionExecutor(
     const succeeded = await (async () => {
       if (
         (action === "settle" || action === "unsettle") &&
-        !environmentSupportsSettlement(thread.environmentId)
+        !environmentConfigLoaded(thread.environmentId)
       ) {
         Dialog.alert(
           actionFailureTitle(action),
@@ -331,7 +297,7 @@ export function useThreadListActions(): {
     }
     snoozeInFlightThreadKeys.current.add(key);
     const succeeded = await (async () => {
-      if (!environmentSupportsSnooze(thread.environmentId)) {
+      if (!environmentConfigLoaded(thread.environmentId)) {
         Dialog.alert(
           "Could not snooze thread",
           "This environment's server does not support snoozing yet. Update the server to use Snooze.",
@@ -389,7 +355,7 @@ export function useThreadListActions(): {
     }
     snoozeInFlightThreadKeys.current.add(key);
     const succeeded = await (async () => {
-      if (!environmentSupportsSnooze(thread.environmentId)) {
+      if (!environmentConfigLoaded(thread.environmentId)) {
         Dialog.alert(
           "Could not wake thread",
           "This environment's server does not support snoozing yet. Update the server to wake this thread.",
@@ -427,7 +393,7 @@ export function useThreadListActions(): {
     (await executeAction("unsettle", thread)) === true;
   const pinThread = async (thread: EnvironmentThreadShell, restoreOrderKey?: string) => {
     if (!checkThreadOperationPermission(thread, "Could not pin thread")) return false;
-    if (!environmentSupportsPinning(thread.environmentId)) {
+    if (!environmentConfigLoaded(thread.environmentId)) {
       Dialog.alert(
         "Could not pin thread",
         "This environment's server does not support pinning yet. Update the server to use Pin.",
@@ -435,19 +401,13 @@ export function useThreadListActions(): {
       return false;
     }
     selectionHaptic();
-    let orderKey: string | undefined;
-    if (environmentSupportsPinReorder(thread.environmentId)) {
-      const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
-      let firstKey: string | null = null;
-      for (const shell of shells) {
-        if (shell.pinnedAt == null || shell.pinOrderKey == null) continue;
-        if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
-      }
-      orderKey = pinOrderKeyBetween(null, firstKey) ?? undefined;
+    const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
+    let firstKey: string | null = null;
+    for (const shell of shells) {
+      if (shell.pinnedAt == null || shell.pinOrderKey == null) continue;
+      if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
     }
-    orderKey = environmentSupportsPinReorder(thread.environmentId)
-      ? (restoreOrderKey ?? orderKey)
-      : undefined;
+    const orderKey = restoreOrderKey ?? pinOrderKeyBetween(null, firstKey) ?? undefined;
     ThreadUndo.invalidate("pin", scopedThreadKey(thread.environmentId, thread.id));
     // Pinning clears snooze, so older Settled or Snoozed undos would fight this pin.
     ThreadUndo.invalidate("settle", scopedThreadKey(thread.environmentId, thread.id));
@@ -475,7 +435,7 @@ export function useThreadListActions(): {
   };
   const unpinThread = async (thread: EnvironmentThreadShell) => {
     if (!checkThreadOperationPermission(thread, "Could not unpin thread")) return false;
-    if (!environmentSupportsPinning(thread.environmentId)) {
+    if (!environmentConfigLoaded(thread.environmentId)) {
       Dialog.alert(
         "Could not unpin thread",
         "This environment's server does not support pinning yet. Update the server to use Pin.",
@@ -539,7 +499,7 @@ export function useThreadListActions(): {
     if (thread.titleRegeneration != null || titleRegenerationInFlightThreadKeys.current.has(key)) {
       return false;
     }
-    if (!environmentSupportsTitleRegeneration(thread.environmentId)) {
+    if (!environmentConfigLoaded(thread.environmentId)) {
       Dialog.alert(
         "Could not regenerate title",
         "This environment's server does not support title regeneration yet. Update the server to regenerate thread titles.",
@@ -624,20 +584,14 @@ export function useThreadListActions(): {
           ? "pinned"
           : "active";
     if (section === "settled") {
-      if (!environmentSupportsSettlement(thread.environmentId)) return false;
+      if (!environmentConfigLoaded(thread.environmentId)) return false;
       appAtomRegistry.set(threadDropBusyAtom, true);
       const settled = await settleThread(thread);
       appAtomRegistry.set(threadDropBusyAtom, false);
       return settled;
     }
     const configs = appAtomRegistry.get(environmentServerConfigsAtom);
-    const supportsReorder = (environmentId: EnvironmentThreadShell["environmentId"]) => {
-      const capabilities = configs.get(environmentId)?.environment.capabilities;
-      return section === "pinned"
-        ? capabilities?.threadPinReorder === true
-        : capabilities?.threadActiveReorder === true;
-    };
-    if (!supportsReorder(thread.environmentId)) {
+    if (!configs.has(thread.environmentId)) {
       Dialog.alert(
         "Could not move thread",
         "This environment's server does not support reordering these threads. Update the server to arrange them.",
@@ -649,38 +603,20 @@ export function useThreadListActions(): {
       section,
       now: new Date().toISOString(),
       queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
-      settlementEnvironmentIds: new Set(
-        [...configs].flatMap(([id, config]) =>
-          config.environment.capabilities.threadSettlement === true ? [id] : [],
-        ),
-      ),
-      snoozeEnvironmentIds: new Set(
-        [...configs].flatMap(([id, config]) =>
-          config.environment.capabilities.threadSnooze === true ? [id] : [],
-        ),
-      ),
+      settlementEnvironmentIds: new Set(configs.keys()),
+      snoozeEnvironmentIds: new Set(configs.keys()),
     });
     const assignments = createThreadMovePlanner({
       allThreads: shells,
       ordered,
       section,
-      reorderableEnvironmentIds: new Set([...configs.keys()].filter(supportsReorder)),
+      reorderableEnvironmentIds: new Set(configs.keys()),
     })(scopedThreadKey(thread.environmentId, thread.id), direction);
     if (assignments === null) return false;
     const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
     const crossSection = !ordered.some(
       (row) => row.id === thread.id && row.environmentId === thread.environmentId,
     );
-    if (
-      crossSection &&
-      (((section === "pinned" || thread.pinnedAt != null) &&
-        !environmentSupportsPinning(thread.environmentId)) ||
-        (thread.settledOverride === "settled" &&
-          !environmentSupportsSettlement(thread.environmentId)) ||
-        (effectiveSnoozed(thread, { now: new Date().toISOString() }) &&
-          !environmentSupportsSnooze(thread.environmentId)))
-    )
-      return false;
     const shellByKey = new Map(
       shells.map((shell) => [scopedThreadKey(shell.environmentId, shell.id), shell]),
     );

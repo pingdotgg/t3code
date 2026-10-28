@@ -1,7 +1,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { type AsyncResult, type Atom } from "effect/reactivity";
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 
 export function usePullToRefresh<A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null) {
   const registry = use(RegistryContext);
@@ -18,36 +18,33 @@ export function usePullToRefresh<A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A
     [atom],
   );
 
-  const onRefresh = useCallback(
-    (beforeRefresh?: (signal: AbortSignal) => Promise<unknown>) => {
-      if (!atom || (request.current?.atom === atom && !request.current.controller.signal.aborted))
-        return;
-      request.current?.controller.abort();
-      const controller = new AbortController();
-      request.current = { atom, controller };
-      setRefreshingAtom(atom);
-      void Promise.resolve()
-        .then(() => {
-          if (!controller.signal.aborted) return beforeRefresh?.(controller.signal);
-        })
-        .catch(() => undefined)
-        .then(() => {
-          if (controller.signal.aborted) return;
-          return executeAtomQuery(registry, atom, {
-            refresh: true,
-            signal: controller.signal,
-            reportFailure: false,
-            reportDefect: false,
-          });
-        })
-        .finally(() => {
-          if (controller.signal.aborted || request.current?.controller !== controller) return;
-          request.current = null;
-          setRefreshingAtom(null);
+  const onRefresh = (beforeRefresh?: (signal: AbortSignal) => Promise<unknown>) => {
+    if (!atom || (request.current?.atom === atom && !request.current.controller.signal.aborted))
+      return;
+    request.current?.controller.abort();
+    const controller = new AbortController();
+    request.current = { atom, controller };
+    setRefreshingAtom(atom);
+    void Promise.resolve()
+      .then(() => {
+        if (!controller.signal.aborted) return beforeRefresh?.(controller.signal);
+      })
+      .catch(() => undefined)
+      .then(() => {
+        if (controller.signal.aborted) return;
+        return executeAtomQuery(registry, atom, {
+          refresh: true,
+          signal: controller.signal,
+          reportFailure: false,
+          reportDefect: false,
         });
-    },
-    [atom, registry],
-  );
+      })
+      .finally(() => {
+        if (controller.signal.aborted || request.current?.controller !== controller) return;
+        request.current = null;
+        setRefreshingAtom(null);
+      });
+  };
 
   return { refreshing: atom !== null && refreshingAtom === atom, onRefresh };
 }

@@ -576,5 +576,3 @@ export const layer = Api.make(
     ),
   ),
 );
-
-export default layer;

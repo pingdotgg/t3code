@@ -43,8 +43,6 @@ import {
   type PendingThreadOrder,
 } from "./threadOrder";
 
-export { snoozeWakeLabel };
-
 export const threadListInboxReturns = createInboxReturnTracker();
 
 export function resolveThreadListV2ProviderDrivers(

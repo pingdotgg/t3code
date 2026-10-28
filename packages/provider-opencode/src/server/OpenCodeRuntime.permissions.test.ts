@@ -1,63 +1,8 @@
 import * as NodeAssert from "node:assert/strict";
 
-import * as RegExpUtils from "effect/RegExp";
 import { describe, it } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
-
-function actionFor(
-  runtimeMode: Parameters<typeof OpenCodeRuntime.buildOpenCodePermissionRules>[0],
-  permission: string,
-  target = "*",
-) {
-  // OpenCode uses the last matching rule. Its wildcards match directory separators.
-  return OpenCodeRuntime.buildOpenCodePermissionRules(runtimeMode).findLast(
-    (rule) =>
-      (rule.permission === "*" || rule.permission === permission) &&
-      new RegExp(`^${RegExpUtils.escape(rule.pattern).replaceAll("\\*", ".*")}$`, "s").test(target),
-  )?.action;
-}
-
-describe("buildOpenCodePermissionRules", () => {
-  it("pre-approves edits once the user has chosen to auto-accept them", () => {
-    NodeAssert.equal(actionFor("auto-accept-edits", "edit"), "allow");
-  });
-
-  it("still asks before editing when approval is required", () => {
-    NodeAssert.equal(actionFor("approval-required", "edit"), "ask");
-  });
-
-  it("leaves auto asking, as the docs say it does without a reviewer", () => {
-    NodeAssert.equal(actionFor("auto", "edit"), "ask");
-  });
-
-  it("preserves OpenCode's environment-file approval rules", () => {
-    for (const runtimeMode of ["approval-required", "auto-accept-edits", "auto"] as const) {
-      for (const target of [
-        ".env",
-        ".env.local",
-        "config/service.env",
-        "config/service.env.local",
-      ]) {
-        NodeAssert.equal(actionFor(runtimeMode, "read", target), "ask");
-      }
-      for (const target of [".env.example", "config/service.env.example"]) {
-        NodeAssert.equal(actionFor(runtimeMode, "read", target), "allow");
-      }
-    }
-  });
-
-  it("still asks before commands, network access, external directories and unknown tools", () => {
-    for (const runtimeMode of ["approval-required", "auto-accept-edits", "auto"] as const) {
-      NodeAssert.equal(actionFor(runtimeMode, "bash"), "ask");
-      NodeAssert.equal(actionFor(runtimeMode, "webfetch"), "ask");
-      NodeAssert.equal(actionFor(runtimeMode, "websearch"), "ask");
-      NodeAssert.equal(actionFor(runtimeMode, "external_directory"), "ask");
-      NodeAssert.equal(actionFor(runtimeMode, "doom_loop"), "ask");
-      NodeAssert.equal(actionFor(runtimeMode, "custom_tool"), "ask");
-    }
-  });
-});
 
 describe("toOpenCodePermissionReply", () => {
   it.each([

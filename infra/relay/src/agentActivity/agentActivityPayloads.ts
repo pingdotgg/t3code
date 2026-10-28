@@ -63,7 +63,7 @@ function sanitizeDeepLink(value: string): string {
   return truncateText(trimmed, MAX_DEEP_LINK_LENGTH);
 }
 
-export function sanitizeAgentActivityAggregateRow(
+function sanitizeAgentActivityAggregateRow(
   row: RelayAgentActivityAggregateRow,
 ): RelayAgentActivityAggregateRow {
   return {

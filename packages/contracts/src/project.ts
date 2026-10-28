@@ -172,16 +172,6 @@ export const ProjectSnapshot = Schema.Struct({
 });
 export type ProjectSnapshot = typeof ProjectSnapshot.Type;
 
-export const ProjectChange = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("project.upserted"), project: Project }),
-  Schema.Struct({
-    type: Schema.Literal("project.deleted"),
-    projectId: ProjectId,
-    deletedAt: IsoDateTime,
-  }),
-]);
-export type ProjectChange = typeof ProjectChange.Type;
-
 export const ProjectCreatePayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,

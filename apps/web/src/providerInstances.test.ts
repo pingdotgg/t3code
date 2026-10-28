@@ -13,7 +13,6 @@ import {
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   resolveDefaultProviderModelSelection,
-  resolveProviderCatalogAvailability,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
 } from "./providerInstances";
@@ -70,46 +69,6 @@ describe("isProviderInstancePickerReady", () => {
 
     expect(entry?.status).toBe("ready");
     expect(entry && isProviderInstancePickerReady(entry)).toBe(false);
-  });
-});
-
-describe("resolveProviderCatalogAvailability", () => {
-  const [entry] = deriveProviderInstanceEntries([
-    provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
-  ]);
-
-  it("keeps the initial reactive config state distinct from an empty catalogue", () => {
-    expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: false,
-        entries: [],
-        selectedEntry: undefined,
-      }),
-    ).toBe("loading");
-    expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: true,
-        entries: [],
-        selectedEntry: undefined,
-      }),
-    ).toBe("unconfigured");
-  });
-
-  it("distinguishes a selected provider from configured but unusable providers", () => {
-    expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: true,
-        entries: entry ? [entry] : [],
-        selectedEntry: entry,
-      }),
-    ).toBe("ready");
-    expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: true,
-        entries: entry ? [entry] : [],
-        selectedEntry: undefined,
-      }),
-    ).toBe("unavailable");
   });
 });
 

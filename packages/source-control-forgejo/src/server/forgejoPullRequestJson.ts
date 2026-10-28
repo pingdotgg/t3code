@@ -1,6 +1,5 @@
+import { toIsoUtc } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Schema from "effect/Schema";
-import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
 import type {
   PullRequestActor,
   PullRequestCheck,
@@ -121,10 +120,6 @@ export function forgejoActor(
   return user?.login
     ? { login: user.login, name: user.full_name || null, avatarUrl: user.avatar_url || null }
     : null;
-}
-
-function toIsoUtc(value: string): string {
-  return Option.match(DateTime.make(value), { onNone: () => value, onSome: DateTime.formatIso });
 }
 
 export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {

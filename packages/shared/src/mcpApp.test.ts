@@ -9,7 +9,6 @@ import {
   mcpAppToolCallableByApp,
   readMcpAppCsp,
   readMcpAppReference,
-  readMcpAppResourceUri,
 } from "./mcpApp.ts";
 
 describe("mcpAppContentSecurityPolicy", () => {
@@ -138,9 +137,6 @@ describe("readMcpAppReference", () => {
 
 describe("tool metadata", () => {
   it("reads the resource URI from either spelling and honors app visibility", () => {
-    expect(readMcpAppResourceUri({ ui: { resourceUri: "ui://a/b" } })).toBe("ui://a/b");
-    expect(readMcpAppResourceUri({ "ui/resourceUri": "ui://a/c" })).toBe("ui://a/c");
-    expect(readMcpAppResourceUri({ ui: { resourceUri: "https://a" } })).toBeUndefined();
     expect(mcpAppToolCallableByApp(undefined)).toBe(true);
     expect(mcpAppToolCallableByApp({ ui: { visibility: ["model"] } })).toBe(false);
     expect(mcpAppToolCallableByApp({ ui: { visibility: ["model", "app"] } })).toBe(true);

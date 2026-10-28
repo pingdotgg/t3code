@@ -1,4 +1,3 @@
-import { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -7,14 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import {
-  isRelayManagedConnection,
-  type SavedRemoteConnection,
-  toStableSavedRemoteConnection,
-} from "../lib/connection";
 import * as MobileSecureStorage from "./mobile-secure-storage";
 
-const CONNECTIONS_KEY = "t3code.connections";
 const AGENT_AWARENESS_DEVICE_ID_KEY = "t3code.agent-awareness.device-id";
 const AGENT_AWARENESS_REGISTRATION_KEY = "t3code.agent-awareness.registration";
 const RECENT_THREAD_SHORTCUTS_KEY = "t3code.recent-thread-shortcuts";
@@ -67,22 +60,6 @@ export interface RecentThreadShortcut {
 export class MobileStorage extends Context.Service<
   MobileStorage,
   {
-    readonly loadSavedConnections: Effect.Effect<
-      ReadonlyArray<SavedRemoteConnection>,
-      MobileSecureStorage.MobileSecureStorageError
-    >;
-    readonly saveConnection: (
-      connection: SavedRemoteConnection,
-    ) => Effect.Effect<
-      void,
-      MobileSecureStorage.MobileSecureStorageError | MobileStorageEncodeError
-    >;
-    readonly clearSavedConnection: (
-      environmentId: EnvironmentId,
-    ) => Effect.Effect<
-      void,
-      MobileSecureStorage.MobileSecureStorageError | MobileStorageEncodeError
-    >;
     readonly loadOrCreateAgentAwarenessDeviceId: Effect.Effect<
       string,
       MobileSecureStorage.MobileSecureStorageError | MobileDeviceIdGenerationError
@@ -148,48 +125,6 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
     yield* secureStorage.setItem(key, encoded);
   });
 
-  const loadSavedConnections = readJson<{
-    readonly connections?: ReadonlyArray<SavedRemoteConnection>;
-  }>(CONNECTIONS_KEY).pipe(
-    Effect.map((parsed) =>
-      pipe(
-        parsed?.connections ?? [],
-        Arr.filter(
-          (connection) =>
-            !!connection.environmentId &&
-            (!!connection.bearerToken?.trim() || isRelayManagedConnection(connection)),
-        ),
-      ),
-    ),
-  );
-
-  const saveConnection = Effect.fn("MobileStorage.saveConnection")(function* (
-    connection: SavedRemoteConnection,
-  ) {
-    const current = yield* loadSavedConnections;
-    const stableConnection = toStableSavedRemoteConnection(connection);
-    const next = current.some((entry) => entry.environmentId === connection.environmentId)
-      ? pipe(
-          current,
-          Arr.map((entry) =>
-            entry.environmentId === connection.environmentId ? stableConnection : entry,
-          ),
-        )
-      : pipe(current, Arr.append(stableConnection));
-    yield* writeJson(CONNECTIONS_KEY, { connections: next });
-  });
-
-  const clearSavedConnection = Effect.fn("MobileStorage.clearSavedConnection")(function* (
-    environmentId: EnvironmentId,
-  ) {
-    const current = yield* loadSavedConnections;
-    const next = pipe(
-      current,
-      Arr.filter((entry) => entry.environmentId !== environmentId),
-    );
-    yield* writeJson(CONNECTIONS_KEY, { connections: next });
-  });
-
   const loadOrCreateAgentAwarenessDeviceId = Effect.gen(function* () {
     const existing = yield* secureStorage.getItem(AGENT_AWARENESS_DEVICE_ID_KEY);
     if (existing?.trim()) return existing;
@@ -246,9 +181,6 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
   );
 
   return MobileStorage.of({
-    loadSavedConnections,
-    saveConnection,
-    clearSavedConnection,
     loadOrCreateAgentAwarenessDeviceId,
     loadAgentAwarenessDeviceId,
     loadAgentAwarenessRegistrationRecord,

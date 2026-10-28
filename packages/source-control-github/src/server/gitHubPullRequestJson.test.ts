@@ -7,7 +7,6 @@ import {
   buildReviewerRequest,
   pullRequestLookup,
   toPullRequestWatchFingerprint,
-  decodePullRequestDetailJson,
   decodePullRequestFilesJson,
   decodePullRequestStacksJson,
   LenientPullRequestList,
@@ -486,27 +485,12 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
-  it("reads an auto-merge request and strategy, its null as off and its absence as neither", () => {
+  it("reads an auto-merge request and strategy, and its null as off", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
       autoMergeMethod: "squash",
     });
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
-    expect(
-      expectSuccess(
-        decodePullRequestDetailJson(
-          JSON.stringify({
-            number: 7,
-            title: "Detail",
-            url: "https://github.com/pingdotgg/t3code/pull/7",
-            headRefName: "feat/detail",
-            baseRefName: "main",
-            createdAt: "2026-07-01T00:00:00Z",
-            updatedAt: "2026-07-05T00:00:00Z",
-          }),
-        ),
-      ).autoMergeEnabled,
-    ).toBeUndefined();
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {

@@ -257,8 +257,8 @@ export const waitForDesktopUpdateTarget = Effect.fn("waitForDesktopUpdateTarget"
   targetVersion: string,
   nextReady: Effect.Effect<ServerLifecycleStreamReadyEvent, EReady>,
   retryCommit: Effect.Effect<void, ECommit>,
-  maxCommitAttempts = 3,
 ): Effect.fn.Return<ServerLifecycleStreamReadyEvent, EReady | ECommit | ServerUpdateTerminalError> {
+  const maxCommitAttempts = 3;
   for (let attempt = 1; attempt <= maxCommitAttempts; attempt += 1) {
     const ready = yield* nextReady;
     if (ready.payload.environment.serverVersion === targetVersion) return ready;
@@ -1204,11 +1204,6 @@ export function createServerEnvironmentAtoms<R, E>(
       // OAuth must not be replayed when the connection recovers.
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.chatGptHandoffSubscribe>) =>
         runStream(WS_METHODS.chatGptHandoffSubscribe, input),
-      idleTtlMs: 0,
-    }),
-    codexAuthCallbackState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:codex:auth-callback",
-      tag: WS_METHODS.codexAuthCallbackSubscribe,
       idleTtlMs: 0,
     }),
     cancelProviderAuth: createEnvironmentRpcCommand(runtime, {

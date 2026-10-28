@@ -3,7 +3,6 @@ import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
-import { useMemo } from "react";
 import { useWindowDimensions, View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -32,31 +31,20 @@ export function WorkspaceRootScreen() {
   const { fabClearance, scale, fabSize } = useAndroidControlSizing();
   const window = useWindowDimensions();
   const floating = floatingTabsMetrics(enabled.length + 1, scale, fabSize, window.width);
-  const context = useMemo(
-    () => ({
-      ...workspace,
-      bottomClearance: floatingTabsEnabled
-        ? insets.bottom +
-          FLOATING_TABS.bottom +
-          FLOATING_TABS.edge +
-          Math.max(
-            floating.height,
-            workspace.state.selectedTab === "threads" ? floating.fabOffset + fabSize : 0,
-          )
-        : workspace.state.selectedTab === "threads"
-          ? fabClearance + 16
-          : 16,
-    }),
-    [
-      floatingTabsEnabled,
-      workspace,
-      fabClearance,
-      insets.bottom,
-      floating.height,
-      floating.fabOffset,
-      fabSize,
-    ],
-  );
+  const context = {
+    ...workspace,
+    bottomClearance: floatingTabsEnabled
+      ? insets.bottom +
+        FLOATING_TABS.bottom +
+        FLOATING_TABS.edge +
+        Math.max(
+          floating.height,
+          workspace.state.selectedTab === "threads" ? floating.fabOffset + fabSize : 0,
+        )
+      : workspace.state.selectedTab === "threads"
+        ? fabClearance + 16
+        : 16,
+  };
   const tab = workspace.state.selectedTab;
 
   if (layout.usesSplitView) {

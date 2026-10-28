@@ -1,4 +1,5 @@
 import {
+  type DesktopBridge,
   type DesktopPendingSnapShot,
   type DesktopSnapShotEvent,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -28,11 +29,7 @@ import {
 } from "../../lib/snapShotAnimation";
 import { resizeSnapShotSource } from "../../lib/snapShotSource";
 import { playSnapShotSound } from "../../lib/snapShotSound";
-import {
-  dispatchSnapShotComposerFocus,
-  getDesktopSnapShotBridge,
-  type DesktopSnapShotBridge,
-} from "../../lib/desktopSnapShot";
+import { dispatchSnapShotComposerFocus, getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import {
   countQuestionRequestAttachments,
   openQuestionAttachmentDraft,
@@ -154,7 +151,7 @@ async function afterNextPaint(): Promise<void> {
 }
 
 export async function deliverSnapShot(
-  bridge: DesktopSnapShotBridge,
+  bridge: DesktopBridge,
   item: DesktopPendingSnapShot,
   resolveTarget: () => CaptureTarget,
 ): Promise<void> {
@@ -404,7 +401,7 @@ export function SnapShotCoordinator() {
 
   const drainPending = useEffectEvent(() => drain());
   const handleSnapShotEvent = useEffectEvent(
-    (bridge: DesktopSnapShotBridge, event: DesktopSnapShotEvent) => {
+    (bridge: DesktopBridge, event: DesktopSnapShotEvent) => {
       if (!getClientSettings().snapShotEnabled) return;
       switch (event.type) {
         case "requested": {

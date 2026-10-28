@@ -1,7 +1,5 @@
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
-  clampFileAttachmentUploadBytes,
-  fileAttachmentTooLargeMessage,
   isAssetAttachmentNotFoundFailure,
   runAttachmentUploadCycle,
   verifyPersistedAttachmentUpload,
@@ -38,29 +36,6 @@ export type UploadedMobileAttachment =
   | UploadChatImageAttachment
   | ChatImageAttachment
   | ChatFileAttachment;
-
-export function validateDraftFileAttachments(input: {
-  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
-  readonly serverConfig: {
-    readonly environment: {
-      readonly capabilities: {
-        readonly attachmentUploads?: boolean;
-        readonly fileAttachments?: { readonly maxUploadBytes: number };
-      };
-    };
-  } | null;
-}): string | null {
-  const files = input.attachments.filter((attachment) => attachment.type === "file");
-  if (files.length === 0) return null;
-  if (input.serverConfig === null) return "Server attachment support is still loading.";
-  const capabilities = input.serverConfig.environment.capabilities;
-  if (capabilities.attachmentUploads !== true || capabilities.fileAttachments === undefined) {
-    return "This server does not support file attachments.";
-  }
-  const maxBytes = clampFileAttachmentUploadBytes(capabilities.fileAttachments.maxUploadBytes);
-  const oversized = files.find((attachment) => attachment.sizeBytes > maxBytes);
-  return oversized ? fileAttachmentTooLargeMessage(oversized.name, maxBytes) : null;
-}
 
 export function withUploadedMobileAttachmentReferences(input: {
   readonly environmentId: EnvironmentId;
@@ -144,7 +119,7 @@ export type PrepareTurnAttachmentsResult =
   | { readonly status: "abandoned" };
 
 /** Promote Files-picked images consistently in headers, payloads and references or ChatImageAttachment rejects them. */
-export function composerAttachmentWireMimeType(attachment: DraftComposerAttachment): string {
+function composerAttachmentWireMimeType(attachment: DraftComposerAttachment): string {
   if (!isComposerImageAttachment(attachment)) return attachment.mimeType;
   return supportedImageWireMimeType(attachment);
 }

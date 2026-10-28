@@ -736,7 +736,7 @@ export function PreviewView({
     };
     const bridge = previewBridge;
     void settlePromise(async () => {
-      await bridge.setAnnotationSendEnabled?.(
+      await bridge.setAnnotationSendEnabled(
         runtimeTabId,
         Boolean(onSendAnnotation) &&
           readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
@@ -795,7 +795,7 @@ export function PreviewView({
   useEffect(() => {
     if (!pickActive || !previewBridge || !runtimeTabId) return;
     void previewBridge
-      .setAnnotationSendEnabled?.(runtimeTabId, canSendAnnotation)
+      .setAnnotationSendEnabled(runtimeTabId, canSendAnnotation)
       .catch(() => undefined);
   }, [canSendAnnotation, pickActive, runtimeTabId]);
 

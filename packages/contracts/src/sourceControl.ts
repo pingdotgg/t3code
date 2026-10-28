@@ -100,7 +100,6 @@ export const SourceControlPublishRepositoryResult = Schema.Struct({
   remoteName: TrimmedNonEmptyString,
   remoteUrl: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
-  upstreamBranch: Schema.optional(TrimmedNonEmptyString),
   status: SourceControlPublishStatus,
 });
 export type SourceControlPublishRepositoryResult = typeof SourceControlPublishRepositoryResult.Type;

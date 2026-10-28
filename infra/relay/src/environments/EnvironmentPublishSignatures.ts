@@ -56,21 +56,9 @@ export class EnvironmentPublishSignatureInvalid extends Schema.TaggedError<Envir
   }
 }
 
-export class EnvironmentPublishPublicKeyMissing extends Schema.TaggedError<EnvironmentPublishPublicKeyMissing>()(
-  "EnvironmentPublishPublicKeyMissing",
-  {
-    environmentId: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Environment '${this.environmentId}' has no publish public key`;
-  }
-}
-
 export type EnvironmentPublishSignatureError =
   | EnvironmentPublishSignatureExpired
   | EnvironmentPublishSignatureInvalid
-  | EnvironmentPublishPublicKeyMissing
   | DpopProofs.DpopProofReplayPersistenceError;
 
 export class EnvironmentPublishSignatures extends Context.Service<

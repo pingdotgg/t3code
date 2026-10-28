@@ -124,49 +124,6 @@ export function deriveThreadRelationshipGraph(input: {
   return { nodes, edges: [...edgesByKey.values()] };
 }
 
-export function relatedThreadIds(
-  graph: ThreadRelationshipGraph,
-  threadId: ThreadId,
-): ReadonlyArray<ThreadId> {
-  const ids = new Set<ThreadId>();
-  for (const edge of graph.edges) {
-    if (edge.sourceThreadId === threadId) ids.add(edge.targetThreadId);
-    if (edge.targetThreadId === threadId) ids.add(edge.sourceThreadId);
-  }
-  return [...ids];
-}
-
-export function walkThreadRelationships(
-  graph: ThreadRelationshipGraph,
-  threadId: ThreadId,
-): ReadonlyArray<ThreadRelationshipWalkRow> {
-  const visited = new Set<ThreadId>([threadId]);
-  const pending: Array<{ readonly threadId: ThreadId; readonly depth: number }> = [
-    { threadId, depth: 0 },
-  ];
-  const rows: ThreadRelationshipWalkRow[] = [];
-
-  for (let index = 0; index < pending.length; index += 1) {
-    const current = pending[index];
-    if (current === undefined) continue;
-    for (const edge of graph.edges) {
-      const relatedId =
-        edge.sourceThreadId === current.threadId
-          ? edge.targetThreadId
-          : edge.targetThreadId === current.threadId
-            ? edge.sourceThreadId
-            : null;
-      if (relatedId === null || visited.has(relatedId)) continue;
-      visited.add(relatedId);
-      const depth = current.depth + 1;
-      rows.push({ threadId: relatedId, fromThreadId: current.threadId, depth, edge });
-      pending.push({ threadId: relatedId, depth });
-    }
-  }
-
-  return rows;
-}
-
 export function immediateThreadRelationships(
   graph: ThreadRelationshipGraph,
   threadId: ThreadId,

@@ -1,12 +1,4 @@
-import type {
-  RelayClientEnvironmentRecord,
-  RelayEnvironmentStatusResponse,
-} from "@t3tools/contracts/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
-import {
-  RelayEnvironmentConnectScope,
-  RelayEnvironmentStatusScope,
-} from "@t3tools/contracts/relay";
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -50,8 +42,8 @@ export interface ManagedRelaySnapshotState<A> {
 }
 
 export interface ManagedRelayQueryEvent {
-  readonly operation: "environments" | "devices" | "environment-status";
-  readonly stage: "clerk-token" | "relay-request" | "validation";
+  readonly operation: "environments" | "devices";
+  readonly stage: "clerk-token" | "relay-request";
   readonly phase: "start" | "success" | "failure";
   readonly accountId: string;
   readonly environmentId?: string;
@@ -62,10 +54,6 @@ export interface ManagedRelayQueryEvent {
 export class ManagedRelaySessionError extends Data.TaggedError("ManagedRelaySessionError")<{
   readonly message: string;
   readonly cause?: unknown;
-}> {}
-
-export class ManagedRelaySnapshotError extends Data.TaggedError("ManagedRelaySnapshotError")<{
-  readonly message: string;
 }> {}
 
 export const managedRelaySessionAtom = Atom.make<ManagedRelaySession | null>(null).pipe(
@@ -222,62 +210,6 @@ function requireClerkToken(
   return readSessionClerkToken(session);
 }
 
-function statusKey(input: {
-  readonly accountId: string;
-  readonly environment: RelayClientEnvironmentRecord;
-}): string {
-  return JSON.stringify(input);
-}
-
-function parseStatusKey(key: string): {
-  readonly accountId: string;
-  readonly environment: RelayClientEnvironmentRecord;
-} {
-  return JSON.parse(key) as {
-    readonly accountId: string;
-    readonly environment: RelayClientEnvironmentRecord;
-  };
-}
-
-function endpointMatches(
-  left: RelayClientEnvironmentRecord["endpoint"],
-  right: RelayClientEnvironmentRecord["endpoint"],
-): boolean {
-  return (
-    left.httpBaseUrl === right.httpBaseUrl &&
-    left.wsBaseUrl === right.wsBaseUrl &&
-    left.providerKind === right.providerKind
-  );
-}
-
-function validateEnvironmentStatus(
-  environment: RelayClientEnvironmentRecord,
-  status: RelayEnvironmentStatusResponse,
-): Effect.Effect<RelayEnvironmentStatusResponse, ManagedRelaySnapshotError> {
-  if (status.environmentId !== environment.environmentId) {
-    return Effect.fail(
-      new ManagedRelaySnapshotError({
-        message: "Relay returned status for a different environment.",
-      }),
-    );
-  }
-  if (!endpointMatches(status.endpoint, environment.endpoint)) {
-    return Effect.fail(
-      new ManagedRelaySnapshotError({
-        message: "Relay returned status for a different endpoint.",
-      }),
-    );
-  }
-  if (status.descriptor && status.descriptor.environmentId !== environment.environmentId) {
-    return Effect.fail(
-      new ManagedRelaySnapshotError({
-        message: "Relay returned status descriptor for a different environment.",
-      }),
-    );
-  }
-  return Effect.succeed(status);
-}
-
 function describeManagedRelayFailure(cause: Cause.Cause<unknown>): {
   readonly message: string;
   readonly traceId: string | null;
@@ -401,63 +333,14 @@ export function createManagedRelayQueryManager(
       ),
   );
 
-  const environmentStatusAtom = Atom.family((key: string) => {
-    const { accountId, environment } = parseStatusKey(key);
-    return runtime
-      .atom((get) =>
-        Effect.gen(function* () {
-          const base = {
-            operation: "environment-status" as const,
-            accountId,
-            environmentId: environment.environmentId,
-          };
-          const clerkToken = yield* observe(
-            { ...base, stage: "clerk-token" },
-            requireClerkToken(get, accountId),
-          );
-          const relay = yield* ManagedRelay.ManagedRelayClient;
-          const status = yield* observe(
-            { ...base, stage: "relay-request" },
-            relay.getEnvironmentStatus({
-              clerkToken,
-              scopes: [RelayEnvironmentStatusScope, RelayEnvironmentConnectScope],
-              environmentId: environment.environmentId,
-            }),
-          );
-          return yield* observe(
-            { ...base, stage: "validation" },
-            validateEnvironmentStatus(environment, status),
-          );
-        }),
-      )
-      .pipe(
-        Atom.swr({ staleTime, revalidateOnMount: true }),
-        Atom.setIdleTTL(idleTtl),
-        Atom.withLabel(`managed-relay:environment-status:${key}`),
-      );
-  });
-
   return {
     environmentsAtom,
     devicesAtom,
-    environmentStatusAtom: (input: {
-      readonly accountId: string;
-      readonly environment: RelayClientEnvironmentRecord;
-    }) => environmentStatusAtom(statusKey(input)),
     refreshEnvironments(registry: AtomRegistry.AtomRegistry, accountId: string): void {
       registry.refresh(environmentsAtom(accountId));
     },
     refreshDevices(registry: AtomRegistry.AtomRegistry, accountId: string): void {
       registry.refresh(devicesAtom(accountId));
-    },
-    refreshEnvironmentStatus(
-      registry: AtomRegistry.AtomRegistry,
-      input: {
-        readonly accountId: string;
-        readonly environment: RelayClientEnvironmentRecord;
-      },
-    ): void {
-      registry.refresh(environmentStatusAtom(statusKey(input)));
     },
   };
 }

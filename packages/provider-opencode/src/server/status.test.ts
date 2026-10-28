@@ -400,20 +400,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
           }),
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeRuntime.OpenCodeInventory),
-  loadInventoryFromCli: ({ cwd }) => {
-    runtimeMock.state.inventoryCwd = cwd;
-    return runtimeMock.state.inventoryError
-      ? Effect.fail(
-          new OpenCodeRuntime.OpenCodeRuntimeError({
-            operation: "loadInventoryFromCli",
-            detail: runtimeMock.state.inventoryError.message,
-            cause: runtimeMock.state.inventoryError,
-          }),
-        )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeRuntime.OpenCodeInventory);
-  },
   loadOpenCodeSkills: () => Effect.succeed([]),
-  loadSkillsFromCli: () => Effect.succeed([]),
 };
 
 beforeEach(() => {

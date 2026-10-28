@@ -11,7 +11,7 @@ import {
   relayManagedTunnelLimits,
 } from "../persistence/schema.ts";
 
-export const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
+const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
 
 export class ManagedTunnelLimitPersistenceError extends Schema.TaggedError<ManagedTunnelLimitPersistenceError>()(
   "ManagedTunnelLimitPersistenceError",
@@ -50,7 +50,7 @@ export class ManagedTunnelLimits extends Context.Service<
   }
 >()("t3code-relay/environments/ManagedTunnelLimits") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
 
   return ManagedTunnelLimits.of({

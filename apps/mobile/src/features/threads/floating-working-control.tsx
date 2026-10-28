@@ -562,7 +562,7 @@ function WorkingDuration(props: {
   );
 }
 
-export function WorkingTimer(props: { readonly startedAt: string }) {
+function WorkingTimer(props: { readonly startedAt: string }) {
   const nowMs = useVisibleSecondClock(true);
   return (
     <SystemText

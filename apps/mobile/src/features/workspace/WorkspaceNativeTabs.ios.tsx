@@ -3,7 +3,7 @@ import {
   NAVIGATION_TAB_ICONS,
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
 import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
@@ -40,27 +40,18 @@ function RetainedWorkspaceTab(props: {
   useLayoutEffect(() => {
     activeRef.current = props.active;
   }, [props.active]);
-  const isActive = useCallback(() => activeRef.current, []);
-  const activity = useMemo(
-    () => ({
-      active: props.active,
-      isActive,
-    }),
-    [props.active, isActive],
-  );
+  const isActive = () => activeRef.current;
+  const activity = {
+    active: props.active,
+    isActive,
+  };
   const [optionsByRoute, setOptionsByRoute] = useState<ReadonlyMap<string, object>>(new Map());
   // Stable, so writers and the cleanups that depend on them don't re-run on every write.
-  const setRouteOptions = useCallback(
-    (routeKey: string, options: object) =>
-      setOptionsByRoute((current) =>
-        new Map(current).set(routeKey, { ...current.get(routeKey), ...options }),
-      ),
-    [],
-  );
-  const slotOptions = useMemo(
-    () => ({ byRoute: optionsByRoute, set: setRouteOptions }),
-    [optionsByRoute, setRouteOptions],
-  );
+  const setRouteOptions = (routeKey: string, options: object) =>
+    setOptionsByRoute((current) =>
+      new Map(current).set(routeKey, { ...current.get(routeKey), ...options }),
+    );
+  const slotOptions = { byRoute: optionsByRoute, set: setRouteOptions };
   const [content, setContent] = useState(
     props.active ? { workspace, children: props.children } : null,
   );
@@ -94,14 +85,10 @@ export function WorkspaceNativeTabs(props: {
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
-  const request = useMemo(
-    () => ({
-      selectedScreenKey:
-        selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!,
-      baseProvenance: provenance,
-    }),
-    [selectedSlot, provenance],
-  );
+  const request = {
+    selectedScreenKey: selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!,
+    baseProvenance: provenance,
+  };
   return (
     <View style={{ flex: 1 }}>
       <Tabs.Host

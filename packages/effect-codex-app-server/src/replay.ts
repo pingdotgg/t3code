@@ -112,26 +112,12 @@ export class CodexAppServerReplayRuntimeExitError extends Schema.TaggedError<Cod
   }
 }
 
-export class CodexAppServerReplayIncompleteError extends Schema.TaggedError<CodexAppServerReplayIncompleteError>()(
-  "CodexAppServerReplayIncompleteError",
-  {
-    scenario: Schema.String,
-    cursor: Schema.Number,
-    remaining: Schema.Number,
-  },
-) {
-  override get message(): string {
-    return `Codex app-server replay ended with ${this.remaining} unconsumed entries in scenario ${this.scenario}.`;
-  }
-}
-
 export const CodexAppServerReplayError = Schema.Union([
   CodexAppServerReplayJsonParseError,
   CodexAppServerReplayExhaustedError,
   CodexAppServerReplayUnexpectedOutboundError,
   CodexAppServerReplayFrameMismatchError,
   CodexAppServerReplayRuntimeExitError,
-  CodexAppServerReplayIncompleteError,
 ]);
 export type CodexAppServerReplayError = typeof CodexAppServerReplayError.Type;
 

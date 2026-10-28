@@ -89,7 +89,7 @@ export function CompactBrandTitle(
   );
 }
 
-export function renderCompactBrandTitle() {
+function renderCompactBrandTitle() {
   return <CompactBrandTitle allowFontScaling={Platform.OS === "ios"} />;
 }
 

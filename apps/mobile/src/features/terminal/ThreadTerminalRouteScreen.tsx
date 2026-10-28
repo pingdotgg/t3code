@@ -67,7 +67,6 @@ import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { TerminalSurface, type TerminalSurfaceHandle } from "./NativeTerminalSurface";
 import { getMobileTerminalTheme } from "./terminalTheme";
-import { terminalDebugLog } from "./terminalDebugLog";
 import { useTerminalExitNavigation } from "./useTerminalExitNavigation";
 import {
   useInitialTerminalLaunchLocation,
@@ -428,10 +427,8 @@ function ThreadTerminal(props: {
   } = useAppearancePreferences();
   const fontSize = appearance.terminalFontSize;
   const terminalKey = `${selectedThread.environmentId}:${selectedThread.id}:${terminalId}`;
-  const activeKnownSession = useMemo(
-    () => knownSessions?.find((session) => session.target.terminalId === terminalId) ?? null,
-    [knownSessions, terminalId],
-  );
+  const activeKnownSession =
+    knownSessions?.find((session) => session.target.terminalId === terminalId) ?? null;
   const hasTerminalTarget = props.hasExplicitTerminalId || activeKnownSession !== null;
   const [pendingLaunch] = useState<PendingTerminalLaunch | null>(() =>
     takePendingTerminalLaunch({
@@ -476,7 +473,6 @@ function ThreadTerminal(props: {
         if (live) exitNavigation.restarted();
         pasteSession.reset(live);
       },
-      debugLog: terminalDebugLog,
     }),
   );
   const surfaceRef = useRef<TerminalSurfaceHandle>(null);
@@ -613,31 +609,18 @@ function ThreadTerminal(props: {
     (keyboardState.isVisible ? keyboardState.height : 0) +
     (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
 
-  const terminalMenuSessions = useMemo<ReadonlyArray<TerminalMenuSession>>(
-    () =>
-      buildTerminalMenuSessions({
-        knownSessions: knownSessions ?? [],
-        workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
-        currentSession: {
-          terminalId,
-          cwd: cwd ?? null,
-          status: terminal.status,
-          hasRunningSubprocess: terminal.hasRunningSubprocess,
-          displayLabel: resolveTerminalSessionLabel(terminalId, terminal.summary),
-          updatedAt: terminal.updatedAt,
-        },
-      }),
-    [
-      cwd,
-      knownSessions,
-      selectedThreadProject?.workspaceRoot,
-      terminal.hasRunningSubprocess,
-      terminal.summary,
-      terminal.status,
-      terminal.updatedAt,
+  const terminalMenuSessions: ReadonlyArray<TerminalMenuSession> = buildTerminalMenuSessions({
+    knownSessions: knownSessions ?? [],
+    workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
+    currentSession: {
       terminalId,
-    ],
-  );
+      cwd: cwd ?? null,
+      status: terminal.status,
+      hasRunningSubprocess: terminal.hasRunningSubprocess,
+      displayLabel: resolveTerminalSessionLabel(terminalId, terminal.summary),
+      updatedAt: terminal.updatedAt,
+    },
+  });
 
   const writeInput = async (data: string): Promise<boolean> => {
     if (
@@ -696,11 +679,6 @@ function ThreadTerminal(props: {
   };
 
   const handleResize = (size: { readonly cols: number; readonly rows: number }) => {
-    terminalDebugLog("native:onResize", {
-      cols: size.cols,
-      rows: size.rows,
-      terminalKey,
-    });
     if (routeEnvironmentId && routeThreadId) {
       cacheTerminalGridSize(
         {

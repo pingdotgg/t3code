@@ -28,13 +28,13 @@ import * as HeldHooks from "./HeldHooks.ts";
 import * as HookInbox from "./HookInbox.ts";
 import { sendUpstream, TUNNEL_OFFLINE_STATUS } from "./upstream.ts";
 
-export const RELAY_HOOK_PATH_PREFIX = "/v1/hooks/";
+const RELAY_HOOK_PATH_PREFIX = "/v1/hooks/";
 export const RELAY_HOOK_MAX_BODY_BYTES = 1_048_576;
 export const RELAY_HOOK_RATE_LIMIT = { limit: 60, periodSeconds: 60 } as const;
 /** URL budgets alone are bypassable by minting URLs; cap each endpoint too. */
 export const RELAY_HOOK_ENDPOINT_RATE_LIMIT = { limit: 600, periodSeconds: 60 } as const;
 /** No tunnel origin (530) or local server unavailable (502/503/504) means the environment did not take the request. */
-export const ENVIRONMENT_UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([
+const ENVIRONMENT_UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([
   502,
   503,
   504,

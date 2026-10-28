@@ -71,7 +71,7 @@ export function resolvePullRequestMergeMethod(
   return allowed[0] ?? "merge";
 }
 
-export type PullRequestPrimaryControl =
+type PullRequestPrimaryControl =
   | "resolve"
   | "ready"
   | "merge"
@@ -274,7 +274,7 @@ export function isStackedPullRequestBase(
   return defaultBranch !== baseBranch;
 }
 
-export type PullRequestActionableDetail = Pick<
+type PullRequestActionableDetail = Pick<
   PullRequestDetail,
   "state" | "isDraft" | "mergeability" | "capabilities" | "viewerPermissions" | "mergeCapabilities"
 >;
@@ -349,7 +349,7 @@ export function groupPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) 
   };
 }
 
-export type ThreadPanelPullRequestAction = "resolve" | "ready" | "fix" | "merge";
+type ThreadPanelPullRequestAction = "resolve" | "ready" | "fix" | "merge";
 
 export function resolveThreadPanelPullRequestAction(
   detail: (PullRequestActionableDetail & Pick<PullRequestDetail, "checks">) | null,
@@ -419,7 +419,7 @@ export function isPullRequestVerdictStale(at: string, newestCommitAt: string | n
   return !Number.isNaN(verdictAt) && !Number.isNaN(commitAt) && verdictAt < commitAt;
 }
 
-export interface PullRequestReviewOutcomeEntry {
+interface PullRequestReviewOutcomeEntry {
   readonly key: string;
   readonly actor: PullRequestActor | null;
   readonly outcome: PullRequestReviewOutcome;
@@ -483,7 +483,7 @@ export interface PullRequestTimelineThread
   readonly replies: ReadonlyArray<PullRequestTimelineEvent>;
 }
 
-export type PullRequestTimelineRow =
+type PullRequestTimelineRow =
   | { readonly kind: "event"; readonly event: PullRequestTimelineEvent }
   | { readonly kind: "comments"; readonly events: ReadonlyArray<PullRequestTimelineEvent> };
 
@@ -820,7 +820,7 @@ function handoffPreamble(input: {
   ];
 }
 
-export interface FixFindingsHandoff {
+interface FixFindingsHandoff {
   readonly prompt: string;
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
 }
@@ -1310,7 +1310,7 @@ export function resolvePullRequestReferenceHost(
   return host === null ? reference : { ...reference, host };
 }
 
-export interface PullRequestDetailSnapshotRef {
+interface PullRequestDetailSnapshotRef {
   readonly host?: string | undefined;
   readonly projectId: string;
   readonly repository: string;

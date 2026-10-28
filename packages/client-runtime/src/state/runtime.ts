@@ -373,7 +373,7 @@ export async function settleAsyncResult<A, E>(
   }
 }
 
-export async function executeAtomCommand<A, E>(
+async function executeAtomCommand<A, E>(
   execute: () => Promise<Exit.Exit<A, E>>,
   options: AtomCommandOptions = {},
   reporter: AtomCommandReporter = console,
@@ -476,7 +476,7 @@ export async function settlePromise<A>(
   }
 }
 
-export function environmentRpcKey<Input>(target: {
+function environmentRpcKey<Input>(target: {
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }): string {

@@ -628,13 +628,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   ) {
     const startedAt = yield* Clock.monotonicTimeNanos;
     yield* Effect.sleep(SILENT_SOCKET_CHECK_AFTER);
-    // An older host answers probes with its full config, which can be slow
-    // enough to lose to a fresh request on a healthy socket.
-    const answersCheapProbe = yield* lease.session.initialConfig.pipe(
-      Effect.map((config) => config.environment.capabilities.connectionProbe === true),
+    const configLoaded = yield* lease.session.initialConfig.pipe(
+      Effect.as(true),
       Effect.catchCause(() => Effect.succeed(false)),
     );
-    if (!answersCheapProbe) return yield* Effect.never;
+    if (!configLoaded) return yield* Effect.never;
     // Frames that queued while the app was suspended have drained by now, so
     // a later frame shows the path still works.
     const framesBefore = yield* lease.session.inboundFrames;

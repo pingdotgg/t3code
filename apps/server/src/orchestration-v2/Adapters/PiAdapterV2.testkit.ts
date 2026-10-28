@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderReplayEntry,
+  ProviderInstanceId,
   type ProviderInstanceEnvironment,
   type ProviderReplayTranscript,
   type ProviderReplayEntry as ProviderReplayEntryType,
@@ -364,17 +365,19 @@ export function layer<E, R>(input: {
   readonly launchArgs: string;
   readonly environment?: ProviderInstanceEnvironment;
 }) {
-  return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [PiAdapterV2Driver],
-    configMap: {
-      [PI_PROVIDER]: {
-        driver: PI_PROVIDER,
-        enabled: true,
-        config: { binaryPath: input.binaryPath, launchArgs: input.launchArgs },
-        ...(input.environment === undefined ? {} : { environment: input.environment }),
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+    PiAdapterV2Driver.create({
+      instanceId: ProviderInstanceId.make(PI_PROVIDER),
+      environment: input.environment ?? [],
+      displayName: undefined,
+      enabled: true,
+      config: {
+        ...PiAdapterV2Driver.defaultConfig(),
+        binaryPath: input.binaryPath,
+        launchArgs: input.launchArgs,
       },
-    },
-  }).pipe(
+    }).pipe(Effect.map((adapter) => [adapter])),
+  ).pipe(
     Layer.provide(input.spawner),
     Layer.provide(
       Layer.mergeAll(

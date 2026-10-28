@@ -19,18 +19,6 @@ export function deriveSubagentElapsedMs(
   return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : null;
 }
 
-type LatestRunTiming = {
-  readonly runId: string | null;
-  readonly requestedAt?: string | null;
-  readonly startedAt: string | null;
-  readonly completedAt: string | null;
-};
-
-type RuntimeActivityState = {
-  readonly orchestrationStatus: string;
-  readonly activeRunId?: string | null;
-};
-
 export function formatDuration(durationMs: number): string {
   if (!Number.isFinite(durationMs) || durationMs < 0) return "0ms";
   if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`;
@@ -49,30 +37,4 @@ export function formatDuration(durationMs: number): string {
   if (minutes > 0) parts.push(`${minutes}m`);
   if (seconds > 0) parts.push(`${seconds}s`);
   return parts.join(" ");
-}
-
-function isLatestRunSettled(
-  latestRun: LatestRunTiming | null,
-  runtime: RuntimeActivityState | null,
-): boolean {
-  if (!latestRun) return false;
-  if (!latestRun.completedAt) return false;
-  if (!runtime) return true;
-  if (runtime.orchestrationStatus === "running") return false;
-  return true;
-}
-
-/** Fall back during provider startup; the projector stamps startedAt only when the session becomes running. */
-export function deriveActiveWorkStartedAt(
-  latestRun: LatestRunTiming | null,
-  runtime: RuntimeActivityState | null,
-  sendStartedAt: string | null,
-): string | null {
-  if (runtime?.activeRunId && runtime.activeRunId !== latestRun?.runId) {
-    return sendStartedAt;
-  }
-  if (!isLatestRunSettled(latestRun, runtime)) {
-    return latestRun?.startedAt ?? latestRun?.requestedAt ?? sendStartedAt;
-  }
-  return sendStartedAt;
 }

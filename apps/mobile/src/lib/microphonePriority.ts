@@ -1,5 +1,5 @@
 /** iOS lists connected inputs only after recording-session setup. */
-export const MICROPHONE_KINDS = ["wired", "bluetooth", "builtIn", "carPlay"] as const;
+const MICROPHONE_KINDS = ["wired", "bluetooth", "builtIn", "carPlay"] as const;
 
 export type MicrophoneKind = (typeof MICROPHONE_KINDS)[number];
 
