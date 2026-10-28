@@ -212,7 +212,8 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
 }
 
 function useSettingsIndexSections(): SettingsListSection[] {
-  const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const { selectedTargets, projectGroups, repositoryAccounts, selectedProjectKey } =
+    useSettingsEnvironmentFilter();
   const noServerTargets = selectedTargets.length === 0;
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const scopedProjectMembers =
@@ -226,6 +227,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
       ? deriveProjectGroupLabel({
           representative: scopedProjectMembers[0]!,
           members: scopedProjectMembers,
+          repositoryAccounts,
         })
       : (selectedProject?.label ?? "Unavailable project");
   const page = (
