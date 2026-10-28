@@ -287,9 +287,9 @@ const FULL_CATALOG_DRIVERS: ReadonlySet<string> = new Set(["codex", "claudeAgent
 const LISTED_MODEL_LIMIT = 8;
 
 /**
- * Picks the models orchestrator_capabilities shows for one provider. Hidden
- * models never appear. With search terms, lists matches; otherwise lists pinned
- * models (custom, favorite, the caller's own) plus the provider's non-legacy
+ * Picks the models orchestrator_capabilities shows for one provider. Hidden models never
+ * appear. Search words naming the provider are dropped; other words list matches. With no
+ * words left, lists pinned models (custom, favorite, the caller's own) plus non-legacy
  * models, or only the first few in the user's model order for large catalogs.
  */
 function listCapabilityModels(input: {
@@ -304,10 +304,13 @@ function listCapabilityModels(input: {
   const visible = input.provider.models
     .filter((model) => model.isCustom || !input.preferences?.hiddenModels.includes(model.slug))
     .toSorted((a, b) => (rank.get(a.slug) ?? rank.size) - (rank.get(b.slug) ?? rank.size));
-  if (input.searchTerms.length > 0) {
+  const { instanceId, driver, displayName } = input.provider;
+  const providerText = `${instanceId} ${driver} ${displayName ?? ""}`.toLowerCase();
+  const modelTerms = input.searchTerms.filter((term) => !providerText.includes(term));
+  if (modelTerms.length > 0) {
     const matches = visible.filter((model) => {
       const text = `${model.slug} ${model.name} ${model.subProvider ?? ""}`.toLowerCase();
-      return input.searchTerms.every((term) => text.includes(term));
+      return modelTerms.every((term) => text.includes(term));
     });
     const listed = matches.slice(0, LISTED_MODEL_LIMIT);
     return { listed, omitted: matches.length - listed.length };

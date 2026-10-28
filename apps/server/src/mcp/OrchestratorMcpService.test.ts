@@ -1431,6 +1431,16 @@ describe("OrchestratorMcpService provider resolution", () => {
           models: ["oc/m12", "oc/m01", "oc/m03", "oc/m04", "oc/m05", "oc/m06", "oc/m07", "oc/m08"],
           omitted: 3,
         });
+        // A word naming the provider matches all its models, so legacy ones stay out.
+        assert.deepEqual(listing(yield* capabilitiesWith("Codex")), [
+          { id: codexInstanceId, models: ["gpt-6", "gpt-4", "gpt-3", "my-alpha"], omitted: 1 },
+          { id: opencodeInstanceId, models: [], omitted: 0 },
+        ]);
+        assert.deepEqual(listing(yield* capabilitiesWith("codex gpt 5"))[0], {
+          id: codexInstanceId,
+          models: ["gpt-5"],
+          omitted: 0,
+        });
       }),
     );
 
