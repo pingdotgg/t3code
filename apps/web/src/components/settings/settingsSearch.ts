@@ -420,6 +420,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "boring-sidebar",
+    title: "Boring sidebar (group by project)",
+    to: "/settings/labs",
+    searchTerms: ["beta folders project tree legacy old classic sidebar"],
+  },
+  {
     id: "guest-links",
     title: "Guest links",
     to: "/settings/labs",
@@ -707,12 +713,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Context window indicator (legacy)",
     to: "/settings/labs",
     searchTerms: ["composer meter usage tokens circle old"],
-  },
-  {
-    id: "legacy-sidebar",
-    title: "Sidebar (legacy)",
-    to: "/settings/labs",
-    searchTerms: ["project thread tree old flat list"],
   },
   {
     id: "keybindings",

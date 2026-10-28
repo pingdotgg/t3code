@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -15,12 +16,34 @@ export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
+        <BoringSidebarRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
+  );
+}
+
+function BoringSidebarRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("boring-sidebar")}
+      description="Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders."
+      control={
+        <Switch
+          checked={settings.boringSidebarEnabled || settings.legacySidebarEnabled}
+          // Turning it off also clears the opt-in of the removed legacy sidebar.
+          onCheckedChange={(checked) =>
+            updateSettings({ boringSidebarEnabled: Boolean(checked), legacySidebarEnabled: false })
+          }
+          aria-label="Boring sidebar (group by project)"
+        />
+      }
+    />
   );
 }
 

@@ -34,6 +34,7 @@ import { isLatestRunSettled } from "../session-logic";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
+import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -51,7 +52,6 @@ export function shouldNavigateAfterThreadPark(input: {
   );
 }
 
-const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 
 export function resolveSidebarRowAccessibility(input: {
@@ -67,7 +67,6 @@ export function resolveSidebarRowAccessibility(input: {
 }
 
 // Each prewarm retains growing thread detail and a live subscription, multiplying heap and server load.
-const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
 
 export function useSidebarRowSubscriptionLease(isActive: boolean): {
@@ -542,21 +541,6 @@ export async function archiveSelectedThreadEntries<
   return { archivedThreadKeys, mutationFailure: null, followupFailures };
 }
 
-export function buildMultiSelectThreadContextMenuItems(input: {
-  count: number;
-  hasRunningThread: boolean;
-}): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
-  return [
-    { id: "mark-unread", label: `Mark unread (${input.count})` },
-    {
-      id: "archive",
-      label: `Archive (${input.count})`,
-      disabled: input.hasRunningThread,
-    },
-    { id: "delete", label: `Delete (${input.count})`, destructive: true },
-  ];
-}
-
 export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
   return thread.lineage.relationshipToParent === "subagent";
 }
@@ -722,11 +706,6 @@ function hasUnseenFailure(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
-export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
-  if (target === null) return true;
-  return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
-}
-
 // Suppress trailing double-click navigation; keyboard and synthetic clicks use detail 0.
 export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
@@ -795,13 +774,6 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   return [...ordered, ...remaining];
 }
 
-export function getSidebarThreadIdsToPrewarm<TThreadId>(
-  visibleThreadIds: readonly TThreadId[],
-  limit = SIDEBAR_THREAD_PREWARM_LIMIT,
-): TThreadId[] {
-  return visibleThreadIds.slice(0, Math.max(0, limit));
-}
-
 export function resolveAdjacentThreadId<T>(input: {
   threadIds: readonly T[];
   currentThreadId: T | null;
@@ -827,15 +799,6 @@ export function resolveAdjacentThreadId<T>(input: {
   }
 
   return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
-}
-
-export function isContextMenuPointerDown(input: {
-  button: number;
-  ctrlKey: boolean;
-  isMac: boolean;
-}): boolean {
-  if (input.button === 2) return true;
-  return input.isMac && input.button === 0 && input.ctrlKey;
 }
 
 export type SidebarThreadStatus =
@@ -908,6 +871,92 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   }
   return "ready";
 }
+
+/**
+ * The dot on a closed boring-sidebar folder: the most urgent state among its
+ * hidden threads. Waiting threads stay quiet, like their rows.
+ */
+export function resolveSidebarFolderDot(
+  threads: ReadonlyArray<ThreadStatusInput & SidebarThreadStatusInput>,
+): "attention" | "failed" | "unread" | "working" | null {
+  const statuses = new Set(threads.map(resolveSidebarThreadStatus));
+  if (
+    statuses.has("input") ||
+    statuses.has("approval") ||
+    statuses.has("request") ||
+    statuses.has("limited")
+  ) {
+    return "attention";
+  }
+  if (statuses.has("failed")) return "failed";
+  // Rows show Done only for ready threads, so the dot follows the same rule.
+  const hasUnread = threads.some(
+    (thread) => resolveSidebarThreadStatus(thread) === "ready" && hasUnseenCompletion(thread),
+  );
+  if (hasUnread) return "unread";
+  if (statuses.has("working")) return "working";
+  return null;
+}
+
+/**
+ * Keys the old per-project sidebar saved folder open state under, most
+ * specific first, for `resolveProjectExpanded`. Boring folders read and write
+ * the same keys, so a legacy user's closed folders stay closed after regrouping.
+ */
+export function sidebarFolderExpansionKeys(group: {
+  readonly projectKey: string;
+  readonly memberProjects: ReadonlyArray<{
+    readonly physicalProjectKey: string;
+    readonly workspaceRoot: string;
+  }>;
+}): string[] {
+  return [
+    group.projectKey,
+    ...group.memberProjects.map((member) => member.physicalProjectKey),
+    ...group.memberProjects.map((member) => legacyProjectCwdPreferenceKey(member.workspaceRoot)),
+  ];
+}
+
+/**
+ * Boring sidebar folders. Folders follow `groups` order and include empty
+ * projects so each one can start a thread. Threads keep their input order.
+ * A thread whose project is in no group has no folder and is left out.
+ */
+export function groupSidebarThreadsByProject<
+  TGroup extends {
+    readonly memberProjectRefs: ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly projectId: string;
+    }>;
+  },
+  TThread extends Pick<SidebarThreadSummary, "environmentId" | "projectId">,
+>(
+  groups: readonly TGroup[],
+  threads: readonly TThread[],
+): Array<{ group: TGroup; threads: TThread[] }> {
+  const folders = groups.map((group) => ({ group, threads: [] as TThread[] }));
+  const folderByProject = new Map<string, (typeof folders)[number]>();
+  for (const folder of folders) {
+    for (const ref of folder.group.memberProjectRefs) {
+      folderByProject.set(`${ref.environmentId}:${ref.projectId}`, folder);
+    }
+  }
+  for (const thread of threads) {
+    folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.threads.push(thread);
+  }
+  return folders;
+}
+
+export type SidebarV2TopStatusKind =
+  | "approval"
+  | "done"
+  | "failed"
+  | "limited"
+  | "input"
+  | "request"
+  | "waiting"
+  | "woke"
+  | "working";
 
 export function firstValidTimestampMs(
   ...candidates: ReadonlyArray<string | null | undefined>

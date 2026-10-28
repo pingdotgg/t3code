@@ -97,7 +97,7 @@ function useSidebarVisibility() {
   return isMobile ? openMobile : open;
 }
 
-// Same breakpoint as useIsMobile, also read when a shortcut fires.
+// The `max-md` breakpoint, also read when a shortcut fires.
 const SIDEBAR_MOBILE_QUERY = "(max-width: 767px)";
 
 function isMobileViewport(): boolean {
