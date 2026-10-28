@@ -15,6 +15,7 @@ import Animated, {
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { cn } from "../../lib/cn";
 import type { VoiceComposerPresentation } from "./voiceInputPresentation";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
@@ -258,8 +259,14 @@ function VoiceActionButton(props: {
   readonly onPress: () => void;
   readonly variant?: "plain" | "primary";
 }) {
+  const { scale } = useAndroidControlSizing();
   const variant = props.variant ?? "plain";
   const loading = props.loading === true;
+  const large = props.size === "large";
+  const circleSize = Math.round((large ? 44 : 30) * scale);
+  const iconSize = Math.round(
+    (variant === "primary" ? (large ? 20 : 16) : large ? 24 : 20) * scale,
+  );
   const primaryStyle = useAnimatedStyle(() => ({
     opacity: withTiming(loading ? 0 : 1, DICTATION_TIMING),
   }));
@@ -272,17 +279,18 @@ function VoiceActionButton(props: {
       className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
       disabled={props.disabled}
       onPress={props.onPress}
-      style={{ opacity: props.disabled && !props.loading ? 0.4 : 1 }}
+      style={{
+        opacity: props.disabled && !props.loading ? 0.4 : 1,
+        // Matches ComposerActionButton so the circle stays concentric with the large composer corner.
+        width: variant === "primary" && large ? 62 : undefined,
+      }}
     >
       <View
         className={cn(
           "items-center justify-center",
-          variant === "primary"
-            ? props.size === "large"
-              ? "size-[44px] rounded-full bg-subtle"
-              : "size-[30px] rounded-full bg-subtle"
-            : "size-[44px]",
+          variant === "primary" ? "rounded-full bg-subtle" : "size-[44px]",
         )}
+        style={variant === "primary" ? { width: circleSize, height: circleSize } : undefined}
       >
         {variant === "primary" ? (
           <Animated.View
@@ -296,7 +304,7 @@ function VoiceActionButton(props: {
           ) : (
             <SymbolView
               name={props.icon}
-              size={props.size === "large" ? 24 : variant === "primary" ? 16 : 20}
+              size={iconSize}
               weight={variant === "primary" ? "semibold" : "regular"}
               tintColorClassName={
                 variant === "primary" ? "accent-primary-foreground" : "accent-icon"
