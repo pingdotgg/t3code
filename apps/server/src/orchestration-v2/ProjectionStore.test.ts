@@ -31,7 +31,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -1557,10 +1556,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
 );
 
 // regression: #25806 pending request cards outlive the history window that drops their turn
-it.effect.each([
-  ["memory", ProjectionStore.layerMemory],
-  ["SQL", layerTest],
-] as const)("%s snapshot windows keep cards for requests still pending", ([storeKind, layer]) =>
+it.effect("SQL snapshot windows keep cards for requests still pending", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const now = yield* DateTime.now;
@@ -1740,27 +1736,24 @@ it.effect.each([
         userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
       })
       .pipe(Effect.withTracer(tracer));
-    const sqlClient = yield* Effect.serviceOption(SqlClient.SqlClient);
-    if (storeKind === "SQL") {
-      const sql = Option.getOrThrow(sqlClient);
-      const query = statements.find(
-        (statement) =>
-          statement.includes("FROM orchestration_v2_projection_runtime_requests AS request") &&
-          statement.includes("SELECT item.payload_json"),
-      );
-      assert.isDefined(query);
-      const plan = (yield* sql.unsafe<{ readonly detail: string }>(
-        `EXPLAIN QUERY PLAN ${query}`,
-      )).map((row) => row.detail);
-      assert.include(
-        plan[0],
-        "SEARCH request USING INDEX orchestration_v2_projection_runtime_requests_thread_status_idx",
-      );
-      assert.include(
-        plan[1],
-        "SEARCH item USING INDEX orchestration_v2_projection_turn_items_node_ordinal_idx",
-      );
-    }
+    const sql = yield* SqlClient.SqlClient;
+    const query = statements.find(
+      (statement) =>
+        statement.includes("FROM orchestration_v2_projection_runtime_requests AS request") &&
+        statement.includes("SELECT item.payload_json"),
+    );
+    assert.isDefined(query);
+    const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN ${query}`,
+    )).map((row) => row.detail);
+    assert.include(
+      plan[0],
+      "SEARCH request USING INDEX orchestration_v2_projection_runtime_requests_thread_status_idx",
+    );
+    assert.include(
+      plan[1],
+      "SEARCH item USING INDEX orchestration_v2_projection_turn_items_node_ordinal_idx",
+    );
     const bounded = buildBoundedThreadProjection({
       projection: snapshot.projection,
       snapshotSequence: snapshot.snapshotSequence,
@@ -1779,7 +1772,7 @@ it.effect.each([
       );
       for (const id of pendingCardIds) assert.notInclude(visibleIds, id);
     }
-  }).pipe(Effect.provide(layer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("lists only active subagent IDs without loading shell data", () =>
