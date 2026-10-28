@@ -92,6 +92,24 @@ describe("ServerBrowserSurface clipboard commands", () => {
       { type: "key", action: "down", key: "x", code: "KeyX", keyCode: 88, modifiers: 2 },
       { type: "key", action: "up", key: "x", code: "KeyX", keyCode: 88, modifiers: 2 },
     ]);
+
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "c",
+        code: "KeyC",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    input.blur();
+    input.focus();
+    mocks.sent.length = 0;
+    expect(document.execCommand("copy")).toBe(true);
+    expect(keys()).toEqual([
+      { type: "key", action: "down", key: "c", code: "KeyC", keyCode: 67, modifiers: 2 },
+      { type: "key", action: "up", key: "c", code: "KeyC", keyCode: 67, modifiers: 2 },
+    ]);
   });
 
   it("sends a keyboard Cut once even though the browser also fires cut", async () => {
