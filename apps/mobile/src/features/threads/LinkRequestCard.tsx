@@ -30,9 +30,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
-import { useLinkableMachines } from "../../state/peerLinks";
+import { peerLinkEnvironment, useLinkableMachines } from "../../state/peerLinks";
 import { mintPairingCodeOn } from "../../state/peerPairingCode";
-import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
@@ -107,13 +106,13 @@ function PendingLinkRequest(props: {
   const [open, setOpen] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const answer = useAtomCommand(serverEnvironment.answerLinkRequest, {
+  const answer = useAtomCommand(peerLinkEnvironment.answerRequest, {
     label: "decline link request",
     reportFailure: false,
     reportDefect: false,
   });
   const canAnswer = useAtomValue(
-    serverEnvironment.answerLinkRequest.permissionAtom(props.environmentId),
+    peerLinkEnvironment.answerRequest.permissionAtom(props.environmentId),
   );
   const target = linkRequestTargetName(item);
 
@@ -244,7 +243,7 @@ function LinkRequestSheet(props: {
   const [mintFailed, setMintFailed] = useState<ReadonlySet<EnvironmentId>>(new Set());
   // Submit then a tap can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
-  const answer = useAtomCommand(serverEnvironment.answerLinkRequest, {
+  const answer = useAtomCommand(peerLinkEnvironment.answerRequest, {
     label: "answer link request",
     // The failure cause holds the request, and with it the code; keep it out of the console.
     reportFailure: false,

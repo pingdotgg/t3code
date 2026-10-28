@@ -7,6 +7,7 @@ import type {
   EnvironmentId,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
+  ServerProvider,
 } from "@t3tools/contracts";
 import { Pressable, View, type ColorValue } from "react-native";
 
@@ -41,14 +42,22 @@ function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTimin
 
 function SubagentAvatar(props: {
   readonly item: SubagentItem;
-  readonly iconUrl?: string | null | undefined;
+  readonly provider: ServerProvider | undefined;
 }) {
+  // A remote task's own driver is only a "remote" label.
+  const driver =
+    props.provider?.driver ??
+    (props.item.remoteChild === undefined ? props.item.driver : undefined);
   return (
     <View
       accessible={false}
       className="h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-card"
     >
-      <ProviderIcon provider={props.item.driver} iconUrl={props.iconUrl} size={15} />
+      {driver === undefined ? (
+        <SymbolView name="sparkles" size={13} tintColorClassName="accent-icon-muted" />
+      ) : (
+        <ProviderIcon provider={driver} iconUrl={props.provider?.iconUrl} size={15} />
+      )}
     </View>
   );
 }
@@ -91,11 +100,11 @@ export function ThreadSubagentGroup(props: {
   const expanded = props.expandedRows[props.anchorKey] ?? false;
   const serverConfigs = useServerConfigs();
   // A task in a linked environment runs a provider instance of that environment.
-  const iconUrl = (item: SubagentItem) =>
+  const providerOf = (item: SubagentItem) =>
     (item.remoteChild === undefined
       ? config
       : serverConfigs.get(item.remoteChild.environmentId)
-    )?.providers.find((provider) => provider.instanceId === item.providerInstanceId)?.iconUrl;
+    )?.providers.find((provider) => provider.instanceId === item.providerInstanceId);
   return (
     <WorkLogBlock>
       {grouped ? (
@@ -109,7 +118,7 @@ export function ThreadSubagentGroup(props: {
           <View className="flex-row items-center">
             {agents.slice(0, 3).map((agent, index) => (
               <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-                <SubagentAvatar item={agent.item} iconUrl={iconUrl(agent.item)} />
+                <SubagentAvatar item={agent.item} provider={providerOf(agent.item)} />
               </View>
             ))}
             {agents.length > 3 ? (

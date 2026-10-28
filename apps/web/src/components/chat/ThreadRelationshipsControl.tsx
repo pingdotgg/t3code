@@ -32,6 +32,7 @@ import {
   isProviderNativeSubagentThread,
   NodeId,
   type EnvironmentId,
+  type OrchestrationV2DelegatedFrom,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
@@ -60,6 +61,7 @@ import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   useProjects,
+  useQuietThreadShell,
   useThreadProjection,
   useThreadRelationshipShells,
 } from "../../state/entities";
@@ -261,7 +263,8 @@ function RemoteSubagentRow(props: {
           }
         >
           <ThreadRelationshipIcon
-            driver={props.agent.driver}
+            // The task's own driver here is only a "remote" label.
+            driver={props.provider?.driver}
             provider={props.provider}
             fallbackIcon={BotIcon}
             status={status}
@@ -281,6 +284,62 @@ function RemoteSubagentRow(props: {
           {environment === null
             ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
             : `Open on ${remoteChild.label}`}
+        </TooltipPopup>
+      </Tooltip>
+    </li>
+  );
+}
+
+/**
+ * The thread on a linked environment whose agent delegated this one. It opens
+ * there when this client is connected to that environment.
+ */
+function DelegatedFromRow(props: {
+  readonly delegatedFrom: OrchestrationV2DelegatedFrom;
+  readonly fallbackLabel: string | undefined;
+}) {
+  const navigate = useNavigate();
+  const { delegatedFrom } = props;
+  const environment = useEnvironment(delegatedFrom.environmentId);
+  const parentRef = scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
+  // The title it had at delegation, until this client sees the parent itself.
+  const parent = useQuietThreadShell(parentRef);
+  const label = environment?.label ?? props.fallbackLabel;
+  const title = parent?.title ?? delegatedFrom.title;
+  return (
+    <li className="group relative flex h-8 items-center rounded-lg">
+      <Tooltip>
+        <TooltipTrigger
+          delay={200}
+          render={
+            <ThreadDetailsControl
+              size="sm"
+              variant="ghost"
+              part="row"
+              disabled={environment === null}
+              onClick={() =>
+                void navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(parentRef),
+                })
+              }
+            />
+          }
+        >
+          <ThreadRelationshipIcon fallbackIcon={CornerLeftUpIcon} status={null} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
+              {title}
+            </span>
+          </span>
+          {label ? (
+            <span className="shrink-0 text-2xs text-muted-foreground">on {label}</span>
+          ) : null}
+        </TooltipTrigger>
+        <TooltipPopup side="left">
+          {environment === null
+            ? `Delegated from ${label ?? "a linked environment"}. Connect to it to open the parent thread.`
+            : "Open parent agent"}
         </TooltipPopup>
       </Tooltip>
     </li>
@@ -412,7 +471,15 @@ export function ThreadRelationshipsPanel(props: {
       (agent) => agent.childThreadId === null && agent.status === "running",
     ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
 
-  if (relationshipRows.length === 0 && runningCount === 0 && remoteSubagents.length === 0) {
+  // A linked environment's agent may have delegated this thread from there.
+  const delegatedFrom = currentThread?.delegatedFrom;
+
+  if (
+    relationshipRows.length === 0 &&
+    runningCount === 0 &&
+    remoteSubagents.length === 0 &&
+    delegatedFrom === undefined
+  ) {
     return null;
   }
 
@@ -487,7 +554,13 @@ export function ThreadRelationshipsPanel(props: {
       headingId="thread-details-lineage-heading"
       title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
       // A lone "Previous agents" row names itself; the heading returns for status or actions.
-      showHeading={runningCount > 0 || canDetach || related.length > 0 || active.length > 0}
+      showHeading={
+        runningCount > 0 ||
+        canDetach ||
+        related.length > 0 ||
+        active.length > 0 ||
+        delegatedFrom !== undefined
+      }
       data-thread-relationships-panel
       actions={
         canDetach ? (
@@ -515,6 +588,14 @@ export function ThreadRelationshipsPanel(props: {
         ) : null
       }
     >
+      {delegatedFrom === undefined ? null : (
+        <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
+          <DelegatedFromRow
+            delegatedFrom={delegatedFrom}
+            fallbackLabel={currentThread?.linkOrigin?.label}
+          />
+        </ThreadLineageRowList>
+      )}
       {groups.map((group) => (
         <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
           {(visibleRows) =>
