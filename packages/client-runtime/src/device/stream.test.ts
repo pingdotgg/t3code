@@ -199,7 +199,11 @@ class MjpegImage extends EventTarget {
   }
 }
 
-function recoveryFixture(platform: "ios" | "android" = "ios", preferMjpeg = true) {
+function recoveryFixture(
+  platform: "ios" | "android" = "ios",
+  preferMjpeg = true,
+  serveSimOnly = false,
+) {
   vi.useFakeTimers();
   const sockets: Socket[] = [];
   class Socket {
@@ -211,7 +215,9 @@ function recoveryFixture(platform: "ios" | "android" = "ios", preferMjpeg = true
     onclose: ((event: { code: number; reason: string }) => void) | null = null;
     send = vi.fn();
     close = vi.fn();
-    constructor() {
+    readonly url: string;
+    constructor(url: string) {
+      this.url = url;
       sockets.push(this);
     }
   }
@@ -273,6 +279,7 @@ function recoveryFixture(platform: "ios" | "android" = "ios", preferMjpeg = true
     {
       platform,
       preferMjpeg,
+      serveSimOnly,
       deviceId: "test-device",
       access: {
         httpBase: "https://test/api/device-hub",
@@ -351,6 +358,56 @@ describe("shared device stream readiness and recovery", () => {
     } finally {
       client.stop();
     }
+  });
+
+  it("streams and drives a serve-sim-only Android device over serve-sim's AVCC and input socket", async () => {
+    const { client, events, fetch, sockets, videoBodies, decoders } = recoveryFixture(
+      "android",
+      false,
+      true,
+    );
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    // No MJPEG priming: Simlock serves only the AVCC stream and the input socket.
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "https://test/api/device-hub/vendor/serve-sim/helper/test-device/stream.avcc",
+    ]);
+    expect(sockets.map((socket) => socket.url)).toEqual([
+      "wss://test/api/device-hub/vendor/serve-sim/helper/ws?device=test-device",
+    ]);
+    // Simlock adds meta (5), keep-alive (6), and lease-end (7) frames to serve-sim's envelopes.
+    videoBodies[0]!.enqueue(
+      new Uint8Array([
+        ...envelope(5, [0x7b, 0x7d]),
+        ...envelope(1, [1, 0x64, 0, 0x1f]),
+        ...envelope(6, []),
+        ...envelope(2, [2]),
+        ...envelope(7, [0x7b, 0x7d]),
+      ]),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders[0]!.decode).toHaveBeenCalledOnce();
+
+    const input = sockets[0]!;
+    input.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+    input.onmessage?.({
+      data: new Uint8Array([
+        0x82,
+        ...new TextEncoder().encode('{"width":1080,"height":2400,"orientation":"portrait"}'),
+      ]).buffer,
+    });
+    expect(events.onInputConnected).toHaveBeenLastCalledWith(true, undefined);
+    client.sendTouch("begin", 0.25, 0.5);
+    client.pressButton("back");
+    const sent = input.send.mock.calls.map(([payload]) => {
+      const bytes = payload as Uint8Array;
+      return [bytes[0], JSON.parse(new TextDecoder().decode(bytes.subarray(1)))];
+    });
+    expect(sent).toEqual([
+      [0x03, { type: "begin", x: 0.25, y: 0.5 }],
+      [0x04, { button: "back" }],
+    ]);
+    client.stop();
   });
 
   it("does not repaint a delayed JPEG seed over newer decoded video", async () => {

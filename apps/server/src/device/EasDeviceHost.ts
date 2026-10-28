@@ -830,16 +830,22 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     ),
   );
 
+  // Each server signs in on its own, so one with no Expo credential answers for itself. Reading
+  // the credential is local; whether Expo accepts it is only known once a session starts.
   const platformAvailability = (platform: DevicePlatform) =>
-    Effect.succeed(
-      platform === "ios"
-        ? { platform, available: true }
-        : {
-            platform,
-            available: false,
-            reason: "EAS Simulator Android emulators are not supported yet.",
-          },
-    );
+    platform === "ios"
+      ? resolveExpoCredential(config.accessToken).pipe(
+          Effect.provide(services),
+          Effect.as({ platform, available: true }),
+          Effect.catch((error) =>
+            Effect.succeed({ platform, available: false, reason: error.message }),
+          ),
+        )
+      : Effect.succeed({
+          platform,
+          available: false,
+          reason: "EAS Simulator Android emulators are not supported yet.",
+        });
 
   const summary: Effect.Effect<DeviceHostSummary> = Effect.all([
     platformAvailability("ios"),

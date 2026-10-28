@@ -93,6 +93,8 @@ export function DeviceStreamView(props: {
   readonly axOverlay?: boolean;
   /** Lets a parent read this view's own stream state, such as its screen size. */
   readonly viewId?: string;
+  /** The host serves only serve-sim's stream and input socket (Simlock). */
+  readonly serveSimOnly?: boolean;
 }) {
   const model = deviceModel(props.platform, props.deviceName ?? "");
   const isDuo = model?.id === "iphone-duo";
@@ -118,6 +120,7 @@ export function DeviceStreamView(props: {
           platform: props.platform,
           deviceId: props.deviceId,
           access,
+          serveSimOnly: props.serveSimOnly === true,
           viewId,
         })
       : NO_SESSION_ATOM,

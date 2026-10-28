@@ -44,6 +44,27 @@ clients never hold it. Agent config files are written per device
 device before targeting it. Device settings run `simctl` on the simulator's
 machine, which EAS does not expose, so they are unavailable there.
 
+## Simlock hosts lease through the agent-device front
+
+A [Simlock host](../../apps/server/src/device/SimlockDeviceHost.ts) (alpha) opens a
+device by running T3's own agent-device CLI against the gateway's agent-device
+front (`connect proxy`, then `open`), not with Simlock's lease HTTP API:
+agent-device cannot adopt a lease it did not allocate. The lease is bound to
+that one agent-device session and to the directory `open` ran in, so
+`agentEndpoint` hands every thread the same session, a `stateDir` holding its
+connection record, and no `--udid`/`--serial` (the gateway refuses selectors).
+Installs work only from that directory; `device_open` names it.
+
+Simlock serves a lease's screen and input to its holder in serve-sim's formats
+on both platforms: AVCC envelopes at `/v1/leases/<id>/stream` and serve-sim's
+input messages at `/v1/leases/<id>/input`, both with the agent token. Clients
+therefore treat a Simlock Android lease like iOS (`serveSimOnly` in the stream
+client), and `upstream` maps serve-sim's `stream.avcc` and `helper/ws` paths to
+those routes. Simlock has no MJPEG, screenshot, or host command routes, so the
+panel offers only input there.
+Leases are renewed while tracked and released at the host's age limit; one a
+crashed server left behind ends on its own one TTL later, so there is no ledger.
+
 ## The hub is never exposed
 
 serve-sim has a shell-exec route whose token is readable from its own
