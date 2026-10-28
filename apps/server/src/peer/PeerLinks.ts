@@ -671,6 +671,7 @@ const make = Effect.gen(function* () {
       if (url.value === link.urls[0]) {
         preferredRoutes?.delete(environmentId);
       } else if (!reuse || preferred.url !== url.value) {
+        const verifiedAt = yield* DateTime.now;
         // Healthy primary routes need no preference state.
         const routes = (preferredRoutes ??= new Map());
         routes.delete(environmentId);
@@ -682,7 +683,7 @@ const make = Effect.gen(function* () {
         routes.set(environmentId, {
           url: url.value,
           secretName: row.value.secret_name,
-          until: DateTime.toEpochMillis(now) + 60_000,
+          until: DateTime.toEpochMillis(verifiedAt) + 60_000,
         });
       }
       return {

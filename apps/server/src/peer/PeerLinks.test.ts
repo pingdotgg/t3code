@@ -329,6 +329,44 @@ const serveRaw = <E, R>(
     ),
   );
 
+it.effect("starts the fallback preference window after route verification", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const probes = yield* Ref.make(0);
+      const slow = yield* serveRaw(() =>
+        Ref.update(probes, (count) => count + 1).pipe(
+          Effect.andThen(Deferred.succeed(entered, undefined)),
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(HttpServerResponse.empty({ status: 404 })),
+        ),
+      );
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      const urls = JSON.stringify([slow, b.url]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+      const resolving = yield* a.links.resolve(box.environmentId).pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust(Duration.seconds(2));
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(resolving)).url).toBe(b.url);
+
+      yield* TestClock.adjust(Duration.seconds(59));
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      expect(yield* Ref.get(probes)).toBe(1);
+      yield* TestClock.adjust(Duration.seconds(2));
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      expect(yield* Ref.get(probes)).toBe(2);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect(
   "prefers a verified fallback briefly, rechecks identity, and retries the configured route",
   () =>
