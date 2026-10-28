@@ -163,8 +163,10 @@ function markdownHtmlTags(content: string): RegExpExecArray[] {
       }
     }
     if (closingIndex === -1) {
-      if (fenced) codeRanges.push({ start: opening.index, end: content.length });
-      continue;
+      if (!fenced) continue;
+      // An unclosed fence runs to the end of the content, so no later opener matters.
+      codeRanges.push({ start: opening.index, end: content.length });
+      break;
     }
     const closing = delimiters[closingIndex]!;
     codeRanges.push({ start: opening.index, end: closing.index + closing[0].length });
