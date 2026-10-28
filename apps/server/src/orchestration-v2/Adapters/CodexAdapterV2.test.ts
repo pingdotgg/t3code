@@ -3636,6 +3636,25 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
             {
               type: "emit_inbound",
+              label: "error/retry/waiting-for-network",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: {
+                    message: "Reconnecting... waiting for network",
+                    additionalDetails: "Connection failed: error sending request",
+                    codexErrorInfo: {
+                      responseStreamDisconnected: { httpStatusCode: null },
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
               label: "item/started/after-retry",
               frame: {
                 method: "item/started",
@@ -3717,7 +3736,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ? [event.turnItem]
             : [],
         );
-        assert.lengthOf(retryItems, 2);
+        assert.lengthOf(retryItems, 3);
         assert.equal(retryItems[0]?.status, "running");
         assert.equal(retryItems[0]?.failure.code, "responseStreamDisconnected");
         assert.deepEqual(retryItems[0]?.retry, {
@@ -3725,9 +3744,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           maxAttempts: 5,
           retryDelayMs: null,
         });
-        assert.equal(retryItems[1]?.id, retryItems[0]?.id);
-        assert.equal(retryItems[1]?.status, "completed");
-        assert.equal(retryItems[1]?.title, "Provider recovered");
+        assert.deepEqual(retryItems[1]?.retry, {
+          attempt: 3,
+          maxAttempts: null,
+          retryDelayMs: null,
+        });
+        assert.equal(retryItems[2]?.id, retryItems[0]?.id);
+        assert.equal(retryItems[2]?.status, "completed");
+        assert.equal(retryItems[2]?.title, "Provider recovered");
 
         const recoveredIndex = harness.events.findIndex(
           (event) =>
