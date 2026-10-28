@@ -7,6 +7,7 @@ const fixture = vi.hoisted(() => ({
   active: true,
   currentThread: "thread-a",
   currentEnvironment: "environment",
+  fullscreenTarget: null as { threadId: string; environmentId: string } | null,
   stop: vi.fn(),
 }));
 const RouteName = createContext("Thread");
@@ -27,6 +28,9 @@ vi.mock("@react-navigation/native", () => ({
           name: "Thread",
           params: { threadId: fixture.currentThread, environmentId: fixture.currentEnvironment },
         },
+        ...(fixture.fullscreenTarget === null
+          ? []
+          : [{ name: "ThreadInspectorFullscreen", params: fixture.fullscreenTarget }]),
       ],
     }),
 }));
@@ -53,6 +57,7 @@ beforeEach(() => {
   fixture.active = true;
   fixture.currentThread = "thread-a";
   fixture.currentEnvironment = "environment";
+  fixture.fullscreenTarget = null;
   fixture.stop.mockClear();
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   root = createRoot(document.createElement("div"));
@@ -80,12 +85,17 @@ it("keeps voice running when Files closes and stops when the owning Thread leave
   act(() => root.unmount());
   expect(fixture.stop).toHaveBeenCalledTimes(1);
 });
-it.each(["thread", "environment"])(
+it.each(["thread", "environment", "fullscreen thread", "fullscreen environment"])(
   "stops the previous thread when navigation selects a different %s",
   (changed) => {
     render(false);
     if (changed === "thread") fixture.currentThread = "thread-b";
-    else fixture.currentEnvironment = "another-environment";
+    else if (changed === "environment") fixture.currentEnvironment = "another-environment";
+    else
+      fixture.fullscreenTarget = {
+        threadId: changed === "fullscreen thread" ? "thread-b" : "thread-a",
+        environmentId: changed === "fullscreen environment" ? "another-environment" : "environment",
+      };
     render(false);
     expect(fixture.stop).toHaveBeenCalledTimes(1);
   },

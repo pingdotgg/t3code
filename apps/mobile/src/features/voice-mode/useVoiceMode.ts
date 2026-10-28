@@ -35,7 +35,9 @@ export function useVoiceModeThreadLifecycle(target: VoiceSessionTarget): void {
   const { environmentId, threadId } = target;
   const routeName = useRoute().name;
   const isVisibleThread = useNavigationState((state) => {
-    const route = state.routes.findLast((route) => route.name === "Thread");
+    const route = state.routes.findLast(
+      (route) => route.name === "Thread" || route.name === "ThreadInspectorFullscreen",
+    );
     const params = route?.params;
     return (
       params != null &&
