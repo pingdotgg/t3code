@@ -1448,12 +1448,6 @@ private class DiffCanvasView(context: Context) : View(context) {
     canvas.drawRect(left, top, right, bottom, backgroundPaint)
   }
 
-  private fun drawBottomBorder(canvas: Canvas, bottom: Int) {
-    borderPaint.color = theme.border
-    borderPaint.strokeWidth = density
-    canvas.drawLine(0f, bottom - density / 2f, width.toFloat(), bottom - density / 2f, borderPaint)
-  }
-
   private fun centeredBaseline(top: Int, bottom: Int, paint: Paint): Float {
     val metrics = paint.fontMetrics
     return (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f
@@ -1477,26 +1471,6 @@ private fun centeredBaseline(top: Int, bottom: Int, paint: Paint): Float {
   return (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f
 }
 
-// A single-line preview never shows this many characters, so longer text is cut before measuring.
-private const val ELLIPSIZE_MAX_CHARS = 500
-
-private fun ellipsize(value: String, paint: Paint, width: Float): String {
-  val truncated = value.length > ELLIPSIZE_MAX_CHARS
-  val capEnd = surrogateSafeEnd(value, ELLIPSIZE_MAX_CHARS)
-  val text = if (truncated) value.substring(0, capEnd) else value
-  if (!truncated && paint.measureText(text) <= width) return value
-  val suffix = "..."
-  val available = max(0f, width - paint.measureText(suffix))
-  val end = surrogateSafeEnd(text, paint.breakText(text, true, available, null))
-  return text.substring(0, end) + suffix
-}
-
-private fun surrogateSafeEnd(value: String, end: Int): Int {
-  val splitsPair = end in 1 until value.length &&
-    Character.isSurrogatePair(value[end - 1], value[end])
-  return if (splitsPair) end - 1 else end
-}
-
 private fun indexFileHeaders(rows: List<DiffRow>): IntArray {
   val headers = ArrayList<Int>()
   rows.forEachIndexed { index, row ->
@@ -1516,39 +1490,39 @@ private fun parseRows(value: String, isCancelled: () -> Boolean): List<DiffRow> 
     List(array.length()) { index ->
       if (isCancelled()) return emptyList()
       val row = array.getJSONObject(index)
-    DiffRow(
-      kind = row.optString("kind"),
-      id = row.optString("id"),
-      fileId = row.optString("fileId"),
-      filePath = row.optString("filePath"),
-      previousPath = row.optNullableString("previousPath"),
-      renameSegments = row.optJSONArray("renameSegments")?.let { parts ->
-        List(parts.length()) { index ->
-          val part = parts.getJSONObject(index)
-          DiffRenameSegment(part.getString("text"), part.getString("kind"))
-        }
-      }.orEmpty(),
-      changeType = row.optString("changeType"),
-      additions = row.optInt("additions"),
-      deletions = row.optInt("deletions"),
-      text = row.optString("text"),
-      hunkAction = row.optNullableString("hunkAction"),
-      hunkActionDisabled = row.optBoolean("hunkActionDisabled", false),
-      hunkRevertAction = row.optBoolean("hunkRevertAction", false),
-      hunkRevertActionDisabled = row.optBoolean("hunkRevertActionDisabled", false),
-      fileAction = row.optNullableString("fileAction"),
-      fileActionDisabled = row.optBoolean("fileActionDisabled", false),
-      content = row.optString("content"),
-      change = row.optString("change", "context"),
-      oldLineNumber = row.optNullableInt("oldLineNumber"),
-      newLineNumber = row.optNullableInt("newLineNumber"),
-      wordDiffRanges = row.optJSONArray("wordDiffRanges")?.let(::parseWordDiffRanges).orEmpty(),
-      commentText = row.optString("commentText"),
-      commentRangeLabel = row.optString("commentRangeLabel"),
-      commentPending = row.optBoolean("commentPending", false),
-      commentResolvedSummary = row.optNullableString("commentResolvedSummary"),
-      commentSectionTitle = row.optString("commentSectionTitle"),
-    )
+      DiffRow(
+        kind = row.optString("kind"),
+        id = row.optString("id"),
+        fileId = row.optString("fileId"),
+        filePath = row.optString("filePath"),
+        previousPath = row.optNullableString("previousPath"),
+        renameSegments = row.optJSONArray("renameSegments")?.let { parts ->
+          List(parts.length()) { index ->
+            val part = parts.getJSONObject(index)
+            DiffRenameSegment(part.getString("text"), part.getString("kind"))
+          }
+        }.orEmpty(),
+        changeType = row.optString("changeType"),
+        additions = row.optInt("additions"),
+        deletions = row.optInt("deletions"),
+        text = row.optString("text"),
+        hunkAction = row.optNullableString("hunkAction"),
+        hunkActionDisabled = row.optBoolean("hunkActionDisabled", false),
+        hunkRevertAction = row.optBoolean("hunkRevertAction", false),
+        hunkRevertActionDisabled = row.optBoolean("hunkRevertActionDisabled", false),
+        fileAction = row.optNullableString("fileAction"),
+        fileActionDisabled = row.optBoolean("fileActionDisabled", false),
+        content = row.optString("content"),
+        change = row.optString("change", "context"),
+        oldLineNumber = row.optNullableInt("oldLineNumber"),
+        newLineNumber = row.optNullableInt("newLineNumber"),
+        wordDiffRanges = row.optJSONArray("wordDiffRanges")?.let(::parseWordDiffRanges).orEmpty(),
+        commentText = row.optString("commentText"),
+        commentRangeLabel = row.optString("commentRangeLabel"),
+        commentPending = row.optBoolean("commentPending", false),
+        commentResolvedSummary = row.optNullableString("commentResolvedSummary"),
+        commentSectionTitle = row.optString("commentSectionTitle"),
+      )
     }
   } catch (_: Exception) {
     emptyList()
