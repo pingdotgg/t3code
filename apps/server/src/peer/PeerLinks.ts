@@ -194,6 +194,12 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  // Prefer a recently working route, without caching its identity or credentials.
+  // Retry the configured order after a minute so a recovered direct route wins again.
+  const preferredRoutes = new Map<
+    EnvironmentId,
+    { readonly url: string; readonly secretName: string; readonly until: number }
+  >();
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -528,6 +534,7 @@ const make = Effect.gen(function* () {
     if (Option.isSome(previous) && previous.value.secret_name !== secretName) {
       yield* secrets.remove(previous.value.secret_name).pipe(Effect.ignore);
     }
+    preferredRoutes.delete(peer.environmentId);
     return linked;
   });
 
@@ -593,6 +600,7 @@ const make = Effect.gen(function* () {
       for (const row of deleted) {
         yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
       }
+      preferredRoutes.delete(environmentId);
       return deleted.length > 0;
     },
   );
@@ -607,7 +615,8 @@ const make = Effect.gen(function* () {
         });
       }
       const link = yield* toLink(row.value);
-      if (DateTime.isLessThanOrEqualTo(link.expiresAt, yield* DateTime.now)) {
+      const now = yield* DateTime.now;
+      if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) {
         return yield* new PeerLinkError({
           reason: "expired",
           message: `The link to ${link.label} expired. Link it again with a new pairing code from ${link.label}.`,
@@ -622,9 +631,18 @@ const make = Effect.gen(function* () {
       }
       // The token goes only to an address that proves it is this peer, so a
       // reused LAN address or a moved hostname never receives it.
+      const preferred = preferredRoutes.get(environmentId);
+      const reuse =
+        preferred !== undefined &&
+        preferred.secretName === row.value.secret_name &&
+        preferred.until > DateTime.toEpochMillis(now) &&
+        link.urls.includes(preferred.url);
+      const urls = reuse
+        ? [preferred.url, ...link.urls.filter((candidate) => candidate !== preferred.url)]
+        : link.urls;
       let fenced = true;
       let label = link.label;
-      const url = yield* Effect.findFirst(link.urls, (candidate) =>
+      const url = yield* Effect.findFirst(urls, (candidate) =>
         answersAs(candidate, environmentId).pipe(
           Effect.map((found) => {
             if (Option.isNone(found)) return false;
@@ -646,6 +664,19 @@ const make = Effect.gen(function* () {
         return yield* new PeerLinkError({
           reason: "incompatible",
           message: `${link.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
+        });
+      }
+      if (!reuse || preferred.url !== url.value) {
+        preferredRoutes.delete(environmentId);
+        // Bound retained state even if links are changed outside this service.
+        if (preferredRoutes.size >= 256) {
+          const oldest = preferredRoutes.keys().next();
+          if (!oldest.done) preferredRoutes.delete(oldest.value);
+        }
+        preferredRoutes.set(environmentId, {
+          url: url.value,
+          secretName: row.value.secret_name,
+          until: DateTime.toEpochMillis(now) + 60_000,
         });
       }
       return {

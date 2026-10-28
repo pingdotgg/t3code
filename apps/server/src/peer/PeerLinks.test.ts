@@ -329,6 +329,57 @@ const serveRaw = <E, R>(
     ),
   );
 
+it.effect(
+  "prefers a verified fallback briefly, rechecks identity, and retries the configured route",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = yield* serveApart(descriptorOf("environment-other", "Other"));
+        const b = yield* serveB(box);
+        const a = yield* makeA(laptop);
+        yield* a.links.link({
+          url: b.url,
+          pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+          access: "auto",
+        });
+        const urls = JSON.stringify([first.url, b.url]);
+        yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+        yield* Ref.set(first.probes, 0);
+        yield* Ref.set(b.probes, 0);
+        yield* TestClock.adjust(Duration.seconds(30));
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+        expect(yield* Ref.get(first.probes)).toBe(0);
+        expect(yield* Ref.get(b.probes)).toBe(1);
+
+        // A recovered preferred address gets a turn, even under repeated demand.
+        yield* Ref.set(first.descriptor, box);
+        yield* TestClock.adjust(Duration.seconds(31));
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(first.url);
+        expect(yield* Ref.get(first.probes)).toBe(1);
+
+        // A remembered address that changes identity is skipped immediately.
+        yield* Ref.set(first.descriptor, descriptorOf("environment-other", "Other"));
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+        expect(yield* Ref.get(first.bearers)).toEqual([]);
+
+        // Relinking restores the new configured order rather than the old preference.
+        yield* Ref.set(first.descriptor, box);
+        yield* a.links.link({
+          url: first.url,
+          alternateUrls: [b.url],
+          pairingCode: (yield* first.auth.issuePairingCredential()).credential,
+          access: "auto",
+        });
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(first.url);
+        yield* a.links.unlink(box.environmentId);
+        expect((yield* a.links.resolve(box.environmentId).pipe(Effect.flip)).reason).toBe(
+          "unknown_link",
+        );
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("never follows a peer's redirect with the pairing code", () =>
   Effect.scoped(
     Effect.gen(function* () {
