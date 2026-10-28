@@ -7856,7 +7856,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   : new ProviderAdapter.ProviderAdapterProtocolError({
                       driver: CODEX_PROVIDER,
                       detail:
-                        cause._tag === "CodexVoiceSessionError" ? cause.detail : cause.message,
+                        cause._tag === "CodexVoiceSessionError"
+                          ? cause.detail
+                          : "Voice conversation failed.",
                       payload: cause,
                     }),
               ),

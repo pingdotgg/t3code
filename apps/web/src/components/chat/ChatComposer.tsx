@@ -967,7 +967,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const voiceEngaged = voicePhase !== "idle";
   // A conversation stays stoppable here even if its provider stopped offering voice.
   const voiceSupported = voiceAvailability.kind !== "unsupported" || voiceEngaged;
-  const toggleVoice = () => toggleThreadVoice(routeThreadRef, voiceAvailability);
+  const toggleVoice = useStableCallback(() => toggleThreadVoice(routeThreadRef, voiceAvailability));
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SKILLS;
@@ -1143,6 +1143,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- binds voice shortcuts to window keyboard events for the mounted composer
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
+      if (isCommandPaletteOpen()) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
@@ -1162,7 +1163,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (!event.repeat) voiceMode.toggleMuted();
         return;
       }
-      if (command !== "voice.toggle" || !voiceSupported || isCommandPaletteOpen()) return;
+      if (command !== "voice.toggle" || !voiceSupported) return;
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) toggleVoice();

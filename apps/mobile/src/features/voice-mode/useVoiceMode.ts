@@ -34,16 +34,21 @@ export function useVoiceModePhase(target: VoiceSessionTarget): VoiceModePhase {
 export function useVoiceModeThreadLifecycle(target: VoiceSessionTarget): void {
   const { environmentId, threadId } = target;
   const routeName = useRoute().name;
-  const visibleThreadId = useNavigationState((state) => {
+  const isVisibleThread = useNavigationState((state) => {
     const route = state.routes.findLast((route) => route.name === "Thread");
     const params = route?.params;
-    return params && "threadId" in params ? String(params.threadId) : null;
+    return (
+      params != null &&
+      "threadId" in params &&
+      "environmentId" in params &&
+      String(params.threadId) === threadId &&
+      String(params.environmentId) === environmentId
+    );
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronize the WebRTC lifetime with the visible native thread.
   useEffect(() => {
-    if (visibleThreadId !== threadId && voiceMode.isActiveFor({ environmentId, threadId }))
-      voiceMode.stop();
-  }, [environmentId, threadId, visibleThreadId]);
+    if (!isVisibleThread && voiceMode.isActiveFor({ environmentId, threadId })) voiceMode.stop();
+  }, [environmentId, threadId, isVisibleThread]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the native call when its owning thread screen unmounts.
   useEffect(

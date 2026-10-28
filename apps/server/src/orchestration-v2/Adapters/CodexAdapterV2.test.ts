@@ -1380,6 +1380,81 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect.each(["request", "realtime"] as const)(
+    "only displays intentional voice errors from a %s failure",
+    (failure) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "voice-error-thread";
+          const detail =
+            failure === "request" ? "private protocol payload" : "Voice service is unavailable";
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: `voice-error-${failure}`,
+              entries: [
+                ...codexReplayPreamble({
+                  nativeThreadId,
+                  nativeTurnId: "unused",
+                  prompt: "",
+                }).slice(0, -3),
+                {
+                  type: "expect_outbound",
+                  label: "thread/realtime/start",
+                  frame: {
+                    id: 3,
+                    method: "thread/realtime/start",
+                    params: {
+                      threadId: nativeThreadId,
+                      outputModality: "audio",
+                      transport: { type: "webrtc", sdp: "v=offer\r\n" },
+                      version: "v3",
+                      clientManagedHandoffs: true,
+                      includeStartupContext: false,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/realtime/start",
+                  frame:
+                    failure === "request"
+                      ? { id: 3, error: { code: -32603, message: detail } }
+                      : { id: 3, result: {} },
+                },
+                ...(failure === "realtime"
+                  ? [
+                      {
+                        type: "emit_inbound" as const,
+                        label: "thread/realtime/error",
+                        frame: {
+                          method: "thread/realtime/error",
+                          params: { threadId: nativeThreadId, message: detail },
+                        },
+                      },
+                    ]
+                  : []),
+              ],
+            }),
+          );
+          const error = yield* harness.runtime.startVoiceSession!({
+            providerThread: harness.providerThread,
+            offerSdp: "v=offer\r\n",
+          }).pipe(Stream.runDrain, Effect.flip);
+          assert.equal(error._tag, "ProviderAdapterProtocolError");
+          if (error._tag === "ProviderAdapterProtocolError") {
+            assert.equal(
+              error.detail,
+              failure === "request" ? "Voice conversation failed." : detail,
+            );
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect(
     "resubmits a voice handoff Codex started only once its turn is interrupted or failed",
     () =>
