@@ -148,6 +148,10 @@ choice.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
+To work through the active list as a queue, turn on **Settings → General → Oldest first**. The
+thread that has waited longest stays at the top, and threads that come back later join at the
+bottom. Each device keeps its own choice.
+
 ### Group threads by project (beta)
 
 Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active
