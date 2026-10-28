@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { normalizeProviderIconUrl, type ProviderDriverKind } from "@t3tools/contracts";
 import { Input } from "../ui/input";
 import { Button } from "../ui/button";
@@ -11,6 +11,7 @@ export function ProviderIconUrlInput(props: {
   readonly disabled?: boolean;
   readonly onCommit: (value: string) => void;
 }) {
+  const errorId = useId();
   const [draft, setDraft] = useState<{ saved: string | undefined; value: string } | null>(null);
   const value = draft !== null && draft.saved === props.value ? draft.value : (props.value ?? "");
   const invalid = value.trim() !== "" && normalizeProviderIconUrl(value) === null;
@@ -29,6 +30,7 @@ export function ProviderIconUrlInput(props: {
         <Input
           aria-label="Instance icon URL"
           aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? errorId : undefined}
           size="sm"
           type="url"
           value={value}
@@ -57,7 +59,9 @@ export function ProviderIconUrlInput(props: {
         </Button>
       </div>
       {invalid ? (
-        <p className="text-xs text-destructive">Enter an HTTPS image URL without credentials.</p>
+        <p id={errorId} role="alert" className="text-xs text-destructive">
+          Enter an HTTPS image URL without credentials.
+        </p>
       ) : null}
     </div>
   );
