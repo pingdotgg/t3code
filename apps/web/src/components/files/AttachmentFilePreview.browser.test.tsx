@@ -51,6 +51,7 @@ import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import BinaryViewer from "./BinaryViewer";
 import { decodeImagePreview } from "./decodeImagePreview";
 import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
+import type { TextPreviewResult } from "./largeTextProtocol";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
@@ -462,12 +463,20 @@ describe("large text preview recovery", () => {
     const original = URL.createObjectURL(new Blob(["original\n".repeat(1000)]));
     const changed = URL.createObjectURL(new Blob(["changed\n".repeat(1000)]));
     const workers: Worker[] = [];
+    const indexed: Promise<void>[] = [];
     using _worker = stubGlobal(
       "Worker",
       class extends Worker {
         constructor(...args: ConstructorParameters<typeof Worker>) {
           super(...args);
           workers.push(this);
+          indexed.push(
+            new Promise((resolve) =>
+              this.addEventListener("message", (event: MessageEvent<TextPreviewResult>) => {
+                if (event.data.type === "meta" && event.data.complete) resolve();
+              }),
+            ),
+          );
         }
       },
     );
@@ -499,6 +508,8 @@ describe("large text preview recovery", () => {
       await using screen = await render(preview("first"));
       await vi.waitFor(() => expect(workers).toHaveLength(1));
       await vi.waitFor(() => expect(screen.container.textContent).toContain("original"));
+      // A cold worker can take longer than waitFor allows to load and index on CI.
+      await indexed[0];
       await vi.waitFor(() => expect(screen.container.textContent).toContain("1,000 lines"));
       const viewport = screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
       await act(() =>
@@ -2273,6 +2284,8 @@ it("loads a font attachment through the lazy preview", async () => {
   const { default: fontUrl } =
     await import("../../../node_modules/@betteroffice/fonts/assets/Carlito-Regular.ttf?url");
   const file = await (await fetch(fontUrl)).blob();
+  // Both lazy chunks can take longer than waitFor allows to load cold on CI.
+  await Promise.all([import("./FontFilePreview"), import("./FontViewer")]);
   await using screen = await render(
     <AttachmentFilePreview
       name="Carlito.ttf"
