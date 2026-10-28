@@ -3,6 +3,10 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
+  assistantCitationLabel,
+  collectAssistantCitations,
+} from "@t3tools/shared/assistantCitations";
+import {
   COMPOSER_CONTEXT_MAX_RECORDS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   ComposerContextId,
@@ -169,16 +173,23 @@ export function composerContextEditorTokens(
   knownSkills: { has(name: string): boolean },
 ) {
   const references = collectComposerContextReferences(text);
+  const citations = collectAssistantCitations(text);
   return [
     ...tokens.filter(
       (token) =>
         // `$HOME` and other `$name` text that is not one of the provider's skills stays prose.
         (token.type !== "skill" || knownSkills.has(token.value)) &&
-        !references.some((ref) => token.start < ref.end && token.end > ref.start),
+        !references.some((ref) => token.start < ref.end && token.end > ref.start) &&
+        !citations.some((ref) => token.start < ref.end && token.end > ref.start),
     ),
     ...references.map((ref) => ({
       type: "context" as const,
       value: ref.label,
+      ...ref,
+    })),
+    ...citations.map((ref) => ({
+      type: "citation" as const,
+      value: assistantCitationLabel(ref.citation),
       ...ref,
     })),
   ].sort((a, b) => a.start - b.start);

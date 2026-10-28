@@ -130,7 +130,13 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
-import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
+import {
+  captureComposerDraftInsertion,
+  getComposerDraftSnapshot,
+  insertComposerDraftText,
+} from "../../state/use-composer-drafts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import type { AssistantCitation } from "@t3tools/contracts";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import {
   ANDROID_READING_MAX_WIDTH,
@@ -1329,6 +1335,24 @@ function ThreadDetailBody(
     composerEditorRef.current?.blur();
   };
 
+  const canCiteAssistantText =
+    props.composerDraftKey !== null &&
+    !isProviderSubagent &&
+    !composerSlotHidden &&
+    !props.isSavingQueuedEdit &&
+    !props.draftMode?.interactionLocked;
+  const handleCiteAssistantText = (citation: AssistantCitation) => {
+    if (!canCiteAssistantText || props.composerDraftKey === null) return;
+    const target = captureComposerDraftInsertion(props.composerDraftKey);
+    const prefix = target.start > 0 && !/\s/.test(target.text[target.start - 1]!) ? " " : "";
+    insertComposerDraftText(
+      props.composerDraftKey,
+      `${prefix}${serializeAssistantCitation(citation)} `,
+      target,
+    );
+    composerEditorRef.current?.focus();
+  };
+
   const handleUseArtifactTemplate = (template: CodexArtifactTemplate) => {
     const draftMessage =
       props.composerDraftKey === null ? "" : getComposerDraftSnapshot(props.composerDraftKey).text;
@@ -1465,6 +1489,7 @@ function ThreadDetailBody(
               onEndFollowEnabledChange={handleEndFollowEnabledChange}
               skills={selectedProviderSkills}
               onUseArtifactTemplate={handleUseArtifactTemplate}
+              onCiteAssistantText={canCiteAssistantText ? handleCiteAssistantText : undefined}
             />
           </RenderErrorBoundary>
         </View>

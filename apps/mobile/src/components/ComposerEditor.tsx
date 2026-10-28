@@ -7,6 +7,12 @@ import { useEffect, useState } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  collectAssistantCitations,
+  serializeAssistantCitation,
+  withAssistantCitationComment,
+} from "@t3tools/shared/assistantCitations";
+import { AssistantCitationSheet } from "./AssistantCitationSheet";
 import { ComposerEditor as NativeComposerEditor } from "../native/T3ComposerEditor";
 import type { ComposerEditorProps as NativeComposerEditorProps } from "../native/T3ComposerEditor";
 import {
@@ -164,6 +170,9 @@ export function ComposerEditor({
   const selectedReference = selected
     ? collectComposerContextReferences(selected.source)[0]
     : undefined;
+  const selectedCitation = selected
+    ? collectAssistantCitations(selected.source)[0]?.citation
+    : undefined;
   const selectedSkillName = selected?.source.match(/^\p{Sc}(.+)$/u)?.[1];
   const selectedSkill = selectedSkillName
     ? props.skills?.find((skill) => skill.name === selectedSkillName)
@@ -171,6 +180,32 @@ export function ComposerEditor({
   const record = draft.context?.records.find(
     (entry) => entry.contextId === selectedReference?.contextId,
   );
+  const removeSelected =
+    props.readOnly || props.editable === false
+      ? undefined
+      : () => {
+          if (!selected) return;
+          if (props.value.slice(selected.start, selected.end) === selected.source) {
+            changeText(props.value.slice(0, selected.start) + props.value.slice(selected.end));
+            props.onSelectionChange?.({ start: selected.start, end: selected.start });
+          }
+          setSelected(null);
+        };
+  const commentSelectedCitation =
+    props.readOnly || props.editable === false || !selected || !selectedCitation
+      ? undefined
+      : (comment: string) => {
+          if (props.value.slice(selected.start, selected.end) !== selected.source) return;
+          const next = serializeAssistantCitation(
+            withAssistantCitationComment(selectedCitation, comment),
+          );
+          const text =
+            props.value.slice(0, selected.start) + next + props.value.slice(selected.end);
+          const cursor = selected.start + next.length;
+          if (draftKey)
+            rememberComposerDraftSelection(draftKey, text, { start: cursor, end: cursor });
+          changeText(text);
+        };
   return (
     <>
       {/* Reset revision history with the recreated iOS view without aborting context imports. */}
@@ -214,6 +249,14 @@ export function ComposerEditor({
       {importing ? (
         <Text className="py-2 text-xs text-foreground-muted">Copying context…</Text>
       ) : null}
+      {selectedCitation ? (
+        <AssistantCitationSheet
+          citation={selectedCitation}
+          onClose={() => setSelected(null)}
+          onRemove={removeSelected}
+          onCommentChange={commentSelectedCitation}
+        />
+      ) : null}
       {selected && (selectedReference || selectedSkill) ? (
         <ComposerContextSheet
           label={
@@ -252,19 +295,7 @@ export function ComposerEditor({
           records={draft.context?.records}
           attachments={draft.attachments}
           onClose={() => setSelected(null)}
-          onRemove={
-            props.readOnly || props.editable === false
-              ? undefined
-              : () => {
-                  if (props.value.slice(selected.start, selected.end) === selected.source) {
-                    changeText(
-                      props.value.slice(0, selected.start) + props.value.slice(selected.end),
-                    );
-                    props.onSelectionChange?.({ start: selected.start, end: selected.start });
-                  }
-                  setSelected(null);
-                }
-          }
+          onRemove={removeSelected}
         />
       ) : null}
     </>
