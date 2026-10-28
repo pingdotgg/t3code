@@ -19,7 +19,6 @@ import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { use, type ComponentProps } from "react";
 import { Platform, View } from "react-native";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
-import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
@@ -212,24 +211,10 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
 }
 
 function useSettingsIndexSections(): SettingsListSection[] {
-  const { selectedTargets, projectGroups, repositoryAccounts, selectedProjectKey } =
-    useSettingsEnvironmentFilter();
+  const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const noServerTargets = selectedTargets.length === 0;
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
-  const scopedProjectMembers =
-    selectedProject?.members
-      .map((member) => member.project)
-      .filter((project) =>
-        selectedTargets.some((target) => target.environmentId === project.environmentId),
-      ) ?? [];
-  const projectLabel =
-    scopedProjectMembers.length > 0
-      ? deriveProjectGroupLabel({
-          representative: scopedProjectMembers[0]!,
-          members: scopedProjectMembers,
-          repositoryAccounts,
-        })
-      : (selectedProject?.label ?? "Unavailable project");
+  const projectLabel = selectedProject?.label ?? "Unavailable project";
   const page = (
     target: SettingsPageTarget,
     icon: SettingsListRow["icon"],

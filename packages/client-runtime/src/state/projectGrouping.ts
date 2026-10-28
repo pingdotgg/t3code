@@ -223,11 +223,24 @@ function deriveOwnRepositoryName(
   if (!repositoryAccounts || !identity) return null;
   const [host, owner] = repositoryGroupingKeyOf(identity).toLowerCase().split("/");
   if (!host || !owner || !displayName.toLowerCase().startsWith(`${owner}/`)) return null;
-  const ownedEverywhere = members.every((member) =>
-    (repositoryAccounts[member.environmentId] ?? []).some(
-      (entry) => entry.host.toLowerCase() === host && entry.account.toLowerCase() === owner,
-    ),
-  );
+  const ownedEverywhere = members.every((member) => {
+    const repository = member.repositoryIdentity;
+    if (!repository) return false;
+    let authority = host;
+    try {
+      const remote = new URL(
+        repository.origin ? (repository.origin.remoteUrl ?? "") : repository.locator.remoteUrl,
+      );
+      if (remote.protocol === "http:" || remote.protocol === "https:") {
+        authority = remote.host.toLowerCase();
+      }
+    } catch {
+      // SSH remotes do not name the web server's port.
+    }
+    return (repositoryAccounts[member.environmentId] ?? []).some(
+      (entry) => entry.host.toLowerCase() === authority && entry.account.toLowerCase() === owner,
+    );
+  });
   return ownedEverywhere ? displayName.slice(owner.length + 1) : null;
 }
 

@@ -306,6 +306,11 @@ describe("buildProjectGroups", () => {
       owner: "EtanHey",
       name: "orchestrator",
       displayName: "EtanHey/orchestrator",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/EtanHey/orchestrator.git",
+      },
     };
     const linked = (title = "orchestrator") => [
       makeProject("orchestrator-a", "/a/orchestrator", { title, repositoryIdentity: ownIdentity }),
@@ -366,6 +371,34 @@ describe("buildProjectGroups", () => {
           makeProject("other", "/a/other", { title: "Orchestrator", repositoryIdentity: null }),
         ]),
       ).toEqual(["EtanHey/orchestrator", "Orchestrator"]);
+    });
+
+    it.each([
+      ["forgejo.local:4000", "orchestrator"],
+      ["forgejo.local", "EtanHey/orchestrator"],
+      ["forgejo.local:5000", "EtanHey/orchestrator"],
+    ])("matches the grouping remote's authority against %s", (host, label) => {
+      const projects = linked().map((project) => ({
+        ...project,
+        repositoryIdentity: {
+          ...ownIdentity,
+          origin: {
+            canonicalKey: "forgejo.local/etanhey/orchestrator",
+            displayName: "EtanHey/orchestrator",
+            remoteUrl: "http://forgejo.local:4000/EtanHey/orchestrator.git",
+          },
+        },
+      }));
+      expect(
+        buildProjectGroups({
+          projects,
+          settings: settings("repository"),
+          repositoryAccounts: {
+            [environmentId]: account("EtanHey", host),
+            [macB]: account("EtanHey", host),
+          },
+        }).map((group) => group.label),
+      ).toEqual([label]);
     });
   });
 
