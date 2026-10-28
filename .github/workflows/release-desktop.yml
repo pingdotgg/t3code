@@ -254,6 +254,24 @@ jobs:
           if [[ "${{ inputs.version }}" =~ -nightly\.[0-9]{8}\.[0-9]+$ ]]; then brand=nightly; fi
           node scripts/apply-web-brand-assets.ts "$brand" apps/server/dist/client
 
+      # tsdown downloads the target Node with one fetch and no retry, and
+      # nodejs.org drops that download often enough to fail releases. Seed
+      # tsdown's cache with a retried, checksum-verified copy instead.
+      - name: Download target Node.js for the CLI executable
+        if: inputs.cli_archive && inputs.platform == 'win'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").engines.node')"
+          name="node-v$version-win-${{ inputs.arch }}"
+          dest="${XDG_CACHE_HOME:-$HOME/.cache}/tsdown/node/v$version/win-${{ inputs.arch }}"
+          dir="$RUNNER_TEMP/node-download"
+          mkdir -p "$dir" "$dest"
+          curl -fsSL --retry 5 --retry-all-errors -o "$dir/$name.zip" "https://nodejs.org/dist/v$version/$name.zip"
+          curl -fsSL --retry 5 --retry-all-errors -o "$dir/SHASUMS256.txt" "https://nodejs.org/dist/v$version/SHASUMS256.txt"
+          (cd "$dir" && grep " $name.zip\$" SHASUMS256.txt | sha256sum -c -)
+          unzip -p "$dir/$name.zip" "$name/node.exe" > "$dest/node.exe"
+
       # Setup Vite+ selects the exact engines.node version from package.json.
       # Native builds embed that executable; cross-target builds download the
       # same version for their target.
