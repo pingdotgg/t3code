@@ -306,4 +306,31 @@ describe("sortInboxThreadsBySend", () => {
       ).map((entry) => entry.id),
     ).toEqual(["returned", "unsettled", "sent"]);
   });
+
+  it("keeps a finished run's return after a reload, only with the Working section", () => {
+    const returnedEarlier = inboxThread("returned-earlier", {
+      latestUserAuthoredMessageAt: "2026-06-01T01:00:00.000Z",
+      latestRun: {
+        runId: RunId.make("run:done"),
+        status: "completed" as const,
+        requestedAt: "2026-06-01T01:00:00.000Z",
+        startedAt: "2026-06-01T01:00:00.000Z",
+        completedAt: "2026-06-01T03:00:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const sentLater = inboxThread("sent-later", {
+      latestUserAuthoredMessageAt: "2026-06-01T02:00:00.000Z",
+    });
+    // A fresh page has no observed returns yet.
+    expect(
+      sortInboxThreadsBySend([sentLater, returnedEarlier], () => undefined).map(
+        (entry) => entry.id,
+      ),
+    ).toEqual(["returned-earlier", "sent-later"]);
+    expect(sortInboxThreadsBySend([sentLater, returnedEarlier]).map((entry) => entry.id)).toEqual([
+      "sent-later",
+      "returned-earlier",
+    ]);
+  });
 });
