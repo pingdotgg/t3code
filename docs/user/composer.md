@@ -135,8 +135,8 @@ The quoted text and comment count toward the message limit.
 
 On mobile, long-press an assistant response, adjust the text selection, and choose
 **Cite** to insert a quote at the composer cursor. Tap a quote in a draft to add
-or edit its comment, or to remove it. Tap a quote in a draft or sent message to
-open its source message.
+or edit its comment, or to remove it. To open the source message, tap a quote in
+a draft or sent message, then choose **Go to message**.
 
 ## Recall a sent prompt
 
