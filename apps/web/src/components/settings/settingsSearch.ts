@@ -842,7 +842,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "terminal-close-confirmation",
     title: "Terminal close confirmation",
-    to: "/settings/general",
+    to: "/settings/threads",
     searchTerms: ["ask before delete stop process shell console history"],
   },
   {
