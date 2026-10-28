@@ -9,10 +9,10 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { FetchHttpClient, type HttpMethod } from "effect/http";
 
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
@@ -55,7 +55,7 @@ const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironm
     authorization: PreparedHttpAuthorization | null,
     method: HttpMethod.HttpMethod,
     url: string,
-    signer: Option.Option<ManagedRelayDpopSigner["Service"]>,
+    signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>,
   ): Effect.fn.Return<EnvironmentHttpAuthHeaders, RemoteEnvironmentAuthFetchError> {
     if (authorization === null) {
       return {};
@@ -113,7 +113,7 @@ export const executeConnectedEnvironmentHttpRequest = Effect.fn(
     "prepared" | "signer" | "remoteAuthorization"
   >,
 ) {
-  const supervisor = yield* EnvironmentSupervisor;
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const prepared = yield* SubscriptionRef.get(supervisor.prepared);
   if (Option.isNone(prepared)) {
     return yield* new RemoteEnvironmentAuthFetchError({
@@ -124,8 +124,10 @@ export const executeConnectedEnvironmentHttpRequest = Effect.fn(
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
     prepared: prepared.value,
-    signer: yield* Effect.serviceOption(ManagedRelayDpopSigner),
-    remoteAuthorization: yield* Effect.serviceOption(RemoteEnvironmentAuthorization),
+    signer: yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner),
+    remoteAuthorization: yield* Effect.serviceOption(
+      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+    ),
   });
 });
 
@@ -138,8 +140,10 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   R,
 >(input: {
   readonly prepared: PreparedConnection;
-  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
-  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<
+    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
+  >;
   readonly method: HttpMethod.HttpMethod;
   /**
    * The URL to sign, from the group's contract URL builder. It encodes path
