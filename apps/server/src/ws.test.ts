@@ -303,6 +303,74 @@ it.live.each(["thread", "shell"] as const)(
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+it.effect("coalesces streaming replay before synchronization and the live tail", () =>
+  Effect.gen(function* () {
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:streaming-replay");
+    const now = "2026-10-27T00:00:00.000Z";
+    const insert = (version: number, text: string, streaming: boolean) => sql<{
+      sequence: number;
+    }>`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${`streaming-replay:${version}`}, 'thread', ${threadId}, ${version}, 'message.updated',
+        ${now}, 'server', ${JSON.stringify({
+          createdBy: "agent",
+          creationSource: "web",
+          id: "message:streaming-replay",
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "assistant",
+          text,
+          attachments: [],
+          streaming,
+          createdAt: now,
+          updatedAt: now,
+        })}, '{}', 2
+      ) RETURNING sequence
+    `;
+    yield* insert(0, "H", true);
+    yield* insert(1, "He", true);
+    const [latest] = yield* insert(2, "Hello", true);
+    const [completed] = yield* insert(3, "Hello!", false);
+    const items = yield* subscribeOrchestrationV2Thread({
+      threadId,
+      afterSequence: 0,
+      requestCompletionMarker: true,
+    }).pipe(
+      Effect.flatMap(Stream.runCollect),
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        ensureLegacyTranscript: () => Effect.void,
+        streamStoredEventsFrom: () =>
+          Stream.unwrap(
+            insert(4, "Next", false).pipe(
+              Effect.map(() =>
+                store.readAgentEvents({ threadId, afterSequence: completed!.sequence }),
+              ),
+            ),
+          ),
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+    );
+    assert.deepEqual(
+      items.map((item) =>
+        item.kind === "event"
+          ? [item.sequence, item.event.type === "message.updated" ? item.event.payload.text : null]
+          : [item.kind],
+      ),
+      [
+        [latest!.sequence, "Hello"],
+        [completed!.sequence, "Hello!"],
+        ["synchronized"],
+        [completed!.sequence + 1, "Next"],
+      ],
+    );
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
 it.effect("shell snapshots omit idle children and older settled threads only on request", () =>
   Effect.gen(function* () {
     const shell = (

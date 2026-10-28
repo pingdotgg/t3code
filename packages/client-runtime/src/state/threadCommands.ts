@@ -351,7 +351,8 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency: {
         mode: "serial",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
+        key: ({ environmentId, input }) =>
+          `history:${JSON.stringify([environmentId, input.threadId])}`,
       },
     }),
     uploadFeedback: createEnvironmentRpcCommand(runtime, {

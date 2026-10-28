@@ -142,7 +142,10 @@ import {
   type ShellApplicationEvent,
 } from "./orchestration-v2/ShellStream.ts";
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
-import { coalesceThreadLiveStream } from "./orchestration-v2/ThreadLiveEventCoalescer.ts";
+import {
+  coalesceLiveUpdatedEvents,
+  coalesceThreadLiveStream,
+} from "./orchestration-v2/ThreadLiveEventCoalescer.ts";
 import {
   buildBoundedThreadStreamSnapshot,
   decideThreadResume,
@@ -947,7 +950,9 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         // Retained creation events may describe deleted threads; replace replay only if a snapshot exists.
         if (shell !== null) return yield* snapshotThenLive();
       }
-      const replay = yield* loadReplayThrough(input.afterSequence, highWater);
+      const replay = coalesceLiveUpdatedEvents(
+        yield* loadReplayThrough(input.afterSequence, highWater),
+      );
       const plan = decideThreadResume({
         afterSequence: input.afterSequence,
         highWater,
