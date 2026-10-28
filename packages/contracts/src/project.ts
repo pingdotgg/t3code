@@ -193,15 +193,10 @@ export const ProjectUpdatePayload = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
-  pinned: Schema.optional(
-    Schema.Boolean.annotate({
-      description: "Pin (true) or unpin (false). Pinned projects come first in project pickers.",
-    }),
-  ),
+  pinned: Schema.optional(Schema.Boolean),
   archived: Schema.optional(
     Schema.Boolean.annotate({
-      description:
-        "Archive (true) or unarchive (false) this environment's record. Threads and files are kept. A project on several machines leaves project pickers once every machine's record is archived.",
+      description: "Threads and files are kept.",
     }),
   ),
 });
