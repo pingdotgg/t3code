@@ -32,9 +32,11 @@ export function isMainWindowPermissionAllowed(
   permission: string,
   origin: string | undefined,
   appUrl: string,
+  media?: { readonly platform: NodeJS.Platform; readonly microphoneStatus: () => string },
 ): boolean {
   return permission === "media"
-    ? isAppUrl(origin, appUrl)
+    ? isAppUrl(origin, appUrl) &&
+        (media?.platform !== "darwin" || media.microphoneStatus() !== "not-determined")
     : permission !== "deprecated-sync-clipboard-read";
 }
 
@@ -67,6 +69,9 @@ export function installMainWindowPermissionHandlers(
     });
   });
   session.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
-    isMainWindowPermissionAllowed(permission, requestingOrigin, options.appUrl),
+    isMainWindowPermissionAllowed(permission, requestingOrigin, options.appUrl, {
+      platform: options.platform,
+      microphoneStatus: () => Electron.systemPreferences.getMediaAccessStatus("microphone"),
+    }),
   );
 }

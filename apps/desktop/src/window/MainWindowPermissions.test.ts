@@ -38,6 +38,18 @@ describe("decideMainWindowMediaRequest", () => {
     expect(decide({ microphoneStatus: () => "not-determined" })).toBe("ask-microphone");
     expect(decide({ microphoneStatus: () => "denied" })).toBe("ask-microphone");
     expect(decide()).toBe("grant");
+    expect(
+      isMainWindowPermissionAllowed("media", APP_URL, APP_URL, {
+        platform: "darwin",
+        microphoneStatus: () => "not-determined",
+      }),
+    ).toBe(false);
+    expect(
+      isMainWindowPermissionAllowed("media", APP_URL, APP_URL, {
+        platform: "darwin",
+        microphoneStatus: () => "granted",
+      }),
+    ).toBe(true);
   });
 
   it("grants the microphone directly off macOS", () => {
