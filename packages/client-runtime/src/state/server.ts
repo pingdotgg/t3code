@@ -792,8 +792,9 @@ export function createServerEnvironmentAtoms<R, E>(
     }
     let previousProviders: ServerConfig["providers"] | undefined;
     return Atom.make((get): ServerConfig | null => {
-      const projection = Option.getOrNull(
-        AsyncResult.value(get(configProjection({ environmentId, input: {} }))),
+      const projection = AsyncResult.getOrElse(
+        get(configProjection({ environmentId, input: {} })),
+        () => null,
       );
       const config = resolveServerConfigValue(
         projection,

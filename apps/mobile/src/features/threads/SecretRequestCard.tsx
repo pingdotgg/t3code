@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import {
   SECRET_REQUEST_DEFAULT_PLACEHOLDER,
   secretRequestAnswerInput,
@@ -91,7 +92,7 @@ function PendingSecretRequestForm(props: {
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
-      setError(secretRequestFailureMessage(squashAtomCommandFailure(result)));
+      pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
     }
   };
 

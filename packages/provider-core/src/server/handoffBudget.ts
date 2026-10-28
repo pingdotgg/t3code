@@ -197,14 +197,16 @@ export function renderHistory(
   return [context, ...messages.map(renderHistoricalMessage)].join("\n\n");
 }
 
+const jsonByteLength = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+
 export function historyCost(
   messages: ReadonlyArray<OrchestrationV2HistoricalMessage>,
   context: string,
 ): number {
   return (
     Math.max(
-      Buffer.byteLength(JSON.stringify(historyResponseItems(messages, context))),
-      Buffer.byteLength(JSON.stringify(renderHistory(messages, context))),
+      jsonByteLength(historyResponseItems(messages, context)),
+      jsonByteLength(renderHistory(messages, context)),
     ) + 256
   );
 }

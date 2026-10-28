@@ -318,7 +318,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
   );
   const results = useAtomValue(pagesAtom);
   const values = results.flatMap((result) => {
-    const value = Option.getOrNull(AsyncResult.value(result));
+    const value = AsyncResult.getOrElse(result, () => null);
     return value === null ? [] : [value];
   });
   const refs = new Map<string, VcsRef>();

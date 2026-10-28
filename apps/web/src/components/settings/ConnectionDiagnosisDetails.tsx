@@ -28,8 +28,8 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
  */
 export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
   const environmentId = environment.environmentId;
-  const state = Option.getOrElse(
-    AsyncResult.value(useAtomValue(environmentCatalog.stateAtom(environmentId))),
+  const state = AsyncResult.getOrElse(
+    useAtomValue(environmentCatalog.stateAtom(environmentId)),
     () => AVAILABLE_CONNECTION_STATE,
   );
   const relayStatus = useRelayEnvironmentDiscovery().environments.get(environmentId)?.status;

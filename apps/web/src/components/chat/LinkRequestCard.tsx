@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type LinkableMachine,
@@ -106,7 +107,7 @@ function PendingLinkRequest(props: {
       setDeclining(false),
     );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      setError(linkRequestFailureMessage(squashAtomCommandFailure(result)));
+      pipe(squashAtomCommandFailure(result), linkRequestFailureMessage, setError);
     }
   };
 
@@ -311,7 +312,7 @@ function LinkRequestDialog(props: {
       // The card switches to its answered row once the item updates.
       close();
     } else if (!isAtomCommandInterrupted(result)) {
-      setError(linkRequestFailureMessage(squashAtomCommandFailure(result)));
+      pipe(squashAtomCommandFailure(result), linkRequestFailureMessage, setError);
     }
   };
 

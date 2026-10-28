@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -269,7 +270,11 @@ function sameFrame(
   ignoredConfigKeys: ReadonlySet<string> = new Set(),
 ): boolean {
   const normalize = (frame: unknown) =>
-    stableStringify(normalizeThreadRequest(normalizeReplayFrame(frame), ignoredConfigKeys));
+    pipe(
+      normalizeReplayFrame(frame),
+      (request) => normalizeThreadRequest(request, ignoredConfigKeys),
+      stableStringify,
+    );
   return normalize(left) === normalize(right);
 }
 

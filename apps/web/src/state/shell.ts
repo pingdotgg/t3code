@@ -75,8 +75,8 @@ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
     if (Option.isSome(get(environmentShell.stateValueAtom(environmentId)).snapshot)) {
       continue;
     }
-    const connection = Option.getOrElse(
-      AsyncResult.value(get(environmentCatalog.stateAtom(environmentId))),
+    const connection = AsyncResult.getOrElse(
+      get(environmentCatalog.stateAtom(environmentId)),
       () => AVAILABLE_CONNECTION_STATE,
     );
     if (connectionProjectionPhase(connection) !== "disconnected") {

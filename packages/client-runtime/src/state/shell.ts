@@ -596,7 +596,7 @@ export function createEnvironmentShellAtoms<R, E>(
 
   const stateValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) =>
-      Option.getOrElse(AsyncResult.value(get(stateAtom(environmentId))), () => EMPTY_SHELL_STATE),
+      AsyncResult.getOrElse(get(stateAtom(environmentId)), () => EMPTY_SHELL_STATE),
     ).pipe(Atom.withLabel(`environment-shell-state-value:${environmentId}`)),
   );
 

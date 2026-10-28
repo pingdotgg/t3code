@@ -16,7 +16,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { cast } from "effect/Function";
+import { cast, pipe } from "effect/Function";
 import {
   HttpClient,
   HttpClientResponse,
@@ -181,8 +181,11 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     if (bytes === null) {
       return HttpServerResponse.text("MCP app is too large to preview.", { status: 413 });
     }
-    const body = new TextEncoder().encode(
-      injectMcpAppCookieBootstrap(injectMcpAppThemeBootstrap(new TextDecoder().decode(bytes))),
+    const body = pipe(
+      new TextDecoder().decode(bytes),
+      injectMcpAppThemeBootstrap,
+      injectMcpAppCookieBootstrap,
+      (html) => new TextEncoder().encode(html),
     );
     headers["Content-Length"] = String(body.byteLength);
     return method === "HEAD"

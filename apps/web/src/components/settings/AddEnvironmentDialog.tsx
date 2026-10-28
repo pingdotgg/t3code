@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
@@ -155,7 +156,7 @@ export function AddEnvironmentDialog({
     });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        onErrorChange(formatDesktopSshConnectionError(squashAtomCommandFailure(result)));
+        pipe(squashAtomCommandFailure(result), formatDesktopSshConnectionError, onErrorChange);
       }
       setIsAddingSavedBackend(false);
       return;
