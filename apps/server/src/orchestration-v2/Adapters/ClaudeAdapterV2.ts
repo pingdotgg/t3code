@@ -13640,6 +13640,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return existing;
           }
 
+          // A transient settings read can open bypass turns downgraded. Keeping that stricter
+          // process beats killing its background work; the next idle turn reopens in bypass.
+          if (
+            existing !== null &&
+            existing.nativeThreadId === nativeThreadId &&
+            !existing.stopping &&
+            queryPolicy.permissionMode === "bypassPermissions" &&
+            existing.selection.queryIdentity === compiledSelection.queryIdentity &&
+            [false, true].some(
+              (autoDisabled) =>
+                existing.queryPolicyKey ===
+                claudeEffectiveQueryPolicyKey(
+                  claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy, {
+                    bypassDisabled: true,
+                    autoDisabled,
+                  }),
+                  mcpOverrides,
+                ),
+            ) &&
+            (yield* liveProcessRunsBackgroundWork(existing))
+          ) {
+            return existing;
+          }
+
           // Replacing this thread's process kills its background work, even with a new native identity.
           if (
             existing !== null &&

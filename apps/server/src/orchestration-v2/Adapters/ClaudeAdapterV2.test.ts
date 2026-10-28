@@ -7957,6 +7957,90 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect(
+    "keeps a bypass-downgraded process running background work when bypass resolves again",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-recovery-",
+          });
+          const remoteSettings = path.join(home, "remote-settings.json");
+          // Claude rewrites its remote policy cache in place; a concurrent read can see it empty.
+          yield* fileSystem.writeFileString(remoteSettings, "");
+          const harness = yield* makeWakeHarnessWithOptions({
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+            close: Queue.shutdown,
+            freshQueueOnReopen: true,
+          });
+          const now = yield* DateTime.now;
+          const turn = (
+            ordinal: number,
+            origin: Pick<
+              Parameters<typeof makeClaudeTestTurnInput>[0],
+              "messageCreatedBy" | "messageCreationSource"
+            >,
+          ) =>
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-bypass-recovery:${ordinal}`),
+              text: `Request ${ordinal}`,
+              attachments: [],
+              providerTurnOrdinal: ordinal,
+              ...origin,
+            });
+          yield* harness.runtime.startTurn(
+            turn(1, { messageCreatedBy: "agent", messageCreationSource: "mcp" }),
+          );
+          const downgradedOptions = harness.getOpenedOptions();
+          assert.equal(downgradedOptions?.permissionMode, "auto");
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          yield* fileSystem.writeFileString(remoteSettings, "{}");
+          for (const [ordinal, origin] of [
+            [2, { messageCreatedBy: "agent", messageCreationSource: "server" }],
+            [3, { messageCreatedBy: "user", messageCreationSource: "web" }],
+          ] as const) {
+            const started = yield* harness.runtime
+              .startTurn(turn(ordinal, origin))
+              .pipe(Effect.result);
+            assert.equal(
+              started._tag,
+              "Success",
+              `${origin.messageCreationSource} turn must not be refused as a setting change`,
+            );
+            yield* harness.offerAndWait(turnOneResult);
+            yield* Queue.take(harness.terminalReceipts);
+          }
+          assert.strictEqual(harness.getOpenedOptions(), downgradedOptions);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          yield* harness.offerAndWait(wakeNotification);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          yield* harness.runtime.startTurn(
+            turn(4, { messageCreatedBy: "user", messageCreationSource: "web" }),
+          );
+          assert.equal(harness.getOpenedOptions()?.permissionMode, "bypassPermissions");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   describe("MCP elicitations", () => {
     const testLayer = Layer.mergeAll(
       IdAllocator.layer,
