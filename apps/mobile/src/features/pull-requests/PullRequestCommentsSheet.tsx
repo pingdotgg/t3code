@@ -139,6 +139,7 @@ export function PullRequestCommentsSheet({
                       draftId: comment.id,
                       path: comment.path,
                       position: comment.position,
+                      ...(comment.startPosition ? { startPosition: comment.startPosition } : {}),
                       headSha: comment.headSha,
                       code: comment.code,
                       ...(comment.oldPath ? { oldPath: comment.oldPath } : {}),

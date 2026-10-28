@@ -101,5 +101,8 @@ class T3ReviewDiffModule : Module() {
     Prop("initialRowIndex") { view: T3ReviewDiffView, initialRowIndex: Double ->
       view.setInitialRowIndex(initialRowIndex)
     }
+    Prop("initialFileId") { view: T3ReviewDiffView, fileId: String ->
+      view.setInitialFileId(fileId)
+    }
   }
 }

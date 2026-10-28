@@ -20,6 +20,7 @@ import {
   MERGE_METHODS,
   PR_ACTION_ICONS,
   pullRequestActionLabel,
+  pullRequestMergeConfirmationAction,
 } from "./pullRequestActions";
 import { pullRequestStackMerge, singlePullRequestMergeAllowed } from "./pullRequestStack";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
@@ -144,6 +145,11 @@ export function PullRequestMergeControls(props: {
   const bypass = confirmation?.key === confirmationKey && confirmation.bypass;
   const confirmationOpen = confirmation?.key === confirmationKey && canAdminMerge;
   const canConfirmAutoMerge = canAutoMerge && autoAction === "enable-auto-merge";
+  const confirmAction = pullRequestMergeConfirmationAction({
+    bypass,
+    requirementsUnmet,
+    canConfirmAutoMerge,
+  });
   if (confirmation !== null && (!canAdminMerge || confirmation.key !== confirmationKey))
     setConfirmation(null);
   const perform = async (
@@ -353,18 +359,18 @@ export function PullRequestMergeControls(props: {
                     ? "Working…"
                     : bypass
                       ? "Bypass rules and merge"
-                      : canConfirmAutoMerge
+                      : confirmAction === "enable-auto-merge"
                         ? "Enable auto-merge"
                         : "Confirm merge"
                 }
                 tone={bypass ? "danger" : "primary"}
-                disabled={busy || (!bypass && !canMerge && !canConfirmAutoMerge)}
+                disabled={
+                  busy ||
+                  (!bypass && (confirmAction === "merge" ? !canMerge : !canConfirmAutoMerge))
+                }
                 loading={busy}
                 onPress={async () => {
-                  const completed = await perform(
-                    bypass || !canConfirmAutoMerge ? "merge" : "enable-auto-merge",
-                    bypass,
-                  );
+                  const completed = await perform(confirmAction, bypass);
                   if (completed) setConfirmation(null);
                 }}
               />

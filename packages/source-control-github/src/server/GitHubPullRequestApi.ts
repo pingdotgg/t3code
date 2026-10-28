@@ -1503,6 +1503,12 @@ export const make = Effect.gen(function* () {
           "saveDraftComment",
           new Error("The saved review comment changed on GitHub. Refresh the pull request."),
         );
+      if (!sameDraftComment(saved, input.comment))
+        return yield* readError(
+          input.cwd,
+          "saveDraftComment",
+          new Error("Discard and save the edited comment again."),
+        );
       return {
         reviewId: pending.review.id,
         commentId: saved.node_id,

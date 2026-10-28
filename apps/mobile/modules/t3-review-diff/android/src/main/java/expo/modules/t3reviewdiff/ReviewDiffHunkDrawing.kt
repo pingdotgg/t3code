@@ -130,7 +130,11 @@ internal fun ellipsizeDiffText(value: String, paint: Paint, width: Float): Strin
   if (paint.measureText(value) <= width) return value
   val suffix = "..."
   val available = max(0f, width - paint.measureText(suffix))
-  var end = value.length
-  while (end > 0 && paint.measureText(value, 0, end) > available) end -= 1
+  var end = paint.breakText(value, true, available, null)
+  if (
+    end > 0 && end < value.length && Character.isSurrogatePair(value[end - 1], value[end])
+  ) {
+    end -= 1
+  }
   return value.substring(0, end) + suffix
 }

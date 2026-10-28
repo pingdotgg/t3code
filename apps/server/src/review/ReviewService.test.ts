@@ -121,6 +121,7 @@ describe("ReviewService", () => {
         yield* run(["init"]);
         yield* run(["config", "user.name", "Test"]);
         yield* run(["config", "user.email", "test@example.com"]);
+        yield* fs.makeDirectory(`${workspaceRoot}/nested`);
         yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "one\ntwo\nthree\n");
         yield* run(["add", "."]);
         yield* run(["commit", "-m", "initial"]);
@@ -134,10 +135,12 @@ describe("ReviewService", () => {
         assert.include(yield* run(["diff"]), "+THREE");
         yield* service.setStaged({ cwd: workspaceRoot, paths: ["file.txt"], staged: false, patch });
         assert.equal(yield* run(["diff", "--cached"]), "");
-        yield* service.setStaged({ cwd: workspaceRoot, paths: ["file.txt"], staged: true });
-        assert.include(yield* run(["diff", "--cached"]), "+THREE");
-        yield* service.setStaged({ cwd: workspaceRoot, paths: ["file.txt"], staged: false });
-        assert.equal(yield* run(["diff", "--cached"]), "");
+        for (const cwd of [workspaceRoot, `${workspaceRoot}/nested`]) {
+          yield* service.setStaged({ cwd, paths: ["file.txt"], staged: true });
+          assert.include(yield* run(["diff", "--cached"]), "+THREE");
+          yield* service.setStaged({ cwd, paths: ["file.txt"], staged: false });
+          assert.equal(yield* run(["diff", "--cached"]), "");
+        }
         assert.equal(yield* fs.readFileString(`${workspaceRoot}/file.txt`), contents);
       }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, gitLayer: GitVcsDriver.layer })));
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -247,20 +250,19 @@ describe("ReviewService", () => {
           yield* run(["commit", "-m", "initial"]);
           yield* fs.writeFileString(`${workspaceRoot}/src/[literal].txt`, "staged\n");
           yield* run(["add", "."]);
-          yield* fs.writeFileString(`${workspaceRoot}/src/[literal].txt`, "unstaged\n");
-          yield* fs.writeFileString(`${workspaceRoot}/src/new.txt`, "new\n");
           yield* fs.writeFileString(`${workspaceRoot}/keep.txt`, "keep\n");
-          yield* service.revert({
-            cwd: workspaceRoot,
-            paths: ["src/[literal].txt", "src/new.txt"],
-          });
-          assert.strictEqual(
-            yield* fs.readFileString(`${workspaceRoot}/src/[literal].txt`),
-            "staged\n",
-          );
-          assert.strictEqual(yield* run(["show", ":src/[literal].txt"]), "staged");
-          assert.strictEqual(yield* fs.exists(`${workspaceRoot}/src/new.txt`), false);
-          assert.strictEqual(yield* fs.readFileString(`${workspaceRoot}/keep.txt`), "keep\n");
+          for (const cwd of [workspaceRoot, `${workspaceRoot}/src`]) {
+            yield* fs.writeFileString(`${workspaceRoot}/src/[literal].txt`, "unstaged\n");
+            yield* fs.writeFileString(`${workspaceRoot}/src/new.txt`, "new\n");
+            yield* service.revert({ cwd, paths: ["src/[literal].txt", "src/new.txt"] });
+            assert.strictEqual(
+              yield* fs.readFileString(`${workspaceRoot}/src/[literal].txt`),
+              "staged\n",
+            );
+            assert.strictEqual(yield* run(["show", ":src/[literal].txt"]), "staged");
+            assert.strictEqual(yield* fs.exists(`${workspaceRoot}/src/new.txt`), false);
+            assert.strictEqual(yield* fs.readFileString(`${workspaceRoot}/keep.txt`), "keep\n");
+          }
           const traversal = yield* service
             .revert({ cwd: workspaceRoot, paths: ["../keep.txt"] })
             .pipe(Effect.flip);

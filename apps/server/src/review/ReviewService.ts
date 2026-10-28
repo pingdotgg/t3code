@@ -197,7 +197,7 @@ export const make = Effect.gen(function* () {
       yield* workflow.invalidateLocalStatus(input.cwd);
       return;
     }
-    const paths = input.paths.map((file) => `:(literal)${file}`);
+    const paths = input.paths.map((file) => `:(top,literal)${file}`);
     if (input.staged) {
       yield* git.execute({
         operation: "ReviewService.setStaged.files",
@@ -276,16 +276,16 @@ export const make = Effect.gen(function* () {
       yield* workflow.invalidateLocalStatus(input.cwd);
       return;
     }
-    const paths = [...new Set(input.paths)].map((file) => `:(literal)${file}`);
+    const paths = [...new Set(input.paths)].map((file) => `:(top,literal)${file}`);
     const tracked = yield* git.execute({
       operation: "ReviewService.revert.tracked",
       cwd: input.cwd,
-      args: ["ls-files", "--cached", "-z", "--", ...paths],
+      args: ["ls-files", "--cached", "--full-name", "-z", "--", ...paths],
     });
     const trackedPaths = tracked.stdout
       .split("\0")
       .filter(Boolean)
-      .map((file) => `:(literal)${file}`);
+      .map((file) => `:(top,literal)${file}`);
     if (trackedPaths.length > 0)
       yield* git.execute({
         operation: "ReviewService.revert.restore",

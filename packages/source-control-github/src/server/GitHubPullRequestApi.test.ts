@@ -3327,7 +3327,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("saves a range in a private pending review and returns its actual comment link", () =>
+  it.effect("saves a private range review and rejects changed hosted drafts", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
@@ -3400,6 +3400,71 @@ layer("GitHubPullRequestApi.layer", (it) => {
           },
         },
       ]);
+      expect(variablesOf("submitPullRequestReview(")).toEqual([]);
+      const hosted = {
+        path: "src/a.ts",
+        body: "Review this range",
+        position: { kind: "added" as const, newLine: 5 },
+        startPosition: { kind: "added" as const, newLine: 3 },
+        hostedComment: result,
+      };
+      for (const comment of [
+        hosted,
+        { ...hosted, body: "Edited body" },
+        { ...hosted, path: "src/b.ts" },
+        { ...hosted, position: { kind: "added" as const, newLine: 6 } },
+        { ...hosted, startPosition: { kind: "added" as const, newLine: 2 } },
+      ]) {
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      id: "PR_7",
+                      reviews: {
+                        nodes: [
+                          { id: "PRR_1", fullDatabaseId: "81", body: "", viewerDidAuthor: true },
+                        ],
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson([
+                {
+                  id: 91,
+                  node_id: "PRRC_1",
+                  html_url: "https://github.com/acme/web/pull/7#discussion_r91",
+                  body: hosted.body,
+                  path: hosted.path,
+                  line: 5,
+                  side: "RIGHT",
+                  start_line: 3,
+                  start_side: "RIGHT",
+                },
+              ]),
+            ),
+          ),
+        );
+        const save = cli.saveDraftComment({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          comment,
+        });
+        if (comment === hosted) expect(yield* save).toEqual(result);
+        else expect((yield* save.pipe(Effect.flip))._tag).toBe("GitHubPullRequestReadError");
+      }
+      expect(variablesOf("addPullRequestReviewThread(")).toEqual([]);
       expect(variablesOf("submitPullRequestReview(")).toEqual([]);
     }),
   );
