@@ -1221,7 +1221,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       >
         <div
           ref={observeLaneWidth}
-          className="@container/chat-lane chat-content-lane overflow-x-clip"
+          className="chat-content-lane overflow-x-clip"
           data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
@@ -1241,10 +1241,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       {unmatchedPendingApprovals.size > 0 ? (
         <TimelineRowCtx value={sharedState}>
           <div className="messages-timeline-row-frame">
-            <div
-              className="@container/chat-lane chat-content-lane overflow-x-clip"
-              data-timeline-root="true"
-            >
+            <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
               <WorkLogBlock>
                 {[...unmatchedPendingApprovals.values()].map((approval) => (
                   <TimelinePendingApprovalRow key={approval.requestId} approval={approval} />

@@ -54,13 +54,19 @@ function leadingExternalLinkTextLength(text: string): number {
   return Math.min(text.length, 1);
 }
 
+// Long words such as URLs can break after any character so they fit narrow
+// table columns. Short ones, like a PR number, stay whole.
 function breakableExternalLinkText(text: string): ReactNode[] {
-  return Array.from(text, (character, index) => (
-    <Fragment key={`${index}:${character}`}>
-      {character}
-      <wbr />
-    </Fragment>
-  ));
+  return Array.from(text.matchAll(/\s+|\S+/g), ({ 0: word, index: start }) =>
+    word.length <= 16
+      ? word
+      : Array.from(word, (character, offset) => (
+          <Fragment key={`${start + offset}:${character}`}>
+            {character}
+            <wbr />
+          </Fragment>
+        )),
+  );
 }
 
 export function MarkdownExternalLinkContent({
