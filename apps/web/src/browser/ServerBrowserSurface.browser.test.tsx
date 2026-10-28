@@ -135,8 +135,12 @@ describe("ServerBrowserSurface clipboard commands", () => {
     const { screen, input } = await renderSurface("another-viewer");
     await using _screen = screen;
 
-    input.dispatchEvent(new ClipboardEvent("copy", { bubbles: true, cancelable: true }));
-    input.dispatchEvent(new ClipboardEvent("cut", { bubbles: true, cancelable: true }));
+    expect(
+      input.dispatchEvent(new ClipboardEvent("copy", { bubbles: true, cancelable: true })),
+    ).toBe(false);
+    expect(
+      input.dispatchEvent(new ClipboardEvent("cut", { bubbles: true, cancelable: true })),
+    ).toBe(false);
     expect(mocks.sent).toEqual([]);
   });
 });
