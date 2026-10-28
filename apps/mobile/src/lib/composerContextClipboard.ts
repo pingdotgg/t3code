@@ -67,6 +67,8 @@ export async function importComposerContextClipboard(
   signal: AbortSignal,
   existingContextCount = 0,
   destinationEnvironmentId?: EnvironmentId,
+  /** The machines the destination links to, whose threads its agent can read too. */
+  linkedEnvironments: ReadonlyMap<EnvironmentId, string> = new Map(),
 ) {
   const fragment =
     decodeComposerContextFragment(input.fragment) ?? decodeComposerContextClipboardHtml(input.html);
@@ -80,6 +82,7 @@ export async function importComposerContextClipboard(
           text: imported.text,
           records: imported.context.records,
           environmentId: destinationEnvironmentId,
+          linkedEnvironments,
         });
   const skippedIds = new Set(skippedThreads.map((record) => record.contextId));
   const retained = imported.context.records.filter((record) => !skippedIds.has(record.contextId));

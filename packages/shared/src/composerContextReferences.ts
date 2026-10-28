@@ -322,11 +322,13 @@ export function projectComposerContextForProvider(input: {
   return `${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
 }
 
-// Thread reads are environment-local even when a draft moves between machines.
+// An agent reads threads on its own machine and on those it links to, even when a draft
+// moves between machines.
 export function threadContextsOutsideEnvironment(input: {
   text: string;
   records: ReadonlyArray<ComposerContextRecord>;
   environmentId: EnvironmentId;
+  linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
 }): ThreadContextRecord[] {
   const referenced = new Set(
     collectComposerContextReferences(input.text).map((occurrence) => occurrence.contextId),
@@ -336,7 +338,8 @@ export function threadContextsOutsideEnvironment(input: {
       record.kind === "thread" &&
       "threadId" in record &&
       referenced.has(record.contextId) &&
-      record.environmentId !== input.environmentId,
+      record.environmentId !== input.environmentId &&
+      !input.linkedEnvironments.has(record.environmentId),
   );
 }
 

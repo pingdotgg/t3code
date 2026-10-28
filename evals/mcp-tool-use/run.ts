@@ -11,7 +11,11 @@ import * as NodeVM from "node:vm";
 import * as NodeZlib from "node:zlib";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { OrchestratorMcpTaskRole, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ComposerContextRecord,
+  OrchestratorMcpTaskRole,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -30,6 +34,7 @@ import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } from "@t3tools/contracts";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
@@ -170,6 +175,8 @@ export const McpToolUseCase = Schema.Struct({
     role: Schema.Literals(["top", "delegated-child", "native-subagent"]),
     /** Runs only on this harness, for cases whose right answer depends on it. */
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
+    /** The Linked environments beta is on, so T3 lists its link tools. */
+    linkedEnvironments: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
@@ -191,6 +198,8 @@ export const McpToolUseCase = Schema.Struct({
     ),
   }),
   prompt: Schema.String,
+  /** Records for the context chips `prompt` links, projected as T3 sends them. */
+  promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
   expect: McpToolUseExpect,
   /** Model calls this case may need. Overrides `--max-steps`. */
   maxSteps: Schema.optional(Schema.Number),
@@ -320,10 +329,11 @@ const enabledWhen = (predicate: () => boolean) =>
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
-const visibleT3Tools = (subagent: boolean) =>
+const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>
   t3Tools.filter(
     (tool) =>
-      !hiddenWhileLinksOff.has(tool.name) && !(subagent && hiddenFromSubagents.has(tool.name)),
+      (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
@@ -387,9 +397,10 @@ export const buildBase = (
     readonly model: Model;
     readonly keepUserInstructions: boolean;
     readonly subagent?: boolean;
+    readonly links?: boolean;
   },
 ) => {
-  const t3 = visibleT3Tools(options.subagent === true);
+  const t3 = visibleT3Tools(options);
   const firstAssistant = template.messages.findIndex((message) => message.role === "assistant");
   const head = template.messages.slice(0, firstAssistant === -1 ? undefined : firstAssistant);
   const systemTexts = [
@@ -462,9 +473,10 @@ const buildCodexBase = (
     readonly keepUserInstructions: boolean;
     readonly effort?: string | undefined;
     readonly subagent?: boolean;
+    readonly links?: boolean;
   },
 ): Base => {
-  const t3 = visibleT3Tools(options.subagent === true);
+  const t3 = visibleT3Tools(options);
   const contentText = (item: Block) =>
     Array.isArray(item.content)
       ? item.content.map((block: Block) => valueText(block.text)).join("\n")
@@ -725,7 +737,10 @@ export const buildMessages = (sample: Sample) => {
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
-  const { prompt } = testCase;
+  const prompt =
+    testCase.promptContext === undefined
+      ? testCase.prompt
+      : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   return messages;
@@ -1688,7 +1703,7 @@ const main = Effect.gen(function* () {
     templatePath.endsWith(".gz") ? NodeZlib.gunzipSync(templateBytes) : templateBytes,
   );
   const keepUserInstructions = flags["user-instructions"] === "keep";
-  const buildFor = (subagent: boolean): Effect.Effect<Base, Schema.SchemaError> =>
+  const buildFor = (subagent: boolean, links = false): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
           Effect.map((capture) =>
@@ -1697,6 +1712,7 @@ const main = Effect.gen(function* () {
               keepUserInstructions,
               effort: flags.effort,
               subagent,
+              links,
             }),
           ),
         )
@@ -1706,13 +1722,19 @@ const main = Effect.gen(function* () {
               model: flags.model,
               keepUserInstructions,
               subagent,
+              links,
             }),
           ),
         );
   const base = yield* buildFor(false);
   const childBase = yield* buildFor(true);
+  const linkedBase = yield* buildFor(false, true);
   const baseFor = (testCase: McpToolUseCase) =>
-    testCase.setup.role === "delegated-child" ? childBase : base;
+    testCase.setup.role === "delegated-child"
+      ? childBase
+      : testCase.setup.linkedEnvironments === true
+        ? linkedBase
+        : base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";
   if (flags["dry-run"]) {
     // One JSON line per case. Without --case this also checks that every case builds.

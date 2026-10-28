@@ -16,6 +16,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
+const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import {
@@ -211,6 +212,7 @@ export function useComposerCommandMenu({
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
   environments = EMPTY_ENVIRONMENTS,
+  linkedEnvironments = NO_LINKED_ENVIRONMENTS,
   currentThreadId = null,
   projectCwd,
   pullRequestProjectId = null,
@@ -230,6 +232,8 @@ export function useComposerCommandMenu({
   readonly environmentId: EnvironmentId | null;
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   readonly environments?: ReadonlyArray<ComposerEnvironmentCandidate>;
+  /** The machines `environmentId` links to, by name, whose threads the picker also offers. */
+  readonly linkedEnvironments?: ReadonlyMap<EnvironmentId, string>;
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
@@ -459,6 +463,7 @@ export function useComposerCommandMenu({
         ? matchComposerThreadItems({
             shells: threadShells,
             environmentId,
+            linkedEnvironments,
             excludeThreadId: currentThreadId,
             query: trigger.query,
             now,
