@@ -15,9 +15,11 @@ import {
   type OrchestrationV2CommandOutputFrame,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2GetTurnItemResult,
+  type OrchestrationV2TurnItem,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { chatMarkdownImageSources } from "@t3tools/shared/markdownPipeline";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -63,7 +65,10 @@ import { guestShareView, guestThreadModel } from "./guestView.ts";
 import {
   classifyGuestUploads,
   GUEST_UPLOAD_HEADER_BYTES,
+  guestHostImageType,
   type GuestUpload,
+  matchesImageSignature,
+  repliesShowImage,
 } from "./guestAttachments.ts";
 
 const SIGNING_SECRET_NAME = "guest-share-signing-key";
@@ -71,6 +76,8 @@ const SHARE_ID_BYTES = 16;
 const INVITE_SIGNATURE_BYTES = 16;
 const SNAPSHOT_ROW_LIMIT = 600;
 const SNAPSHOT_USER_TURN_LIMIT = 20;
+// Shares with no open guest stream whose sent image replies are still kept.
+const SHARED_THREAD_REPLIES_LIMIT = 64;
 // How soon an open read notices that its link stopped working, such as Connect no longer serving
 // the host. Closing or replacing the link ends the main stream at once.
 const ACCESS_RECHECK_INTERVAL = Duration.seconds(30);
@@ -190,8 +197,19 @@ export class GuestShareService extends Context.Service<
       { readonly path: string; readonly attachment: ChatAttachment },
       GuestShareAccessError
     >;
+    /** An image on the host that an agent reply the guest sees shows, and its type. */
+    readonly media: (
+      session: string,
+      path: string,
+    ) => Effect.Effect<{ readonly path: string; readonly mimeType: string }, GuestShareAccessError>;
   }
 >()("t3/guest/GuestShareService") {}
+
+/** A reply a guest's stream sent, with its image sources once a media request parsed them. */
+interface SentReply {
+  readonly text: string;
+  sources?: ReadonlyArray<string>;
+}
 
 /** The thread record an event carries, for the share and the view. */
 const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread | null => {
@@ -464,6 +482,40 @@ const make = Effect.gen(function* () {
       Effect.ignore,
     );
 
+  // The image replies each share's guest stream has sent, in its opening snapshot or live, so an
+  // image loads while the guest's page can show its reply, inherited ones included. Keyed by
+  // share, so a new link on the thread starts empty. A share with an open stream keeps its
+  // record; past the limit, closed ones are dropped.
+  const sentImageReplies = new Map<
+    GuestShareId,
+    { openStreams: number; readonly replies: Map<string, SentReply> }
+  >();
+  const sentRecord = (shareId: GuestShareId) => {
+    let record = sentImageReplies.get(shareId);
+    if (record === undefined) {
+      record = { openStreams: 0, replies: new Map() };
+      sentImageReplies.set(shareId, record);
+      for (const [id, other] of sentImageReplies) {
+        if (sentImageReplies.size <= SHARED_THREAD_REPLIES_LIMIT) break;
+        if (other.openStreams === 0 && id !== shareId) sentImageReplies.delete(id);
+      }
+    }
+    return record;
+  };
+  const rememberSent = (shareId: GuestShareId, items: Iterable<OrchestrationV2TurnItem>) => {
+    for (const item of items) {
+      if (item.type !== "assistant_message") continue;
+      const key = `${item.threadId}\u0000${item.id}`;
+      // Only replies with image syntax can show an image. One edited to drop its images stops
+      // allowing them.
+      if (item.text.includes("![") || /<img/i.test(item.text)) {
+        sentRecord(shareId).replies.set(key, { text: item.text });
+      } else {
+        sentImageReplies.get(shareId)?.replies.delete(key);
+      }
+    }
+  };
+
   /**
    * The thread as the owner's thread subscription sends it: a bounded snapshot, then the same
    * wire events, batched the same way. Only the share's own state is added.
@@ -511,6 +563,7 @@ const make = Effect.gen(function* () {
         Stream.map((item): ReadonlyArray<GuestStreamEvent> => {
           if (item.kind !== "event") return [];
           if (endsShare(item.event)) return [ended];
+          if (item.event.type === "turn-item.updated") rememberSent(share.id, [item.event.payload]);
           const updated = threadOf(item.event);
           const view = updated === null ? null : viewOf(updated);
           return view === null
@@ -528,17 +581,15 @@ const make = Effect.gen(function* () {
     const untilExpiry = Effect.sleep(
       Math.max(0, Date.parse(share.expiresAt) - DateTime.toEpochMillis(yield* DateTime.now)),
     );
+    const openingSnapshot = buildBoundedThreadStreamSnapshot({
+      snapshotSequence: snapshot.snapshotSequence,
+      projection: snapshot.projection,
+    });
     const opening: ReadonlyArray<GuestStreamEvent> = [
       { type: "view", view: initialView },
-      {
-        type: "thread",
-        item: buildBoundedThreadStreamSnapshot({
-          snapshotSequence: snapshot.snapshotSequence,
-          projection: snapshot.projection,
-        }),
-      },
+      { type: "thread", item: openingSnapshot },
     ];
-    return Stream.fromIterable(opening).pipe(
+    const events = Stream.fromIterable(opening).pipe(
       Stream.concat(
         Stream.merge(live, Stream.fromEffect(Effect.as(untilExpiry, ended)), {
           haltStrategy: "either",
@@ -556,6 +607,25 @@ const make = Effect.gen(function* () {
           }),
         ),
       ),
+    );
+    // The record is opened and counted when the stream runs, paired with its release, so a
+    // response whose body never runs (HEAD) touches nothing.
+    return Stream.unwrap(
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const record = sentRecord(share.id);
+          record.openStreams += 1;
+          rememberSent(
+            share.id,
+            openingSnapshot.projection.visibleTurnItems.map((row) => row.item),
+          );
+          return record;
+        }),
+        (record) =>
+          Effect.sync(() => {
+            record.openStreams -= 1;
+          }),
+      ).pipe(Effect.as(events)),
     );
   });
 
@@ -630,6 +700,33 @@ const make = Effect.gen(function* () {
     return exists ? { path, attachment: found } : yield* unavailable;
   });
 
+  const media = Effect.fn("GuestShareService.media")(function* (session: string, path: string) {
+    const { share } = yield* authorize(session, "session");
+    const mimeType = guestHostImageType(path);
+    if (mimeType === null) return yield* unavailable;
+    const sent = sentImageReplies.get(share.id)?.replies.values() ?? [];
+    // Each sent reply is parsed once, on the first request that needs it.
+    if (
+      !repliesShowImage(
+        path,
+        [...sent],
+        (reply) => (reply.sources ??= chatMarkdownImageSources(reply.text)),
+      )
+    ) {
+      return yield* unavailable;
+    }
+    // The bytes must be the image the name says, as for a guest's own upload.
+    const header = yield* fileSystem.open(path, { flag: "r" }).pipe(
+      Effect.flatMap((file) => file.readAlloc(GUEST_UPLOAD_HEADER_BYTES)),
+      Effect.scoped,
+      Effect.mapError(() => unavailable),
+    );
+    if (Option.isNone(header) || !matchesImageSignature(mimeType, header.value)) {
+      return yield* unavailable;
+    }
+    return { path, mimeType };
+  });
+
   return GuestShareService.of({
     create,
     redeem,
@@ -640,6 +737,7 @@ const make = Effect.gen(function* () {
     item,
     commandOutput,
     attachment,
+    media,
   });
 });
 

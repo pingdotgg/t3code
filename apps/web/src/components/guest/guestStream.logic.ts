@@ -1,5 +1,6 @@
 import {
   GUEST_ATTACHMENT_ROUTE,
+  GUEST_MEDIA_ROUTE,
   GUEST_MESSAGE_MAX_ATTACHMENT_BYTES,
   GUEST_MESSAGE_MAX_ATTACHMENTS,
   GUEST_SHARE_PARAM,
@@ -183,6 +184,10 @@ export function inviteShareId(credential: string): string | null {
 /** Where the guest page loads a file of the shared thread or of a waiting message. */
 export const guestAttachmentUrl = (shareId: string, attachmentId: string) =>
   `${GUEST_ATTACHMENT_ROUTE}?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}&id=${encodeURIComponent(attachmentId)}`;
+
+/** Where the guest page loads an image file on the host that an agent message embeds. */
+export const guestMediaUrl = (shareId: string, path: string) =>
+  `${GUEST_MEDIA_ROUTE}?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}&path=${encodeURIComponent(path)}`;
 
 /**
  * Why these files cannot go with one message, or null. The server checks the same limits; this

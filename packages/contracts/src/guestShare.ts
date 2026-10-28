@@ -136,3 +136,8 @@ export const GUEST_COMMAND_OUTPUT_ROUTE = `${GUEST_ROUTE_PREFIX}/command-output`
  * Images load inline; other files download.
  */
 export const GUEST_ATTACHMENT_ROUTE = `${GUEST_ROUTE_PREFIX}/attachment`;
+/**
+ * An image file on the host that an agent message in the shared thread embeds:
+ * `?share=<share id>&path=<absolute path>`.
+ */
+export const GUEST_MEDIA_ROUTE = `${GUEST_ROUTE_PREFIX}/media`;
