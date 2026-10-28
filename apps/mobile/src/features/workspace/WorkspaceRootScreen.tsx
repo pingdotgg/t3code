@@ -11,6 +11,7 @@ import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area
 
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { HeaderItemsWidthContext } from "../../native/header-items-width";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { isDuoDevice } from "../../lib/device-type";
@@ -49,10 +50,11 @@ import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 const TAB_TITLES = WORKSPACE_TAB_LABELS;
 
 function WorkspaceRootTitle(props: {
-  readonly maxWidth: number;
+  readonly columnWidth: number;
   readonly onOpenEnvironments: () => void;
 }) {
   const { state, settingsOpen } = useWorkspaceTabs()!;
+  const maxWidth = Math.max(0, props.columnWidth - (use(HeaderItemsWidthContext) ?? 160));
   const enabled = useEnabledNavigationTabs();
   const tabTitle = settingsOpen
     ? "Settings"
@@ -60,10 +62,10 @@ function WorkspaceRootTitle(props: {
       ? TAB_TITLES[state.selectedTab]
       : "Navigation";
   return (
-    <View style={{ width: props.maxWidth, minHeight: 32, justifyContent: "center" }}>
+    <View style={{ width: maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
         brand={<CompactBrandTitle accessibilityLabel={`T3 Code, ${tabTitle}`} fit />}
-        maxWidth={props.maxWidth}
+        maxWidth={maxWidth}
         onPress={props.onOpenEnvironments}
       />
     </View>
@@ -99,8 +101,7 @@ function WorkspaceRootContent() {
   const settingsOpen = workspace.settingsOpen;
   const renderHeaderTitle = () => (
     <WorkspaceRootTitle
-      // Settings adds its scope filter beside search.
-      maxWidth={Math.max(0, width - 160 - (settingsOpen ? 44 : 0))}
+      columnWidth={width}
       onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
     />
   );
