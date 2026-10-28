@@ -226,6 +226,10 @@ private final class ComposerTextView: UITextView {
       onPasteText?(text, selectedRange)
       return
     }
+    if !bypassTextPasteInterception, T3ComposerClipboard.hasThreadLink(context["text", default: ""]) {
+      onPasteContext?(context)
+      return
+    }
     super.paste(sender)
   }
 
