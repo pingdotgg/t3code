@@ -1,6 +1,7 @@
 import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
+  withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "./session";
@@ -148,14 +149,22 @@ export function useComposerPullRequestSearch(input: {
       : null,
   );
   const entries = (() => {
-    if (!ready) return [];
-    if (numeric) {
+    if (input.query === null || input.projectId === null || input.repository === null) return [];
+    if (/^\d*$/.test(input.query)) {
       return filterComposerPullRequestMatches({
-        entries: [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])],
+        entries: ready ? [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])] : [],
         linked,
-        projectId: input.projectId!,
-        repository: input.repository!,
-        query: query ?? "",
+        projectId: input.projectId,
+        repository: input.repository,
+        query: input.query,
+        limit: 20,
+      });
+    }
+    if (!ready) {
+      return withLinkedComposerPullRequestsFirst({
+        matches: [],
+        linked,
+        query: input.query,
         limit: 20,
       });
     }
@@ -170,9 +179,14 @@ export function useComposerPullRequestSearch(input: {
     );
     const unique = new Map<number, (typeof found)[number]>();
     for (const entry of found) if (!unique.has(entry.number)) unique.set(entry.number, entry);
-    return [...unique.values()]
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(0, 20);
+    return withLinkedComposerPullRequestsFirst({
+      matches: [...unique.values()].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      ),
+      linked,
+      query: query ?? "",
+      limit: 20,
+    });
   })();
   return {
     entries,
