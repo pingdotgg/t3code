@@ -1169,27 +1169,7 @@ const make = Effect.gen(function* () {
         environmentHash,
       );
       const requestedTunnelName = managedEndpointTunnelName(cf.namespace, environmentHash);
-      yield* tunnelLimits
-        .ensureCapacity({
-          userId: input.userId,
-          environmentId: input.environmentId,
-        })
-        .pipe(
-          Effect.catchTags({
-            ManagedTunnelLimitPersistenceError: (cause) =>
-              Effect.fail(
-                new ManagedEndpointProvisioningFailed({
-                  userId: input.userId,
-                  environmentId: input.environmentId,
-                  stage: "check-tunnel-limit",
-                  hostname: requestedHostname,
-                  tunnelName: requestedTunnelName,
-                  cause,
-                }),
-              ),
-          }),
-        );
-      const allocation = yield* allocations
+      const reserveAllocation = allocations
         .reserve({
           userId: input.userId,
           environmentId: input.environmentId,
@@ -1208,6 +1188,26 @@ const make = Effect.gen(function* () {
                 cause,
               }),
           ),
+        );
+      const allocation = yield* tunnelLimits
+        .withCapacity(
+          { userId: input.userId, environmentId: input.environmentId },
+          reserveAllocation,
+        )
+        .pipe(
+          Effect.catchTags({
+            ManagedTunnelLimitPersistenceError: (cause) =>
+              Effect.fail(
+                new ManagedEndpointProvisioningFailed({
+                  userId: input.userId,
+                  environmentId: input.environmentId,
+                  stage: "check-tunnel-limit",
+                  hostname: requestedHostname,
+                  tunnelName: requestedTunnelName,
+                  cause,
+                }),
+              ),
+          }),
         );
       const { hostname, tunnelName } = allocation;
 

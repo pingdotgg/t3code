@@ -335,10 +335,13 @@ function makeTunnelLimits(
   result: ManagedTunnelLimits.ManagedTunnelLimitExceeded | null = null,
 ) {
   return ManagedTunnelLimits.ManagedTunnelLimits.of({
-    ensureCapacity: (input) =>
-      Effect.suspend(() => {
+    withCapacity: (input, reserve) =>
+      Effect.gen(function* () {
         calls.push(input);
-        return result === null ? Effect.void : Effect.fail(result);
+        if (result !== null) {
+          return yield* result;
+        }
+        return yield* reserve;
       }),
   });
 }
