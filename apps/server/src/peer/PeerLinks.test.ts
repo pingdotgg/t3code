@@ -363,6 +363,15 @@ it.effect(
         expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
         expect(yield* Ref.get(first.bearers)).toEqual([]);
 
+        // When the remembered fallback stops answering as this peer, primary recovery
+        // clears that preference so later calls do not retry the failed fallback.
+        yield* Ref.set(first.descriptor, box);
+        yield* Ref.set(b.descriptor, descriptorOf("environment-other", "Other"));
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(first.url);
+        yield* Ref.set(b.probes, 0);
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(first.url);
+        expect(yield* Ref.get(b.probes)).toBe(0);
+
         // Relinking restores the new configured order rather than the old preference.
         yield* Ref.set(first.descriptor, box);
         yield* a.links.link({

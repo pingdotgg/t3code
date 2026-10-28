@@ -194,12 +194,14 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  // Prefer a recently working route, without caching its identity or credentials.
+  // Prefer a recently working fallback, without caching its identity or credentials.
   // Retry the configured order after a minute so a recovered direct route wins again.
-  const preferredRoutes = new Map<
-    EnvironmentId,
-    { readonly url: string; readonly secretName: string; readonly until: number }
-  >();
+  let preferredRoutes:
+    | Map<
+        EnvironmentId,
+        { readonly url: string; readonly secretName: string; readonly until: number }
+      >
+    | undefined;
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -534,7 +536,7 @@ const make = Effect.gen(function* () {
     if (Option.isSome(previous) && previous.value.secret_name !== secretName) {
       yield* secrets.remove(previous.value.secret_name).pipe(Effect.ignore);
     }
-    preferredRoutes.delete(peer.environmentId);
+    preferredRoutes?.delete(peer.environmentId);
     return linked;
   });
 
@@ -600,7 +602,7 @@ const make = Effect.gen(function* () {
       for (const row of deleted) {
         yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
       }
-      preferredRoutes.delete(environmentId);
+      preferredRoutes?.delete(environmentId);
       return deleted.length > 0;
     },
   );
@@ -631,7 +633,7 @@ const make = Effect.gen(function* () {
       }
       // The token goes only to an address that proves it is this peer, so a
       // reused LAN address or a moved hostname never receives it.
-      const preferred = preferredRoutes.get(environmentId);
+      const preferred = link.urls.length > 1 ? preferredRoutes?.get(environmentId) : undefined;
       const reuse =
         preferred !== undefined &&
         preferred.secretName === row.value.secret_name &&
@@ -666,14 +668,18 @@ const make = Effect.gen(function* () {
           message: `${link.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
         });
       }
-      if (!reuse || preferred.url !== url.value) {
-        preferredRoutes.delete(environmentId);
+      if (url.value === link.urls[0]) {
+        preferredRoutes?.delete(environmentId);
+      } else if (!reuse || preferred.url !== url.value) {
+        // Healthy primary routes need no preference state.
+        const routes = (preferredRoutes ??= new Map());
+        routes.delete(environmentId);
         // Bound retained state even if links are changed outside this service.
-        if (preferredRoutes.size >= 256) {
-          const oldest = preferredRoutes.keys().next();
-          if (!oldest.done) preferredRoutes.delete(oldest.value);
+        if (routes.size >= 256) {
+          const oldest = routes.keys().next();
+          if (!oldest.done) routes.delete(oldest.value);
         }
-        preferredRoutes.set(environmentId, {
+        routes.set(environmentId, {
           url: url.value,
           secretName: row.value.secret_name,
           until: DateTime.toEpochMillis(now) + 60_000,
