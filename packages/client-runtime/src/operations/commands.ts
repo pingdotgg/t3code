@@ -13,6 +13,7 @@ import {
   type NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type PlanId,
   type ProjectId,
   type ProjectIconOverride,
@@ -145,7 +146,7 @@ export interface SetThreadInteractionModeInput extends ThreadCommandInput {
   readonly interactionMode: ProviderInteractionMode;
 }
 
-interface StartThreadBootstrap {
+export interface StartThreadBootstrap {
   readonly createThread?: {
     readonly projectId: ProjectId;
     readonly title: string;
@@ -669,6 +670,42 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
   },
 );
 
+/**
+ * Maps a draft's bootstrap (existing branch/worktree) or worktree preparation
+ * request to the thread-launch workspace strategy. Shared by thread starts and
+ * pipeline run starts so both resolve a draft identically.
+ */
+export function draftWorkspaceStrategy(
+  bootstrap:
+    | Pick<NonNullable<StartThreadBootstrap["createThread"]>, "branch" | "worktreePath">
+    | undefined,
+  prepareWorktree: StartThreadBootstrap["prepareWorktree"] | undefined,
+): OrchestrationV2ThreadLaunchWorkspaceStrategy {
+  if (prepareWorktree !== undefined) {
+    return {
+      type: "worktree",
+      baseRef: prepareWorktree.baseBranch,
+      ...(prepareWorktree.branch === undefined ? {} : { branch: prepareWorktree.branch }),
+      ...(prepareWorktree.startFromOrigin === undefined
+        ? {}
+        : { startFromOrigin: prepareWorktree.startFromOrigin }),
+    };
+  }
+  if (bootstrap?.worktreePath) {
+    return {
+      type: "existing_worktree",
+      worktreePath: bootstrap.worktreePath,
+      ...(bootstrap.branch === null ? {} : { branch: bootstrap.branch }),
+    };
+  }
+  return {
+    type: "root",
+    ...(bootstrap?.branch === null || bootstrap?.branch === undefined
+      ? {}
+      : { branch: bootstrap.branch }),
+  };
+}
+
 export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(function* (
   input: StartThreadTurnInput,
 ) {
@@ -689,28 +726,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     const existingProjection =
       bootstrap === undefined ? yield* getProjection(input.threadId) : null;
     const thread = bootstrap ?? existingProjection!.thread;
-    const workspaceStrategy =
-      prepareWorktree !== undefined
-        ? {
-            type: "worktree" as const,
-            baseRef: prepareWorktree.baseBranch,
-            ...(prepareWorktree.branch === undefined ? {} : { branch: prepareWorktree.branch }),
-            ...(prepareWorktree.startFromOrigin === undefined
-              ? {}
-              : { startFromOrigin: prepareWorktree.startFromOrigin }),
-          }
-        : bootstrap?.worktreePath
-          ? {
-              type: "existing_worktree" as const,
-              worktreePath: bootstrap.worktreePath,
-              ...(bootstrap.branch === null ? {} : { branch: bootstrap.branch }),
-            }
-          : {
-              type: "root" as const,
-              ...(bootstrap?.branch === null || bootstrap?.branch === undefined
-                ? {}
-                : { branch: bootstrap.branch }),
-            };
+    const workspaceStrategy = draftWorkspaceStrategy(bootstrap, prepareWorktree);
     return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
       commandId,
       creationSource: input.creationSource ?? "web",

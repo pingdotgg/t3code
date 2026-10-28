@@ -6,6 +6,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2Run,
   type OrchestrationV2ProviderThread,
+  PipelineRunId,
   ProviderThreadId,
   ProviderDriverKind,
   ProviderSessionId,
@@ -62,6 +63,11 @@ it("stamps authoritative provenance on commands that create threads or messages"
       threadId: ThreadId.make("thread:elsewhere"),
       title: "Somewhere else",
     },
+    // Only the pipeline runner sets this.
+    pipeline: {
+      runId: PipelineRunId.make("pipeline-run:forged"),
+      stepId: null,
+    },
   };
 
   const stamped = ThreadManagementService.withCreationProvenance(command, {
@@ -74,6 +80,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+  expect(stamped).not.toHaveProperty("pipeline");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(

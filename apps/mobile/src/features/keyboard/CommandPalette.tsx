@@ -333,6 +333,13 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsScheduledTasks"),
       },
       {
+        key: "pipelines",
+        kind: "action",
+        title: "Pipelines",
+        searchTerms: ["workflow", "steps", "chain"],
+        run: () => openSettings(navigation, "SettingsPipelines"),
+      },
+      {
         key: "usage",
         kind: "action",
         title: "Usage",

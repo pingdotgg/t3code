@@ -179,6 +179,7 @@ import { FreshSessionNotice } from "./FreshSessionNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
+import { PipelineRunPanel, PipelineStepParentBar } from "./PipelineRunPanel";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
 import {
@@ -223,6 +224,8 @@ export interface ThreadDetailScreenProps {
     readonly editorRef: React.RefObject<ComposerEditorHandle | null>;
     readonly sendBlockedReason: string | null;
     readonly interactionLocked: boolean;
+    /** Starting a pipeline: no model, mode or attachment controls. */
+    readonly pipelineSelected?: boolean;
   };
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
@@ -504,6 +507,13 @@ function ThreadDetailBody(
   const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
+  // A pipeline's parent thread is runless: the run panel replaces its feed and composer.
+  const threadPipeline = props.selectedThread.pipeline ?? null;
+  const pipelineParentRunId = threadPipeline?.stepId === null ? threadPipeline.runId : null;
+  const pipelineStep =
+    threadPipeline !== null && threadPipeline.stepId !== null
+      ? { runId: threadPipeline.runId, stepId: threadPipeline.stepId }
+      : null;
   const editingRunId = props.queuedRunEdit?.runId ?? null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the composer editor on the next animation frame when a queued run edit starts
   useEffect(() => {
@@ -1450,71 +1460,82 @@ function ThreadDetailBody(
                 : "absolute inset-0 bg-screen"
             }
           />
-          <RenderErrorBoundary
-            key={selectedThreadKey}
-            resetKeys={[props.threadCwd]}
-            renderFallback={(fallback) => (
-              <RenderFailureView
-                {...fallback}
-                title="The conversation couldn't be displayed"
-                bottomInset={estimatedOverlayHeight}
-              />
-            )}
-          >
-            <WorkspaceMutationIdProvider threadRef={props.selectedThreadDetailRef}>
-              <ColumnWidth width={columnWidth}>
-                <ThreadFeed
-                  toolCallVisibility={toolCallVisibility}
-                  environmentId={props.environmentId}
-                  threadId={props.selectedThread.id}
-                  detailRef={props.selectedThreadDetailRef}
-                  workspaceRoot={props.threadCwd}
-                  feed={props.selectedThreadFeed}
-                  pendingHandoff={props.pendingHandoff}
-                  worktreeSetup={props.worktreeSetup}
-                  setupWorkingStartedAt={props.setupWorkingStartedAt}
-                  queuedMessages={props.queuedMessages}
-                  dispatchingMessageId={props.dispatchingMessageId}
-                  // A native subagent has no composer to edit a pending message in;
-                  // Cancel on the edit banner would discard it.
-                  onEditPendingMessage={
-                    isProviderSubagent || pendingMessageEditBlocked
-                      ? null
-                      : handleEditPendingMessage
-                  }
-                  contentPresentation={props.contentPresentation}
-                  threadTitle={props.selectedThread.title}
-                  latestRun={props.activityRun}
-                  activeWorkStartedAt={props.activeWorkStartedAt}
-                  runlessWorkActive={props.runlessWorkActive ?? false}
-                  listRef={listRef}
-                  freeze={freeze}
-                  anchorMessageId={anchorMessageId}
-                  jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
-                  onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
-                  contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
-                  keyboardOffset={composerKeyboardOffset}
-                  sendingWithKeyboard={sendingWithKeyboard}
-                  fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}
-                  contentBottomInset={
-                    questionInFlow
-                      ? 0
-                      : estimatedOverlayHeight +
-                        (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
-                  }
-                  contentMaxWidth={contentMaxWidth}
-                  historyControls={props.historyControls}
-                  contentSideInsets={nativeMetrics?.safeArea}
-                  layoutVariant={layoutVariant}
-                  usesAutomaticContentInsets={props.usesAutomaticContentInsets}
-                  onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
-                  onIsAtEndChange={setIsAtEnd}
-                  skills={selectedProviderSkills}
-                  onUseArtifactTemplate={handleUseArtifactTemplate}
+          {pipelineParentRunId !== null ? (
+            <PipelineRunPanel
+              environmentId={props.environmentId}
+              runId={pipelineParentRunId}
+              topInset={navigationHeaderHeight}
+              automaticInsets={props.usesAutomaticContentInsets === true}
+              bottomInset={estimatedOverlayHeight}
+              contentMaxWidth={contentMaxWidth}
+            />
+          ) : (
+            <RenderErrorBoundary
+              key={selectedThreadKey}
+              resetKeys={[props.threadCwd]}
+              renderFallback={(fallback) => (
+                <RenderFailureView
+                  {...fallback}
+                  title="The conversation couldn't be displayed"
+                  bottomInset={estimatedOverlayHeight}
                 />
-              </ColumnWidth>
-            </WorkspaceMutationIdProvider>
-          </RenderErrorBoundary>
+              )}
+            >
+              <WorkspaceMutationIdProvider threadRef={props.selectedThreadDetailRef}>
+                <ColumnWidth width={columnWidth}>
+                  <ThreadFeed
+                    toolCallVisibility={toolCallVisibility}
+                    environmentId={props.environmentId}
+                    threadId={props.selectedThread.id}
+                    detailRef={props.selectedThreadDetailRef}
+                    workspaceRoot={props.threadCwd}
+                    feed={props.selectedThreadFeed}
+                    pendingHandoff={props.pendingHandoff}
+                    worktreeSetup={props.worktreeSetup}
+                    setupWorkingStartedAt={props.setupWorkingStartedAt}
+                    queuedMessages={props.queuedMessages}
+                    dispatchingMessageId={props.dispatchingMessageId}
+                    // A native subagent has no composer to edit a pending message in;
+                    // Cancel on the edit banner would discard it.
+                    onEditPendingMessage={
+                      isProviderSubagent || pendingMessageEditBlocked
+                        ? null
+                        : handleEditPendingMessage
+                    }
+                    contentPresentation={props.contentPresentation}
+                    threadTitle={props.selectedThread.title}
+                    latestRun={props.activityRun}
+                    activeWorkStartedAt={props.activeWorkStartedAt}
+                    runlessWorkActive={props.runlessWorkActive ?? false}
+                    listRef={listRef}
+                    freeze={freeze}
+                    anchorMessageId={anchorMessageId}
+                    jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
+                    onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
+                    contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
+                    keyboardOffset={composerKeyboardOffset}
+                    sendingWithKeyboard={sendingWithKeyboard}
+                    fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}
+                    contentBottomInset={
+                      questionInFlow
+                        ? 0
+                        : estimatedOverlayHeight +
+                          (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
+                    }
+                    contentMaxWidth={contentMaxWidth}
+                    historyControls={props.historyControls}
+                    contentSideInsets={nativeMetrics?.safeArea}
+                    layoutVariant={layoutVariant}
+                    usesAutomaticContentInsets={props.usesAutomaticContentInsets}
+                    onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
+                    onIsAtEndChange={setIsAtEnd}
+                    skills={selectedProviderSkills}
+                    onUseArtifactTemplate={handleUseArtifactTemplate}
+                  />
+                </ColumnWidth>
+              </WorkspaceMutationIdProvider>
+            </RenderErrorBoundary>
+          )}
         </View>
       ) : (
         <View className="flex-1" />
@@ -1791,6 +1812,18 @@ function ThreadDetailBody(
                 </View>
 
                 <View style={composerSlotHidden ? { display: "none" } : undefined}>
+                  {pipelineStep !== null ? (
+                    <View
+                      className="self-center px-3 pt-1.5"
+                      style={{ width: "100%", maxWidth: contentMaxWidth }}
+                    >
+                      <PipelineStepParentBar
+                        environmentId={props.environmentId}
+                        runId={pipelineStep.runId}
+                        stepId={pipelineStep.stepId}
+                      />
+                    </View>
+                  ) : null}
                   {isProviderSubagent ? (
                     <View
                       className="self-center px-3 pt-1.5"
@@ -1831,10 +1864,11 @@ function ThreadDetailBody(
                         }
                       />
                     </View>
-                  ) : (
+                  ) : pipelineParentRunId !== null ? null : (
                     <>
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
+                        pipelineDraft={props.draftMode?.pipelineSelected === true}
                         canOperateThread={props.canOperateThread}
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}

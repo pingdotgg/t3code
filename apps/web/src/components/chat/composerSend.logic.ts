@@ -1,4 +1,4 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type { EnvironmentId, PipelineId, ThreadContextRecord } from "@t3tools/contracts";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
@@ -78,4 +78,67 @@ export function approvalRedirectNotice(input: {
     return "Another approval arrived, so your message wasn't sent.";
   }
   return null;
+}
+
+/** The pipeline chosen on a draft, remembered with the environment it was chosen from. */
+export interface DraftPipelineSelection {
+  readonly environmentId: EnvironmentId;
+  readonly pipelineId: PipelineId;
+}
+
+/**
+ * The selected pipeline for a draft in `environmentId`, or null. Pipelines live on one server, so
+ * a selection made before the draft moved to another environment no longer applies.
+ */
+export function activeDraftPipelineId(
+  selection: DraftPipelineSelection | null,
+  environmentId: EnvironmentId,
+): PipelineId | null {
+  return selection !== null && selection.environmentId === environmentId
+    ? selection.pipelineId
+    : null;
+}
+
+export const PIPELINE_TEXT_ONLY_HINT =
+  "Pipelines take text only. Remove attachments and added context, or choose No pipeline.";
+
+/** Why a pipeline cannot start from this draft: it carries more than text. */
+export function pipelineSendBlock(input: {
+  readonly attachmentCount: number;
+  readonly hasContext: boolean;
+}): string | null {
+  return input.attachmentCount > 0 || input.hasContext ? PIPELINE_TEXT_ONLY_HINT : null;
+}
+
+/** Same pipeline, project, workspace and text means the same attempt. */
+export function pipelineSendRetryKey(input: {
+  readonly routeKey: string;
+  readonly pipelineId: string;
+  readonly projectId: string;
+  readonly workspaceStrategy: unknown;
+  readonly text: string;
+}): string {
+  return JSON.stringify([
+    input.routeKey,
+    input.pipelineId,
+    input.projectId,
+    input.workspaceStrategy,
+    input.text,
+  ]);
+}
+
+/**
+ * A command id that stays the same while the same send is retried, so a request that reached the
+ * server before failing resolves to its run instead of starting a second one.
+ */
+export function commandIdForPipelineSend<T>(
+  commands: Map<string, T>,
+  retryKey: string,
+  make: () => T,
+): T {
+  const existing = commands.get(retryKey);
+  if (existing !== undefined) return existing;
+  const created = make();
+  commands.set(retryKey, created);
+  return created;
 }

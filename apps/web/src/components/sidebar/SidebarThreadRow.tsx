@@ -27,6 +27,11 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  type PipelineStepStatus,
+  mergePipelineParentStatus,
+  nestedPipelineStepLabel,
+} from "@t3tools/client-runtime/state/pipeline-nesting";
+import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -491,6 +496,46 @@ export function SortableThreadRow(
   // Keyed by variant so a card/slim switch remounts the row.
   return <SidebarThreadRow key={rowProps.variant} {...rowProps} thread={thread} sortable={bag} />;
 }
+/** A pipeline parent's step rows; a list of its own so the tree reads them as the parent's group. */
+export function SidebarPipelineSteps(props: { children: ReactNode }) {
+  return (
+    <ul role="group" className="flex flex-col">
+      {props.children}
+    </ul>
+  );
+}
+
+// A quiet rail under the parent's icon with a tick into each step; the last one closes it.
+function PipelineStepConnector(props: { last: boolean }) {
+  return (
+    <>
+      <span
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute start-[1.125rem] top-0 w-px bg-sidebar-border",
+          props.last ? "h-1/2" : "h-full",
+        )}
+      />
+      <span
+        aria-hidden
+        className="pointer-events-none absolute start-[1.125rem] top-1/2 h-px w-2.5 bg-sidebar-border"
+      />
+    </>
+  );
+}
+
+/**
+ * A pipeline step's row. Steps move with their parent, so they are not sortable;
+ * like sortable rows they follow the live shell for their own status.
+ */
+export const PipelineStepRow = memo(function PipelineStepRow(
+  props: Omit<SidebarThreadRowProps, "sortable" | "variant">,
+) {
+  const thread =
+    useThreadShell(scopeThreadRef(props.thread.environmentId, props.thread.id)) ?? props.thread;
+  return <SidebarThreadRow {...props} variant="step" thread={thread} />;
+});
+
 export type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
 const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   pin: (
@@ -544,8 +589,15 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
-  // "folder-multiline" adds the card's branch and PR line under it.
-  variant: "card" | "slim" | "folder" | "folder-multiline";
+  // "folder-multiline" adds the card's branch and PR line under it. "step" is
+  // a one-line row nested under a pipeline's parent row.
+  variant: "card" | "slim" | "folder" | "folder-multiline" | "step";
+  /** Aggregate of a pipeline parent's steps; replaces a quiet status of the parent's own. */
+  stepStatus?: PipelineStepStatus | null | undefined;
+  /** Draws the closing connector on the last step of a pipeline. */
+  isLastStep?: boolean | undefined;
+  /** A pipeline parent's step rows, drawn inside its row so a drag moves them together. */
+  pipelineSteps?: ReactNode;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -721,7 +773,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     : null;
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const status = resolveSidebarThreadStatus(thread);
+  const status = mergePipelineParentStatus(
+    resolveSidebarThreadStatus(thread),
+    props.stepStatus ?? null,
+  );
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -1059,7 +1114,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       )}
       dir={textDirection(thread.title)}
     >
-      {thread.title}
+      {variant === "step" ? nestedPipelineStepLabel(thread.title) : thread.title}
     </span>
   );
   const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
@@ -1210,7 +1265,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   if (variant !== "card") {
     const multiline = variant === "folder-multiline";
-    const inFolder = variant === "folder" || multiline;
+    const isStep = variant === "step";
+    const inFolder = variant === "folder" || multiline || isStep;
     return (
       <li
         data-thread-item={threadKey}
@@ -1219,9 +1275,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         className={cn(
           "list-none [content-visibility:auto] [contain-intrinsic-size:auto_--spacing(9)]",
           metaLine !== null && multiline && "[contain-intrinsic-size:auto_--spacing(13.5)]",
+          isStep && "relative [contain-intrinsic-size:auto_--spacing(8)]",
           sortable?.isDragging && "relative z-20",
         )}
       >
+        {isStep ? <PipelineStepConnector last={props.isLastStep === true} /> : null}
         <Tooltip disabled={sortable?.isDragging}>
           <TooltipTrigger
             render={
@@ -1239,7 +1297,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   rowSurfaceClassName,
                   multiline
                     ? "flex flex-col justify-center px-2.5 py-1.5"
-                    : "flex h-9 items-center gap-2.5 px-2.5",
+                    : cn("flex items-center gap-2.5 px-2.5", isStep ? "h-8" : "h-9"),
                   // Lines titles up with the folder name, past its chevron and icon.
                   inFolder && "ps-9",
                 )}
@@ -1403,6 +1461,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        {props.pipelineSteps}
       </li>
     );
   }
@@ -1605,6 +1664,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
+      {props.pipelineSteps}
     </li>
   );
 });

@@ -552,3 +552,24 @@ export function applyClaudePromptEffortPrefix(
   }
   return `Ultrathink:\n${trimmed}`;
 }
+
+/** Drops the `plan` choice from an `agent` select (plan mode under another name). */
+export function withoutPlanAgentOption(caps: ModelCapabilities): ModelCapabilities {
+  return {
+    ...caps,
+    optionDescriptors: (caps.optionDescriptors ?? []).flatMap((descriptor) => {
+      if (descriptor.type !== "select" || descriptor.id !== "agent") {
+        return [descriptor];
+      }
+      const options = descriptor.options.filter((option) => option.id !== "plan");
+      if (options.length === 0) {
+        return [];
+      }
+      const currentValue =
+        descriptor.currentValue && options.some((option) => option.id === descriptor.currentValue)
+          ? descriptor.currentValue
+          : (options.find((option) => option.isDefault)?.id ?? options[0]?.id);
+      return [{ ...descriptor, options, ...(currentValue ? { currentValue } : {}) }];
+    }),
+  };
+}

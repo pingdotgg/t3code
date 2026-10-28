@@ -55,6 +55,8 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as PipelineService from "../pipelines/PipelineService.ts";
+import * as PipelineStore from "../pipelines/PipelineStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
@@ -303,6 +305,17 @@ const layerScratchThreadPromotionProvided = ScratchThreadPromotion.layer.pipe(
     ),
   ),
 );
+// ThreadLaunch/ThreadManagement/IdAllocator are for the run driver added with the runner.
+const layerPipelineProvided = PipelineService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      PipelineStore.layer,
+      layerThreadLaunchProvided,
+      layerThreadManagementProvided,
+      IdAllocator.layer,
+    ),
+  ),
+);
 const layerProviderContinuationWorkerProvided = ProviderContinuationService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -380,6 +393,7 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLaunchProvided,
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,
+  layerPipelineProvided,
   layerSecretRequestsProvided,
   GuestShareService.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),

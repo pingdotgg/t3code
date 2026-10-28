@@ -19,6 +19,14 @@
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"
     },
+    "./pipeline-editor": {
+      "types": "./src/pipelineEditor.ts",
+      "default": "./src/pipelineEditor.ts"
+    },
+    "./pipeline-run-presentation": {
+      "types": "./src/pipelineRunPresentation.ts",
+      "default": "./src/pipelineRunPresentation.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
@@ -342,6 +350,10 @@
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
+    },
+    "./state/pipeline-nesting": {
+      "types": "./src/state/pipelineNesting.ts",
+      "default": "./src/state/pipelineNesting.ts"
     },
     "./state/thread-inbox": {
       "types": "./src/state/threadInbox.ts",

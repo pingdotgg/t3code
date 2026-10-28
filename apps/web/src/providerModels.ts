@@ -8,7 +8,11 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { createModelCapabilities, resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  createModelCapabilities,
+  resolveSelectableModel,
+  withoutPlanAgentOption,
+} from "@t3tools/shared/model";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -62,26 +66,6 @@ export function getProviderModelCapabilities(
     return caps;
   }
   return withoutPlanAgentOption(caps);
-}
-
-function withoutPlanAgentOption(caps: ModelCapabilities): ModelCapabilities {
-  return {
-    ...caps,
-    optionDescriptors: (caps.optionDescriptors ?? []).flatMap((descriptor) => {
-      if (descriptor.type !== "select" || descriptor.id !== "agent") {
-        return [descriptor];
-      }
-      const options = descriptor.options.filter((option) => option.id !== "plan");
-      if (options.length === 0) {
-        return [];
-      }
-      const currentValue =
-        descriptor.currentValue && options.some((option) => option.id === descriptor.currentValue)
-          ? descriptor.currentValue
-          : (options.find((option) => option.isDefault)?.id ?? options[0]?.id);
-      return [{ ...descriptor, options, ...(currentValue ? { currentValue } : {}) }];
-    }),
-  };
 }
 
 export function getDefaultServerModel(

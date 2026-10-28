@@ -2,6 +2,7 @@ import {
   CommandId,
   type EnvironmentId,
   type ModelSelection,
+  type PipelineId,
   type ScopedThreadRef,
   type ThreadId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -42,6 +43,9 @@ import {
   waitForRevertedMessage,
 } from "../ChatView.logic";
 import { readPreparedConnection } from "../../state/session";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { DraftPipelineSelection } from "./composerSend.logic";
 import { recallableComposerPrompt } from "./composerPromptHistory";
 
 // Kept per route so a send in flight, and the multiple-model selections, survive
@@ -49,17 +53,39 @@ import { recallableComposerPrompt } from "./composerPromptHistory";
 export const draftFanoutSelectionsAtom = Atom.family((_routeKey: string) =>
   Atom.make<ReadonlyArray<ModelSelection> | null>(null).pipe(Atom.keepAlive),
 );
+// The pipeline chosen on a local draft; exclusive with multiple-model selections.
+export const draftPipelineSelectionAtom = Atom.family((_routeKey: string) =>
+  Atom.make<DraftPipelineSelection | null>(null).pipe(Atom.keepAlive),
+);
+
+/**
+ * Opens `pipelineId` as the pipeline of the draft shown at `threadRef`, e.g. from the command
+ * palette. Multiple-model selections would otherwise stay on the draft beside it.
+ */
+export function presetDraftPipeline(threadRef: ScopedThreadRef, pipelineId: PipelineId) {
+  const routeKey = scopedThreadKey(threadRef);
+  appAtomRegistry.set(draftFanoutSelectionsAtom(routeKey), null);
+  appAtomRegistry.set(draftPipelineSelectionAtom(routeKey), {
+    environmentId: threadRef.environmentId,
+    pipelineId,
+  });
+}
 const draftSendStateByRouteKey = new Map<
   string,
   {
     readonly sendInFlight: { current: boolean };
     readonly uncertainSubmissions: { current: Map<string, ThreadId> };
+    readonly pipelineCommands: { current: Map<string, CommandId> };
   }
 >();
 export function draftSendState(routeKey: string) {
   let state = draftSendStateByRouteKey.get(routeKey);
   if (!state) {
-    state = { sendInFlight: { current: false }, uncertainSubmissions: { current: new Map() } };
+    state = {
+      sendInFlight: { current: false },
+      uncertainSubmissions: { current: new Map() },
+      pipelineCommands: { current: new Map() },
+    };
     draftSendStateByRouteKey.set(routeKey, state);
   }
   return state;

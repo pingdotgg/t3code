@@ -1,11 +1,19 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PipelineId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
   newThreadNoProjectIndex,
   buildNestedSearchItems,
   resolveCommandPaletteProject,
+  buildStartPipelineProjectItems,
+  type CommandPaletteProject,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
@@ -959,5 +967,43 @@ describe("newThreadNoProjectIndex", () => {
   it("keeps a pinned or current scratch project in its own place", () => {
     expect(newThreadNoProjectIndex([entry(false, true, true), entry()])).toBe(0);
     expect(newThreadNoProjectIndex([entry(true), entry(true, false, true), entry()])).toBe(1);
+  });
+});
+
+describe("buildStartPipelineProjectItems", () => {
+  const withPipelines = EnvironmentId.make("env-with");
+  const withoutPipelines = EnvironmentId.make("env-without");
+  const project = (environmentId: EnvironmentId, id: string): CommandPaletteProject =>
+    ({
+      environmentId,
+      id: ProjectId.make(id),
+      title: id,
+      displayName: id,
+      workspaceRoot: `/work/${id}`,
+    }) as unknown as CommandPaletteProject;
+  const pipeline = {
+    id: PipelineId.make("review"),
+    name: "Review",
+    steps: [{ name: "Plan" }, { name: "Build" }],
+  };
+
+  it("lists only projects whose environment has pipelines and starts the chosen one", async () => {
+    const start = vi.fn(async () => {});
+    const items = buildStartPipelineProjectItems({
+      projects: [project(withPipelines, "app"), project(withoutPipelines, "other")],
+      pipelinesByEnvironment: new Map([[withPipelines, [pipeline]]]),
+      projectIcon: () => null,
+      pipelineIcon: null,
+      addonIcon: null,
+      describeSteps: (steps) => steps.map((step) => step.name).join(" > "),
+      start,
+    });
+
+    expect(items.map((item) => item.title)).toEqual(["app"]);
+    const [action] = items[0]!.groups[0]!.items;
+    expect(action).toMatchObject({ kind: "action", title: "Review", description: "Plan > Build" });
+    if (action?.kind !== "action") throw new Error("expected an action");
+    await action.run();
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ id: "app" }), pipeline);
   });
 });

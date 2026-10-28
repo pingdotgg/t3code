@@ -357,6 +357,95 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(1);
   });
 
+  it("lists a pipeline's steps under its parent, wherever the parent lists", () => {
+    const parent = (id: string, patch: Partial<EnvironmentThreadShell> = {}) =>
+      makeThread({
+        id: ThreadId.make(id),
+        title: `Flow: ${id}`,
+        createdAt: "2026-06-01T00:00:00.000Z",
+        pipeline: { runId: "run-1" as never, stepId: null },
+        ...patch,
+      });
+    const step = (id: string, createdAt: string, patch: Partial<EnvironmentThreadShell> = {}) =>
+      makeThread({
+        id: ThreadId.make(id),
+        title: `Flow · ${id}`,
+        createdAt,
+        pipeline: { runId: "run-1" as never, stepId: id as never },
+        ...patch,
+      });
+    const build = (threads: EnvironmentThreadShell[]) =>
+      buildThreadListV2Items({ threads, environmentId: null, searchQuery: "", now: NOW });
+    const steps = [
+      step("two", "2026-06-01T00:02:00.000Z"),
+      step("one", "2026-06-01T00:01:00.000Z", { settledOverride: "settled" }),
+    ];
+
+    // A newer step lifts the run above older threads; steps keep step order and ignore their own settled state.
+    const layout = build([
+      makeThread({
+        id: ThreadId.make("older"),
+        title: "Older",
+        createdAt: "2026-06-01T00:00:30.000Z",
+      }),
+      parent("flow"),
+      ...steps,
+    ]);
+    expect(layout.items.map((item) => [item.thread.id, item.nested ?? false])).toEqual([
+      ["flow", false],
+      ["one", true],
+      ["two", true],
+      ["older", false],
+    ]);
+    expect(layout.items.map((item) => item.isLastStep)).toEqual([
+      undefined,
+      false,
+      true,
+      undefined,
+    ]);
+
+    // Settling the parent moves the whole run to the settled shelf.
+    const settled = build([parent("flow", { settledOverride: "settled" }), ...steps]);
+    expect(settled.items.map((item) => item.thread.id)).toEqual(["flow", "one", "two"]);
+    expect(settled.settledShelfHeaderIndex).toBe(0);
+    expect(settled.settledCount).toBe(1);
+
+    // Without the parent in the list the steps stay top-level.
+    expect(build(steps).items.map((item) => item.nested)).toEqual([undefined, undefined]);
+  });
+
+  it("keeps a pipeline on the Working shelf while any step works", () => {
+    const run = { runId: "run-1" as never };
+    const flow = makeThread({
+      id: ThreadId.make("flow"),
+      title: "Flow: x",
+      pipeline: { ...run, stepId: null },
+    });
+    const step = makeThread({
+      id: ThreadId.make("one"),
+      title: "Flow · one",
+      createdAt: "2026-06-01T00:01:00.000Z",
+      pipeline: { ...run, stepId: "one" as never },
+    });
+    const build = (working: ReadonlySet<string>) =>
+      buildThreadListV2Items({
+        threads: [flow, step],
+        environmentId: null,
+        searchQuery: "",
+        now: NOW,
+        workingShelfEnabled: true,
+        workingShelfExpanded: true,
+        isWorking: (thread) => working.has(thread.id),
+      });
+
+    const running = build(new Set(["one"]));
+    expect(running.workingCount).toBe(1);
+    expect(running.workingShelfHeaderIndex).toBe(0);
+    expect(running.items.map((item) => item.thread.id)).toEqual(["flow", "one"]);
+    // With no step working the group falls back to the parent's own placement.
+    expect(build(new Set()).workingCount).toBe(0);
+  });
+
   it("moves a settled pinned thread into the settled shelf — parity with web (#7969)", () => {
     const layout = buildThreadListV2Items({
       threads: [

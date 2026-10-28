@@ -78,6 +78,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  WorkflowIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
@@ -235,7 +236,13 @@ import {
 import {
   buildNewThreadInProjectItems,
   buildProjectSearchItems,
+  buildStartPipelineItems,
 } from "./CommandPaletteProjectItems";
+import { describePipelineSteps } from "@t3tools/client-runtime/pipeline-editor";
+import { AsyncResult } from "effect/reactivity";
+import { environmentAtomList, environmentIdsKey } from "../state/environmentAtomList";
+import { presetDraftPipeline } from "./chat/chatViewSend";
+import { useComposerDraftStore } from "../composerDraftStore";
 import {
   CommandPaletteSubmitButton,
   NewProjectPublishHostPicker,
@@ -278,6 +285,16 @@ import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
 const NEW_THREAD_IN_GROUP = "projects";
+const START_PIPELINE_IN_GROUP = "start-pipeline-projects";
+
+// Subscribed only while the palette is open, for the environments that answer pipelines.*.
+const palettePipelinesAtom = environmentAtomList("web-palette-pipelines", (environmentId) =>
+  serverEnvironment.pipelinesLive({ environmentId, input: {} }),
+);
+const palettePipelineStartPermissionAtom = environmentAtomList(
+  "web-palette-pipeline-start-permission",
+  (environmentId) => serverEnvironment.startPipelineRun.permissionAtom(environmentId),
+);
 
 /** The submenu an open intent starts in; its groups resolve while rendering. */
 function openIntentView(intent: CommandPaletteOpenIntent | null): CommandPaletteView | null {
@@ -711,6 +728,26 @@ function OpenCommandPaletteDialog(props: {
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     supportsTriage(triageEnvironmentId);
+  const pipelineEnvironmentIds = environments
+    .filter(
+      (environment) =>
+        environment.connection.phase === "connected" &&
+        environment.serverConfig?.environment.capabilities.pipelines === true,
+    )
+    .map((environment) => environment.environmentId);
+  const pipelineEnvironmentsKey = environmentIdsKey(pipelineEnvironmentIds);
+  const pipelineQueries = useAtomValue(palettePipelinesAtom(pipelineEnvironmentsKey));
+  const pipelineStartPermissions = useAtomValue(
+    palettePipelineStartPermissionAtom(pipelineEnvironmentsKey),
+  );
+  const pipelinesByEnvironment = new Map(
+    pipelineEnvironmentIds.flatMap((environmentId, index) => {
+      const pipelines = pipelineStartPermissions[index]
+        ? (AsyncResult.getOrElse(pipelineQueries[index]!, () => null)?.pipelines ?? [])
+        : [];
+      return pipelines.length === 0 ? [] : [[environmentId, pipelines] as const];
+    }),
+  );
   const currentProject = resolveCommandPaletteProject(
     projectByKey,
     currentProjectEnvironmentId,
@@ -1316,6 +1353,52 @@ function OpenCommandPaletteDialog(props: {
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: NEW_THREAD_IN_GROUP, label: "Projects", items: projectThreadItems }],
+    });
+  }
+
+  if (pipelineEnvironmentIds.length > 0) {
+    const startPipelineProjectItems = buildStartPipelineItems({
+      projects: pickerProjects.filter(
+        (project) => !isScratchProject(project, scratchWorkspaceRootFor(project.environmentId)),
+      ),
+      locationByEnvironmentId: projectEnvironmentLocationById,
+      pipelinesByEnvironment,
+      pipelineIcon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <WorkflowIcon className={ADDON_ICON_CLASS} />,
+      describeSteps: describePipelineSteps,
+      // The pipeline lives on the project's own environment, so that project is the target.
+      start: async (project, pipeline) => {
+        const opened = await handleNewThread(scopeProjectRef(project.environmentId, project.id));
+        if (!opened) return;
+        const draftEnvironmentId =
+          useComposerDraftStore.getState().getDraftSession(opened.draftId)?.environmentId ??
+          project.environmentId;
+        presetDraftPipeline(scopeThreadRef(draftEnvironmentId, opened.threadId), pipeline.id);
+      },
+    });
+    if (startPipelineProjectItems.length > 0) {
+      actionItems.push({
+        kind: "submenu",
+        value: "action:start-pipeline",
+        searchTerms: ["pipeline", "workflow", "chain", "steps", "run", "start"],
+        title: "Start pipeline...",
+        description: "Run a chain of agent steps from a new thread",
+        icon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <WorkflowIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          { value: START_PIPELINE_IN_GROUP, label: "Projects", items: startPipelineProjectItems },
+        ],
+      });
+    }
+    actionItems.push({
+      kind: "action",
+      value: "action:pipelines-settings",
+      searchTerms: ["pipeline", "pipelines", "workflow", "settings", "manage", "edit"],
+      title: "Pipelines settings",
+      icon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/settings/pipelines" });
+      },
     });
   }
 

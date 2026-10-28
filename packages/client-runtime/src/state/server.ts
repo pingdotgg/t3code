@@ -1339,6 +1339,15 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
     }),
+    pipelinesLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:pipelines:live",
+      tag: WS_METHODS.pipelinesSubscribe,
+    }),
+    // Keyed by { runId }; mounted only while a run is on screen.
+    pipelineRunLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:pipeline-run:live",
+      tag: WS_METHODS.pipelineRunsSubscribe,
+    }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -1587,6 +1596,45 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksRotateWebhookToken,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    upsertPipeline: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pipeline:upsert",
+      tag: WS_METHODS.pipelinesUpsert,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    deletePipeline: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pipeline:delete",
+      tag: WS_METHODS.pipelinesDelete,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    // Run controls are deliberately off the config lane: starting a run
+    // creates its parent thread, and run actions must not queue behind
+    // settings/keybinding/provider mutations.
+    startPipelineRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pipeline-run:start",
+      tag: WS_METHODS.pipelineRunsStart,
+    }),
+    continuePipelineRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pipeline-run:continue",
+      tag: WS_METHODS.pipelineRunsContinue,
+    }),
+    retryPipelineStep: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pipeline-run:retry-step",
+      tag: WS_METHODS.pipelineRunsRetryStep,
+    }),
+    skipPipelineStep: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pipeline-run:skip-step",
+      tag: WS_METHODS.pipelineRunsSkipStep,
+    }),
+    cancelPipelineRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pipeline-run:cancel",
+      tag: WS_METHODS.pipelineRunsCancel,
+    }),
+    setPipelineStepPauseBefore: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pipeline-run:set-pause-before",
+      tag: WS_METHODS.pipelineRunsSetPauseBefore,
     }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",

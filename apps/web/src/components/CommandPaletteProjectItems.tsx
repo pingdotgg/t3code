@@ -6,6 +6,7 @@ import {
   buildCommandPaletteProjectMetadata,
   buildProjectActionItems,
   type CommandPaletteItemPin,
+  buildStartPipelineProjectItems,
   type CommandPaletteProject,
   ITEM_ICON_CLASS,
 } from "./CommandPalette.logic";
@@ -97,6 +98,26 @@ export function buildNewThreadInProjectItems(
     icon: projectFaviconIcon,
     runProject: input.runProject,
     ...(input.pin ? { pin: input.pin } : {}),
+  });
+}
+
+/** Projects as the first step of "Start pipeline...", each opening its pipelines. */
+export function buildStartPipelineItems(
+  input: Pick<ProjectItemsInput, "projects" | "locationByEnvironmentId"> &
+    Pick<
+      Parameters<typeof buildStartPipelineProjectItems>[0],
+      "pipelinesByEnvironment" | "pipelineIcon" | "addonIcon" | "describeSteps" | "start"
+    >,
+) {
+  return buildStartPipelineProjectItems({
+    ...input,
+    projectIcon: projectFaviconIcon,
+    projectDescription: (project) => (
+      <ProjectLocationDescription
+        location={input.locationByEnvironmentId.get(project.environmentId)}
+        workspaceRoot={project.workspaceRoot}
+      />
+    ),
   });
 }
 

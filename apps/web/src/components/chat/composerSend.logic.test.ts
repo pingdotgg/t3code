@@ -1,11 +1,16 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, PipelineId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import { threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
+  activeDraftPipelineId,
   approvalRedirectNotice,
+  commandIdForPipelineSend,
+  PIPELINE_TEXT_ONLY_HINT,
+  pipelineSendBlock,
+  pipelineSendRetryKey,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -122,5 +127,45 @@ describe("approvalRedirectNotice", () => {
   it("stays quiet when the decline failed or the user left the thread", () => {
     expect(approvalRedirectNotice({ ...settled, declined: false })).toBeNull();
     expect(approvalRedirectNotice(settled)).toBeNull();
+  });
+});
+
+describe("activeDraftPipelineId", () => {
+  const pipelineId = PipelineId.make("pipeline-1");
+  it("applies only in the environment it was chosen in", () => {
+    expect(activeDraftPipelineId({ environmentId: local, pipelineId }, local)).toBe(pipelineId);
+    expect(activeDraftPipelineId({ environmentId: local, pipelineId }, remote)).toBeNull();
+    expect(activeDraftPipelineId(null, local)).toBeNull();
+  });
+});
+
+describe("pipelineSendBlock", () => {
+  it("allows text only", () => {
+    expect(pipelineSendBlock({ attachmentCount: 0, hasContext: false })).toBeNull();
+    expect(pipelineSendBlock({ attachmentCount: 1, hasContext: false })).toBe(
+      PIPELINE_TEXT_ONLY_HINT,
+    );
+    expect(pipelineSendBlock({ attachmentCount: 0, hasContext: true })).toBe(
+      PIPELINE_TEXT_ONLY_HINT,
+    );
+  });
+});
+
+describe("commandIdForPipelineSend", () => {
+  const key = (text: string) =>
+    pipelineSendRetryKey({
+      routeKey: "r",
+      pipelineId: "p",
+      projectId: "proj",
+      workspaceStrategy: { type: "root" },
+      text,
+    });
+  it("reuses the id for the same attempt and mints a new one when the text changes", () => {
+    const commands = new Map<string, string>();
+    let next = 0;
+    const make = () => `cmd-${(next += 1)}`;
+    expect(commandIdForPipelineSend(commands, key("a"), make)).toBe("cmd-1");
+    expect(commandIdForPipelineSend(commands, key("a"), make)).toBe("cmd-1");
+    expect(commandIdForPipelineSend(commands, key("b"), make)).toBe("cmd-2");
   });
 });

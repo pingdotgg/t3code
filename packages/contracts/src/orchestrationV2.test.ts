@@ -447,43 +447,53 @@ describe("orchestration V2 contracts", () => {
   });
 });
 
-describe("thread open stats", () => {
+describe("thread shell", () => {
+  const shell = {
+    id: "thread-test",
+    projectId: "project-test",
+    title: "Thread",
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { rootThreadId: "thread-test", parentThreadId: null, relationshipToParent: null },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "mobile",
+    latestRunId: null,
+    activeRunId: null,
+    status: "idle",
+    pendingRuntimeRequest: null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+  };
+  const decode = Schema.decodeUnknownSync(OrchestrationV2ThreadShellJson);
+
   it("reads a thread whose open stats this build cannot read, without them", () => {
-    const shell = {
-      id: "thread-test",
-      projectId: "project-test",
-      title: "Thread",
-      providerInstanceId: "codex",
-      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      activeProviderThreadId: null,
-      lineage: { rootThreadId: "thread-test", parentThreadId: null, relationshipToParent: null },
-      forkedFrom: null,
-      createdBy: "user",
-      creationSource: "mobile",
-      latestRunId: null,
-      activeRunId: null,
-      status: "idle",
-      pendingRuntimeRequest: null,
-      latestVisibleMessage: null,
-      latestUserMessageAt: null,
-      hasActionableProposedPlan: false,
-      itemCount: 0,
-      visibleItemCount: 0,
-      createdAt: "2026-10-01T00:00:00.000Z",
-      updatedAt: "2026-10-01T00:00:00.000Z",
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      deletedAt: null,
-    };
-    const decode = Schema.decodeUnknownSync(OrchestrationV2ThreadShellJson);
     const opens = { openedAt: 1, score: 1, picks: [{ query: "upl", at: 1 }] };
     expect(decode({ ...shell, opens }).opens).toEqual(opens);
     expect(decode({ ...shell, opens: { openedAt: "2026-10-01", score: 1 } }).opens).toBeNull();
+  });
+
+  it("round-trips the pipeline of a parent and a step thread, and reads a shell without one", () => {
+    const encode = Schema.encodeSync(OrchestrationV2ThreadShellJson);
+    const parent = { runId: "run-1", stepId: null };
+    const step = { runId: "run-1", stepId: "review" };
+    expect(decode(shell).pipeline).toBeUndefined();
+    expect(decode({ ...shell, pipeline: parent }).pipeline).toEqual(parent);
+    expect(encode(decode({ ...shell, pipeline: step })).pipeline).toEqual(step);
   });
 });
 

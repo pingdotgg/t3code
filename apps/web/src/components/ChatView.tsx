@@ -275,6 +275,8 @@ import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
+import { PipelineRunView } from "./chat/PipelineRunView";
+import { pipelineStepBreadcrumbTitle } from "@t3tools/client-runtime/pipeline-run-presentation";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
@@ -809,6 +811,18 @@ export default function ChatView(props: ChatViewProps) {
     serverProjection === null ? null : deriveProviderSubagentStatus(serverProjection);
   const isProviderSubagent =
     serverThread !== null && isProviderNativeSubagentThread(serverThread.source);
+  // The server marks a run's parent thread with `stepId: null` and each step's thread with its id.
+  const threadPipeline = serverThread?.pipeline ?? null;
+  const isPipelineParent = threadPipeline !== null && threadPipeline.stepId === null;
+  const pipelineStepId = threadPipeline?.stepId ?? null;
+  const pipelineStepRun = useEnvironmentQuery(
+    threadPipeline !== null && pipelineStepId !== null && serverThread !== null
+      ? serverEnvironment.pipelineRunLive({
+          environmentId: serverThread.environmentId,
+          input: { runId: threadPipeline.runId },
+        })
+      : null,
+  ).data?.run;
   const supportsProviderSwitchingViaHandoff = threadSupportsProviderHandoff(serverProjection);
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
@@ -863,12 +877,33 @@ export default function ChatView(props: ChatViewProps) {
       : scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useQuietThreadShell(delegatedFromRef);
+  const pipelineParentThreadRef =
+    pipelineStepRun === undefined || activeThread === undefined || activeThread === null
+      ? null
+      : scopeThreadRef(activeThread.environmentId, pipelineStepRun.parentThreadId);
   const sideChatParentRef =
     activeThread?.lineage.sideChat === true && activeThread.lineage.parentThreadId !== null
       ? scopeThreadRef(activeThread.environmentId, activeThread.lineage.parentThreadId)
       : null;
   const sideChatParent = useQuietThreadShell(sideChatParentRef);
   const parentThreadLink = (() => {
+    if (
+      pipelineStepRun !== undefined &&
+      pipelineParentThreadRef !== null &&
+      pipelineStepId !== null
+    ) {
+      const parentRef = pipelineParentThreadRef;
+      return {
+        title: pipelineStepBreadcrumbTitle(pipelineStepRun, pipelineStepId),
+        label: "Parent",
+        open: (): void => {
+          void navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(parentRef),
+          });
+        },
+      };
+    }
     if (sideChatParentRef !== null) {
       const title = sideChatParent?.title ?? "Parent thread";
       // Embedded, the parent is the view around it.
@@ -915,12 +950,17 @@ export default function ChatView(props: ChatViewProps) {
   })();
   // The header's breadcrumb opens a parent in this environment only.
   const headerParentThreadLink =
-    parentSubagentThreadRef === null
-      ? null
-      : {
-          threadId: parentSubagentThreadRef.threadId,
-          title: parentSubagentThread?.title ?? "Parent thread",
-        };
+    pipelineStepRun !== undefined && pipelineParentThreadRef !== null && pipelineStepId !== null
+      ? {
+          threadId: pipelineParentThreadRef.threadId,
+          title: pipelineStepBreadcrumbTitle(pipelineStepRun, pipelineStepId),
+        }
+      : parentSubagentThreadRef === null
+        ? null
+        : {
+            threadId: parentSubagentThreadRef.threadId,
+            title: parentSubagentThread?.title ?? "Parent thread",
+          };
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
@@ -1693,7 +1733,8 @@ export default function ChatView(props: ChatViewProps) {
   const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
-  const composerMounted = !showProviderSubagentBar;
+  // A pipeline's parent thread is read-only: its body is the run view, not a conversation.
+  const composerMounted = !showProviderSubagentBar && !isPipelineParent;
   const providerSubagentModels = selectedProviderEntry?.models ?? EMPTY_PROVIDER_MODELS;
   // Providers can report dated model ids or aliases.
   const providerSubagentModelSlug = selectedProviderEntry
@@ -3358,104 +3399,115 @@ export default function ChatView(props: ChatViewProps) {
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
-                <ThreadTimeline
-                  pendingApprovals={pendingApprovals}
-                  heldApprovalRequestIds={heldApprovalRequestIds}
-                  respondingRequestIds={respondingRequestIds}
-                  onRespondToApproval={onRespondToApprovalStable}
-                  canOperateThread={canOperateThread}
-                  threadDetailRef={routeThreadDetailRef}
-                  entriesInput={timelineEntriesInput}
-                  draftEntries={isServerThread ? null : draftTimelineEntries}
-                  activeThreadKey={activeThreadKey}
-                  syncing={threadSyncPhase !== null}
-                  detailLoading={threadDetailLoading}
-                  citationRequest={citationRequest}
-                  citationHistory={citationHistory}
-                  onCiteAssistantText={citeAssistantTextStable}
-                  {...(activeProject
-                    ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
-                    : {})}
-                  isWorking={isWorking}
-                  runlessWorkActive={runlessWorkStartedAt !== null}
-                  isCompacting={isCompacting}
-                  awaitingUser={
-                    activePendingApproval !== null
-                      ? "approval"
-                      : activePendingUserInput !== null ||
-                          // A secret request has no runtime request; the shell carries it.
-                          activeThreadShell?.hasPendingUserInput === true
-                        ? "input"
-                        : null
-                  }
-                  awaitingRequestId={
-                    activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
-                  }
-                  activeTurnStartedAt={activeWorkStartedAt}
-                  worktreeSetup={worktreeSetup}
-                  onCancelWorktreeSetup={onCancelWorktreeSetupStable}
-                  retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
-                  onRetryWorkspacePreparation={onRetryWorkspacePreparationStable}
-                  {...(draftId
-                    ? { onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocallyStable }
-                    : {})}
-                  {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
-                  isPreparingWorktree={isPreparingWorktree}
-                  footer={timelineFooter}
-                  listRef={legendListRef}
-                  runs={serverProjection?.runs ?? []}
-                  latestRun={activeActivityRun}
-                  announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
-                  detailBehindShell={isDetailBehindShell(
-                    activeLatestRun,
-                    activeThreadShell?.latestRun ?? null,
-                  )}
-                  runningRunId={activeRunningTurnId}
-                  turnDiffSummaries={turnDiffSummaries}
-                  activeThreadEnvironmentId={
-                    displayedThreadRef?.environmentId ?? activeThread.environmentId
-                  }
-                  routeThreadKey={displayedTimelineKey}
-                  displayThreadKey={displayedTimelineKey}
-                  announceTurnStatus={!isProviderSubagent}
-                  onOpenToolDiff={parentPanel?.openToolDiff ?? onOpenToolDiffStable}
-                  // Side chat runs keep no checkpoints to diff, and a fork would promote the side chat.
-                  {...(embedded
-                    ? {}
-                    : { onOpenTurnDiff: onOpenTurnDiffStable, onForkFromRun: onForkFromRunStable })}
-                  onOpenThread={onOpenRelatedThreadStable}
-                  parentThreadLink={parentThreadLink}
-                  workflowOpening={workflowOpening}
-                  supportsConversationRollback={supportsConversationRollback}
-                  threadStartCheckpointReady={threadStartCheckpointReady}
-                  availableRevertTurnCounts={availableRevertTurnCounts}
-                  onRevertToTurnCount={onRevertTimelineTurnStable}
-                  onUseArtifactTemplate={insertArtifactTemplateStable}
-                  onSendAppMessage={sendAppMessageStable}
-                  isRevertingCheckpoint={isRevertingCheckpoint}
-                  onImageExpand={onExpandTimelineImageStable}
-                  onFileOpen={openFileAttachmentStable}
-                  onFileDownload={downloadFileAttachmentStable}
-                  markdownCwd={gitCwd ?? undefined}
-                  resolvedTheme={resolvedTheme}
-                  timestampFormat={timestampFormat}
-                  workspaceRoot={activeWorkspaceRoot}
-                  skills={timelineSkills}
-                  anchorMessageId={timelineAnchorMessageId}
-                  onAnchorReady={onTimelineAnchorReadyStable}
-                  onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
-                  contentInsetEndAdjustment={composerTimelineInset}
-                  liveFollowEnabled={timelineLiveFollowEnabled}
-                  onIsAtEndChange={onIsAtEndChangeStable}
-                  onViewportAttach={attachTimelineViewport}
-                  onFooterGrow={onTimelineFooterGrowStable}
-                  hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
-                  emptyPlaceholderInset={composerReservedHeight}
-                  topFadeEnabled={!hasTimelineTopBanner}
-                  {...(threadHistoryControls === undefined
-                    ? {}
-                    : { historyControls: threadHistoryControls })}
-                />
+                {isPipelineParent && threadPipeline !== null ? (
+                  <PipelineRunView
+                    environmentId={activeThread.environmentId}
+                    runId={threadPipeline.runId}
+                    cwd={gitCwd ?? undefined}
+                  />
+                ) : (
+                  <ThreadTimeline
+                    pendingApprovals={pendingApprovals}
+                    heldApprovalRequestIds={heldApprovalRequestIds}
+                    respondingRequestIds={respondingRequestIds}
+                    onRespondToApproval={onRespondToApprovalStable}
+                    canOperateThread={canOperateThread}
+                    threadDetailRef={routeThreadDetailRef}
+                    entriesInput={timelineEntriesInput}
+                    draftEntries={isServerThread ? null : draftTimelineEntries}
+                    activeThreadKey={activeThreadKey}
+                    syncing={threadSyncPhase !== null}
+                    detailLoading={threadDetailLoading}
+                    citationRequest={citationRequest}
+                    citationHistory={citationHistory}
+                    onCiteAssistantText={citeAssistantTextStable}
+                    {...(activeProject
+                      ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
+                      : {})}
+                    isWorking={isWorking}
+                    runlessWorkActive={runlessWorkStartedAt !== null}
+                    isCompacting={isCompacting}
+                    awaitingUser={
+                      activePendingApproval !== null
+                        ? "approval"
+                        : activePendingUserInput !== null ||
+                            // A secret request has no runtime request; the shell carries it.
+                            activeThreadShell?.hasPendingUserInput === true
+                          ? "input"
+                          : null
+                    }
+                    awaitingRequestId={
+                      activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
+                    }
+                    activeTurnStartedAt={activeWorkStartedAt}
+                    worktreeSetup={worktreeSetup}
+                    onCancelWorktreeSetup={onCancelWorktreeSetupStable}
+                    retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
+                    onRetryWorkspacePreparation={onRetryWorkspacePreparationStable}
+                    {...(draftId
+                      ? { onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocallyStable }
+                      : {})}
+                    {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
+                    isPreparingWorktree={isPreparingWorktree}
+                    footer={timelineFooter}
+                    listRef={legendListRef}
+                    runs={serverProjection?.runs ?? []}
+                    latestRun={activeActivityRun}
+                    announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
+                    detailBehindShell={isDetailBehindShell(
+                      activeLatestRun,
+                      activeThreadShell?.latestRun ?? null,
+                    )}
+                    runningRunId={activeRunningTurnId}
+                    turnDiffSummaries={turnDiffSummaries}
+                    activeThreadEnvironmentId={
+                      displayedThreadRef?.environmentId ?? activeThread.environmentId
+                    }
+                    routeThreadKey={displayedTimelineKey}
+                    displayThreadKey={displayedTimelineKey}
+                    announceTurnStatus={!isProviderSubagent}
+                    onOpenToolDiff={parentPanel?.openToolDiff ?? onOpenToolDiffStable}
+                    // Side chat runs keep no checkpoints to diff, and a fork would promote the side chat.
+                    {...(embedded
+                      ? {}
+                      : {
+                          onOpenTurnDiff: onOpenTurnDiffStable,
+                          onForkFromRun: onForkFromRunStable,
+                        })}
+                    onOpenThread={onOpenRelatedThreadStable}
+                    parentThreadLink={parentThreadLink}
+                    workflowOpening={workflowOpening}
+                    supportsConversationRollback={supportsConversationRollback}
+                    threadStartCheckpointReady={threadStartCheckpointReady}
+                    availableRevertTurnCounts={availableRevertTurnCounts}
+                    onRevertToTurnCount={onRevertTimelineTurnStable}
+                    onUseArtifactTemplate={insertArtifactTemplateStable}
+                    onSendAppMessage={sendAppMessageStable}
+                    isRevertingCheckpoint={isRevertingCheckpoint}
+                    onImageExpand={onExpandTimelineImageStable}
+                    onFileOpen={openFileAttachmentStable}
+                    onFileDownload={downloadFileAttachmentStable}
+                    markdownCwd={gitCwd ?? undefined}
+                    resolvedTheme={resolvedTheme}
+                    timestampFormat={timestampFormat}
+                    workspaceRoot={activeWorkspaceRoot}
+                    skills={timelineSkills}
+                    anchorMessageId={timelineAnchorMessageId}
+                    onAnchorReady={onTimelineAnchorReadyStable}
+                    onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
+                    contentInsetEndAdjustment={composerTimelineInset}
+                    liveFollowEnabled={timelineLiveFollowEnabled}
+                    onIsAtEndChange={onIsAtEndChangeStable}
+                    onViewportAttach={attachTimelineViewport}
+                    onFooterGrow={onTimelineFooterGrowStable}
+                    hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                    emptyPlaceholderInset={composerReservedHeight}
+                    topFadeEnabled={!hasTimelineTopBanner}
+                    {...(threadHistoryControls === undefined
+                      ? {}
+                      : { historyControls: threadHistoryControls })}
+                  />
+                )}
               </WorkspaceMutationIdContext>
 
               {showScrollToBottom && !isThreadFindActive && (

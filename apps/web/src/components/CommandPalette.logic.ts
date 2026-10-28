@@ -25,6 +25,7 @@ import {
   type EnvironmentMachineKind,
   type FilesystemBrowseEntry,
   type KeybindingCommand,
+  type PipelineId,
   type SourceControlDiscoveryResult,
   type SourceControlRepositoryInfo,
   THREAD_JUMP_KEYBINDING_COMMANDS,
@@ -397,6 +398,60 @@ export function buildProjectActionItems(input: {
         await input.runProject(project);
       },
     };
+  });
+}
+
+/** A pipeline as the palette lists it. */
+export interface CommandPalettePipeline {
+  readonly id: PipelineId;
+  readonly name: string;
+  readonly steps: ReadonlyArray<{ readonly name: string }>;
+}
+
+/**
+ * "Start pipeline..." targets: one submenu per project that has pipelines, listing them. Projects
+ * without pipelines (or on servers without them) are left out.
+ */
+export function buildStartPipelineProjectItems(input: {
+  projects: ReadonlyArray<CommandPaletteProject>;
+  pipelinesByEnvironment: ReadonlyMap<EnvironmentId, ReadonlyArray<CommandPalettePipeline>>;
+  projectIcon: (project: CommandPaletteProject) => ReactNode;
+  projectDescription?: (project: CommandPaletteProject) => ReactNode;
+  pipelineIcon: ReactNode;
+  addonIcon: ReactNode;
+  describeSteps: (steps: CommandPalettePipeline["steps"]) => string;
+  start: (project: CommandPaletteProject, pipeline: CommandPalettePipeline) => Promise<void>;
+}): CommandPaletteSubmenuItem[] {
+  return input.projects.flatMap((project): CommandPaletteSubmenuItem[] => {
+    const pipelines = input.pipelinesByEnvironment.get(project.environmentId) ?? [];
+    if (pipelines.length === 0) return [];
+    const valuePrefix = `start-pipeline-in:${project.environmentId}:${project.id}`;
+    return [
+      {
+        kind: "submenu",
+        value: valuePrefix,
+        searchTerms: [project.displayName, project.title, project.workspaceRoot],
+        title: project.displayName,
+        description: input.projectDescription?.(project) ?? project.workspaceRoot,
+        icon: input.projectIcon(project),
+        addonIcon: input.addonIcon,
+        groups: [
+          {
+            value: `${valuePrefix}:pipelines`,
+            label: "Pipelines",
+            items: pipelines.map((pipeline): CommandPaletteActionItem => ({
+              kind: "action",
+              value: `${valuePrefix}:${pipeline.id}`,
+              searchTerms: [pipeline.name, ...pipeline.steps.map((step) => step.name)],
+              title: pipeline.name,
+              description: input.describeSteps(pipeline.steps),
+              icon: input.pipelineIcon,
+              run: () => input.start(project, pipeline),
+            })),
+          },
+        ],
+      },
+    ];
   });
 }
 

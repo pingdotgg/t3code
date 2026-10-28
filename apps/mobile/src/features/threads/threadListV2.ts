@@ -12,6 +12,14 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import {
+  aggregatePipelineStepStatus,
+  isPipelineGroupActive,
+  nestPipelineSteps,
+  pipelineParentsOfSteps,
+  pipelineStepsOfParents,
+  type PipelineNesting,
+} from "@t3tools/client-runtime/state/pipeline-nesting";
+import {
   threadSearchMatchKey,
   threadSearchSubject,
 } from "@t3tools/client-runtime/state/thread-search";
@@ -296,6 +304,29 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
+/** What a pipeline's parent row shows for its steps; the row merges it with its own status. */
+export function resolveThreadListV2StepStatus(
+  steps: ReadonlyArray<Parameters<typeof resolveThreadListV2Status>[0]>,
+) {
+  return aggregatePipelineStepStatus(steps.map(resolveThreadListV2Status));
+}
+
+/**
+ * Folds a section's steps under their parent, where the first of the run sits;
+ * a parent the user placed with an order key stays put.
+ */
+function nestThreadListV2Section(
+  sorted: readonly EnvironmentThreadShell[],
+  section: "pinned" | "active" | null,
+): PipelineNesting<EnvironmentThreadShell> {
+  return nestPipelineSteps(sorted, {
+    anchored: (parent) =>
+      section === "pinned"
+        ? parent.pinOrderKey != null
+        : section === "active" && parent.activeOrderKey != null,
+  });
+}
+
 function parseTimestampMs(isoDate: string): number {
   const parsed = Date.parse(isoDate);
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -323,8 +354,13 @@ export function getThreadListV2OrderedSection(input: {
   readonly queuedThreadKeys?: ReadonlySet<string>;
 }): EnvironmentThreadShell[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
-  const threads = input.threads.filter((thread) => {
-    if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return false;
+  const candidates = input.threads.filter(
+    (thread) => thread.archivedAt === null && isListedThreadLineage(thread.lineage),
+  );
+  const parentOfStep = pipelineParentsOfSteps(candidates);
+  const threads = candidates.filter((step) => {
+    // A pipeline's steps list where their parent lists.
+    const thread = parentOfStep.get(`${step.environmentId}:${step.id}`) ?? step;
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
       thread.settledOverride === "settled" &&
@@ -340,10 +376,12 @@ export function getThreadListV2OrderedSection(input: {
     }
     return (thread.pinnedAt != null) === (input.section === "pinned");
   });
-  const ordered =
+  const ordered = nestThreadListV2Section(
     input.section === "pinned"
       ? sortPinnedThreadsByOrderKey(threads)
-      : sortActiveThreadsByOrderKey(threads);
+      : sortActiveThreadsByOrderKey(threads),
+    input.section,
+  ).rows;
   const pending =
     input.pendingOrder?.section === input.section
       ? reconcilePendingThreadOrder(input.pendingOrder, ordered)
@@ -358,6 +396,12 @@ export interface ThreadListV2Item {
   readonly pinned: boolean;
   readonly wokeAt: string | null;
   readonly isLast: boolean;
+  /** A pipeline step, listed under its parent. */
+  readonly nested?: boolean;
+  /** Whether this is the last step of its pipeline. */
+  readonly isLastStep?: boolean;
+  /** On a pipeline's parent: what its steps need, for the parent to show. */
+  readonly stepStatus?: ReturnType<typeof resolveThreadListV2StepStatus>;
 }
 
 export interface ThreadListV2Layout {
@@ -458,6 +502,9 @@ export function threadListV2ListItemsAreEqual(
         previous.item.snoozed === item.item.snoozed &&
         previous.item.pinned === item.item.pinned &&
         previous.item.wokeAt === item.item.wokeAt &&
+        previous.item.nested === item.item.nested &&
+        previous.item.isLastStep === item.item.isLastStep &&
+        previous.item.stepStatus === item.item.stepStatus &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
@@ -545,6 +592,7 @@ export function buildThreadListV2ListItems(input: {
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
     const snoozePresetMinute =
       !item.snoozed &&
+      item.nested !== true &&
       input.snoozeLabelNow !== undefined &&
       (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
       canSnooze(item.thread, { now: input.snoozeLabelNow })
@@ -724,6 +772,8 @@ export function buildThreadListV2Items(input: {
   // Threads listed only because their messages match; only their rows show
   // the message and open at it.
   const contentOnlyThreadKeys = new Set<string>();
+  const parentOfStep = pipelineParentsOfSteps(listedThreads);
+  const stepsOfParent = pipelineStepsOfParents(listedThreads, parentOfStep);
   for (const thread of listedThreads) {
     if (matchingThreads !== null && !matchingThreads.has(thread)) {
       const key = threadSearchMatchKey({
@@ -733,11 +783,14 @@ export function buildThreadListV2Items(input: {
       if (input.matchedThreadKeys?.has(key) !== true) continue;
       contentOnlyThreadKeys.add(key);
     }
-    const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
-    const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
-    if (supportsSnooze && effectiveSnoozed(thread, { now })) {
+    // A pipeline's steps list where their parent lists, whatever their own state.
+    const owner = parentOfStep.get(`${thread.environmentId}:${thread.id}`) ?? thread;
+    const supportsSettlement = input.settlementEnvironmentIds?.has(owner.environmentId) ?? true;
+    const supportsSnooze = input.snoozeEnvironmentIds?.has(owner.environmentId) ?? true;
+    if (supportsSnooze && effectiveSnoozed(owner, { now })) {
       snoozed.push(thread);
       if (
+        owner === thread &&
         thread.snoozedUntil != null &&
         (nextSnoozeWakeAt === null ||
           parseTimestampMs(thread.snoozedUntil) < parseTimestampMs(nextSnoozeWakeAt))
@@ -746,13 +799,16 @@ export function buildThreadListV2Items(input: {
       }
       continue;
     }
-    const hasQueuedMessages =
-      queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
-    if (supportsSettlement && thread.settledOverride === "settled" && !hasQueuedMessages) {
+    const hasQueuedMessages = queuedThreadKeys?.has(`${owner.environmentId}:${owner.id}`) === true;
+    if (supportsSettlement && owner.settledOverride === "settled" && !hasQueuedMessages) {
       settled.push(thread);
-    } else if (thread.pinnedAt != null) {
+    } else if (owner.pinnedAt != null) {
       pinned.push(thread);
-    } else if (workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)) {
+    } else if (
+      // A pipeline counts as working while any of its steps does, so it stays on the shelf.
+      workingShelfEnabled &&
+      isPipelineGroupActive(owner, stepsOfParent, input.isWorking ?? isThreadWorking)
+    ) {
       working.push(thread);
     } else {
       active.push(thread);
@@ -799,28 +855,47 @@ export function buildThreadListV2Items(input: {
     };
   }
 
-  const orderedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
-    : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
-  const orderedWorking = sortWorkingThreadsBySend(working);
-  const orderedSnoozed = [...snoozed].sort(
-    (left, right) =>
-      parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
+  // Steps sort with everything else, then fold under their parent (see nestThreadListV2Section).
+  const nestedPinned = nestThreadListV2Section(sortPinnedThreadsByOrderKey(pinned), "pinned");
+  const nestedActive = nestThreadListV2Section(
+    workingShelfEnabled
+      ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
+      : sortThreadsForListV2(active),
+    workingShelfEnabled ? null : "active",
   );
+  const nestedWorking = nestThreadListV2Section(sortWorkingThreadsBySend(working), null);
+  const nestedSnoozed = nestThreadListV2Section(
+    [...snoozed].sort(
+      (left, right) =>
+        parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
+    ),
+    null,
+  );
+  const nestedSettled = nestThreadListV2Section(sortSettledThreadsReusingLast(settled), null);
+  const stepsByParentKey = new Map([
+    ...nestedPinned.stepsByParentKey,
+    ...nestedActive.stepsByParentKey,
+    ...nestedWorking.stepsByParentKey,
+    ...nestedSnoozed.stepsByParentKey,
+    ...nestedSettled.stepsByParentKey,
+  ]);
+  const orderedActive = workingShelfEnabled
+    ? nestedActive.rows
+    : applyPendingThreadOrder(nestedActive.rows, "active", pending);
+  const orderedWorking = nestedWorking.rows;
+  const orderedSnoozed = nestedSnoozed.rows;
   const selectedThreadKey = input.selectedThreadKey ?? null;
+  // A collapsed shelf keeps the open thread's row, and the parent's row when a step is open.
+  const holdsSelected = (thread: EnvironmentThreadShell) =>
+    `${thread.environmentId}:${thread.id}` === selectedThreadKey ||
+    stepsByParentKey
+      .get(`${thread.environmentId}:${thread.id}`)
+      ?.some((step) => `${step.environmentId}:${step.id}` === selectedThreadKey) === true;
   const visibleWorking =
-    input.workingShelfExpanded === true
-      ? orderedWorking
-      : orderedWorking.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
+    input.workingShelfExpanded === true ? orderedWorking : orderedWorking.filter(holdsSelected);
   const visibleSnoozed =
-    input.snoozedShelfExpanded === true
-      ? orderedSnoozed
-      : orderedSnoozed.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
-  const orderedSettled = sortSettledThreadsReusingLast(settled);
+    input.snoozedShelfExpanded === true ? orderedSnoozed : orderedSnoozed.filter(holdsSelected);
+  const orderedSettled = nestedSettled.rows;
   const listedSettled =
     input.isListedSettled === undefined
       ? orderedSettled
@@ -830,78 +905,72 @@ export function buildThreadListV2Items(input: {
   const limitedSettled =
     listedSettled.length > settledLimit ? listedSettled.slice(0, settledLimit) : listedSettled;
   const selectedSettled =
-    selectedThreadKey === null ||
-    limitedSettled.some((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey)
+    selectedThreadKey === null || limitedSettled.some(holdsSelected)
       ? undefined
-      : orderedSettled.find(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
+      : orderedSettled.find(holdsSelected);
   const pagedSettled =
     selectedSettled === undefined ? limitedSettled : [...limitedSettled, selectedSettled];
   const visibleSettled =
-    input.settledShelfExpanded !== false
-      ? pagedSettled
-      : pagedSettled.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
+    input.settledShelfExpanded !== false ? pagedSettled : pagedSettled.filter(holdsSelected);
 
   const items: ThreadListV2Item[] = [];
-  for (const thread of applyPendingThreadOrder(
-    sortPinnedThreadsByOrderKey(pinned),
-    "pinned",
-    pending,
-  )) {
+  // A parent's steps follow it directly, so the list reads in the order it draws.
+  const pushRow = (
+    thread: EnvironmentThreadShell,
+    row: Pick<ThreadListV2Item, "variant" | "snoozed" | "pinned" | "wokeAt">,
+  ) => {
+    const steps = stepsByParentKey.get(`${thread.environmentId}:${thread.id}`);
     items.push({
       thread,
+      ...row,
+      isLast: false,
+      ...(steps === undefined ? {} : { stepStatus: resolveThreadListV2StepStatus(steps) }),
+    });
+    steps?.forEach((step, index) => {
+      items.push({
+        thread: step,
+        variant: "slim",
+        snoozed: false,
+        pinned: false,
+        wokeAt: null,
+        isLast: false,
+        nested: true,
+        isLastStep: index === steps.length - 1,
+      });
+    });
+  };
+  for (const thread of applyPendingThreadOrder(nestedPinned.rows, "pinned", pending)) {
+    pushRow(thread, {
       variant: "card",
       snoozed: false,
       pinned: true,
       wokeAt: resolveThreadListV2WokeAt(thread, { now }),
-      isLast: false,
     });
   }
   for (const thread of orderedActive) {
-    items.push({
-      thread,
+    pushRow(thread, {
       variant: "card",
       snoozed: false,
       pinned: false,
       wokeAt: resolveThreadListV2WokeAt(thread, { now }),
-      isLast: false,
     });
   }
   const workingShelfHeaderIndex = orderedWorking.length > 0 ? items.length : null;
   for (const thread of visibleWorking) {
-    items.push({
-      thread,
+    pushRow(thread, {
       variant: "card",
       snoozed: false,
       pinned: false,
       wokeAt: resolveThreadListV2WokeAt(thread, { now }),
-      isLast: false,
     });
   }
   const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
   for (const thread of visibleSnoozed) {
-    items.push({
-      thread,
-      variant: "slim",
-      snoozed: true,
-      pinned: false,
-      wokeAt: null,
-      isLast: false,
-    });
+    pushRow(thread, { variant: "slim", snoozed: true, pinned: false, wokeAt: null });
   }
   const settledShelfHeaderIndex = settledTotal > 0 ? items.length : null;
   for (const thread of visibleSettled) {
-    items.push({
-      thread,
-      variant: "slim",
-      snoozed: false,
-      pinned: false,
-      wokeAt: null,
-      isLast: false,
-    });
+    pushRow(thread, { variant: "slim", snoozed: false, pinned: false, wokeAt: null });
   }
   const last = items.at(-1);
   if (last) {

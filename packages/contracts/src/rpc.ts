@@ -383,6 +383,21 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  PipelineDeleteInput,
+  PipelineDeleteResult,
+  PipelineError,
+  PipelineListInput,
+  PipelineListResult,
+  PipelineMutationResult,
+  PipelineRunCancelInput,
+  PipelineRunResult,
+  PipelineRunSetPauseBeforeInput,
+  PipelineRunStartInput,
+  PipelineRunStepActionInput,
+  PipelineRunSubscribeInput,
+  PipelineUpsertInput,
+} from "./pipeline.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -558,6 +573,17 @@ export const WS_METHODS = {
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+
+  pipelinesSubscribe: "pipelines.subscribe",
+  pipelinesUpsert: "pipelines.upsert",
+  pipelinesDelete: "pipelines.delete",
+  pipelineRunsSubscribe: "pipelineRuns.subscribe",
+  pipelineRunsStart: "pipelineRuns.start",
+  pipelineRunsContinue: "pipelineRuns.continue",
+  pipelineRunsRetryStep: "pipelineRuns.retryStep",
+  pipelineRunsSkipStep: "pipelineRuns.skipStep",
+  pipelineRunsCancel: "pipelineRuns.cancel",
+  pipelineRunsSetPauseBefore: "pipelineRuns.setPauseBefore",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1976,6 +2002,68 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsPipelinesSubscribeRpc = Rpc.make(WS_METHODS.pipelinesSubscribe, {
+  payload: PipelineListInput,
+  success: PipelineListResult,
+  error: Schema.Union([PipelineError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsPipelinesUpsertRpc = Rpc.make(WS_METHODS.pipelinesUpsert, {
+  payload: PipelineUpsertInput,
+  success: PipelineMutationResult,
+  error: Schema.Union([PipelineError, EnvironmentAuthorizationError]),
+});
+
+const WsPipelinesDeleteRpc = Rpc.make(WS_METHODS.pipelinesDelete, {
+  payload: PipelineDeleteInput,
+  success: PipelineDeleteResult,
+  error: Schema.Union([PipelineError, EnvironmentAuthorizationError]),
+});
+
+const WsPipelineRunsSubscribeRpc = Rpc.make(WS_METHODS.pipelineRunsSubscribe, {
+  payload: PipelineRunSubscribeInput,
+  success: PipelineRunResult,
+  error: Schema.Union([PipelineError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsPipelineRunsStartRpc = Rpc.make(WS_METHODS.pipelineRunsStart, {
+  payload: PipelineRunStartInput,
+  success: PipelineRunResult,
+  error: Schema.Union([PipelineError, EnvironmentAuthorizationError]),
+});
+
+const WsPipelineRunsContinueRpc = Rpc.make(WS_METHODS.pipelineRunsContinue, {
+  payload: PipelineRunStepActionInput,
+  success: PipelineRunResult,
+  error: Schema.Union([PipelineError, EnvironmentAuthorizationError]),
+});
+
+const WsPipelineRunsRetryStepRpc = Rpc.make(WS_METHODS.pipelineRunsRetryStep, {
+  payload: PipelineRunStepActionInput,
+  success: PipelineRunResult,
+  error: Schema.Union([PipelineError, EnvironmentAuthorizationError]),
+});
+
+const WsPipelineRunsSkipStepRpc = Rpc.make(WS_METHODS.pipelineRunsSkipStep, {
+  payload: PipelineRunStepActionInput,
+  success: PipelineRunResult,
+  error: Schema.Union([PipelineError, EnvironmentAuthorizationError]),
+});
+
+const WsPipelineRunsCancelRpc = Rpc.make(WS_METHODS.pipelineRunsCancel, {
+  payload: PipelineRunCancelInput,
+  success: PipelineRunResult,
+  error: Schema.Union([PipelineError, EnvironmentAuthorizationError]),
+});
+
+const WsPipelineRunsSetPauseBeforeRpc = Rpc.make(WS_METHODS.pipelineRunsSetPauseBefore, {
+  payload: PipelineRunSetPauseBeforeInput,
+  success: PipelineRunResult,
+  error: Schema.Union([PipelineError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2133,6 +2221,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsPipelinesSubscribeRpc,
+  WsPipelinesUpsertRpc,
+  WsPipelinesDeleteRpc,
+  WsPipelineRunsSubscribeRpc,
+  WsPipelineRunsStartRpc,
+  WsPipelineRunsContinueRpc,
+  WsPipelineRunsRetryStepRpc,
+  WsPipelineRunsSkipStepRpc,
+  WsPipelineRunsCancelRpc,
+  WsPipelineRunsSetPauseBeforeRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

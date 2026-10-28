@@ -17,7 +17,13 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { draftWorkspaceStrategy } from "@t3tools/client-runtime/operations";
+import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import {
   CommonActions,
   StackActions,
@@ -33,6 +39,7 @@ import { KeyboardController } from "react-native-keyboard-controller";
 
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   resolveEnvironmentMachineKind,
@@ -55,6 +62,12 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
+import { randomHex } from "../../lib/uuid";
+import { Menu } from "../../components/ui/Menu";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
+import { nextPipelineStartAttempt, type PipelineStartAttempt } from "./pipeline-run-view";
+import { waitForThreadShell } from "./wait-for-thread-shell";
 
 import {
   clearComposerDraftContent,
@@ -193,6 +206,26 @@ export function NewTaskDraftScreen(props: {
     selectedProject?.environmentId ?? null,
   );
   const environmentConnected = connectionState === "connected";
+  // Pipelines are an opt-in server capability; older servers never see the selector.
+  const supportsPipelines =
+    environmentConnected &&
+    selectedEnvironmentServerConfig?.environment.capabilities.pipelines === true;
+  const pipelinesQuery = useEnvironmentQuery(
+    supportsPipelines && selectedProject
+      ? serverEnvironment.pipelinesLive({
+          environmentId: selectedProject.environmentId,
+          input: {},
+        })
+      : null,
+  );
+  const pipelines = supportsPipelines ? (pipelinesQuery.data?.pipelines ?? []) : [];
+  const [pipelineId, setPipelineId] = useState<string | null>(null);
+  const selectedPipeline = pipelines.find((pipeline) => pipeline.id === pipelineId) ?? null;
+  const startPipelineRun = useAtomCommand(serverEnvironment.startPipelineRun, {
+    label: "pipeline start",
+    reportFailure: false,
+  });
+  const pipelineStartAttemptRef = useRef<PipelineStartAttempt | null>(null);
   const canOperate = useEnvironmentScope(
     selectedProject?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -593,6 +626,108 @@ export function NewTaskDraftScreen(props: {
     const selectedBranchName = workspaceSelection.branch;
     const initialMessageText = draft.text.trim();
 
+    if (selectedPipeline !== null) {
+      // A pipeline run starts on the server: no outbox, no model, text only.
+      if (draft.attachments.length > 0 || draft.context?.records?.length) {
+        Dialog.alert(
+          "Pipelines take text only",
+          "Remove attachments and context to start a pipeline.",
+        );
+        return null;
+      }
+      if (initialMessageText.length === 0 || !environmentConnected) return null;
+      if (workspaceSelection.pullRequestReference) {
+        Dialog.alert(
+          "Pipelines cannot start from a pull request",
+          "Choose a branch instead of a pull request to start a pipeline.",
+        );
+        return null;
+      }
+      if (workspaceMode === "worktree" && !selectedBranchName) return null;
+      const branch = resolveProjectThreadCreationBranch({
+        workspaceMode,
+        selectedBranch: selectedBranchName ?? null,
+        currentCheckoutBranch: flow.currentCheckoutBranchName,
+      });
+      const startFromOrigin = workspaceSelection.startFromOrigin ?? false;
+      const worktreePath =
+        workspaceMode === "worktree" ? null : (workspaceSelection.worktreePath ?? null);
+      const attempt = (pipelineStartAttemptRef.current = nextPipelineStartAttempt(
+        pipelineStartAttemptRef.current,
+        JSON.stringify([
+          selectedPipeline.id,
+          selectedProject.id,
+          initialMessageText,
+          workspaceMode,
+          branch,
+          worktreePath,
+          startFromOrigin,
+        ]),
+        () => ({
+          commandId: CommandId.make(creationMetadata.commandId),
+          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+        }),
+      ));
+      flow.setSubmitting(true);
+      const started = await startPipelineRun({
+        environmentId: selectedProject.environmentId,
+        input: {
+          commandId: CommandId.make(attempt.commandId),
+          pipelineId: selectedPipeline.id,
+          projectId: selectedProject.id,
+          input: initialMessageText,
+          workspaceStrategy: draftWorkspaceStrategy(
+            { branch, worktreePath },
+            workspaceMode === "worktree" && branch !== null
+              ? {
+                  projectCwd: selectedProject.workspaceRoot,
+                  baseBranch: branch,
+                  branch: attempt.worktreeBranchName,
+                  ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                }
+              : undefined,
+          ),
+          creationSource: "mobile",
+        },
+      });
+      flow.setSubmitting(false);
+      if (started._tag === "Failure") {
+        if (!isAtomCommandInterrupted(started)) {
+          const error = squashAtomCommandFailure(started);
+          Dialog.alert(
+            "Could not start pipeline",
+            error instanceof Error ? error.message : "The pipeline run could not be started.",
+          );
+        }
+        return null;
+      }
+      pipelineStartAttemptRef.current = null;
+      const parentThread = {
+        environmentId: selectedProject.environmentId,
+        threadId: started.value.run.parentThreadId,
+      };
+      // The shell follows the command on the shell stream; the thread route needs it to open.
+      flow.setSubmitting(true);
+      await waitForThreadShell(parentThread, 5_000);
+      flow.setSubmitting(false);
+      setPipelineId(null);
+      promptInputRef.current?.blur();
+      navigation.dispatch(
+        CommonActions.setParams(
+          submittedThreadParams(String(parentThread.environmentId), String(parentThread.threadId)),
+        ),
+      );
+      abortComposerDraftOperations(draftKey);
+      const startedDraft = getComposerDraftSnapshot(draftKey);
+      clearComposerDraftContent(draftKey, {
+        clearModelSelection: true,
+        clearWorkspaceSelection: true,
+        deferAttachmentCleanup: true,
+      });
+      scheduleUnusedComposerAttachmentCleanup(startedDraft.attachments);
+      return null;
+    }
+
     if (
       attachmentBlockReason !== null ||
       !modelSelection ||
@@ -863,6 +998,35 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const pipelineControl =
+    pipelines.length === 0 ? null : (
+      <View className="min-w-0 shrink">
+        <Menu
+          title="Pipeline"
+          actions={[
+            { id: "none", title: "No pipeline", state: selectedPipeline === null ? "on" : "off" },
+            ...pipelines.map((pipeline) => ({
+              id: pipeline.id,
+              title: pipeline.name,
+              state: selectedPipeline?.id === pipeline.id ? ("on" as const) : ("off" as const),
+            })),
+          ]}
+          onPressAction={({ nativeEvent }) =>
+            setPipelineId(nativeEvent.event === "none" ? null : nativeEvent.event)
+          }
+        >
+          <ComposerInlineControl
+            accessibilityLabel={`Pipeline: ${selectedPipeline?.name ?? "none"}`}
+            disabled={isComposerInteractionLocked}
+            icon="list.number"
+            label={selectedPipeline?.name ?? "Pipeline"}
+            maxWidth="100%"
+            selected={selectedPipeline !== null}
+          />
+        </Menu>
+      </View>
+    );
+
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
@@ -881,6 +1045,8 @@ export function NewTaskDraftScreen(props: {
         onPress={() => flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")}
         showChevron={false}
       />
+
+      {pipelineControl}
 
       <View className="min-w-0 shrink">
         <ComposerInlineControl
@@ -971,6 +1137,7 @@ export function NewTaskDraftScreen(props: {
           editorRef: promptInputRef,
           sendBlockedReason: setupBlockReason,
           interactionLocked: isComposerInteractionLocked,
+          pipelineSelected: selectedPipeline !== null,
         }}
         canOperateThread={canOperate}
         selectedThread={thread}

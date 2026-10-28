@@ -119,6 +119,7 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
+import * as PipelineService from "./pipelines/PipelineService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
@@ -1442,6 +1443,7 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const pipelines = yield* PipelineService.PipelineService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2228,6 +2230,45 @@ export const layerWsRpc = (
         [WS_METHODS.scheduledTasksRotateWebhookToken]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.rotateWebhookToken(input)),
+          ),
+        [WS_METHODS.pipelinesSubscribe]: (_input) => pipelines.subscribeList(),
+        [WS_METHODS.pipelinesUpsert]: (input) =>
+          Effect.annotateCurrentSpan(
+            input.id === undefined ? {} : { "pipeline.id": input.id },
+          ).pipe(Effect.andThen(pipelines.upsert(input))),
+        [WS_METHODS.pipelinesDelete]: (input) =>
+          Effect.annotateCurrentSpan({ "pipeline.id": input.id }).pipe(
+            Effect.andThen(pipelines.delete(input)),
+          ),
+        [WS_METHODS.pipelineRunsSubscribe]: (input) =>
+          Stream.unwrap(
+            Effect.annotateCurrentSpan({ "pipeline_run.id": input.runId }).pipe(
+              Effect.as(pipelines.subscribeRun(input)),
+            ),
+          ),
+        [WS_METHODS.pipelineRunsStart]: (input) =>
+          Effect.annotateCurrentSpan({ "pipeline.id": input.pipelineId }).pipe(
+            Effect.andThen(pipelines.start(input)),
+          ),
+        [WS_METHODS.pipelineRunsContinue]: (input) =>
+          Effect.annotateCurrentSpan({ "pipeline_run.id": input.runId }).pipe(
+            Effect.andThen(pipelines.continueRun(input)),
+          ),
+        [WS_METHODS.pipelineRunsRetryStep]: (input) =>
+          Effect.annotateCurrentSpan({ "pipeline_run.id": input.runId }).pipe(
+            Effect.andThen(pipelines.retryStep(input)),
+          ),
+        [WS_METHODS.pipelineRunsSkipStep]: (input) =>
+          Effect.annotateCurrentSpan({ "pipeline_run.id": input.runId }).pipe(
+            Effect.andThen(pipelines.skipStep(input)),
+          ),
+        [WS_METHODS.pipelineRunsCancel]: (input) =>
+          Effect.annotateCurrentSpan({ "pipeline_run.id": input.runId }).pipe(
+            Effect.andThen(pipelines.cancel(input)),
+          ),
+        [WS_METHODS.pipelineRunsSetPauseBefore]: (input) =>
+          Effect.annotateCurrentSpan({ "pipeline_run.id": input.runId }).pipe(
+            Effect.andThen(pipelines.setStepPauseBefore(input)),
           ),
         [WS_METHODS.guestShareCreate]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
