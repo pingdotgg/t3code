@@ -4904,6 +4904,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         runId: limited.id,
       });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:hold-available`),
+            type: "run.updated",
+            threadId,
+            runId: available.id,
+            occurredAt: now,
+            payload: { ...available, queueHeld: true },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make(`${threadId}:resume-available`),
+        threadId,
+      });
       yield* orchestrator.resumeQueuedRuns;
       const after = yield* orchestrator.getThreadProjection(threadId);
       const started = after.runs.find((run) => run.id === available.id);
@@ -5284,6 +5301,80 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         );
         assert.equal(resumed.runs.length, 3, "resume retries must not duplicate messages or runs");
       }),
+  );
+
+  it.effect("starts a provider wake queued beside a held queue", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const events = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("queue-hold-provider-wake");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Wake beside a held queue",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const send = (index: number, text: string, source: "web" | "provider" | "server" = "web") =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: source === "web" ? "user" : "agent",
+          creationSource: source,
+          commandId: CommandId.make(`${threadId}:message:${index}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:${index}`),
+          text,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+        });
+      yield* send(0, "Active");
+      yield* send(1, "Queued before the restart");
+      yield* recovery.reconcile("startup");
+      yield* send(2, "First background task completed.", "provider");
+      yield* send(3, "Background task completed.", "provider");
+      yield* send(4, "Continue after the command completed.", "server");
+      const queued = yield* orchestrator.getThreadProjection(threadId);
+      const [held, active, wake] = [queued.runs[1]!, queued.runs[2]!, queued.runs[3]!];
+      assert.equal(active.status, "starting");
+      assert.isTrue(held.queueHeld);
+      assert.equal(wake.status, "queued");
+      assert.notEqual(wake.queueHeld, true);
+      const textContinuation = queued.runs[4]!;
+      assert.isTrue(textContinuation.queueHeld);
+      const now = yield* DateTime.now;
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:active-done`),
+            type: "run.updated",
+            threadId,
+            runId: active.id,
+            occurredAt: now,
+            payload: { ...active, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(after.runs.find((run) => run.id === wake.id)?.status, "starting");
+      assert.deepEqual(
+        after.runs.find((run) => run.id === held.id),
+        held,
+      );
+      assert.deepEqual(
+        after.runs.find((run) => run.id === textContinuation.id),
+        textContinuation,
+      );
+    }),
   );
 
   it.effect("edits and removes queued runs", () =>
