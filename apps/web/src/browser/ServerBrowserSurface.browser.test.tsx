@@ -65,8 +65,9 @@ async function renderSurface(controller: PreviewStreamControl["controller"]) {
   );
   mocks.sent.length = 0;
   const input = container.querySelector("textarea")!;
+  const canvas = container.querySelector("canvas")!;
   stack.move();
-  return { screen, input };
+  return { screen, input, canvas };
 }
 
 const keys = () => mocks.sent.filter((input) => input.type === "key");
@@ -74,9 +75,12 @@ const keys = () => mocks.sent.filter((input) => input.type === "key");
 describe("ServerBrowserSurface clipboard commands", () => {
   it("sends a native Copy or Cut menu command to the page once", async () => {
     setup();
-    const { screen, input } = await renderSurface("you");
+    const { screen, input, canvas } = await renderSurface("you");
     await using _screen = screen;
+    // Chromium runs a script Copy or Cut only during a user gesture, as a menu click is.
+    await userEvent.click(canvas);
     input.focus();
+    mocks.sent.length = 0;
 
     // Like Electron's webContents.copy(): the browser's Copy command, with no key.
     expect(document.execCommand("copy")).toBe(true);
