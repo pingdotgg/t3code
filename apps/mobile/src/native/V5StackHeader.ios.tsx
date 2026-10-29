@@ -13,12 +13,12 @@ import { nativeWorkspaceTabCount } from "../features/workspace/workspace-tabs-st
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
 import { HeaderItemsWidthContext } from "./header-items-width";
+import { fitVerticalBarItems, type HeaderItem } from "./vertical-bar-items";
 import {
   SearchBar,
   Stack,
   type HeaderBarButtonMailSearchToolbarItem,
   type SearchBarCommands,
-  type StackHeaderConfigProps,
   type StackHeaderMinimizationBehaviorIOS,
   type StackHeaderMenuElementIOS,
   type StackHeaderMenuIOS,
@@ -30,7 +30,6 @@ import {
 const BAR_MARGINS = 32;
 const BAR_BUTTON_WIDTH = 44;
 
-type HeaderItem = NonNullable<NonNullable<StackHeaderConfigProps["ios"]>["leadingItems"]>[number];
 type ToolbarItem =
   | NativeStackHeaderItem
   | HeaderBarButtonMailSearchToolbarItem
@@ -100,45 +99,6 @@ function convertMenu(menu: MenuInput, id: string): StackHeaderMenuIOS {
     ];
   });
   return { id, type: "menu", title: menu.title, children };
-}
-
-function isSearchPlacement(item: HeaderItem) {
-  return "searchBarPlacement" in item && item.searchBarPlacement === true;
-}
-
-function verticalBarGroupSizes(items: readonly HeaderItem[]) {
-  const sizes = [0];
-  for (const item of items) {
-    if (item.type === "spacer") sizes.push(0);
-    else if (item.axisBehavior !== "horizontalOnly" && !isSearchPlacement(item))
-      sizes[sizes.length - 1]! += 1;
-  }
-  return sizes;
-}
-
-function foldIntoMoreMenu(items: readonly HeaderItem[]): HeaderItem {
-  const children = items.flatMap<StackHeaderMenuElementIOS>((item) => {
-    if (item.type !== "item" || "render" in item) return [];
-    if (item.menu) return [{ ...item.menu, title: item.title, icon: item.icon }];
-    return [
-      {
-        id: `${item.id}:more`,
-        type: "menuItem" as const,
-        itemType: "action" as const,
-        title: item.title,
-        icon: item.icon,
-        onPress: item.onPress,
-        disabled: !item.onPress,
-      },
-    ];
-  });
-  return {
-    type: "item",
-    id: "vertical-bar-more",
-    title: "More",
-    icon: { type: "sfSymbol", name: "ellipsis" },
-    menu: { id: "vertical-bar-more:menu", type: "menu", children },
-  };
 }
 
 function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderItem[] {
@@ -276,24 +236,15 @@ export function V5StackHeader(props: {
     nativeMetrics !== null &&
     nativeMetrics.verticalBarEdge !== "none" &&
     (props.column !== "primary" || nativeMetrics.horizontalSizeClass === "compact");
-  const foldable = (item: HeaderItem) =>
-    item.type === "item" &&
-    !("render" in item) &&
-    !isSearchPlacement(item) &&
-    item.axisBehavior !== "horizontalOnly";
-  const folded = trailing.filter(foldable);
-  if (
-    sharesVerticalBar &&
-    folded.length > 1 &&
-    !verticalBarGroupsFitAboveTabBar(nativeMetrics, workspaceTabCount, [
-      ...verticalBarGroupSizes(trailing),
-      props.onCompose ? 1 : 0,
-      keyboardVisible ? 1 : 0,
-    ])
-  ) {
-    const kept = trailing.filter((item) => item.type === "item" && !foldable(item));
-    trailing.length = 0;
-    trailing.push(foldIntoMoreMenu(folded), ...kept);
+  if (sharesVerticalBar) {
+    const fitted = fitVerticalBarItems(trailing, (groupSizes) =>
+      verticalBarGroupsFitAboveTabBar(nativeMetrics, workspaceTabCount, [
+        ...groupSizes,
+        props.onCompose ? 1 : 0,
+        keyboardVisible ? 1 : 0,
+      ]),
+    );
+    trailing.splice(0, trailing.length, ...fitted);
   }
   if (props.onCompose) {
     const compose: HeaderItem = {
