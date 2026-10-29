@@ -319,6 +319,20 @@ describe("mobile task permissions", () => {
   });
 });
 
+describe("queued follow-up model", () => {
+  it("queues a follow-up with no model when the user picked none", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState();
+
+    expect(await composer.onSendMessage()).toBe("message");
+
+    // The outbox can deliver after the thread moved elsewhere; only the server knows its model then.
+    expect(state.enqueue).toHaveBeenCalledOnce();
+    const [queued] = state.enqueue.mock.calls[0] as unknown as [object];
+    expect(queued).not.toHaveProperty("modelSelection");
+  });
+});
+
 describe("mobile handoff preview and submission", () => {
   it("follows project enablement and provider availability for the selected destination", async () => {
     state.grantedEnvironments.add("secondary");
