@@ -178,7 +178,15 @@ export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;
   readonly otlpLogsUrl: string | undefined;
+  readonly telemetryEnabled: boolean;
 }
+
+export const NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS: PersistedServerObservabilitySettings = {
+  otlpTracesUrl: undefined,
+  otlpMetricsUrl: undefined,
+  otlpLogsUrl: undefined,
+  telemetryEnabled: true,
+};
 
 function normalizePersistedServerSettingString(
   value: string | null | undefined,
@@ -187,17 +195,14 @@ function normalizePersistedServerSettingString(
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
-function extractPersistedServerObservabilitySettings(input: {
-  readonly observability?: {
-    readonly otlpTracesUrl?: string;
-    readonly otlpMetricsUrl?: string;
-    readonly otlpLogsUrl?: string;
-  };
-}): PersistedServerObservabilitySettings {
+function extractPersistedServerObservabilitySettings(
+  input: Pick<ServerSettings, "observability" | "telemetryEnabled">,
+): PersistedServerObservabilitySettings {
   return {
-    otlpTracesUrl: normalizePersistedServerSettingString(input.observability?.otlpTracesUrl),
-    otlpMetricsUrl: normalizePersistedServerSettingString(input.observability?.otlpMetricsUrl),
-    otlpLogsUrl: normalizePersistedServerSettingString(input.observability?.otlpLogsUrl),
+    otlpTracesUrl: normalizePersistedServerSettingString(input.observability.otlpTracesUrl),
+    otlpMetricsUrl: normalizePersistedServerSettingString(input.observability.otlpMetricsUrl),
+    otlpLogsUrl: normalizePersistedServerSettingString(input.observability.otlpLogsUrl),
+    telemetryEnabled: input.telemetryEnabled,
   };
 }
 
@@ -208,7 +213,7 @@ export function parsePersistedServerObservabilitySettings(
   if (Option.isSome(decoded)) {
     return extractPersistedServerObservabilitySettings(decoded.value);
   }
-  return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined, otlpLogsUrl: undefined };
+  return NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS;
 }
 
 function shouldReplaceTextGenerationModelSelection(

@@ -271,6 +271,7 @@ describe("serverSettings helpers", () => {
       otlpTracesUrl: "http://localhost:4318/v1/traces",
       otlpMetricsUrl: "http://localhost:4318/v1/metrics",
       otlpLogsUrl: "http://localhost:4318/v1/logs",
+      telemetryEnabled: true,
     });
     // The server still loads a file holding the retired token streaming mode.
     expect(
@@ -283,11 +284,19 @@ describe("serverSettings helpers", () => {
     ).toBe("http://localhost:4318/v1/traces");
   });
 
+  it("reads a persisted telemetry opt-out", () => {
+    expect(
+      parsePersistedServerObservabilitySettings(JSON.stringify({ telemetryEnabled: false }))
+        .telemetryEnabled,
+    ).toBe(false);
+  });
+
   it("falls back cleanly when persisted settings are invalid", () => {
     expect(parsePersistedServerObservabilitySettings("{")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
       otlpLogsUrl: undefined,
+      telemetryEnabled: true,
     });
   });
 
