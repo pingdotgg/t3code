@@ -893,8 +893,11 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
         assert.isFunction(canUseTool);
 
         const requestEvent = yield* runtime.events.pipe(
-          Stream.filter((event) => event.type === "runtime_request.updated"),
-          Stream.runHead,
+          Stream.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          ),
+          Stream.runCollect,
           Effect.forkScoped,
         );
         const command = { command: "node -e 'console.log(42)'" };
@@ -903,6 +906,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
             signal: new AbortController().signal,
             toolUseID: "tool-bash-accept-edits",
             requestId: "request-bash-accept-edits",
+            description: "Check the Node runtime",
           }),
         ).pipe(Effect.forkScoped);
         const first = yield* Effect.raceFirst(
@@ -915,12 +919,16 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
         );
         assert.equal(first.type, "request", "the command ran without asking");
         if (first.type !== "request") return;
-        const event = first.event;
-        if (Option.isNone(event) || event.value.type !== "runtime_request.updated") return;
-        assert.equal(event.value.runtimeRequest.kind, "command");
+        const event = first.event.find((event) => event.type === "runtime_request.updated");
+        assert.equal(event?.runtimeRequest.kind, "command");
+        const approval = first.event.findLast((event) => event.type === "turn_item.updated");
+        assert.equal(
+          approval?.turnItem.type === "approval_request" ? approval.turnItem.prompt : undefined,
+          command.command,
+        );
 
         yield* runtime.respondToRuntimeRequest({
-          requestId: event.value.runtimeRequest.id,
+          requestId: event!.runtimeRequest.id,
           decision: "accept",
         });
         assert.equal((yield* Fiber.join(decision))?.behavior, "allow");

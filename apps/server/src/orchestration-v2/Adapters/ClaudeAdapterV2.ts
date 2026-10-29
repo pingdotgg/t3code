@@ -9551,7 +9551,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
+          // The user approves the command itself; Claude's title and description only summarize it.
+          const command = inputRecordValue(nativeToolInput, "command");
           const prompt =
+            (typeof command === "string" && command.trim() !== "" ? command : undefined) ??
             callbackOptions.title ??
             callbackOptions.description ??
             callbackOptions.decisionReason ??
