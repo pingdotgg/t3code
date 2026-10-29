@@ -377,6 +377,35 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 
+  it.effect(
+    "preserves a rejected MCP pairing code for exactly one concurrent lower-access retry",
+    () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const pairing = yield* serverAuth.issuePairingCredential({
+          scopes: ["orchestration:read"],
+        });
+
+        const rejected = yield* Effect.flip(
+          serverAuth.consumeMcpApprovalCode(pairing.credential, "full-access"),
+        );
+        expect(rejected).toMatchObject({
+          _tag: "ServerAuthMcpApprovalCodeError",
+          reason: "insufficient_scope",
+        });
+
+        const retry = Effect.result(
+          serverAuth.consumeMcpApprovalCode(pairing.credential, "read-only"),
+        );
+        const results = yield* Effect.all([retry, retry], { concurrency: "unbounded" });
+
+        expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
+        expect(results.filter((result) => result._tag === "Failure")).toMatchObject([
+          { failure: { _tag: "ServerAuthMcpApprovalCodeError", reason: "unknown_or_used" } },
+        ]);
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
   it.effect("narrows seeded desktop grants to the requested scopes", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
