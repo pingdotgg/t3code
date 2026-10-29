@@ -107,6 +107,10 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
             }
           : {}),
         actionVariant: "outline",
+        data: {
+          expandableContent: message,
+          expandableLabels: { expand: "Show more", collapse: "Show less" },
+        },
       }),
     );
   };
