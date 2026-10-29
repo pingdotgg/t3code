@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { useSidebarSwipe } from "./sidebarSwipe";
@@ -37,6 +38,7 @@ function pointer(target: HTMLElement, type: string, x: number, pointerType = "to
   );
 }
 
+// These isolated gesture harnesses do not use routing.
 describe("sidebar touch events", () => {
   it("opens when touch and pointer IDs differ, even after pointer cancellation", async () => {
     await using screen = await render(<Harness />, { router: false });
@@ -198,8 +200,8 @@ describe("paired mobile drawers", () => {
   });
 });
 
-function SheetHarness() {
-  const [open, setOpen] = useState(true);
+function SheetHarness({ initiallyOpen = true }: { initiallyOpen?: boolean }) {
+  const [open, setOpen] = useState(initiallyOpen);
   const [clicks, setClicks] = useState(0);
   const sheetRef = useRef<HTMLDivElement>(null);
   useSidebarSwipe({ enabled: true, side: "right", open, setOpen, sheetRef });
@@ -262,10 +264,33 @@ describe("actual right sheet gestures", () => {
     await act(() => {
       pointer(button, "pointerdown", 150);
       swipe(button, 150, 250);
-      button.click();
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
     });
     expect(state.dataset.open).toBe("false");
     expect(state.dataset.clicks).toBe("0");
+  });
+
+  it("allows keyboard activation after a claimed swipe without a trailing click", async () => {
+    await using screen = await render(<SheetHarness initiallyOpen={false} />, { router: false });
+    const state = screen.container.firstElementChild as HTMLElement;
+    await act(() => swipe(state, 250, 150));
+    const button = document.querySelector("[data-slot='sheet-popup'] button") as HTMLElement;
+    button.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(state.dataset.clicks).toBe("1");
+  });
+
+  it("removes click suppression on unmount", async () => {
+    await using screen = await render(<Harness />, { router: false });
+    const target = screen.container.firstElementChild as HTMLElement;
+    await act(() => swipe(target, 100, 180));
+    await screen.unmount();
+    const listener = vi.fn();
+    window.addEventListener("click", listener, { once: true });
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 });
+    window.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(false);
+    expect(listener).toHaveBeenCalledOnce();
   });
 
   it("does not claim a tiny horizontal drift followed by vertical scrolling", async () => {

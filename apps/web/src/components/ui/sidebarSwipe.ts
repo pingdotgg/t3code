@@ -52,7 +52,11 @@ function isOpenSheetTarget(target: EventTarget | null, sheet: HTMLElement | null
  * and drop the swallow if the browser never emits it.
  */
 function suppressClickFromGesture() {
-  const stopClick = (event: Event) => {
+  const stopClick = (event: MouseEvent) => {
+    if (event.detail === 0) {
+      forget();
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     forget();
@@ -60,9 +64,12 @@ function suppressClickFromGesture() {
   const forget = () => {
     window.removeEventListener("click", stopClick, true);
     window.removeEventListener("pointerdown", forget, true);
+    window.clearTimeout(timeout);
   };
+  const timeout = window.setTimeout(forget, 700);
   window.addEventListener("click", stopClick, true);
   window.addEventListener("pointerdown", forget, true);
+  return forget;
 }
 
 export function useSidebarSwipe(input: {
@@ -95,6 +102,7 @@ export function useSidebarSwipe(input: {
 
     let gesture: SidebarSwipeGesture | null = null;
     let claimed = false;
+    let clearSuppression: (() => void) | undefined;
     const projectX = (x: number) => (side === "right" ? -x : x);
 
     const reset = () => {
@@ -138,7 +146,10 @@ export function useSidebarSwipe(input: {
       if (endSidebarSwipe(finished) === "commit") {
         commitOpen(finished.intent === "open");
       }
-      if (didClaim) suppressClickFromGesture();
+      if (didClaim) {
+        clearSuppression?.();
+        clearSuppression = suppressClickFromGesture();
+      }
       reset();
     };
 
@@ -189,6 +200,7 @@ export function useSidebarSwipe(input: {
     window.addEventListener("pointerup", onPointerUp, true);
     window.addEventListener("pointercancel", onPointerCancel, true);
     return () => {
+      clearSuppression?.();
       window.removeEventListener("touchstart", onTouchStart, true);
       window.removeEventListener("touchmove", onTouchMove, true);
       window.removeEventListener("touchend", onTouchEnd, true);
