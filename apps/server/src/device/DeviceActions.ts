@@ -11,6 +11,7 @@ import {
   type DeviceTextSize,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type { DeviceHostReady } from "./DeviceHost.ts";
@@ -432,9 +433,13 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
         });
       }
       const verb = input.decision === "grant" ? "grant" : "revoke";
-      for (const permission of permissions) {
-        yield* shell(["pm", verb, input.appId, permission], "permission").pipe(Effect.ignore);
-      }
+      // `pm` rejects a permission the app or system image does not declare, and Photos lists both
+      // the Android 13 and the older storage permission, so fail only when none of them applied.
+      const results = yield* Effect.forEach(permissions, (permission) =>
+        shell(["pm", verb, input.appId, permission], "permission").pipe(Effect.result),
+      );
+      const failure = results.find(Result.isFailure);
+      if (failure && !results.some(Result.isSuccess)) return yield* failure.failure;
       return;
     }
     case "openUrl":

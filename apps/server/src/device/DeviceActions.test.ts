@@ -98,6 +98,60 @@ describe("runDeviceAction", () => {
         expect(calls.at(-1)?.args.at(-1)).toBe(expected);
       }),
   );
+
+  it.effect.each([
+    ["camera", "grant", "android.permission.CAMERA"],
+    ["photos", "revoke", "android.permission.READ_MEDIA_IMAGES"],
+  ] as const)(
+    "reports an Android %s %s that no pm command applied",
+    ([permission, decision, firstPermission]) =>
+      Effect.gen(function* () {
+        const { ready } = makeReady((call) => ({
+          code: 1,
+          stderr: `Unknown package: ${call.args.at(-1)}`,
+        }));
+        const error = yield* Effect.flip(
+          runDeviceAction(ready, "android", {
+            type: "setPermission",
+            deviceId: "emulator-5554",
+            appId: "com.example.missing",
+            permission,
+            decision,
+          }),
+        );
+        expect(error._tag).toBe("DeviceOperationError");
+        expect(error.operation).toBe("permission");
+        expect(error._tag === "DeviceOperationError" && error.cause).toMatchObject({
+          stderr: `Unknown package: ${firstPermission}`,
+        });
+      }),
+  );
+
+  it.effect.each([
+    [
+      "photos",
+      ["android.permission.READ_MEDIA_IMAGES", "android.permission.READ_EXTERNAL_STORAGE"],
+      1,
+    ],
+    ["contacts", ["android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS"], 0],
+  ] as const)(
+    "keeps a partially applied %s permission change",
+    ([permission, permissions, success]) =>
+      Effect.gen(function* () {
+        const { ready, calls } = makeReady((call) => ({
+          code: call.args.at(-1) === permissions[success] ? 0 : 1,
+        }));
+        const result = yield* runDeviceAction(ready, "android", {
+          type: "setPermission",
+          deviceId: "emulator-5554",
+          appId: "com.example.app",
+          permission,
+          decision: "grant",
+        });
+        expect(result).toBeUndefined();
+        expect(calls.map((call) => call.args.at(-1))).toEqual(permissions);
+      }),
+  );
 });
 
 describe("readDeviceDetail", () => {
