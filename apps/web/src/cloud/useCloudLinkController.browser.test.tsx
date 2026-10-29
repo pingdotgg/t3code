@@ -274,12 +274,17 @@ describe("useCloudLinkController", () => {
     expect(testState.toast).toHaveBeenCalledOnce();
     expect(testState.toast).toHaveBeenCalledWith(
       expect.objectContaining({
-        description: message,
+        description: "T3 Connect couldn't finish disconnecting. Try again.",
+        actionProps: {
+          children: "Copy trace ID",
+          onClick: expect.any(Function),
+        },
         data: {
-          secondaryActionProps: {
-            children: "Copy trace ID",
-            onClick: expect.any(Function),
-          },
+          actionLayout: "stacked-end",
+          actionVariant: "outline",
+          hideCopyButton: true,
+          expandableContent: message,
+          expandableLabels: { expand: "Show more", collapse: "Show less" },
         },
       }),
     );
