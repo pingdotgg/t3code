@@ -512,6 +512,42 @@ const cell = (text: string): GhosttyCell => ({
 });
 
 describe("terminalLinkAtPositionWithRange", () => {
+  it.each([
+    { text: "https://example.com/日本", cols: 80, end: { x: 23, y: 0 } },
+    { text: "src/日本/main.ts:3:1", cols: 80, end: { x: 19, y: 0 } },
+    { text: "https://example.com/🙂", cols: 80, end: { x: 21, y: 0 } },
+    { text: "https://example.com/日本", cols: 23, end: { x: 1, y: 1 } },
+  ])("keeps every cell of $text clickable at $cols columns", async ({ text, cols, end }) => {
+    const core = await GhosttyTerminalCore.create(
+      cols,
+      3,
+      8,
+      16,
+      {
+        foreground: { r: 255, g: 255, b: 255 },
+        background: { r: 0, g: 0, b: 0 },
+        cursor: { r: 255, g: 255, b: 255 },
+      },
+      () => {},
+    );
+    try {
+      core.write(text + " next");
+      const rows = core.snapshot().rowData;
+      for (let y = 0; y <= end.y; y += 1) {
+        const lastColumn = y === end.y ? end.x : cols - 2;
+        for (let x = 0; x <= lastColumn; x += 1) {
+          expect(terminalLinkAtPositionWithRange(rows, y, x)).toEqual({
+            text,
+            range: { start: { x: 0, y: 0 }, end },
+          });
+        }
+      }
+      expect(terminalLinkAtPositionWithRange(rows, end.y, end.x + 1)).toBeNull();
+    } finally {
+      core.dispose();
+    }
+  });
+
   it("activates a wrapped quoted Windows path from its spaces and position suffix", () => {
     const row = (text: string, isWrapContinuation: boolean): GhosttyRow => ({
       cells: Array.from(text, (character) => cell(character)),
