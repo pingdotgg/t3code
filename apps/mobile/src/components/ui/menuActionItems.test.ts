@@ -1,5 +1,5 @@
 import type { MenuAction } from "@react-native-menu/menu";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
 import { appBarMenuItemsFromActions } from "./menuActionItems";
