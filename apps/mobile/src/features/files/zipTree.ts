@@ -133,7 +133,7 @@ export function zipDownloadTimeLeft(input: {
   const seconds = Math.ceil(
     ((input.totalBytes - input.receivedBytes) * input.elapsedMs) / input.receivedBytes / 1000,
   );
-  return seconds < 60
-    ? `About ${seconds} ${seconds === 1 ? "second" : "seconds"} left`
-    : `About ${Math.ceil(seconds / 60)} minutes left`;
+  if (seconds < 60) return `About ${seconds} ${seconds === 1 ? "second" : "seconds"} left`;
+  const minutes = Math.ceil(seconds / 60);
+  return `About ${minutes} ${minutes === 1 ? "minute" : "minutes"} left`;
 }
