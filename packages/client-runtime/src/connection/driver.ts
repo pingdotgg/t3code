@@ -33,6 +33,12 @@ export type ConnectionDriverProgress =
   | {
       readonly stage: Exclude<ConnectionAttemptStage, "preparing">;
       readonly prepared: PreparedConnection;
+    }
+  | {
+      // The socket opened; the stage stays synchronizing until the first snapshot.
+      readonly stage: "synchronizing";
+      readonly prepared: PreparedConnection;
+      readonly transportOpened: true;
     };
 
 export interface EnvironmentConnectionLease {
@@ -197,6 +203,8 @@ export const make = Effect.gen(function* () {
         yield* reportProgress({ stage: "opening", prepared });
         const session = yield* sessions.connect(prepared);
         yield* reportProgress({ stage: "synchronizing", prepared });
+        yield* session.opened;
+        yield* reportProgress({ stage: "synchronizing", prepared, transportOpened: true });
         yield* session.ready;
         // The server closes a socket when its session expires, unless the same key renewed it.
         if (prepared.httpAuthorization?._tag === "Dpop") {

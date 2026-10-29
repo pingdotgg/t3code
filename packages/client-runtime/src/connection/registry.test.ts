@@ -425,6 +425,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
                   type: "snapshot" as const,
                   config: { directEndpoints: options.directEndpoints } as ServerConfig,
                 }),
+          opened: Effect.void,
           ready: Effect.void,
           probe: Effect.void,
           inboundFrames: Effect.succeed(0),
