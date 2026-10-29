@@ -1007,6 +1007,24 @@ it.effect("GitVcsDriver treats a missing git executable as outside any repositor
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "GitVcsDriver detects a repository whose path contains a newline",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-newline-repo-" });
+      const cwd = path.join(parent, "multi\nline");
+      yield* fileSystem.makeDirectory(cwd);
+      yield* runGit(cwd, ["init"]);
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+      const repository = yield* driver.detectRepository(cwd);
+      assert.strictEqual(repository?.rootPath, yield* fileSystem.realPath(cwd));
+      assert.strictEqual(repository?.metadataPath, ".git");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "GitVcsDriver still fails detection when git exists but cannot be spawned",
   () =>
     Effect.gen(function* () {
