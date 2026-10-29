@@ -45,7 +45,7 @@ export function PipelineStepModelPickerRouteScreen() {
           : undefined,
         selections: selectedModel?.options,
       }),
-    [selectedOption?.capabilities, selectedModel?.options],
+    [selectedOption, selectedModel?.options],
   );
 
   if (!editor || !step) return <MissingPipelineDraft />;

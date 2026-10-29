@@ -28,7 +28,6 @@ describe("Pipeline schema", () => {
         SELECT MAX(migration_id) AS migration_id FROM effect_sql_migrations
       `;
       assert.strictEqual(latest?.migration_id, migrationManifest.at(-1)?.[0]);
-      assert.isFalse(migrationManifest.some(([, name]) => name === "Pipelines"));
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

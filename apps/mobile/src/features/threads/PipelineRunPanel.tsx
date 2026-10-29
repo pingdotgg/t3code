@@ -135,21 +135,19 @@ export function PipelineRunPanel(props: {
     if (inFlightRef.current || busy !== null) return;
     inFlightRef.current = true;
     setRequestKey(key);
-    try {
-      const result = await action();
-      reportFailure(title, result);
-      if (result._tag === "Success") {
-        const updatedAt = result.value.run.updatedAt;
-        setSync({ key, updatedAt });
-        // A subscription that never catches up must not lock the run for good.
-        setTimeout(
-          () => setSync((current) => (current?.updatedAt === updatedAt ? null : current)),
-          SYNC_LOCK_MAX_MS,
-        );
-      }
-    } finally {
+    const result = await action().finally(() => {
       inFlightRef.current = false;
       setRequestKey(null);
+    });
+    reportFailure(title, result);
+    if (result._tag === "Success") {
+      const updatedAt = result.value.run.updatedAt;
+      setSync({ key, updatedAt });
+      // A subscription that never catches up must not lock the run for good.
+      setTimeout(
+        () => setSync((current) => (current?.updatedAt === updatedAt ? null : current)),
+        SYNC_LOCK_MAX_MS,
+      );
     }
   };
 
