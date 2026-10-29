@@ -1,24 +1,32 @@
-import { type ReactNode } from "react";
+import { type ReactNode, type Ref } from "react";
 
 import { Sheet, SheetHeader, SheetPopup, SheetTitle } from "./ui/sheet";
 
-export function RightPanelSheet(props: {
+export function RightPanelSheet({
+  animationDurationMs,
+  children,
+  open,
+  onClose,
+  sheetRef,
+}: {
   animationDurationMs: number;
   children: ReactNode;
   open: boolean;
   onClose: () => void;
+  sheetRef?: Ref<HTMLDivElement> | undefined;
 }) {
   return (
     <Sheet
-      open={props.open}
+      open={open}
       onOpenChange={(open) => {
         if (!open) {
-          props.onClose();
+          onClose();
         }
       }}
     >
       <SheetPopup
-        transitionDurationMs={props.animationDurationMs}
+        ref={sheetRef}
+        transitionDurationMs={animationDurationMs}
         side="right"
         showCloseButton={false}
         keepMounted
@@ -27,7 +35,7 @@ export function RightPanelSheet(props: {
         <SheetHeader className="sr-only">
           <SheetTitle>Workspace panel</SheetTitle>
         </SheetHeader>
-        {props.children}
+        {children}
       </SheetPopup>
     </Sheet>
   );
