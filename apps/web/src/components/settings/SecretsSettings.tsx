@@ -35,9 +35,18 @@ const SECRET_PROVIDER_KINDS: Readonly<
 
 export function SecretsSettingsPanel() {
   const { scope, environment } = useSettingsScope();
+  const connected = environment?.connection.phase === "connected";
   return (
     <SettingsPageContainer>
-      {environment?.connection.phase === "connected" ? (
+      {connected &&
+      environment.serverConfig !== null &&
+      environment.serverConfig.secretProviderSettings !== true ? (
+        <SettingsSection {...searchableSetting("secret-providers")}>
+          <p className="px-4 py-3 text-sm text-muted-foreground">
+            Update T3 Code on {environment.label} to manage its secret providers.
+          </p>
+        </SettingsSection>
+      ) : connected ? (
         <EnvironmentSecretProviders
           key={environment.environmentId}
           environment={environment}

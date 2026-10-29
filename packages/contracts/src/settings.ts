@@ -859,7 +859,7 @@ export const UsageLimitSourceConfig = Schema.Struct({
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
-// Final once shipped: a key or field that fails here fails the whole settings decode on older builds.
+// Final once shipped: older builds drop entries whose key fails here, and erase them on their next save.
 // Unlike provider slugs it may start with a digit, so a provider named "1Password" fits.
 const SecretProviderSlug = TrimmedNonEmptyString.check(
   Schema.isMaxLength(64),
@@ -903,11 +903,31 @@ export const SecretProviderConfig = Schema.Struct({
 });
 export type SecretProviderConfig = typeof SecretProviderConfig.Type;
 
+/** Kinds this build can resolve. Their `config` holds no credentials, so clients may read it. */
+const SECRET_PROVIDER_KIND_CONFIG_GUARDS: Readonly<Record<string, (config: unknown) => boolean>> = {
+  one_password: Schema.is(OnePasswordSecretProviderConfig),
+};
+
+export function isKnownSecretProviderKind(kind: string): boolean {
+  return Object.hasOwn(SECRET_PROVIDER_KIND_CONFIG_GUARDS, kind);
+}
+
 // Limits that may change later are enforced on writes only, never on the stored envelope.
+// Writes must be a kind this build knows with a config it accepts, so an older server
+// rejects a newer kind instead of storing what it cannot check.
 const SecretProviderConfigWrite = Schema.Struct({
   ...SecretProviderConfig.fields,
   label: SecretProviderLabel,
-});
+}).check(
+  Schema.makeFilter((entry) => {
+    if (!isKnownSecretProviderKind(entry.kind)) {
+      return `Unsupported secret provider kind: ${entry.kind}.`;
+    }
+    return SECRET_PROVIDER_KIND_CONFIG_GUARDS[entry.kind]!(entry.config)
+      ? true
+      : `Invalid ${entry.kind} secret provider config.`;
+  }),
+);
 
 export const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
 export type SourceControlHostSettings = typeof SourceControlHostSettings.Type;
