@@ -238,6 +238,7 @@ describe("installRelayTelemetryEnabled", () => {
     env: NodeJS.ProcessEnv,
     policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
     loginShellEnv: NodeJS.ProcessEnv = {},
+    telemetrySetting = true,
   ) =>
     Effect.gen(function* () {
       const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
@@ -253,7 +254,7 @@ describe("installRelayTelemetryEnabled", () => {
         listeners.get(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL)?.(event as never);
         return event.returnValue;
       };
-      yield* installRelayTelemetryEnabled().pipe(
+      yield* installRelayTelemetryEnabled(telemetrySetting).pipe(
         Effect.provideService(HostProcess.Environment, env),
         Effect.provideService(DesktopShellEnvironment.DesktopShellEnvironment, {
           installIntoProcess: Effect.succeed(true),
@@ -306,6 +307,22 @@ describe("installRelayTelemetryEnabled", () => {
       // A policy that cannot be read fails closed.
       assert.isFalse(
         yield* after({}, new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
+      );
+    }),
+  );
+
+  it.effect("follows the server setting unless the variable was set at launch", () =>
+    Effect.gen(function* () {
+      const off = { beforeDiscovery: false, afterDiscovery: false };
+      assert.deepEqual(yield* relayTelemetryEnabled({}, undefined, {}, false), off);
+      // A login shell value arrives late and can only opt out.
+      assert.deepEqual(
+        yield* relayTelemetryEnabled({}, undefined, { T3CODE_TELEMETRY_ENABLED: "true" }, false),
+        off,
+      );
+      assert.deepEqual(
+        yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "true" }, undefined, {}, false),
+        { beforeDiscovery: null, afterDiscovery: true },
       );
     }),
   );

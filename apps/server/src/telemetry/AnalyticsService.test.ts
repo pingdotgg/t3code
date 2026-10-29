@@ -24,6 +24,7 @@ import type { ManagedPolicyDocument } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { getTelemetryIdentity } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
@@ -113,15 +114,27 @@ const recordTwentyEvents = Effect.gen(function* () {
   }
 });
 
-const analyticsLayerWith = (client: HttpClient.HttpClient, policy?: ManagedPolicyDocument) =>
-  AnalyticsService.layer.pipe(
+interface AnalyticsTestOptions {
+  readonly variable?: boolean | null;
+  readonly setting?: boolean;
+  readonly policy?: ManagedPolicyDocument;
+}
+
+const analyticsLayerWith = (client: HttpClient.HttpClient, options: AnalyticsTestOptions = {}) => {
+  const variable = options.variable === undefined ? true : options.variable;
+  return AnalyticsService.layer.pipe(
     Layer.provideMerge(
       ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
+    ),
+    Layer.provideMerge(
+      ServerSettings.layerTest(
+        options.setting === undefined ? {} : { telemetryEnabled: options.setting },
+      ),
     ),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          T3CODE_TELEMETRY_ENABLED: true,
+          ...(variable === null ? {} : { T3CODE_TELEMETRY_ENABLED: variable }),
           T3CODE_POSTHOG_KEY: "phc_test_key",
           T3CODE_POSTHOG_HOST: "http://localhost",
         }),
@@ -132,14 +145,17 @@ const analyticsLayerWith = (client: HttpClient.HttpClient, policy?: ManagedPolic
         Layer.succeed(HostProcess.Platform, "win32"),
         Layer.succeed(HostProcess.Architecture, "x64"),
         Layer.succeed(HttpClient.HttpClient, client),
-        ManagedPolicy.layerTest(policy),
+        ManagedPolicy.layerTest(options.policy),
       ),
     ),
   );
+};
 
 /**
  * Runs `record` (20 events by default), then lets `minutes` of background
  * flushes run against a client that answers every send with `respond`.
+ * `T3CODE_TELEMETRY_ENABLED` is `true` unless `variable` says otherwise; `null` leaves it unset.
+ * `policy` is the managed policy document, none by default.
  * Returns the sent batches.
  */
 const sendFor = (
@@ -148,9 +164,11 @@ const sendFor = (
   record: Effect.Effect<
     void,
     never,
-    AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
+    | AnalyticsService.AnalyticsService
+    | ServerSettings.ServerSettingsService
+    | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
-  policy?: ManagedPolicyDocument,
+  options: AnalyticsTestOptions = {},
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -165,7 +183,7 @@ const sendFor = (
         return yield* respond(request);
       }),
     );
-    const runtimeLayer = analyticsLayerWith(client, policy);
+    const runtimeLayer = analyticsLayerWith(client, options);
 
     yield* Effect.gen(function* () {
       yield* record;
@@ -258,13 +276,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       Effect.gen(function* () {
         const policy = { schemaVersion: 1, organization: "Example Corp" } as const;
         const allowed = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
-          ...policy,
-          limits: { telemetry: true },
+          policy: { ...policy, limits: { telemetry: true } },
         });
         assert.equal(allowed.length, 1);
         const denied = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
-          ...policy,
-          limits: { telemetry: false },
+          policy: { ...policy, limits: { telemetry: false } },
         });
         assert.deepEqual(denied, []);
       }),
@@ -292,6 +308,44 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
     }),
   );
 
+  it.effect("the setting turns usage events off while the variable is unset", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
+        variable: null,
+        setting: false,
+      });
+      assert.equal(batches.length, 0);
+    }),
+  );
+
+  it.effect("the variable overrides the setting", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
+        variable: true,
+        setting: false,
+      });
+      assert.equal(batches.flat().length, 20);
+    }),
+  );
+
+  it.effect("turning the setting off discards events still waiting to be sent", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(
+        1,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          yield* recordTwentyEvents;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* settings.updateSettings({ telemetryEnabled: false }).pipe(Effect.orDie);
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("test.after-opt-out");
+        }),
+        { variable: null },
+      );
+      assert.equal(batches.length, 0);
+    }),
+  );
+
   it.effect("flush drains all buffered events across multiple batches", () =>
     Effect.gen(function* () {
       const capturedRequests: Array<RecordedBatchRequest> = [];
@@ -299,7 +353,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
         prefix: "t3-telemetry-base-",
       });
 
-      const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
+      const layerTelemetry = AnalyticsService.layer.pipe(
+        Layer.provideMerge(layerServerConfig),
+        Layer.provide(ServerSettings.layerTest()),
+      );
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: true,
@@ -401,7 +458,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
         prefix: "t3-telemetry-disabled-",
       });
-      const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
+      const layerTelemetry = AnalyticsService.layer.pipe(
+        Layer.provideMerge(layerServerConfig),
+        Layer.provide(ServerSettings.layerTest()),
+      );
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: false,

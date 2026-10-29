@@ -404,6 +404,22 @@ describe("isRelayTracingEnabled", () => {
     );
   });
 
+  it("follows the telemetry setting unless T3CODE_TELEMETRY_ENABLED is set", () => {
+    assert.isFalse(OtelEnvironment.isRelayTracingEnabled({}, false));
+    assert.isTrue(
+      OtelEnvironment.isRelayTracingEnabled({ T3CODE_TELEMETRY_ENABLED: "true" }, false),
+    );
+    assert.isFalse(
+      OtelEnvironment.isRelayTracingEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }, true),
+    );
+    assert.isFalse(
+      OtelEnvironment.isRelayTracingEnabled(
+        { T3CODE_TELEMETRY_ENABLED: "true", OTEL_SDK_DISABLED: "true" },
+        true,
+      ),
+    );
+  });
+
   it.effect("product opt-out beats SDK enable without disabling user-configured tracing", () =>
     Effect.gen(function* () {
       const env = {
