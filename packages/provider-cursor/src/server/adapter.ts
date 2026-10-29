@@ -939,6 +939,8 @@ interface ActiveCursorTurn {
   finalized: boolean;
   /** The agent's latest turn ended and no new work has started since. */
   turnEnded: boolean;
+  /** Bumps when new work starts so a pending idle finalize is ignored. */
+  idleFinalizeGeneration: number;
 }
 
 interface CursorLiveAgent {
@@ -1984,97 +1986,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           return candidates.filter((value): value is string => typeof value === "string").join("");
         };
 
-        const handleInteractionUpdate = Effect.fnUntraced(function* (
-          context: ActiveCursorTurn,
-          update: InteractionUpdate,
-        ) {
-          if (context.finalized) {
-            return;
-          }
-          if (update.type === "turn-ended") {
-            context.turnEnded = true;
-          } else if (
-            update.type === "step-started" ||
-            update.type === "user-message-appended" ||
-            update.type === "text-delta" ||
-            update.type === "thinking-delta" ||
-            update.type === "partial-tool-call" ||
-            update.type === "tool-call-started"
-          ) {
-            context.turnEnded = false;
-          }
-          switch (update.type) {
-            case "text-delta":
-              // Classify each assistant message on its own, so earlier
-              // commentary does not hide a later standalone transport dump.
-              if (context.assistant.current === null) {
-                context.assistantReply = new CursorTransportFailure();
-              }
-              context.assistantReply.push(update.text);
-              yield* completeReasoning(context);
-              yield* appendTextSegment({
-                context,
-                stream: context.assistant,
-                kind: "assistant",
-                text: update.text,
-              });
-              yield* emitAssistant(context, false);
-              return;
-            case "thinking-delta":
-              yield* completeAssistant(context);
-              yield* appendTextSegment({
-                context,
-                stream: context.reasoning,
-                kind: "reasoning",
-                text: update.text,
-              });
-              yield* emitReasoning(context, false);
-              return;
-            case "thinking-completed":
-              yield* completeReasoning(context);
-              return;
-            case "tool-call-started":
-            case "partial-tool-call":
-            case "tool-call-completed":
-              yield* completeAssistant(context);
-              yield* completeReasoning(context);
-              yield* handleToolUpdate(context, update);
-              return;
-            case "step-completed":
-            case "turn-ended":
-              yield* completeAssistant(context);
-              yield* completeReasoning(context);
-              return;
-            case "shell-output-delta": {
-              const shell = Array.from(context.tools.values())
-                .toReversed()
-                .find((candidate) => candidate.toolCall.type === "shell");
-              if (shell === undefined) {
-                return;
-              }
-              const chunk = shellOutputText(update.event);
-              if (chunk.length === 0) return;
-              // Persist output once; live hub deltas avoid quadratic event-store growth.
-              shell.streamedOutput = (shell.streamedOutput + chunk).slice(
-                -MAX_CURSOR_STREAMED_OUTPUT_CHARS,
-              );
-              yield* emitProviderEvent({
-                type: "command_output.delta",
-                driver: CursorAgentSdk.CURSOR_PROVIDER,
-                threadId: shell.target.threadId,
-                itemId: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CursorAgentSdk.CURSOR_PROVIDER,
-                  nativeItemId: shell.callId,
-                }),
-                chunk,
-              });
-              return;
-            }
-            default:
-              return;
-          }
-        });
-
         const providerTurnPayload = (input: {
           readonly context: ActiveCursorTurn;
           readonly status: OrchestrationV2ProviderTurn["status"];
@@ -2184,6 +2095,129 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
           yield* Deferred.succeed(input.context.completed, undefined);
+        });
+
+        const cursorTurnHasActiveWork = (context: ActiveCursorTurn) =>
+          context.tools.size > 0 ||
+          Array.from(context.subagents.values()).some((subagent) =>
+            isOrchestrationV2WorkActive(subagent.task.status),
+          );
+
+        const scheduleIdleTurnFinalize = Effect.fnUntraced(function* (context: ActiveCursorTurn) {
+          if (context.finalized || !context.turnEnded || cursorTurnHasActiveWork(context)) {
+            return;
+          }
+          const generation = ++context.idleFinalizeGeneration;
+          yield* Effect.forkIn(
+            Effect.gen(function* () {
+              yield* Effect.yieldNow;
+              if (
+                context.finalized ||
+                context.idleFinalizeGeneration !== generation ||
+                !context.turnEnded ||
+                cursorTurnHasActiveWork(context)
+              ) {
+                return;
+              }
+              yield* finalizeTurn({ context, status: "completed" });
+            }),
+            sessionScope,
+          );
+        });
+
+        const handleInteractionUpdate = Effect.fnUntraced(function* (
+          context: ActiveCursorTurn,
+          update: InteractionUpdate,
+        ) {
+          if (context.finalized) {
+            return;
+          }
+          if (update.type === "turn-ended") {
+            context.turnEnded = true;
+          } else if (
+            update.type === "step-started" ||
+            update.type === "user-message-appended" ||
+            update.type === "text-delta" ||
+            update.type === "thinking-delta" ||
+            update.type === "partial-tool-call" ||
+            update.type === "tool-call-started"
+          ) {
+            context.turnEnded = false;
+            context.idleFinalizeGeneration += 1;
+          }
+          switch (update.type) {
+            case "text-delta":
+              // Classify each assistant message on its own, so earlier
+              // commentary does not hide a later standalone transport dump.
+              if (context.assistant.current === null) {
+                context.assistantReply = new CursorTransportFailure();
+              }
+              context.assistantReply.push(update.text);
+              yield* completeReasoning(context);
+              yield* appendTextSegment({
+                context,
+                stream: context.assistant,
+                kind: "assistant",
+                text: update.text,
+              });
+              yield* emitAssistant(context, false);
+              return;
+            case "thinking-delta":
+              yield* completeAssistant(context);
+              yield* appendTextSegment({
+                context,
+                stream: context.reasoning,
+                kind: "reasoning",
+                text: update.text,
+              });
+              yield* emitReasoning(context, false);
+              return;
+            case "thinking-completed":
+              yield* completeReasoning(context);
+              return;
+            case "tool-call-started":
+            case "partial-tool-call":
+            case "tool-call-completed":
+              yield* completeAssistant(context);
+              yield* completeReasoning(context);
+              yield* handleToolUpdate(context, update);
+              return;
+            case "step-completed":
+            case "turn-ended":
+              yield* completeAssistant(context);
+              yield* completeReasoning(context);
+              if (update.type === "turn-ended") {
+                yield* scheduleIdleTurnFinalize(context);
+              }
+              return;
+            case "shell-output-delta": {
+              const shell = Array.from(context.tools.values())
+                .toReversed()
+                .find((candidate) => candidate.toolCall.type === "shell");
+              if (shell === undefined) {
+                return;
+              }
+              const chunk = shellOutputText(update.event);
+              if (chunk.length === 0) return;
+              // Persist output once; live hub deltas avoid quadratic event-store growth.
+              shell.streamedOutput = (shell.streamedOutput + chunk).slice(
+                -MAX_CURSOR_STREAMED_OUTPUT_CHARS,
+              );
+              yield* emitProviderEvent({
+                type: "command_output.delta",
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                threadId: shell.target.threadId,
+                itemId: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  nativeItemId: shell.callId,
+                }),
+                chunk,
+              });
+              return;
+            }
+            default:
+              return;
+          }
         });
 
         const isResumeFailureAfterTurnEnded = (context: ActiveCursorTurn, result: RunResult) =>
@@ -2437,6 +2471,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               interrupted: false,
               finalized: false,
               turnEnded: false,
+              idleFinalizeGeneration: 0,
             };
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({

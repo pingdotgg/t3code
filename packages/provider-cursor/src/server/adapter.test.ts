@@ -314,6 +314,15 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
+      reason: "turn-ended when run.wait never resolves",
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.never,
+      failure: null,
+    },
+    {
       reason: "no answer from a resume after the turn ended that made no progress",
       updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
       wait: Effect.succeed({
