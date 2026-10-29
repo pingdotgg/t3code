@@ -289,15 +289,12 @@ export function threadGitMenuDefinition(
     separateBackground: false,
     items: [
       {
-        id: "git-repository",
+        id: "git-status",
         title: compactMenuBranchLabel(model.currentBranchLabel),
         icon: THREAD_GIT_GLYPH,
-        disabled: props.hasThread === false,
-        subtitle:
-          props.hasThread === false
-            ? "Available after the first message"
-            : compactMenuStatus(props.gitStatus),
-        onPress: model.openGitInspector,
+        disabled: true,
+        subtitle: compactMenuStatus(props.gitStatus),
+        onPress: () => {},
       },
       {
         id: "git-quick-action",
@@ -318,6 +315,17 @@ export function threadGitMenuDefinition(
           void model.runMenuAction(item);
         },
       })),
+      {
+        id: "git-branches",
+        title: "Branches & worktrees…",
+        icon: "arrow.triangle.branch",
+        disabled: props.hasThread === false,
+        subtitle:
+          props.hasThread === false
+            ? "Available after the first message"
+            : "Switch branch, link a pull request",
+        onPress: model.openGitInspector,
+      },
     ],
   };
 }
@@ -332,18 +340,24 @@ export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
   const model = useThreadGitControlModel(props);
   const disabled = model.quickAction.disabled;
   const actions = [
+    {
+      id: "status",
+      title: compactMenuBranchLabel(model.currentBranchLabel),
+      subtitle: compactMenuStatus(props.gitStatus),
+      attributes: { disabled: true },
+    },
     ...model.menuActions.map((item) => ({
       id: item.id,
       title: item.label,
       attributes: { disabled: item.disabled },
     })),
     {
-      id: "repository",
-      title: compactMenuBranchLabel(model.currentBranchLabel),
+      id: "branches",
+      title: "Branches & worktrees…",
       subtitle:
         props.hasThread === false
           ? "Available after the first message"
-          : compactMenuStatus(props.gitStatus),
+          : "Switch branch, link a pull request",
       attributes: { disabled: props.hasThread === false },
     },
   ];
@@ -377,7 +391,7 @@ export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
         title="Git"
         actions={actions}
         onPressAction={({ nativeEvent }) => {
-          if (nativeEvent.event === "repository") model.openGitInspector();
+          if (nativeEvent.event === "branches") model.openGitInspector();
           const item = model.menuActions.find((candidate) => candidate.id === nativeEvent.event);
           if (item) void model.runMenuAction(item);
         }}
