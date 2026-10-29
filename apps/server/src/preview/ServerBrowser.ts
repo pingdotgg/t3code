@@ -260,7 +260,7 @@ interface ViewerState {
   readonly resume: () => Promise<void>;
   scrolledAt: number;
 
-  requestedSize: { width: number; height: number; order: number } | null;
+  requestedSize: { width: number; height: number } | null;
 }
 
 interface EncoderWindow {
@@ -288,6 +288,7 @@ interface ServerTab {
   readonly createdAt: number;
   usedAt: number;
   readonly viewers: Set<ViewerState>;
+  sizeViewer: ViewerState | null;
   readonly consoleEntries: Array<PreviewAutomationConsoleEntry>;
   readonly networkEntries: Array<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: Array<PreviewAutomationActionEvent>;
@@ -488,7 +489,6 @@ const make = Effect.gen(function* () {
   const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
-  let viewerResizeOrder = 0;
 
   const contexts = new ServerBrowserContexts({
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
@@ -705,10 +705,8 @@ const make = Effect.gen(function* () {
     if (tab.desktop) return;
     const size =
       fixedViewportSize(setting) ??
-      [...tab.viewers]
-        .map((viewer) => viewer.requestedSize)
-        .filter((requested) => requested !== null)
-        .sort((left, right) => right.order - left.order)[0] ??
+      tab.sizeViewer?.requestedSize ??
+      tab.page.viewportSize() ??
       UNATTACHED_FILL_VIEWPORT;
     await tab.page.setViewportSize({ width: size.width, height: size.height });
     await applyZoom(tab);
@@ -852,6 +850,7 @@ const make = Effect.gen(function* () {
       createdAt: Date.now(),
       usedAt: Date.now(),
       viewers: new Set(),
+      sizeViewer: null,
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
@@ -2333,7 +2332,6 @@ const make = Effect.gen(function* () {
         .catch(constVoid);
     }
     viewer.pressedButtons.clear();
-    viewer.requestedSize = null;
   };
 
   const dispatchViewerInput = async (
@@ -2419,14 +2417,24 @@ const make = Effect.gen(function* () {
         }
         return;
       case "resize": {
+        if (!tab.viewers.has(viewer)) return;
         const width = Math.min(Math.round(num(message.width)), 3840);
         const height = Math.min(Math.round(num(message.height)), 2160);
         if (width < 100 || height < 100) return;
-        viewer.requestedSize = { width, height, order: ++viewerResizeOrder };
+        viewer.requestedSize = { width, height };
+        // Keep one sizing viewer across handoffs; passive viewers must not fight over layout.
+        if (tab.control.controller === viewer.id || tab.sizeViewer === null)
+          tab.sizeViewer = viewer;
+        if (
+          tab.sizeViewer !== viewer ||
+          (tab.control.controller !== null && tab.control.controller !== viewer.id)
+        )
+          return;
         if (tab.setting._tag !== "fill" || tab.desktop) return;
         const current = tab.page.viewportSize();
         if (current?.width === width && current.height === height) return;
         await tab.page.setViewportSize({ width, height });
+        await applyZoom(tab);
         await broadcastViewport(tab);
         return;
       }
@@ -2556,6 +2564,16 @@ const make = Effect.gen(function* () {
       scrolledAt: 0,
       requestedSize: null,
     };
+    const releaseInput = async () => {
+      await releaseViewerInput(viewer, session);
+      const sizingViewer = tab.sizeViewer;
+      if (sizingViewer?.requestedSize) {
+        await dispatchViewerInput(tab, session, sizingViewer, {
+          type: "resize",
+          ...sizingViewer.requestedSize,
+        });
+      }
+    };
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         tab.viewers.add(viewer);
@@ -2563,8 +2581,19 @@ const make = Effect.gen(function* () {
       }),
       () =>
         Effect.promise(async () => {
-          await tab.control.disconnect(viewer.id, () => releaseViewerInput(viewer, session));
+          await tab.control.disconnect(viewer.id, releaseInput);
           tab.viewers.delete(viewer);
+          await Promise.resolve()
+            .then(() =>
+              tab.control.system(async () => {
+                if (tab.sizeViewer !== viewer) return;
+                tab.sizeViewer =
+                  [...tab.viewers].find((candidate) => candidate.requestedSize !== null) ?? null;
+                if (tab.setting._tag === "fill" && tab.sizeViewer)
+                  await applySetting(tab, tab.setting);
+              }),
+            )
+            .catch(constVoid);
           broadcastControl(tab);
           reportLiveTabs();
         }),
@@ -2650,9 +2679,7 @@ const make = Effect.gen(function* () {
               await taking;
               pushFileChooser(tab);
             } else if (message.type === "releaseControl") {
-              const releasing = tab.control.release(viewer.id, () =>
-                releaseViewerInput(viewer, session),
-              );
+              const releasing = tab.control.release(viewer.id, releaseInput);
               broadcastControl(tab);
               await releasing;
             } else if (
@@ -2666,6 +2693,8 @@ const make = Effect.gen(function* () {
                   ? { promptText: message.promptText }
                   : {}),
               });
+            } else if (message.type === "resize") {
+              await tab.control.system(() => dispatchViewerInput(tab, session, viewer, message));
             } else {
               const dispatch = (input: Record<string, unknown>) =>
                 dispatchViewerInput(tab, session, viewer, input);
