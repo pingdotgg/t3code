@@ -438,6 +438,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "thread-details-usage",
+    title: "Usage in thread details",
+    to: "/settings/labs",
+    searchTerms: ["beta limits 5 hour weekly context window tokens quota rate limit"],
+  },
+  {
     id: "guest-links",
     title: "Guest links",
     to: "/settings/labs",
