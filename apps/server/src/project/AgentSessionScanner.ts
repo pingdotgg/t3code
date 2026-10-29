@@ -199,7 +199,8 @@ export type AgentSessionRecentThread =
     }
   | { readonly _tag: "AlreadyImported"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
-  | { readonly _tag: "Skipped" };
+  | { readonly _tag: "Skipped" }
+  | { readonly _tag: "Deferred" };
 
 export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
@@ -1524,6 +1525,9 @@ export const make = Effect.gen(function* () {
   });
 
   let cachedCandidates: ReadonlyArray<RawCandidate> | null = null;
+  // An unchanged transcript that was read but could not be parsed fails the same way again, so
+  // later attempts skip it without spending the per-attempt budget.
+  const unimportableTranscripts = new Map<string, TranscriptIdentity>();
 
   const scan: AgentSessionScanner["Service"]["scan"] = Effect.gen(function* () {
     const { candidates: raw, truncated } = yield* collectCandidates();
@@ -1763,11 +1767,15 @@ export const make = Effect.gen(function* () {
     return Stream.fromIteratorSucceed(eligibleTranscripts.values(), 1).pipe(
       Stream.mapEffect(({ candidate, transcript }) =>
         Effect.gen(function* () {
-          const completed = completedByFile.get(
-            `${candidate.providerInstanceId}\0${transcript.filePath}`,
-          );
-          if (completed === undefined && (transcriptsRemaining === 0 || bytesRemaining === 0)) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          const fileKey = `${candidate.providerInstanceId}\0${transcript.filePath}`;
+          const completed = completedByFile.get(fileKey);
+          const unimportable = unimportableTranscripts.get(fileKey);
+          if (
+            completed === undefined &&
+            unimportable === undefined &&
+            (transcriptsRemaining === 0 || bytesRemaining === 0)
+          ) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Deferred" });
           }
           const stats = yield* statOption(transcript.filePath);
           if (Option.isNone(stats) || stats.value.type !== "File") {
@@ -1788,11 +1796,13 @@ export const make = Effect.gen(function* () {
             });
           }
           if (
-            transcriptsRemaining === 0 ||
             identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES ||
-            identity.size > bytesRemaining
+            (unimportable !== undefined && sameTranscriptIdentity(unimportable, identity))
           ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          }
+          if (transcriptsRemaining === 0 || identity.size > bytesRemaining) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Deferred" });
           }
           transcriptsRemaining -= 1;
           bytesRemaining -= identity.size;
@@ -1802,6 +1812,7 @@ export const make = Effect.gen(function* () {
           }
 
           if (Option.isNone(snapshot.cwd)) {
+            unimportableTranscripts.set(fileKey, identity);
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           const expandedCwd = expandHomePath(snapshot.cwd.value.trim(), homeDir);
@@ -1833,6 +1844,10 @@ export const make = Effect.gen(function* () {
             snapshot.claudeFields,
           );
           if (parsedThread === null) {
+            // A Codex rollout missing its inherited history may parse once that history fits.
+            if (candidate.source !== "codex" || inheritedRecords !== null) {
+              unimportableTranscripts.set(fileKey, identity);
+            }
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           let savedTitle: string | undefined;

@@ -1,5 +1,10 @@
 import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
-import type { AgentSessionProjectCandidate, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type {
+  AgentSessionImportResult,
+  AgentSessionProjectCandidate,
+  EnvironmentId,
+  ProjectId,
+} from "@t3tools/contracts";
 
 const RECENT_PROJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_SELECTION_MIN_THREADS = 3;
@@ -133,4 +138,60 @@ export function splitOnboardingProjectPath(path: string): {
 
 export function onboardingProjectKey(environmentId: EnvironmentId, path: string): string {
   return JSON.stringify([environmentId, path]);
+}
+
+/** Servers that omit deferredCount get one batch; the strict decrease guarantees the loop ends. */
+export function shouldImportNextBatch(
+  previous: AgentSessionImportResult | undefined,
+  current: AgentSessionImportResult,
+): boolean {
+  const deferred = current.deferredCount ?? 0;
+  return deferred > 0 && (previous === undefined || deferred < (previous.deferredCount ?? 0));
+}
+
+export function formatOnboardingImportProgress({
+  title,
+  position,
+  total,
+  batch,
+}: {
+  readonly title: string;
+  readonly position: number;
+  readonly total: number;
+  readonly batch: AgentSessionImportResult | null;
+}): string {
+  const label = `Importing ${title}${total > 1 ? ` (${position} of ${total})` : ""}…`;
+  if (batch === null) return label;
+  const imported = `${batch.importedCount} ${batch.importedCount === 1 ? "thread" : "threads"} imported`;
+  const left = batch.deferredCount ?? 0;
+  return `${label} ${imported}${left > 0 ? `, ${left} left` : ""}`;
+}
+
+export function formatOnboardingImportWarning({
+  imported,
+  failed,
+  deferred,
+  stopped,
+}: {
+  readonly imported: number;
+  readonly failed: number;
+  readonly deferred: number;
+  readonly stopped: boolean;
+}): string {
+  const threads = (count: number) => `${count} ${count === 1 ? "thread" : "threads"}`;
+  const sentences: Array<string> = [];
+  if (stopped) sentences.push("Import stopped.");
+  if (imported > 0) sentences.push(`Imported ${threads(imported)}.`);
+  if (failed > 0) sentences.push(`${threads(failed)} could not be imported.`);
+  if (deferred > 0) {
+    sentences.push(`${threads(deferred)} ${deferred === 1 ? "was" : "were"} not imported yet.`);
+  }
+  if (!stopped && failed === 0 && deferred === 0) {
+    sentences.push(
+      imported > 0
+        ? "Some thread history could not be imported."
+        : "Could not import thread history.",
+    );
+  }
+  return sentences.join(" ");
 }

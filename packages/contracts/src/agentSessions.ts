@@ -73,8 +73,12 @@ export class AgentSessionImportProjectChangedError extends Schema.TaggedError<Ag
 }
 
 export const AgentSessionImportResult = Schema.Struct({
+  // Includes transcripts imported by earlier attempts.
   importedCount: NonNegativeInt,
   skippedCount: NonNegativeInt,
+  // The part of skippedCount left for a later attempt by the per-attempt budget. Older servers
+  // omit it.
+  deferredCount: Schema.optionalKey(NonNegativeInt),
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 

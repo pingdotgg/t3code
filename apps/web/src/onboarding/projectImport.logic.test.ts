@@ -1,12 +1,20 @@
-import { EnvironmentId, ProjectId, type AgentSessionProjectCandidate } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  type AgentSessionImportResult,
+  type AgentSessionProjectCandidate,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  formatOnboardingImportProgress,
+  formatOnboardingImportWarning,
   groupOnboardingProjects,
   partitionOnboardingProjects,
   onboardingProjectKey,
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
+  shouldImportNextBatch,
 } from "./projectImport.logic";
 
 const now = Date.parse("2026-08-22T12:00:00.000Z");
@@ -247,5 +255,77 @@ describe("projects on multiple computers", () => {
     const first = { ...candidate("/code/app"), environmentId: "first" };
     const second = { ...candidate("/code/app"), environmentId: "second" };
     expect(partitionOnboardingProjects([first, second], now).recent).toEqual([first, second]);
+  });
+});
+
+describe("shouldImportNextBatch", () => {
+  const batch = (skippedCount: number, deferredCount?: number): AgentSessionImportResult => ({
+    importedCount: 1,
+    skippedCount,
+    ...(deferredCount === undefined ? {} : { deferredCount }),
+  });
+
+  it.each([
+    ["old server without deferredCount", batch(5), batch(5), false],
+    ["first batch with deferred threads", undefined, batch(5, 5), true],
+    ["deferred threads shrinking", batch(5, 5), batch(3, 3), true],
+    ["deferred threads unchanged", batch(5, 5), batch(5, 5), false],
+    ["nothing deferred", batch(5, 5), batch(2, 0), false],
+    ["first batch with nothing deferred", undefined, batch(0, 0), false],
+  ] as const)("%s", (_name, previous, current, expected) => {
+    expect(shouldImportNextBatch(previous, current)).toBe(expected);
+  });
+});
+
+describe("formatOnboardingImportProgress", () => {
+  const project = { title: "web", position: 2, total: 3 };
+
+  it.each([
+    [{ ...project, total: 1, batch: null }, "Importing web…"],
+    [{ ...project, batch: null }, "Importing web (2 of 3)…"],
+    [
+      { ...project, batch: { importedCount: 100, skippedCount: 153, deferredCount: 153 } },
+      "Importing web (2 of 3)… 100 threads imported, 153 left",
+    ],
+    [
+      { ...project, batch: { importedCount: 1, skippedCount: 0, deferredCount: 0 } },
+      "Importing web (2 of 3)… 1 thread imported",
+    ],
+    [
+      { ...project, batch: { importedCount: 4, skippedCount: 2 } },
+      "Importing web (2 of 3)… 4 threads imported",
+    ],
+  ] as const)("%j", (input, expected) => {
+    expect(formatOnboardingImportProgress(input)).toBe(expected);
+  });
+});
+
+describe("formatOnboardingImportWarning", () => {
+  it.each([
+    [
+      { imported: 3, failed: 2, deferred: 0, stopped: false },
+      "Imported 3 threads. 2 threads could not be imported.",
+    ],
+    [{ imported: 0, failed: 1, deferred: 0, stopped: false }, "1 thread could not be imported."],
+    [
+      { imported: 1, failed: 0, deferred: 0, stopped: false },
+      "Imported 1 thread. Some thread history could not be imported.",
+    ],
+    [{ imported: 0, failed: 0, deferred: 0, stopped: false }, "Could not import thread history."],
+    [
+      { imported: 4, failed: 0, deferred: 1, stopped: false },
+      "Imported 4 threads. 1 thread was not imported yet.",
+    ],
+    [
+      { imported: 4, failed: 2, deferred: 3, stopped: false },
+      "Imported 4 threads. 2 threads could not be imported. 3 threads were not imported yet.",
+    ],
+    [
+      { imported: 4, failed: 0, deferred: 3, stopped: true },
+      "Import stopped. Imported 4 threads. 3 threads were not imported yet.",
+    ],
+    [{ imported: 0, failed: 0, deferred: 0, stopped: true }, "Import stopped."],
+  ] as const)("%j", (input, expected) => {
+    expect(formatOnboardingImportWarning(input)).toBe(expected);
   });
 });

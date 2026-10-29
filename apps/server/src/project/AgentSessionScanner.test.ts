@@ -1623,6 +1623,83 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect(
+      "defers transcripts past the per-attempt budget and skips known failures for free",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-transcript-budget-claude-");
+          const codexHomePath = yield* makeTempDir("t3code-transcript-budget-codex-");
+          const workspace = yield* makeTempDir("t3code-transcript-budget-workspace-");
+          const writeRollout = (index: number, withPrompt: boolean) =>
+            writeTranscript({
+              filePath: path.join(
+                codexHomePath,
+                "sessions",
+                "2026",
+                "08",
+                "24",
+                `rollout-${String(index).padStart(3, "0")}.jsonl`,
+              ),
+              contents: [
+                { type: "session_meta", payload: { id: `session-${index}`, cwd: workspace } },
+                ...(withPrompt
+                  ? [
+                      {
+                        type: "event_msg",
+                        payload: { type: "user_message", message: "Import this prompt" },
+                      },
+                    ]
+                  : []),
+              ]
+                .map((record) => encodeTranscriptRecord(record))
+                .join("\n"),
+              mtimeMs: nowMs - index * 60_000,
+            });
+          // The 100 newest rollouts have no user message and fill the first attempt's budget.
+          for (let index = 0; index <= 200; index += 1) {
+            yield* writeRollout(index, index >= 100);
+          }
+          const tags = (outcomes: Iterable<AgentSessionScanner.AgentSessionRecentThread>) =>
+            Array.from(outcomes, (outcome) => outcome._tag);
+          const repeat = (count: number, tag: string) => Array.from({ length: count }, () => tag);
+
+          yield* Effect.gen(function* () {
+            const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+            const first = yield* Stream.runCollect(scanner.recentThreads(workspace));
+            expect(tags(first)).toEqual([...repeat(100, "Skipped"), ...repeat(101, "Deferred")]);
+
+            const second = yield* Stream.runCollect(scanner.recentThreads(workspace));
+            expect(tags(second)).toEqual([
+              ...repeat(100, "Skipped"),
+              ...repeat(100, "Importable"),
+              "Deferred",
+            ]);
+            const completed = Array.from(second).flatMap((outcome) =>
+              outcome._tag === "Importable" ? [outcome.source] : [],
+            );
+
+            // A changed transcript is read again instead of reusing its earlier failure.
+            yield* writeRollout(0, true);
+            const third = Array.from(
+              yield* Stream.runCollect(scanner.recentThreads(workspace, completed)),
+            );
+            expect(tags(third)).toEqual([
+              "Importable",
+              ...repeat(99, "Skipped"),
+              ...repeat(100, "AlreadyImported"),
+              "Importable",
+            ]);
+            expect([third[0], third[200]]).toMatchObject([
+              { thread: { providerSessionId: "session-0" } },
+              { thread: { providerSessionId: "session-200" } },
+            ]);
+          }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+        }),
+    );
+
     for (const source of ["claudeAgent", "codex"] as const) {
       for (const replacement of [
         "same root",
