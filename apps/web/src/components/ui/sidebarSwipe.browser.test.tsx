@@ -122,3 +122,77 @@ describe("sidebar touch events", () => {
     expect(target.dataset.open).toBe("true");
   });
 });
+
+function PairedHarness({
+  leftInitiallyOpen = false,
+  rightInitiallyOpen = false,
+}: {
+  leftInitiallyOpen?: boolean;
+  rightInitiallyOpen?: boolean;
+}) {
+  const [leftOpen, setLeftOpen] = useState(leftInitiallyOpen);
+  const [rightOpen, setRightOpen] = useState(rightInitiallyOpen);
+  const [chat, setChat] = useState<HTMLDivElement | null>(null);
+  const leftSheet = useRef<HTMLDivElement>(null);
+  const rightSheet = useRef<HTMLDivElement>(null);
+  useSidebarSwipe({ enabled: true, open: leftOpen, setOpen: setLeftOpen, sheetRef: leftSheet });
+  useSidebarSwipe({
+    enabled: true,
+    side: "right",
+    open: rightOpen,
+    setOpen: setRightOpen,
+    sheetRef: rightSheet,
+    openFrom: chat,
+  });
+  return (
+    <section data-left-open={leftOpen} data-right-open={rightOpen}>
+      <div ref={setChat} data-chat="" />
+      <div data-outside="" />
+      <div data-slot="sheet-viewport">
+        <div ref={leftSheet} data-left="" />
+      </div>
+      <div data-slot="sheet-viewport">
+        <div ref={rightSheet} data-right="" />
+      </div>
+    </section>
+  );
+}
+
+function swipe(target: HTMLElement, startX: number, endX: number) {
+  touch(target, "touchstart", startX, 200);
+  touch(target, "touchmove", endX, 201);
+  touch(target, "touchend", endX, 201, true);
+}
+
+describe("paired mobile drawers", () => {
+  it("opens the right tray with a leftward swipe across chat", async () => {
+    await using screen = await render(<PairedHarness />, { router: false });
+    const state = screen.container.firstElementChild as HTMLElement;
+    await act(() => swipe(state.querySelector("[data-chat]")!, 250, 150));
+    expect(state.dataset.rightOpen).toBe("true");
+    expect(state.dataset.leftOpen).toBe("false");
+  });
+
+  it("closes the right tray without opening the left sidebar", async () => {
+    await using screen = await render(<PairedHarness rightInitiallyOpen />, { router: false });
+    const state = screen.container.firstElementChild as HTMLElement;
+    await act(() => swipe(state.querySelector("[data-right]")!, 150, 250));
+    expect(state.dataset.rightOpen).toBe("false");
+    expect(state.dataset.leftOpen).toBe("false");
+  });
+
+  it("closes the left sidebar without opening the right tray", async () => {
+    await using screen = await render(<PairedHarness leftInitiallyOpen />, { router: false });
+    const state = screen.container.firstElementChild as HTMLElement;
+    await act(() => swipe(state.querySelector("[data-left]")!, 250, 150));
+    expect(state.dataset.leftOpen).toBe("false");
+    expect(state.dataset.rightOpen).toBe("false");
+  });
+
+  it("does not open the right tray from outside chat", async () => {
+    await using screen = await render(<PairedHarness />, { router: false });
+    const state = screen.container.firstElementChild as HTMLElement;
+    await act(() => swipe(state.querySelector("[data-outside]")!, 250, 150));
+    expect(state.dataset.rightOpen).toBe("false");
+  });
+});
