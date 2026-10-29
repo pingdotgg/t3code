@@ -218,6 +218,9 @@ vi.mock("./AndroidWorkspaceNavigation", () => ({
   FloatingWorkspaceTabs: () => null,
 }));
 vi.mock("./WorkspaceNoTabs", () => ({ WorkspaceNoTabs: () => null }));
+vi.mock("./WorkspaceAppBar", () => ({
+  WorkspaceAppBarScope: ({ children }: { children: ReactNode }) => children,
+}));
 
 function setup(split: boolean, floating: boolean) {
   mocks.split = split;

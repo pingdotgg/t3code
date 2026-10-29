@@ -12,6 +12,7 @@ import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
+import { WorkspaceAppBarScope } from "./WorkspaceAppBar";
 
 export function AndroidWorkspaceSidebar(props: {
   readonly children: ReactNode;
@@ -30,32 +31,34 @@ export function AndroidWorkspaceSidebar(props: {
   const context = { ...workspace, bottomClearance };
   if (enabled.length === 0) return <WorkspaceNoTabs />;
   return (
-    <WorkspaceTabPanes
-      tabs={NAVIGATION_TAB_ORDER}
-      selected={workspace.state.selectedTab}
-      renderTab={(tab) =>
-        tab === "threads" ? (
-          props.children
-        ) : tab !== "pullRequests" ? (
-          <View className="flex-1 bg-screen" />
-        ) : (
-          <WorkspaceTabsContext value={context}>
-            <PullRequestsScreen
-              sidebar
-              selectedPullRequestKey={props.selectedPullRequestKey}
-              renderFrame={(filters, list) => (
-                <View className="flex-1 bg-header">
-                  <PullRequestToolbar
-                    filters={filters}
-                    onRequestVisibility={props.onRequestVisibility}
-                  />
-                  <ScreenContent insetHorizontal>{list}</ScreenContent>
-                </View>
-              )}
-            />
-          </WorkspaceTabsContext>
-        )
-      }
-    />
+    <WorkspaceAppBarScope>
+      <WorkspaceTabPanes
+        tabs={NAVIGATION_TAB_ORDER}
+        selected={workspace.state.selectedTab}
+        renderTab={(tab) =>
+          tab === "threads" ? (
+            props.children
+          ) : tab !== "pullRequests" ? (
+            <View className="flex-1 bg-screen" />
+          ) : (
+            <WorkspaceTabsContext value={context}>
+              <PullRequestsScreen
+                sidebar
+                selectedPullRequestKey={props.selectedPullRequestKey}
+                renderFrame={(filters, list) => (
+                  <View className="flex-1 bg-header">
+                    <PullRequestToolbar
+                      filters={filters}
+                      onRequestVisibility={props.onRequestVisibility}
+                    />
+                    <ScreenContent insetHorizontal>{list}</ScreenContent>
+                  </View>
+                )}
+              />
+            </WorkspaceTabsContext>
+          )
+        }
+      />
+    </WorkspaceAppBarScope>
   );
 }

@@ -23,6 +23,8 @@ export function SettingsScreen(
     readonly children: ReactNode;
     readonly formSheet?: boolean;
     readonly workspaceRoot?: boolean;
+    /** Replaces the screen's own header, such as with the workspace tab bar. */
+    readonly appBar?: ReactNode;
   },
 ) {
   const navigation = useNavigation();
@@ -44,15 +46,16 @@ export function SettingsScreen(
 
   return (
     <View collapsable={false} className={`flex-1 ${surfaceClassName}`}>
-      {Platform.OS === "android" && props.formSheet ? (
-        <AndroidSheetHeader
-          title={props.title}
-          actions={props.actions}
-          trailing={props.trailing}
-          onBack={() => navigation.goBack()}
-          hideBottomBorder
-        />
-      ) : (
+      {props.appBar ??
+        (Platform.OS === "android" && props.formSheet ? (
+          <AndroidSheetHeader
+            title={props.title}
+            actions={props.actions}
+            trailing={props.trailing}
+            onBack={() => navigation.goBack()}
+            hideBottomBorder
+          />
+        ) : (
         <AppBar
           title={props.title}
           actions={props.actions}
@@ -62,7 +65,7 @@ export function SettingsScreen(
           onBack={workspaceRoot ? undefined : () => navigation.goBack()}
           hideBottomBorder={!props.formSheet}
         />
-      )}
+        ))}
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
         <ScreenScrollViewSurface value={surfaceClassName}>
           {props.formSheet && Platform.OS !== "android" ? (

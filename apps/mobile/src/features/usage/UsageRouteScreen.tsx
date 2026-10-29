@@ -29,7 +29,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useRef, useState, type ReactNode } from "react";
-import { Platform, Pressable, RefreshControl, View } from "react-native";
+import { Platform, RefreshControl, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -39,6 +39,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { WorkspaceAppBar, useHasWorkspaceAppBar } from "../workspace/WorkspaceAppBar";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -47,8 +48,8 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
-import { Menu } from "../../components/ui/Menu";
-import { SymbolView } from "../../components/ui/AppSymbol";
+import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
+import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { UsageChartMetric } from "./usageChartData";
@@ -208,6 +209,7 @@ function UsageScreen(props: {
   );
 
   const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
+  const hasWorkspaceAppBar = useHasWorkspaceAppBar();
   const filterIcon =
     selectedEnvironmentIds === null
       ? "line.3.horizontal.decrease"
@@ -237,30 +239,50 @@ function UsageScreen(props: {
     const id = EnvironmentId.make(value);
     setSelectedEnvironmentIds((selected) => toggleUsageEnvironment(selected, environments, id));
   };
+  // Android only; iOS puts the filter in the native header below.
   const environmentFilter = showEnvironmentFilter ? (
-    <Menu
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel="Filter usage environments"
+    <AndroidAnchoredMenu
       title="Environments"
       actions={environmentActions}
       onPressAction={({ nativeEvent }) => selectEnvironment(nativeEvent.event)}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Filter usage environments"
-        className={cn(
-          "items-center justify-center rounded-full",
-          Platform.OS === "ios" ? "size-[28px]" : "size-[44px]",
-        )}
-      >
-        <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />
-      </Pressable>
-    </Menu>
+      {(open) => (
+        <AndroidHeaderIconButton
+          accessibilityLabel="Filter usage environments"
+          icon={
+            selectedEnvironmentIds === null
+              ? "line.3.horizontal.decrease.circle"
+              : "line.3.horizontal.decrease.circle.fill"
+          }
+          onPress={open}
+        />
+      )}
+    </AndroidAnchoredMenu>
   ) : null;
 
   return (
-    <SettingsScreen title="Usage" trailing={environmentFilter} workspaceRoot={props.workspace}>
+    <SettingsScreen
+      title="Usage"
+      trailing={environmentFilter}
+      workspaceRoot={props.workspace}
+      appBar={
+        props.workspace && hasWorkspaceAppBar ? (
+          <WorkspaceAppBar
+            title="Usage"
+            filter={
+              showEnvironmentFilter
+                ? {
+                    accessibilityLabel: "Filter usage environments",
+                    customized: selectedEnvironmentIds !== null,
+                    actions: environmentActions,
+                    onSelect: selectEnvironment,
+                  }
+                : undefined
+            }
+          />
+        ) : undefined
+      }
+    >
       {Platform.OS === "ios" ? (
         <NativeStackScreenOptions
           optionsVersion={JSON.stringify({ showEnvironmentFilter, filterIcon, environmentActions })}
