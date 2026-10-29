@@ -2,7 +2,7 @@ import { SheetHeader } from "../../components/ui/SheetHeader";
 import { useNavigation } from "@react-navigation/native";
 import { useState, type ReactNode } from "react";
 import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -21,16 +21,21 @@ export function PullRequestSheetContent(props: {
   const { height: windowHeight } = useWindowDimensions();
   const android = Platform.OS === "android";
   const compactIos = Platform.OS === "ios" && props.compact === true;
+  const pad = Platform.OS === "ios" && Platform.isPad;
   const [headerHeight, setHeaderHeight] = useState(84);
   const [bodyHeight, setBodyHeight] = useState(144);
   const [footerHeight, setFooterHeight] = useState(0);
+  const [maxSheetHeight, setMaxSheetHeight] = useState(windowHeight);
+  const keyboardVisible = useKeyboardState((state) => state.isVisible);
   // On iOS 26 the native fit-to-contents wrapper contains a flex SafeAreaView. Bound the
   // scene with a measured detent instead, so its header and scroll view can lay out normally.
+  // Detents are fractions of the sheet's maximum height, and an iPad form sheet's maximum is
+  // far below the window, so there it is measured back from the sheet's laid-out height.
   const compactDetent = Math.min(
     0.92,
     Math.max(
       0.25,
-      (headerHeight + bodyHeight + (props.footer ? footerHeight : 0) + 24) / windowHeight,
+      (headerHeight + bodyHeight + (props.footer ? footerHeight : 0) + 24) / maxSheetHeight,
     ),
   );
   const footer = props.footer ? (
@@ -44,12 +49,19 @@ export function PullRequestSheetContent(props: {
   ) : null;
   return (
     <KeyboardAvoidingView
-      enabled={!compactIos}
       automaticOffset
       behavior="padding"
       collapsable={false}
       className="bg-sheet ios:flex-1"
       style={android ? { maxHeight: windowHeight * 0.92 } : undefined}
+      onLayout={
+        compactIos && pad
+          ? (event) => {
+              const measured = event.nativeEvent.layout.height / compactDetent;
+              if (Math.abs(measured - maxSheetHeight) > 1) setMaxSheetHeight(measured);
+            }
+          : undefined
+      }
     >
       <NativeStackScreenOptions
         options={{
@@ -57,8 +69,11 @@ export function PullRequestSheetContent(props: {
           ...(android ? { sheetCornerRadius: 28, sheetAllowedDetents: "fitToContents" } : {}),
           ...(compactIos
             ? {
-                sheetAllowedDetents: [compactDetent],
+                // A phone sheet stays bottom-anchored, so the keyboard would cover the form.
+                sheetAllowedDetents: [keyboardVisible && !pad ? 1 : compactDetent],
                 contentStyle: { flex: 1, bottom: 0 },
+                // The inline header owns dismissal; Duo's keyboard bar would cover its close button.
+                headerShown: false,
               }
             : {}),
         }}
