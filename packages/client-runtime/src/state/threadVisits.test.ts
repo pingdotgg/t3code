@@ -111,6 +111,24 @@ it("keeps a mark-unread on the open thread until new activity lands", () => {
   expect(t.visits.slice(1)).toEqual([{ threadId: t.ref.threadId, visitedAt: at(30) }]);
 });
 
+it("keeps mark unread sticky after an expired wake is retired", () => {
+  using t = setup("thread-unread-retired-wake", {
+    updatedAt: at(10),
+    lastVisitedAt: at(0),
+    latestRun: { completedAt: at(9) },
+    wokeAt: at(15),
+  });
+  t.mount();
+  expect(t.visits).toEqual([{ threadId: t.ref.threadId, visitedAt: at(15), opened: true }]);
+  t.update({ lastVisitedAt: at(15) });
+  t.update({ lastVisitedAt: at(8), wokeAt: null });
+  vi.advanceTimersByTime(VISIT_DISPATCH_THROTTLE_MS);
+  expect(t.visits).toHaveLength(1);
+
+  t.update({ updatedAt: at(30) });
+  expect(t.visits.slice(1)).toEqual([{ threadId: t.ref.threadId, visitedAt: at(30) }]);
+});
+
 it("waits for the shell and records local visits for servers without tracking", () => {
   using t = setup("thread-local", null);
   t.mount();

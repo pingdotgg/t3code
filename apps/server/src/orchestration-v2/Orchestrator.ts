@@ -3360,8 +3360,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: thread.updatedAt,
           };
         }
-        case "thread.mark-unread":
-          return { ...thread, lastVisitedAt: markUnreadVisitedAt };
+        case "thread.mark-unread": {
+          // Retire the wake before rewinding the visit, preserving its settlement timer.
+          const snoozeExpired =
+            thread.snoozedUntil != null &&
+            DateTime.toEpochMillis(thread.snoozedUntil) <= DateTime.toEpochMillis(now);
+          return {
+            ...thread,
+            lastVisitedAt: markUnreadVisitedAt,
+            ...(snoozeExpired
+              ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: thread.snoozedUntil }
+              : {}),
+          };
+        }
         case "thread.metadata.update": {
           const previousRecovery =
             thread.limitRecovery?.runId === command.limitRecovery?.runId &&
