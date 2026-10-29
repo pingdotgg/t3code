@@ -784,6 +784,17 @@ describe("ClaudeAdapterV2 approval presentation", () => {
       callbackOptions: { decisionReason: "Run make?" },
     });
     assert.deepEqual(presentation, {});
+
+    // With no command, title, or description, the prompt is the raw reason itself.
+    const reasonOnly = "\u001b[33mHook needs confirmation\u001b[0m";
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeApprovalPresentation({
+        permissionMode: "default",
+        prompt: reasonOnly,
+        callbackOptions: { decisionReason: reasonOnly },
+      }),
+      {},
+    );
   });
 });
 
