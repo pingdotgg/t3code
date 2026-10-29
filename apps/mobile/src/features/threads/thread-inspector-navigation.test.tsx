@@ -179,10 +179,12 @@ it("keeps a focused inspector registered across renders and updates its content"
   const deactivate = vi.fn(() => {
     activeRender = undefined;
   });
-  const registerWorkspaceInspector = vi.fn((render: () => React.ReactNode) => {
-    activeRender = render;
-    return deactivate;
-  });
+  const registerWorkspaceInspector = vi.fn(
+    (content: { readonly panes: ReadonlyArray<{ readonly render: () => React.ReactNode }> }) => {
+      activeRender = content.panes[0]?.render;
+      return deactivate;
+    },
+  );
   const navigation = {
     isFocused: () => focused,
     addListener(event: "focus" | "blur", listener: () => void) {
@@ -221,7 +223,12 @@ it("keeps a focused inspector registered across renders and updates its content"
     },
   );
   const exports: {
-    Inspector?: (props: { readonly children: React.ReactNode }) => null;
+    Inspector?: (props: {
+      readonly content: {
+        readonly active: string;
+        readonly panes: ReadonlyArray<{ readonly key: string; readonly render: () => string }>;
+      };
+    }) => null;
   } = {};
   const load = (name: string) => {
     if (name === "react" || name.startsWith("react/")) return requireMobile(name);
@@ -238,8 +245,15 @@ it("keeps a focused inspector registered across renders and updates its content"
   };
   new Function("require", "exports", compiled.code)(load, exports);
   const Inspector = exports.Inspector!;
+  const contents = new Map<string, Parameters<typeof Inspector>[0]["content"]>();
   function Screen({ content }: { content: string | undefined }) {
-    return content === undefined ? null : <Inspector>{content}</Inspector>;
+    if (content === undefined) return null;
+    let panes = contents.get(content);
+    if (!panes) {
+      panes = { active: "main", panes: [{ key: "main", render: () => content }] };
+      contents.set(content, panes);
+    }
+    return <Inspector content={panes} />;
   }
   const root = createRoot(document.createElement("div"));
   using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
