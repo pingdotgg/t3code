@@ -627,7 +627,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
   });
 
-  it.effect("refuses to link while T3 Connect is off", () => {
+  it.effect("refuses to link or answer the relay while T3 Connect is off", () => {
     const { store, values } = makeMemorySecretStore([]);
 
     return Effect.gen(function* () {
@@ -647,6 +647,12 @@ describe("releaseManagedTunnelOnShutdown", () => {
         operation: "connect-disabled",
       });
       expect(values.size).toBe(0);
+      expect(yield* Effect.flip(link.answerHealthRequest({ proof: "proof" }))).toMatchObject({
+        operation: "connect-disabled",
+      });
+      expect(yield* Effect.flip(link.mintCredential({ proof: "proof" }))).toMatchObject({
+        operation: "connect-disabled",
+      });
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_CONNECT_ENABLED: "false" } })),

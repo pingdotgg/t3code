@@ -1420,6 +1420,7 @@ const make = Effect.gen(function* () {
 
   const answerHealthRequest = Effect.fn("environment.cloud.health")(
     function* (request: RelayCloudEnvironmentHealthRequest) {
+      yield* requireConnectEnabled;
       const cloudMintPublicKey = yield* secrets
         .get(CLOUD_MINT_PUBLIC_KEY)
         .pipe(
@@ -1524,6 +1525,7 @@ const make = Effect.gen(function* () {
 
   const mintCredential = Effect.fn("environment.cloud.mintCredential")(
     function* (request: RelayCloudMintCredentialRequest) {
+      yield* requireConnectEnabled;
       const cloudMintPublicKey = yield* secrets
         .get(CLOUD_MINT_PUBLIC_KEY)
         .pipe(
