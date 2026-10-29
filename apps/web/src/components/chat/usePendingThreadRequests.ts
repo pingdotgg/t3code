@@ -27,13 +27,15 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import { getUploadedAttachments, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 import {
   buildPendingUserInputAnswers,
+  setPendingUserInputCustomAnswer,
+  togglePendingUserInputOptionSelection,
+  type PendingUserInputDraftAnswer,
+} from "@t3tools/client-runtime/state/pending-user-input";
+import {
   carryDisplacedCustomAnswerIntoPrompt,
   derivePendingUserInputProgress,
   projectPendingUserInputAnswer,
-  setPendingUserInputCustomAnswer,
   threadContextsReferencedByAnswer,
-  togglePendingUserInputOptionSelection,
-  type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
 import {
   questionAttachmentDraftId,
@@ -98,9 +100,9 @@ function makePendingCustomAnswerSetter(input: {
       [activePendingRequestKey]: {
         ...existing[activePendingRequestKey],
         [questionId]: setPendingUserInputCustomAnswer(
+          question,
           existing[activePendingRequestKey]?.[questionId],
           value,
-          question,
         ),
       },
     }));

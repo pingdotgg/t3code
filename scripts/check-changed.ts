@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off
 // Runs CI's fast checks for this branch's changes: format and lint of the
 // changed files, knip, generated GraphQL operations, typecheck of the affected
-// packages and their dependents, and the test files beside the changed files.
+// packages and their dependents, the test files beside the changed files, and
+// the cross-file checks those miss (agent context budget, React Compiler
+// coverage of the changed client files).
 // A dependency change also gets the unused-patch install check below. CI still
 // runs the full test suites and the jobs listed in the summary.
 //
@@ -138,6 +140,52 @@ for (const file of code) {
     if (entry.startsWith(prefix) && TEST.test(entry)) tests.add(NodePath.join(dir, entry));
   }
 }
+// It reads files other than the ones beside it, so no changed file selects it.
+if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
+
+// React Compiler coverage compiles every client source file, so run only the
+// changed files' cases, in one extra step: a -t filter in the main test step
+// would drop every other test. An app is skipped when the main step already
+// runs its coverage file unfiltered. File filters mirror each coverage test.
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const compilerApps = [
+  {
+    test: "apps/web/src/reactCompilerCoverage.test.ts",
+    root: "apps/web/src/",
+    // Test names keep the repo-relative path.
+    name: (file: string) => file,
+    compiled: (file: string) =>
+      /\.tsx?$/.test(file) && !/\.(test|browser)\.tsx?$/.test(file) && !file.endsWith(".gen.ts"),
+    // Web has only per-file cases.
+    always: [],
+  },
+  {
+    test: "apps/mobile/src/reactCompilerCoverage.test.ts",
+    root: "apps/mobile/src/",
+    name: (file: string) => file.slice("apps/mobile/".length),
+    compiled: (file: string) => /\.tsx?$/.test(file) && !/\.(test\.tsx?|d\.ts)$/.test(file),
+    // The Metro, cache, and stale-allowlist cases check more than one file, deletions included.
+    always: ["^(?!.*compiles )"],
+  },
+].flatMap(({ test, root: appRoot, name, compiled, always }) => {
+  const changed = files.filter((file) => file.startsWith(appRoot) && compiled(file));
+  if (changed.length === 0 || tests.has(test)) return [];
+  const names = changed
+    .filter((file) => present.includes(file))
+    .map((file) => `compiles ${escapeRegExp(name(file))}$`);
+  const pattern = [...names, ...always];
+  return pattern.length > 0 ? [{ test, names, pattern }] : [];
+});
+const compilerCoverage = compilerApps.length > 0 && {
+  name: `react compiler (${compilerApps.reduce((count, app) => count + app.names.length, 0)} files)`,
+  args: [
+    "test",
+    "run",
+    ...compilerApps.map((app) => app.test),
+    "-t",
+    compilerApps.flatMap((app) => app.pattern).join("|"),
+  ],
+};
 
 // knip:check cannot be scoped to a package. Any code change can leave a file,
 // export, or dependency unused (removing the last import of a helper does), so
@@ -255,33 +303,42 @@ const steps = [
     name: `test (${tests.size} files)`,
     args: ["test", "run", "--passWithNoTests", ...tests],
   },
+  compilerCoverage,
 ].filter((step) => step !== false);
 
 // Output is piped, so keep the colors a terminal would get.
 const env = process.stdout.isTTY ? { ...process.env, FORCE_COLOR: "1" } : process.env;
+const runStep = (step: (typeof steps)[number]) =>
+  new Promise<{ name: string; ok: boolean; seconds: string }>((resolve) => {
+    const started = performance.now();
+    const finish = (ok: boolean, output?: Buffer) => {
+      const seconds = ((performance.now() - started) / 1000).toFixed(1);
+      console.log(`\n> vp ${step.name}  ${ok ? "pass" : "FAIL"}  ${seconds}s`);
+      if (output) process.stdout.write(output);
+      resolve({ name: step.name, ok, seconds });
+    };
+    // In-process steps print their own output. The patch check is first and
+    // takes about a second, so the commands start right after it.
+    if ("run" in step) return finish(step.run());
+    const output: Array<Buffer> = [];
+    const child = NodeChildProcess.spawn("vp", step.args, { cwd: root, env });
+    child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => output.push(chunk));
+    // A failed spawn emits "error", then "close" with a nonzero code.
+    child.on("error", (error) => output.push(Buffer.from(`${error.message}\n`)));
+    child.on("close", (status) => finish(status === 0, Buffer.concat(output)));
+  });
+
+// Vitest runs started together race to rebuild node_modules/.vitest-cache after
+// an install (ENOTEMPTY), so they run one after another.
+let previousVitest: Promise<unknown> = Promise.resolve();
 const results = await Promise.all(
-  steps.map(
-    (step) =>
-      new Promise<{ name: string; ok: boolean; seconds: string }>((resolve) => {
-        const started = performance.now();
-        const finish = (ok: boolean, output?: Buffer) => {
-          const seconds = ((performance.now() - started) / 1000).toFixed(1);
-          console.log(`\n> vp ${step.name}  ${ok ? "pass" : "FAIL"}  ${seconds}s`);
-          if (output) process.stdout.write(output);
-          resolve({ name: step.name, ok, seconds });
-        };
-        // In-process steps print their own output. The patch check is first and
-        // takes about a second, so the commands start right after it.
-        if ("run" in step) return finish(step.run());
-        const output: Array<Buffer> = [];
-        const child = NodeChildProcess.spawn("vp", step.args, { cwd: root, env });
-        child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
-        child.stderr.on("data", (chunk: Buffer) => output.push(chunk));
-        // A failed spawn emits "error", then "close" with a nonzero code.
-        child.on("error", (error) => output.push(Buffer.from(`${error.message}\n`)));
-        child.on("close", (status) => finish(status === 0, Buffer.concat(output)));
-      }),
-  ),
+  steps.map((step) => {
+    if (!("args" in step) || step.args[0] !== "test") return runStep(step);
+    const result = previousVitest.then(() => runStep(step));
+    previousVitest = result;
+    return result;
+  }),
 );
 
 const summary = ["check:changed summary"];
