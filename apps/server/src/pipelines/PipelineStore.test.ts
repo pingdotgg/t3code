@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointRef,
   PIPELINE_OUTPUT_PREVIEW_CHARS,
   PipelineDefinition,
   PipelineError,
@@ -24,6 +25,7 @@ const decodePipelineId = Schema.decodeSync(PipelineId);
 const decodeRunId = Schema.decodeSync(PipelineRunId);
 const decodeStepId = Schema.decodeSync(PipelineStepId);
 const decodeThreadId = Schema.decodeSync(ThreadId);
+const decodeCheckpointRef = Schema.decodeSync(CheckpointRef);
 const pipelineId = decodePipelineId("pipeline-1");
 const runId = decodeRunId("run-1");
 const parentThreadId = decodeThreadId("thread-parent");
@@ -186,6 +188,7 @@ it.effect("round-trips a run with steps, truncating previews but keeping full ou
         attempt: 0,
         childThreadId: null,
         pauseBefore: false,
+        canRestoreWorkspace: false,
         outputPreview: null,
         error: null,
         startedAt: null,
@@ -198,6 +201,7 @@ it.effect("round-trips a run with steps, truncating previews but keeping full ou
         attempt: 0,
         childThreadId: null,
         pauseBefore: true,
+        canRestoreWorkspace: false,
         outputPreview: null,
         error: null,
         startedAt: null,
@@ -238,6 +242,22 @@ it.effect("round-trips a run with steps, truncating previews but keeping full ou
 
     const outputs = yield* store.getStepOutputs(runId);
     assert.deepStrictEqual([...outputs], [[0, fullOutput]]);
+
+    // The starting snapshot survives later writes to the step, such as a new attempt.
+    const startCheckpoint = {
+      cwd: "/worktrees/repo/feature",
+      ref: decodeCheckpointRef("refs/start"),
+    };
+    assert.deepStrictEqual(yield* store.getStepStartCheckpoint(runId, 0), null);
+    yield* store.updateStep(runId, 0, { startCheckpoint });
+    yield* store.updateStep(runId, 0, { status: "pending", attempt: 2 });
+    assert.deepStrictEqual(yield* store.getStepStartCheckpoint(runId, 0), startCheckpoint);
+    assert.deepStrictEqual(yield* store.getStepStartCheckpoint(runId, 1), null);
+    const restorable = yield* store.getRun(runId);
+    assert.deepStrictEqual(
+      restorable?.steps.map((entry) => entry.canRestoreWorkspace),
+      [true, false],
+    );
 
     yield* store.updateRun(runId, { updatedAt: LATER, pauseReason: null, completedAt: LATER });
     const cleared = yield* store.getRun(runId);

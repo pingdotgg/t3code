@@ -52,6 +52,7 @@ export default Effect.gen(function* () {
       pause_before INTEGER NOT NULL,
       prompt TEXT,
       workspace_strategy_json TEXT,
+      start_checkpoint_json TEXT,
       output TEXT,
       error TEXT,
       started_at TEXT,

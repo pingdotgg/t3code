@@ -274,11 +274,28 @@ export function PipelineRunPanel(props: {
                   accessibilityHint={`Runs ${stepName} again`}
                   disabled={!canRetry || busy !== null}
                   loading={busy === "retry"}
-                  onPress={() =>
-                    void perform("retry", "Could not retry the step", () =>
-                      retryStep({ environmentId, input: stepInput }),
-                    )
-                  }
+                  onPress={() => {
+                    const retry = (restoreWorkspace: boolean) =>
+                      void perform("retry", "Could not retry the step", () =>
+                        retryStep({
+                          environmentId,
+                          input: restoreWorkspace ? { ...stepInput, restoreWorkspace } : stepInput,
+                        }),
+                      );
+                    if (run.steps[stepIndex]?.canRestoreWorkspace !== true) {
+                      retry(false);
+                      return;
+                    }
+                    Dialog.alert(
+                      `Retry ${stepName}`,
+                      "Retry from step start undoes this step's file changes, then runs it again. Commits stay on the branch.",
+                      [
+                        { text: "Retry from step start", onPress: () => retry(true) },
+                        { text: "Retry with current files", onPress: () => retry(false) },
+                        { text: "Cancel", style: "cancel" },
+                      ],
+                    );
+                  }}
                 />
               ) : null}
               {actions.skip ? (

@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -20,6 +21,8 @@ import {
   type PipelineStarter,
 } from "@t3tools/shared/pipelineStarters";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -62,9 +65,15 @@ const serviceLayer = (
           streamDomainEvents: Stream.never,
         }),
         IdAllocator.layer,
+        Layer.mock(CheckpointStore.CheckpointStore)({}),
+        // Only the worktrees directory is read, to tell managed worktrees from other folders.
+        Layer.succeed(ServerConfig.ServerConfig, {
+          worktreesDir: "/t3-test-worktrees",
+        } as ServerConfig.ServerConfig["Service"]),
       ),
     ),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(NodeServices.layer),
   );
 
 const storeLayer = PipelineStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));

@@ -1,4 +1,5 @@
 import {
+  CheckpointRef,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   PIPELINE_OUTPUT_PREVIEW_CHARS,
   PipelineDefinition,
@@ -27,6 +28,10 @@ export type NewPipelineRun = Omit<PipelineRun, "steps">;
 /** Every step starts pending with attempt 0; only identity and the pause override are supplied. */
 export type NewPipelineRunStep = Pick<PipelineRunStep, "index" | "stepId" | "pauseBefore">;
 
+/** The workspace as the step's first attempt found it: a git checkpoint ref inside `cwd`. */
+export const StartCheckpoint = Schema.Struct({ cwd: Schema.String, ref: CheckpointRef });
+export type StartCheckpoint = typeof StartCheckpoint.Type;
+
 export interface PipelineRunPatch {
   readonly updatedAt: string;
   readonly status?: PipelineRunStatus;
@@ -45,6 +50,8 @@ export interface PipelineStepPatch {
   readonly prompt?: string | null;
   /** Where the attempt launches, saved with `prompt` so a restart relaunches the same step. */
   readonly workspaceStrategy?: OrchestrationV2ThreadLaunchWorkspaceStrategy | null;
+  /** Kept across attempts: a restore-retry starts from the same snapshot. */
+  readonly startCheckpoint?: StartCheckpoint | null;
   readonly output?: string | null;
   readonly error?: string | null;
   readonly startedAt?: string | null;
@@ -121,6 +128,11 @@ export class PipelineStore extends Context.Service<
       runId: PipelineRunId,
       stepIndex: number,
     ) => Effect.Effect<StepLaunch | null, PipelineError>;
+    /** The step's saved starting snapshot, or null when none was recorded. */
+    readonly getStepStartCheckpoint: (
+      runId: PipelineRunId,
+      stepIndex: number,
+    ) => Effect.Effect<StartCheckpoint | null, PipelineError>;
     /** Full (untruncated) captured output per step index; steps without output are absent. */
     readonly getStepOutputs: (
       runId: PipelineRunId,
@@ -162,6 +174,7 @@ interface PipelineRunStepRow {
   readonly attempt: number;
   readonly child_thread_id: string | null;
   readonly pause_before: number;
+  readonly has_start_checkpoint: number;
   readonly output: string | null;
   readonly error: string | null;
   readonly started_at: string | null;
@@ -175,6 +188,9 @@ const encodeSnapshotJson = Schema.encodeSync(Schema.fromJsonString(PipelineSnaps
 const workspaceStrategyJson = Schema.fromJsonString(OrchestrationV2ThreadLaunchWorkspaceStrategy);
 const encodeWorkspaceStrategyJson = Schema.encodeSync(workspaceStrategyJson);
 const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(workspaceStrategyJson);
+const startCheckpointJson = Schema.fromJsonString(StartCheckpoint);
+const encodeStartCheckpointJson = Schema.encodeSync(startCheckpointJson);
+const decodeStartCheckpointJson = Schema.decodeUnknownEffect(startCheckpointJson);
 const parseJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 /** Truncates to the preview limit without splitting a surrogate pair. */
@@ -235,6 +251,7 @@ const decodeRunRow = Effect.fnUntraced(function* (
       attempt: step.attempt,
       childThreadId: step.child_thread_id,
       pauseBefore: step.pause_before === 1,
+      canRestoreWorkspace: step.has_start_checkpoint === 1,
       outputPreview: pipelineOutputPreview(step.output),
       error: step.error,
       startedAt: step.started_at,
@@ -274,6 +291,10 @@ const stepColumns = (patch: PipelineStepPatch) =>
       patch.workspaceStrategy === undefined || patch.workspaceStrategy === null
         ? patch.workspaceStrategy
         : encodeWorkspaceStrategyJson(patch.workspaceStrategy),
+    start_checkpoint_json:
+      patch.startCheckpoint === undefined || patch.startCheckpoint === null
+        ? patch.startCheckpoint
+        : encodeStartCheckpointJson(patch.startCheckpoint),
     output: patch.output,
     error: patch.error,
     started_at: patch.startedAt,
@@ -431,6 +452,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
                   pause_before: step.pauseBefore ? 1 : 0,
                   prompt: null,
                   workspace_strategy_json: null,
+                  start_checkpoint_json: null,
                   output: null,
                   error: null,
                   started_at: null,
@@ -457,6 +479,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
             if (row === undefined) return null;
             const stepRows = yield* sql<PipelineRunStepRow>`
                 SELECT step_index, step_id, status, attempt, child_thread_id, pause_before,
+                       start_checkpoint_json IS NOT NULL AS has_start_checkpoint,
                        output, error, started_at, completed_at
                 FROM pipeline_run_steps
                 WHERE run_id = ${row.run_id}
@@ -559,6 +582,23 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       return { prompt: row.prompt, workspaceStrategy };
     });
 
+    const getStepStartCheckpoint: PipelineStore["Service"]["getStepStartCheckpoint"] = Effect.fn(
+      "PipelineStore.getStepStartCheckpoint",
+    )(function* (runId, stepIndex) {
+      const rows = yield* sql<{ readonly start_checkpoint_json: string | null }>`
+        SELECT start_checkpoint_json FROM pipeline_run_steps
+        WHERE run_id = ${runId} AND step_index = ${stepIndex}
+      `.pipe(
+        NodeSqliteClient.readOnly,
+        storageError("Could not read step start checkpoint.", { runId }),
+      );
+      const json = rows[0]?.start_checkpoint_json;
+      if (json === undefined || json === null) return null;
+      return yield* decodeStartCheckpointJson(json).pipe(
+        storageError("Could not decode step start checkpoint.", { runId }),
+      );
+    });
+
     const getStepOutputs: PipelineStore["Service"]["getStepOutputs"] = Effect.fn(
       "PipelineStore.getStepOutputs",
     )(function* (runId) {
@@ -584,6 +624,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       updateStep,
       updateRunWithSteps,
       getStepLaunch,
+      getStepStartCheckpoint,
       getStepOutputs,
     });
   }),

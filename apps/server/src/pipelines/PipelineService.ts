@@ -12,6 +12,7 @@ import {
   type PipelineRunCancelInput,
   type PipelineRunId,
   type PipelineRunResult,
+  type PipelineRunRetryInput,
   type PipelineRunSetPauseBeforeInput,
   type PipelineRunStartInput,
   type PipelineRunStepActionInput,
@@ -24,7 +25,9 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
@@ -35,6 +38,8 @@ import {
   type PipelineStarter,
 } from "@t3tools/shared/pipelineStarters";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ServerConfig from "../config.ts";
 import type { DispatchModes } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -70,7 +75,7 @@ export class PipelineService extends Context.Service<
       input: PipelineRunStepActionInput,
     ) => Effect.Effect<PipelineRunResult, PipelineError>;
     readonly retryStep: (
-      input: PipelineRunStepActionInput,
+      input: PipelineRunRetryInput,
     ) => Effect.Effect<PipelineRunResult, PipelineError>;
     readonly skipStep: (
       input: PipelineRunStepActionInput,
@@ -95,6 +100,10 @@ export const layerWithStarters = (
   | ThreadManagementService.ThreadManagementService
   | IdAllocator.IdAllocatorV2
   | ServerSettings.ServerSettingsService
+  | CheckpointStore.CheckpointStore
+  | ServerConfig.ServerConfig
+  | FileSystem.FileSystem
+  | Path.Path
 > =>
   Layer.effect(
     PipelineService,

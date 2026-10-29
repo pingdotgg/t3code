@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointRef,
   PipelineDefinition,
   PipelineError,
   PipelineRun,
@@ -25,6 +27,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ServerConfig from "../config.ts";
 import type { ThreadLaunchInput } from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import type { ThreadManagementWaitResult } from "../orchestration-v2/ThreadManagementService.ts";
@@ -33,11 +37,17 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PipelineService from "./PipelineService.ts";
 import * as PipelineStore from "./PipelineStore.ts";
+import { beforeRestoreRef } from "./pipelineWorkspace.ts";
 
 const decodeDefinition = Schema.decodeSync(PipelineDefinition);
 const decodeRun = Schema.decodeSync(PipelineRun);
 const decodeStart = Schema.decodeSync(PipelineRunStartInput);
 const decodeThreadId = Schema.decodeSync(ThreadId);
+const decodeCheckpointRef = Schema.decodeSync(CheckpointRef);
+
+const TEST_WORKTREES_DIR = "/t3-test-worktrees";
+/** Worktrees the server manages: a folder per repository below its worktrees directory. */
+const MANAGED_ROOT = `${TEST_WORKTREES_DIR}/repo`;
 
 const NOW = "2026-10-28T10:00:00.000Z";
 const PIPELINE_ID = "pipeline-1";
@@ -91,13 +101,19 @@ const makeHarness = Effect.gen(function* () {
   const subscribed = yield* Deferred.make<void>();
   const stopStarted = yield* Queue.unbounded<ThreadId>();
   const stopGate = yield* Deferred.make<void>();
+  const idleChecks = yield* Queue.unbounded<ThreadId>();
   const providerEnabled = yield* Ref.make(true);
   const behavior = {
     holdStops: false,
     failFirstSubscription: false,
     failParentCreate: false,
     subscriptionCount: 0,
+    worktreeRoot: "/wt",
+    restoreFails: false,
   };
+  /** Threads whose agent is still stopping: their shell reports an active run. */
+  const activeRuns = new Set<ThreadId>();
+  const checkpointOps: Array<{ op: "has" | "capture" | "restore"; cwd: string; ref: string }> = [];
   /** Threads whose shell has no workspace, as after a failed worktree setup. */
   const unrecordedWorkspaces = new Set<ThreadId>();
   const deletedThreads = new Set<ThreadId>();
@@ -158,7 +174,8 @@ const makeHarness = Effect.gen(function* () {
     return {
       id: threadId,
       branch: recorded ? "feature" : null,
-      worktreePath: recorded ? `/wt/${threadId}` : null,
+      worktreePath: recorded ? `${behavior.worktreeRoot}/${threadId}` : null,
+      activeRunId: activeRuns.has(threadId) ? "run-active" : null,
       deletedAt: deletedThreads.has(threadId) ? "2026-10-28T10:00:00.000Z" : null,
     } as unknown as OrchestrationV2ThreadShell;
   };
@@ -194,8 +211,29 @@ const makeHarness = Effect.gen(function* () {
       // A recovery sweep that reads a parent before the deletion watcher subscribed would wait forever.
       getThreadShell: (threadId) =>
         (threadId.startsWith("parent-") ? Deferred.await(subscribed) : Effect.void).pipe(
+          Effect.andThen(
+            activeRuns.has(threadId) ? Queue.offer(idleChecks, threadId) : Effect.void,
+          ),
           Effect.as(shellFor(threadId)),
         ),
+      getCheckpointContext: (threadId) => {
+        const { worktreePath } = shellFor(threadId);
+        return Effect.succeed({
+          runs: [],
+          checkpoints: [],
+          checkpointScopes:
+            worktreePath === null
+              ? []
+              : [
+                  {
+                    id: `scope-of:${threadId}`,
+                    runId: `run-of:${threadId}`,
+                    kind: "root_run",
+                    cwd: worktreePath,
+                  },
+                ],
+        }) as never;
+      },
       isProviderInstanceEnabledForProject: () => Ref.get(providerEnabled),
       streamDomainEvents: Stream.unwrap(
         Effect.gen(function* () {
@@ -209,8 +247,31 @@ const makeHarness = Effect.gen(function* () {
         }),
       ),
     }),
+    Layer.mock(CheckpointStore.CheckpointStore)({
+      hasCheckpointRef: ({ cwd, checkpointRef }) =>
+        Effect.sync(() => {
+          checkpointOps.push({ op: "has", cwd, ref: checkpointRef });
+          return true;
+        }),
+      captureCheckpoint: ({ cwd, checkpointRef }) =>
+        Effect.sync(() => {
+          checkpointOps.push({ op: "capture", cwd, ref: checkpointRef });
+        }),
+      restoreCheckpoint: ({ cwd, checkpointRef }) =>
+        behavior.restoreFails
+          ? Effect.fail(new Error("git boom") as never)
+          : Effect.sync(() => {
+              checkpointOps.push({ op: "restore", cwd, ref: checkpointRef });
+              return true;
+            }),
+    }),
+    // Only the worktrees directory is read, to tell managed worktrees from other folders.
+    Layer.succeed(ServerConfig.ServerConfig, {
+      worktreesDir: TEST_WORKTREES_DIR,
+    } as ServerConfig.ServerConfig["Service"]),
     IdAllocator.layer,
     NodeCrypto.layer,
+    NodeServices.layer,
     ServerSettings.layerTest(),
   );
 
@@ -227,6 +288,9 @@ const makeHarness = Effect.gen(function* () {
     subscriptions,
     stopStarted,
     stopGate,
+    idleChecks,
+    activeRuns,
+    checkpointOps,
     behavior,
     unrecordedWorkspaces,
     deletedThreads,
@@ -797,5 +861,127 @@ it.effect("the deletion watcher resubscribes after its stream fails", () =>
       Effect.sync(() => {
         harness.behavior.failFirstSubscription = true;
       }),
+  ),
+);
+
+it.effect(
+  "a restore-retry puts back the first attempt's starting files after saving the failed ones",
+  () =>
+    withService(
+      Effect.fn(function* (harness, service, store) {
+        harness.behavior.worktreeRoot = MANAGED_ROOT;
+        const { run } = yield* service.start(startInput("cmd-22"));
+        const first = yield* Queue.take(harness.launches);
+        yield* harness.settle(first.threadId, "failed");
+        const failed = yield* awaitRun(service, run.id, (current) => current.status === "paused");
+        assert.isTrue(failed.steps[0]?.canRestoreWorkspace);
+        const start = yield* store.getStepStartCheckpoint(run.id, 0);
+        assert.strictEqual(start?.cwd, `${MANAGED_ROOT}/${first.threadId}`);
+        assert.match(start?.ref ?? "", /^refs\/t3\/orchestration-v2\/checkpoints\/.+\/ordinal\/0$/);
+
+        yield* service.retryStep({ runId: run.id, stepIndex: 0, restoreWorkspace: true });
+        assert.deepStrictEqual(
+          harness.checkpointOps.filter((entry) => entry.op !== "has"),
+          [
+            { op: "capture", cwd: start!.cwd, ref: beforeRestoreRef(run.id, 0, 1) },
+            { op: "restore", cwd: start!.cwd, ref: start!.ref },
+          ],
+        );
+        const retried = yield* Queue.take(harness.launches);
+        assert.strictEqual(retried.input.commandId, `pipeline-run:${run.id}:plan:2`);
+
+        // A later attempt's baseline holds the failed attempt's leftovers, so it is never recorded.
+        const checked = harness.checkpointOps.length;
+        yield* harness.settle(retried.threadId, "failed");
+        yield* awaitRun(
+          service,
+          run.id,
+          (current) => current.steps[0]?.attempt === 2 && current.status === "paused",
+        );
+        assert.strictEqual(harness.checkpointOps.length, checked);
+        assert.deepStrictEqual(yield* store.getStepStartCheckpoint(run.id, 0), start);
+      }),
+    ),
+);
+
+it.effect(
+  "a restore never touches a workspace outside the managed worktrees; a plain retry restores nothing",
+  () =>
+    withService(
+      Effect.fn(function* (harness, service, store) {
+        const { run } = yield* service.start(startInput("cmd-23"));
+        const first = yield* Queue.take(harness.launches);
+        yield* harness.settle(first.threadId, "failed");
+        const failed = yield* awaitRun(service, run.id, (current) => current.status === "paused");
+        // The root checkout is not recorded as restorable.
+        assert.isFalse(failed.steps[0]?.canRestoreWorkspace);
+        const unsaved = yield* Effect.flip(
+          service.retryStep({ runId: run.id, stepIndex: 0, restoreWorkspace: true }),
+        );
+        assert.include(unsaved.message, "were not saved");
+
+        // Even a stored snapshot is refused when its folder is not a managed worktree.
+        const ref = decodeCheckpointRef("refs/t3/orchestration-v2/checkpoints/x/ordinal/0");
+        yield* store.updateStep(run.id, 0, { startCheckpoint: { cwd: "/projects/app", ref } });
+        const refused = yield* Effect.flip(
+          service.retryStep({ runId: run.id, stepIndex: 0, restoreWorkspace: true }),
+        );
+        assert.include(refused.message, "did not run in a T3 Code worktree");
+        assert.deepStrictEqual(harness.checkpointOps, []);
+        const unchanged = yield* service.getRun(run.id);
+        assert.strictEqual(unchanged.status, "paused");
+        assert.strictEqual(unchanged.steps[0]?.status, "failed");
+        assert.strictEqual(unchanged.steps[0]?.attempt, 1);
+        assert.strictEqual(yield* Queue.size(harness.launches), 0);
+
+        yield* service.retryStep({ runId: run.id, stepIndex: 0 });
+        const retried = yield* Queue.take(harness.launches);
+        assert.strictEqual(retried.input.commandId, `pipeline-run:${run.id}:plan:2`);
+        assert.deepStrictEqual(harness.checkpointOps, []);
+      }),
+    ),
+);
+
+it.effect("a failed restore or an agent that is still stopping leaves the run paused", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      harness.behavior.worktreeRoot = MANAGED_ROOT;
+      const { run } = yield* service.start(startInput("cmd-24"));
+      const first = yield* Queue.take(harness.launches);
+      yield* harness.settle(first.threadId, "failed");
+      yield* awaitRun(service, run.id, (current) => current.status === "paused");
+      const assertUnchanged = Effect.gen(function* () {
+        const current = yield* service.getRun(run.id);
+        assert.strictEqual(current.status, "paused");
+        assert.strictEqual(current.steps[0]?.status, "failed");
+        assert.strictEqual(current.steps[0]?.attempt, 1);
+        assert.strictEqual(yield* Queue.size(harness.launches), 0);
+      });
+
+      harness.behavior.restoreFails = true;
+      const failedRestore = yield* Effect.flip(
+        service.retryStep({ runId: run.id, stepIndex: 0, restoreWorkspace: true }),
+      );
+      assert.include(failedRestore.message, "Could not restore the step's starting files");
+      // The failed files were saved before the restore was attempted.
+      assert.deepStrictEqual(
+        harness.checkpointOps.filter((entry) => entry.op !== "has").map((entry) => entry.op),
+        ["capture"],
+      );
+      yield* assertUnchanged;
+
+      harness.behavior.restoreFails = false;
+      harness.activeRuns.add(first.threadId);
+      const operations = harness.checkpointOps.length;
+      const retrying = yield* Effect.forkChild(
+        Effect.flip(service.retryStep({ runId: run.id, stepIndex: 0, restoreWorkspace: true })),
+      );
+      yield* Queue.take(harness.idleChecks);
+      yield* TestClock.adjust("20 seconds");
+      const stopping = yield* Fiber.join(retrying);
+      assert.include(stopping.message, "still stopping");
+      assert.strictEqual(harness.checkpointOps.length, operations);
+      yield* assertUnchanged;
+    }),
   ),
 );

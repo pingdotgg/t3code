@@ -236,6 +236,10 @@ export const PipelineRunStep = Schema.Struct({
   error: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
+  canRestoreWorkspace: Schema.Boolean.annotate({
+    description:
+      "True when the files as they were when the step started can be restored on retry: a snapshot is saved and the workspace is a T3-managed worktree.",
+  }),
 });
 export type PipelineRunStep = typeof PipelineRunStep.Type;
 
@@ -273,12 +277,21 @@ export type PipelineRunStartInput = typeof PipelineRunStartInput.Type;
 export const PipelineRunSubscribeInput = Schema.Struct({ runId: PipelineRunId });
 export type PipelineRunSubscribeInput = typeof PipelineRunSubscribeInput.Type;
 
-/** Shared by continue, retryStep and skipStep; the server rejects a stale `stepIndex`. */
+/** Shared by continue and skipStep; the server rejects a stale `stepIndex`. */
 export const PipelineRunStepActionInput = Schema.Struct({
   runId: PipelineRunId,
   stepIndex: NonNegativeInt,
 });
 export type PipelineRunStepActionInput = typeof PipelineRunStepActionInput.Type;
+
+export const PipelineRunRetryInput = Schema.Struct({
+  ...PipelineRunStepActionInput.fields,
+  restoreWorkspace: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Restore the workspace files to how they were when the step started before running it again. Commits stay on the branch. Defaults to false: the retry starts from the current files.",
+  }),
+});
+export type PipelineRunRetryInput = typeof PipelineRunRetryInput.Type;
 
 export const PipelineRunCancelInput = Schema.Struct({ runId: PipelineRunId });
 export type PipelineRunCancelInput = typeof PipelineRunCancelInput.Type;

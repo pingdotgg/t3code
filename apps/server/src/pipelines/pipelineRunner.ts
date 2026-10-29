@@ -13,6 +13,7 @@ import {
   type PipelineRun,
   type PipelineRunCancelInput,
   type PipelineRunResult,
+  type PipelineRunRetryInput,
   type PipelineRunSetPauseBeforeInput,
   type PipelineRunStartInput,
   type PipelineRunStep,
@@ -48,6 +49,7 @@ import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingEr
 import { forkParked } from "../serverActivation.ts";
 import * as PipelineStore from "./PipelineStore.ts";
 import { renderPipelinePrompt } from "./pipelineTemplate.ts";
+import { makePipelineWorkspace } from "./pipelineWorkspace.ts";
 
 const WAIT_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const PARENT_TITLE_INPUT_CHARS = 60;
@@ -143,6 +145,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const crypto = yield* Crypto.Crypto;
+  const workspace = yield* makePipelineWorkspace();
 
   const permit = yield* Semaphore.make(1);
   const drivers = yield* FiberMap.make<PipelineRunId>();
@@ -209,6 +212,27 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
         pausePatch(now, kind === "failed" ? "step_failed" : "step_stopped", message),
         [{ index: expect.cursor, patch: { status: kind, error: message, completedAt: now } }],
       ),
+    );
+  });
+
+  /**
+   * Saves the snapshot a retry can restore. Best effort, and only from the step's first attempt:
+   * a later attempt's baseline already holds a failed attempt's leftovers.
+   */
+  const recordStartCheckpoint = Effect.fn("PipelineRunner.recordStartCheckpoint")(function* (
+    runId: PipelineRunId,
+    step: PipelineRunStep,
+    threadId: ThreadId,
+  ) {
+    if (step.attempt !== 1 || step.canRestoreWorkspace) return;
+    yield* bestEffort(
+      "Could not record pipeline step start checkpoint",
+      Effect.gen(function* () {
+        const start = yield* workspace.findThreadStartCheckpoint(threadId);
+        if (start === null) return;
+        yield* store.updateStep(runId, step.index, { startCheckpoint: start });
+        yield* notifyRunChanged(runId);
+      }),
     );
   });
 
@@ -547,6 +571,10 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
   ) {
     const settled = yield* waitSettled(run.projectId, childThreadId);
     const expect: StepExpectation = { cursor, attempt, stepStatus: "running" };
+    const settling = run.steps[cursor];
+    if (settling !== undefined && settled._tag !== "deleted") {
+      yield* recordStartCheckpoint(run.id, settling, childThreadId);
+    }
     switch (settled._tag) {
       case "completed": {
         const applied = yield* withGuard(run.id, expect, (current, now) =>
@@ -955,20 +983,50 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     return yield* result(input.runId);
   });
 
-  const retryStep = Effect.fn("PipelineRunner.retryStep")(function* (
-    input: PipelineRunStepActionInput,
-  ) {
+  const retryStep = Effect.fn("PipelineRunner.retryStep")(function* (input: PipelineRunRetryInput) {
     const message = "Only a paused or cancelled run can retry a step.";
+    const restore = input.restoreWorkspace === true;
     yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const run = yield* readRun(input.runId);
         yield* requireRedirectable(run, input.stepIndex, message);
+        const step = run.steps[run.currentStepIndex];
+        const threadId = step?.childThreadId ?? null;
+        // The last chance to save the snapshot: once the retry starts, the step is on attempt 2.
+        if (step !== undefined && threadId !== null) {
+          yield* recordStartCheckpoint(run.id, step, threadId);
+        }
+        const start = restore ? yield* store.getStepStartCheckpoint(run.id, input.stepIndex) : null;
+        if (restore && start === null) {
+          return yield* pipelineError(
+            "This step's starting files were not saved, so they cannot be restored. Retry with the current files instead.",
+            { runId: run.id },
+          );
+        }
         // Stop the old agent before the next attempt can start in the same workspace.
         yield* stopCurrentChild(run, "retry");
+        // Stopping is asynchronous, and the agent must not write while its files are put back.
+        if (restore && threadId !== null && !(yield* workspace.waitUntilThreadIdle(threadId))) {
+          return yield* pipelineError(
+            "The step's agent is still stopping. Try again in a moment.",
+            {
+              runId: run.id,
+            },
+          );
+        }
         yield* section(
           Effect.gen(function* () {
             const current = yield* readRun(input.runId);
             yield* requireRedirectable(current, input.stepIndex, message);
+            // Inside the section, so the run cannot change between the check and the restore.
+            if (start !== null) {
+              yield* workspace.restoreStartCheckpoint({
+                runId: current.id,
+                stepIndex: current.currentStepIndex,
+                attempt: current.steps[current.currentStepIndex]?.attempt ?? 0,
+                start,
+              });
+            }
             const now = yield* nowIso;
             yield* store.updateRunWithSteps(
               current.id,
@@ -1050,7 +1108,13 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
             return run;
           }),
         );
-        if (cancelled !== null) yield* stopActiveChild(cancelled);
+        if (cancelled !== null) {
+          yield* stopActiveChild(cancelled);
+          const step = cancelled.steps[cancelled.currentStepIndex];
+          if (step?.status === "running" && step.childThreadId !== null) {
+            yield* recordStartCheckpoint(runId, step, step.childThreadId);
+          }
+        }
         return cancelled;
       }),
     );

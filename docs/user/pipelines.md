@@ -51,7 +51,10 @@ follow-ups. Open a step's thread to steer it like any other chat.
 - **Refine before continuing.** When a run is paused, before a step or after a failure, keep
   chatting in the previous step's thread. **Continue** then passes that thread's latest answer on.
   A paused run is marked as needing attention in the sidebar.
-- **Retry** runs a failed step again in a new thread, in the same workspace.
+- **Retry** runs a failed step again in a new thread, in the same workspace. When the run uses a
+  T3 Code worktree, you can choose **Retry from step start**: it first puts the files back to how
+  they were when the step began, then runs the step again. **Retry with current files** keeps
+  whatever the failed attempt left behind. Commits the step made stay on the branch either way.
 - **Skip** moves on without a step.
 - **Cancel** stops the active step.
 - **Pause** a step that has not started yet if you want to check the result before it runs.

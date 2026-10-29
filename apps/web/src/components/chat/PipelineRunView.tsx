@@ -23,6 +23,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   BanIcon,
   CheckCircle2Icon,
+  ChevronDownIcon,
   CircleDashedIcon,
   CircleDotIcon,
   ExternalLinkIcon,
@@ -44,6 +45,7 @@ import { cn } from "../../lib/utils";
 import ChatMarkdown from "../ChatMarkdown";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/menu";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
@@ -187,6 +189,14 @@ function PipelineRunBody(props: {
 
   const stepAction = { runId: run.id, stepIndex: run.currentStepIndex };
   const currentName = stepName(run, run.currentStepIndex);
+  const canRestoreFiles = run.steps[run.currentStepIndex]?.canRestoreWorkspace === true;
+  const retryCurrent = (restoreWorkspace: boolean) =>
+    void perform("retry", "Could not retry step", () =>
+      retryStep({
+        environmentId,
+        input: restoreWorkspace ? { ...stepAction, restoreWorkspace } : stepAction,
+      }),
+    );
 
   const confirmCancel = async () => {
     if (busy) return;
@@ -226,16 +236,35 @@ function PipelineRunBody(props: {
                 Continue
               </Button>
             ) : null}
-            {actions.retry ? (
+            {actions.retry && canRestoreFiles ? (
+              <Menu>
+                <MenuTrigger
+                  render={<Button size="sm" variant="outline" disabled={busy || !canRetry} />}
+                >
+                  Retry {currentName}
+                  <ChevronDownIcon className="size-3.5" />
+                </MenuTrigger>
+                <MenuPopup align="start" className="max-w-72">
+                  <MenuItem className="items-start" onClick={() => retryCurrent(true)}>
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <MenuItemLabel>Retry from step start</MenuItemLabel>
+                      <span className="text-xs text-muted-foreground">
+                        Undo this step's file changes, then run it again. Commits stay on the
+                        branch.
+                      </span>
+                    </span>
+                  </MenuItem>
+                  <MenuItem onClick={() => retryCurrent(false)}>
+                    <MenuItemLabel>Retry with current files</MenuItemLabel>
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            ) : actions.retry ? (
               <Button
                 size="sm"
                 variant="outline"
                 disabled={busy || !canRetry}
-                onClick={() =>
-                  void perform("retry", "Could not retry step", () =>
-                    retryStep({ environmentId, input: stepAction }),
-                  )
-                }
+                onClick={() => retryCurrent(false)}
               >
                 Retry {currentName}
               </Button>
