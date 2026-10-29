@@ -16,7 +16,7 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { SymbolView } from "../../../components/ui/AppSymbol";
-import { useEffect, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 import { ScreenStack } from "react-native-screens";
@@ -30,6 +30,7 @@ import { ListRow } from "../../../components/ui/ListRow";
 import { ListSection } from "../../../components/ui/ListSection";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
+import { InspectorSheetContext } from "../../layout/workspace-inspector-sheet";
 import { AppText as Text } from "../../../components/ui/AppText";
 import {
   NativeStackScreenOptions,
@@ -77,6 +78,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
   const isInspector = presentation === "inspector";
+  const closeInspectorSheet = use(InspectorSheetContext);
+  const presentRoute = (present: () => void) =>
+    closeInspectorSheet ? closeInspectorSheet(present) : present();
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
   const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
@@ -163,19 +167,23 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       !input.featureBranch &&
       requiresDefaultBranchConfirmation(input.action, isDefaultRef)
     ) {
-      navigation.navigate("GitConfirm", {
-        environmentId: String(environmentId),
-        threadId: String(threadId),
-        confirmAction: confirmableAction,
-        branchName,
-        includesCommit: String(input.action === "commit_push" || input.action === "commit_push_pr"),
-      });
+      presentRoute(() =>
+        navigation.navigate("GitConfirm", {
+          environmentId: String(environmentId),
+          threadId: String(threadId),
+          confirmAction: confirmableAction,
+          branchName,
+          includesCommit: String(
+            input.action === "commit_push" || input.action === "commit_push_pr",
+          ),
+        }),
+      );
       return;
     }
 
-    if (!isInspector) {
-      navigation.goBack();
-    }
+    // Close a sheet so the thread shows the action's progress.
+    if (!isInspector) navigation.goBack();
+    else closeInspectorSheet?.();
     await gitActions.onRunSelectedThreadGitAction(input);
   };
 
@@ -187,10 +195,12 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     }
     if (!canWriteSourceControl) return;
     if (item.dialogAction === "commit") {
-      navigation.navigate("GitCommit", {
-        environmentId: String(environmentId),
-        threadId: String(threadId),
-      });
+      presentRoute(() =>
+        navigation.navigate("GitCommit", {
+          environmentId: String(environmentId),
+          threadId: String(threadId),
+        }),
+      );
       return;
     }
     if (item.dialogAction === "push") {
@@ -298,10 +308,12 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           }
           disabled={busy || !isRepo}
           onPress={() =>
-            navigation.navigate("GitBranches", {
-              environmentId: String(environmentId),
-              threadId: String(threadId),
-            })
+            presentRoute(() =>
+              navigation.navigate("GitBranches", {
+                environmentId: String(environmentId),
+                threadId: String(threadId),
+              }),
+            )
           }
         />
         {linkedPrActions.canLink ? (

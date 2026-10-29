@@ -23,9 +23,11 @@ interface AdaptiveWorkspaceContextValue {
   readonly selectDetail?: (detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) => void;
   readonly registerWorkspaceInspector: (
     render: () => ReactNode,
-    reveal?: { readonly routeKey: string; readonly key: string },
+    routeKey: string | undefined,
+    revealKey?: string,
   ) => () => void;
   readonly setPrimarySidebarSearchQuery: (query: string) => void;
+  /** Opens the inspector: its column where the window has one, otherwise a sheet. */
   readonly showInspector: () => void;
   readonly toggleAuxiliaryPane: () => void;
   /**
