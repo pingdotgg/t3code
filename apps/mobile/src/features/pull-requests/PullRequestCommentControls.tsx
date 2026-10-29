@@ -237,13 +237,15 @@ export function PullRequestCommentControls({
       ]}
       onPressAction={({ nativeEvent }) => {
         if (nativeEvent.event === "resolve") onResolve?.();
-        else if (nativeEvent.event === "composer")
-          void agent.ask(
-            agent.threads.length === 1 ? agent.threads[0] : undefined,
-            "ask",
-            markdown,
-          );
-        else if (nativeEvent.event === "unresolve") onUnresolve?.();
+        else if (nativeEvent.event === "composer") {
+          if (agent.canAddToComposer) void agent.addToComposer({ markdown });
+          else
+            void agent.ask(
+              agent.threads.length === 1 ? agent.threads[0] : undefined,
+              "ask",
+              markdown,
+            );
+        } else if (nativeEvent.event === "unresolve") onUnresolve?.();
         else if (nativeEvent.event === "discard") onDiscard?.();
         else if (nativeEvent.event === "edit") edit();
         else if (nativeEvent.event === "copy") void Clipboard.setStringAsync(markdown);

@@ -16,6 +16,8 @@ import {
   ThreadId,
   type PullRequestDetail,
   type PullRequestLinkedThreadsResult,
+  type PullRequestReviewPosition,
+  type ReviewCommentContextRecord,
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -23,7 +25,10 @@ import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pu
 import { useRef, useState } from "react";
 import { Platform } from "react-native";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
-import { pullRequestComposerContext } from "../../lib/composerContext";
+import {
+  pendingReviewCommentComposerContext,
+  pullRequestComposerContext,
+} from "../../lib/composerContext";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { uuidv4 } from "../../lib/uuid";
 import { useEnvironmentServerConfig } from "../../state/entities";
@@ -39,6 +44,8 @@ import {
   updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
+import { showComposerInsertNotice } from "./composer-insert-notice";
+import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import {
@@ -48,6 +55,78 @@ import {
 } from "./pullRequestAgentTasks";
 
 type LinkedThread = PullRequestLinkedThreadsResult["threads"][number];
+type DraftKey = Parameters<typeof getComposerDraftSnapshot>[0];
+
+const TOO_MUCH_CONTEXT = "Remove some context from this thread's draft, then try again.";
+
+function pullRequestMetadata(pr: PullRequestDetail) {
+  return {
+    number: pr.number,
+    title: pr.title,
+    url: pr.url,
+    headBranch: pr.headBranch,
+    baseBranch: pr.baseBranch,
+    state: pr.state,
+    isDraft: pr.isDraft,
+  };
+}
+
+function appendContext(draftKey: DraftKey, record: ReviewCommentContextRecord) {
+  const draft = getComposerDraftSnapshot(draftKey);
+  return insertComposerDraftContext(
+    draftKey,
+    {
+      text: `${formatComposerContextReference(record)} `,
+      context: { version: 1, records: [record] },
+    },
+    { text: draft.text, start: draft.text.length, end: draft.text.length },
+  );
+}
+
+/** The pull request is attached once per draft; false when the draft already holds too much context. */
+function attachPullRequestContext(
+  draftKey: DraftKey,
+  pr: PullRequestDetail,
+  filePath: string | undefined,
+) {
+  const context = pullRequestComposerContext(pullRequestMetadata(pr), uuidv4(), filePath);
+  const attached = getComposerDraftSnapshot(draftKey).context?.records.some(
+    (record) =>
+      record.kind === "review-comment" &&
+      "pullRequest" in record &&
+      record.pullRequest?.url === pr.url &&
+      record.filePath === context.filePath,
+  );
+  return attached || appendContext(draftKey, context);
+}
+
+function reviewPositionLine(position: PullRequestReviewPosition) {
+  return "newLine" in position ? position.newLine : position.oldLine;
+}
+
+export function pendingCommentComposerContext(
+  pr: PullRequestDetail,
+  comment: {
+    readonly path: string;
+    readonly body: string;
+    readonly code?: string;
+    readonly position: PullRequestReviewPosition;
+    readonly startPosition?: PullRequestReviewPosition;
+  },
+) {
+  return pendingReviewCommentComposerContext(
+    pullRequestMetadata(pr),
+    {
+      path: comment.path,
+      body: comment.body,
+      ...(comment.code === undefined ? {} : { code: comment.code }),
+      rangeLabel: reviewPositionLabel(comment.position, comment.startPosition),
+      startLine: reviewPositionLine(comment.startPosition ?? comment.position),
+      endLine: reviewPositionLine(comment.position),
+    },
+    uuidv4(),
+  );
+}
 
 export function usePullRequestThreads(
   params: PullRequestParams,
@@ -66,6 +145,23 @@ export function usePullRequestThreads(
   const route = useRoute();
   // The iOS synthetic workspace parent's focus differs from the visible detail's focus.
   const focused = useNavigationState((state) => state.routes[state.index]?.key === route.key);
+  // The thread this pull request was opened over, if any: "Add to composer" writes into its draft.
+  const threadBehind = useNavigationState((state) => {
+    const index = state.routes.findIndex((candidate) => candidate.key === route.key);
+    for (let position = index - 1; position >= 0; position -= 1) {
+      const candidate = state.routes[position];
+      const routeParams = candidate?.params as
+        | { readonly environmentId?: unknown; readonly threadId?: unknown }
+        | undefined;
+      if (
+        candidate?.name === "Thread" &&
+        typeof routeParams?.threadId === "string" &&
+        routeParams.environmentId === params.environmentId
+      )
+        return routeParams.threadId;
+    }
+    return null;
+  });
   const relations = useEnvironmentQuery(
     pr && supported && focused ? composerPullRequests.linkedThreads(reference) : null,
   );
@@ -132,39 +228,7 @@ export function usePullRequestThreads(
             pullRequestReference: pr.url,
           },
         });
-      const context = pullRequestComposerContext(
-        {
-          number: pr.number,
-          title: pr.title,
-          url: pr.url,
-          headBranch: pr.headBranch,
-          baseBranch: pr.baseBranch,
-          state: pr.state,
-          isDraft: pr.isDraft,
-        },
-        uuidv4(),
-        filePath,
-      );
-      const draft = getComposerDraftSnapshot(draftKey);
-      const attached = draft.context?.records.some(
-        (record) =>
-          record.kind === "review-comment" &&
-          "pullRequest" in record &&
-          record.pullRequest?.url === pr.url &&
-          record.filePath === context.filePath,
-      );
-      if (
-        !attached &&
-        !insertComposerDraftContext(
-          draftKey,
-          {
-            text: `${formatComposerContextReference(context)} `,
-            context: { version: 1, records: [context] },
-          },
-          { text: draft.text, start: draft.text.length, end: draft.text.length },
-        )
-      )
-        throw new Error("Remove some context from this thread's draft, then try again.");
+      if (!attachPullRequestContext(draftKey, pr, filePath)) throw new Error(TOO_MUCH_CONTEXT);
       const withContext = getComposerDraftSnapshot(draftKey);
       setComposerDraftText(
         draftKey,
@@ -188,13 +252,50 @@ export function usePullRequestThreads(
       Dialog.alert("Couldn't open a thread", cause instanceof Error ? cause.message : "Try again.");
     }
   };
+  const canAddToComposer = threadBehind !== null && canAsk;
+  /** Desktop's "Add to composer": into the thread behind this pull request, without leaving it. */
+  const addToComposer = async (input: {
+    readonly markdown?: string;
+    readonly context?: ReviewCommentContextRecord;
+    readonly filePath?: string;
+  }) => {
+    if (!pr || threadBehind === null || !canAsk || pending.current) return false;
+    pending.current = true;
+    setBusy(true);
+    const draftKey = scopedThreadKey(target.environmentId, ThreadId.make(threadBehind));
+    const result = await settlePromise(async () => {
+      await waitForComposerDraftsLoaded();
+      if (!attachPullRequestContext(draftKey, pr, input.filePath ?? filePath))
+        throw new Error(TOO_MUCH_CONTEXT);
+      if (input.context && !appendContext(draftKey, input.context))
+        throw new Error(TOO_MUCH_CONTEXT);
+      if (input.markdown) {
+        const draft = getComposerDraftSnapshot(draftKey);
+        setComposerDraftText(draftKey, `${draft.text.trimEnd()}\n\n${input.markdown}\n\n`);
+      }
+    });
+    pending.current = false;
+    setBusy(false);
+    if (AsyncResult.isFailure(result)) {
+      const cause = squashAtomCommandFailure(result);
+      Dialog.alert(
+        "Couldn't add to the composer",
+        cause instanceof Error ? cause.message : "Try again.",
+      );
+      return false;
+    }
+    showComposerInsertNotice({ environmentId: params.environmentId, threadId: threadBehind });
+    return true;
+  };
   return {
     ...relations,
     threads,
     canAsk,
+    canAddToComposer,
     canWatch: config?.environment.capabilities.threadPullRequestWatch === true,
     busy,
     ask,
+    addToComposer,
     openThread,
   };
 }

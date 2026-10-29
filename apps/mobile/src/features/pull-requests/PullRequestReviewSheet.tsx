@@ -1,5 +1,5 @@
 import { AsyncResult } from "effect/reactivity";
-import { PullRequestCommentComposer } from "./PullRequestCommentComposer";
+import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { useAtomRefresh } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -20,7 +20,9 @@ import {
 } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { AppText as Text } from "../../components/ui/AppText";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { Button } from "../../components/ui/Button";
+import { Menu } from "../../components/ui/Menu";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -150,24 +152,66 @@ export function PullRequestReviewSheet({
         setReviewDraftBusy(params, false);
       });
     });
+  const verdictMenu =
+    reviewing && offered.length > 1 ? (
+      <Menu
+        title="Review verdict"
+        actions={offered.map((option) => ({
+          id: option.value,
+          title: option.title,
+          state: option.value === verdict?.value ? ("on" as const) : ("off" as const),
+        }))}
+        onPressAction={({ nativeEvent }) => {
+          const next = offered.find((option) => option.value === nativeEvent.event);
+          if (next && !submission.busy) setRequestedVerdict(next.value);
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Review verdict: ${verdict?.title ?? "Comment"}`}
+          disabled={submission.busy}
+          className="h-11 flex-row items-center gap-1.5 rounded-full border border-border-subtle px-3.5 active:opacity-70"
+        >
+          <Text className="text-xs font-t3-bold">{verdict?.title ?? "Comment"}</Text>
+          <SymbolView name="chevron.down" size={11} tintColorClassName="accent-icon-muted" />
+        </Pressable>
+      </Menu>
+    ) : null;
   return (
     <SheetContent
       title={reviewing ? "Submit review" : "Add comment"}
       subtitle={`#${params.number}${reviewing && result.data?.headSha ? ` · reviewing ${result.data.headSha.slice(0, 7)}` : ` · ${params.repository}`}`}
       busy={submission.busy || uploading}
       compact
+      footer={
+        <View className="flex-row items-center gap-2">
+          {verdictMenu}
+          <View className="flex-1" />
+          <Button
+            tone="text"
+            label="Cancel"
+            disabled={submission.busy}
+            onPress={() => navigation.goBack()}
+          />
+          <Button
+            tone={reviewing ? "primary" : "secondary"}
+            label={
+              submission.busy
+                ? reviewing
+                  ? "Submitting…"
+                  : "Posting…"
+                : reviewing
+                  ? "Submit review"
+                  : "Comment"
+            }
+            loading={submission.busy}
+            disabled={!canSubmit || result.isPending || result.error !== null || submission.busy}
+            onPress={() => void perform()}
+          />
+        </View>
+      }
     >
-      {reviewing && offered.length > 1 ? (
-        <SegmentedControl
-          options={offered.map((option) => ({ value: option.value, label: option.title }))}
-          selected={verdict?.value ?? "comment"}
-          onSelect={(value) => {
-            if (!submission.busy) setRequestedVerdict(value);
-          }}
-          size="compact"
-        />
-      ) : null}
-      <PullRequestCommentComposer
+      <PullRequestCommentForm
         params={params}
         label={reviewing ? "Review summary" : "Comment"}
         placeholder={
@@ -175,34 +219,20 @@ export function PullRequestReviewSheet({
             ? summaryRequired
               ? "Summary required to request changes…"
               : "Summarize your review…"
-            : "Write a comment…"
+            : "Leave a comment"
         }
         editable={store.ready && !submission.busy && !store.busy}
         value={body}
         onChangeText={setBody}
         busy={submission.busy}
-        canSubmit={canSubmit && !result.isPending && result.error === null}
-        submitLabel={
-          submission.busy
-            ? "Submitting…"
-            : reviewing
-              ? verdict?.value === "approve"
-                ? "Approve"
-                : verdict?.value === "request-changes"
-                  ? "Request changes"
-                  : "Submit review"
-              : "Post comment"
-        }
-        showSubmitLabel={reviewing}
-        onSubmit={() => void perform()}
         onBusyChange={setUploading}
         autoFocus={!reviewing}
       />
       {reviewing && store.comments.length ? (
         <View className="gap-2">
-          <Text className="text-sm font-t3-medium">
+          <Text className="text-xs text-foreground-muted">
             {store.comments.length} pending line{" "}
-            {store.comments.length === 1 ? "comment" : "comments"}
+            {store.comments.length === 1 ? "comment" : "comments"} will post with this review
           </Text>
           {store.comments.map((draft) => (
             <View key={draft.id} className="gap-1 rounded-[20px] bg-grouped-card p-4">

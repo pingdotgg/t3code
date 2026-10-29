@@ -1,13 +1,13 @@
 import { PullRequestThreadCard } from "./PullRequestCommentCard";
-import * as Dialog from "../../components/ui/Dialog";
 import { Alert } from "react-native";
-import { PullRequestCommentComposer } from "./PullRequestCommentComposer";
+import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useRef, useState } from "react";
-import { View } from "react-native";
+import { ScrollView, View } from "react-native";
 import type { PullRequestReviewPosition } from "@t3tools/contracts";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { uuidv4 } from "../../lib/uuid";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -19,6 +19,7 @@ import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
+import { pendingCommentComposerContext, usePullRequestThreads } from "./usePullRequestThreads";
 import {
   PullRequestPendingBadge,
   PullRequestPendingCommentActions,
@@ -154,46 +155,98 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         setBusy(false);
       });
   };
+  const agent = usePullRequestThreads(params, detail.data, params.path);
+  const addToComposer = async () => {
+    if (!detail.data || !body.trim()) return;
+    const added = await agent.addToComposer({
+      context: pendingCommentComposerContext(detail.data, {
+        path: params.path,
+        body,
+        code: params.code,
+        position: params.position,
+        ...(params.startPosition ? { startPosition: params.startPosition } : {}),
+      }),
+      filePath: params.path,
+    });
+    if (added) navigation.goBack();
+  };
+  const canSave =
+    !uploading &&
+    !store.busy &&
+    store.ready &&
+    Boolean(body.trim()) &&
+    !detail.isPending &&
+    detail.error === null &&
+    !stale &&
+    permissions.canInlineComment;
   return (
     <PullRequestSheetContent
       busy={busy || uploading}
       title={saved ? "Edit review comment" : "Review comment"}
       subtitle={`#${params.number} · ${reviewPositionLabel(params.position, params.startPosition)}`}
       compact
+      footer={
+        <View className="flex-row items-center justify-end gap-2">
+          <Button
+            tone="text"
+            label="Cancel"
+            disabled={busy || uploading}
+            onPress={() => navigation.goBack()}
+          />
+          {agent.canAddToComposer ? (
+            <Button
+              tone="secondary"
+              label="Add to composer"
+              disabled={!body.trim() || busy || uploading || agent.busy || !detail.data}
+              onPress={() => void addToComposer()}
+            />
+          ) : null}
+          <Button
+            tone="primary"
+            label={busy ? "Saving…" : saved ? "Save" : "Add to review"}
+            loading={busy}
+            disabled={!canSave || busy}
+            onPress={() => void save()}
+          />
+        </View>
+      }
     >
-      <View className="gap-2 rounded-[20px] bg-grouped-card p-4">
-        <Text className="font-mono text-xs text-foreground-muted">{params.path}</Text>
-        <Text selectable className="font-mono text-xs">
-          {params.code}
+      <View className="gap-1 rounded-2xl bg-grouped-card px-3 py-2.5">
+        <Text
+          numberOfLines={1}
+          ellipsizeMode="middle"
+          className="font-mono text-2xs text-foreground-muted"
+        >
+          {params.path}
         </Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
+          <Text selectable className="font-mono text-xs leading-relaxed">
+            {params.code}
+          </Text>
+        </ScrollView>
       </View>
-      <PullRequestCommentComposer
-        params={params}
-        label="Inline review comment"
-        placeholder="Write feedback on these lines…"
-        editable={store.ready && !busy && !store.busy}
-        autoFocus
-        value={body}
-        onChangeText={setBody}
-        busy={busy}
-        canSubmit={
-          !uploading &&
-          !store.busy &&
-          store.ready &&
-          Boolean(body.trim()) &&
-          !detail.isPending &&
-          detail.error === null &&
-          !stale &&
-          permissions.canInlineComment
-        }
-        submitLabel={busy ? "Saving…" : "Save draft"}
-        showSubmitLabel
-        onSubmit={() => void save()}
-        onBusyChange={setUploading}
-      />
-      <Text className="text-xs text-foreground-muted">
-        Saved comments are private until you submit your review.
-      </Text>
+      <View className="gap-2 rounded-r-2xl border-l-2 border-primary/60 bg-primary/5 py-3 pl-3 pr-2">
+        <View className="flex-row items-center gap-1.5">
+          <SymbolView name="bubble.left" size={12} tintColorClassName="accent-primary" />
+          <Text className="font-mono text-2xs text-foreground-muted">
+            {params.path.split("/").at(-1)} ·{" "}
+            {reviewPositionLabel(params.position, params.startPosition)}
+          </Text>
+        </View>
+        <PullRequestCommentForm
+          params={params}
+          label="Inline review comment"
+          placeholder="Write feedback on these lines…"
+          editable={store.ready && !busy && !store.busy}
+          autoFocus
+          value={body}
+          onChangeText={setBody}
+          busy={busy}
+          onBusyChange={setUploading}
+          minimumHeight={72}
+        />
+      </View>
+      <Text className="text-2xs text-foreground-muted">Private until you submit the review.</Text>
       {pendingThread ? (
         <PullRequestThreadCard
           params={params}
@@ -216,25 +269,6 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           <View className="flex-1" />
           <PullRequestPendingCommentActions params={params} comment={saved} />
         </View>
-      ) : null}
-      {saved && (!saved.hostedComment || pendingActions.canDiscard) ? (
-        <Button
-          label="Delete draft"
-          disabled={store.busy || busy || uploading}
-          onPress={() =>
-            Dialog.alert("Delete this draft?", "Your other review comments will be kept.", [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () =>
-                  void pendingActions.discard(saved).then((discarded) => {
-                    if (discarded) navigation.goBack();
-                  }),
-              },
-            ])
-          }
-        />
       ) : null}
     </PullRequestSheetContent>
   );

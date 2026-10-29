@@ -64,6 +64,7 @@ import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-reac
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { type PullRequestDetail, type PullRequestListEntry } from "@t3tools/contracts";
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
+import { PullRequestComposerNotice } from "./PullRequestComposerNotice";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
 import {
@@ -722,6 +723,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
           }
           onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
         >
+          <PullRequestComposerNotice bottomInset={toolbarHeight + 8} />
           {(["overview", "guide", "diff"] as const)
             .filter(
               (tab) =>
@@ -992,6 +994,7 @@ export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
   const title = props.route.params.commit ? "Commit changes" : "Changes";
   return (
     <View className="flex-1 bg-screen">
+      <PullRequestComposerNotice />
       <NativeStackScreenOptions options={{ title, headerTitle: title }} />
       {Platform.OS === "android" ? (
         <AndroidScreenHeader title={title} onBack={() => navigation.goBack()} />

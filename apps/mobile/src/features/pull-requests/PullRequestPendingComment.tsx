@@ -1,4 +1,4 @@
-import { usePullRequestThreads } from "./usePullRequestThreads";
+import { pendingCommentComposerContext, usePullRequestThreads } from "./usePullRequestThreads";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { pullRequestTarget } from "./usePullRequestDiff";
@@ -75,13 +75,19 @@ export function PullRequestPendingCommentActions({
       onPressAction={({ nativeEvent }) => {
         if (nativeEvent.event === "edit") onEdit?.();
         else if (nativeEvent.event === "copy") void Clipboard.setStringAsync(markdown);
-        else if (nativeEvent.event === "composer")
-          void agent.ask(
-            agent.threads.length === 1 ? agent.threads[0] : undefined,
-            "ask",
-            markdown,
-          );
-        else if (nativeEvent.event === "copy-link") void actions.copyLink(comment);
+        else if (nativeEvent.event === "composer") {
+          if (agent.canAddToComposer && detail.data)
+            void agent.addToComposer({
+              context: pendingCommentComposerContext(detail.data, comment),
+              filePath: comment.path,
+            });
+          else
+            void agent.ask(
+              agent.threads.length === 1 ? agent.threads[0] : undefined,
+              "ask",
+              markdown,
+            );
+        } else if (nativeEvent.event === "copy-link") void actions.copyLink(comment);
         else if (nativeEvent.event === "discard")
           Alert.alert("Discard this comment?", "Your other review comments will be kept.", [
             { text: "Cancel", style: "cancel" },
