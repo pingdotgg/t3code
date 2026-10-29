@@ -57,6 +57,7 @@ import { buildBoundedThreadStreamSnapshot } from "../orchestration-v2/ThreadStre
 import {
   projectDomainEventForWire,
   projectTurnItemForDetail,
+  projectTurnItemForWire,
 } from "../orchestration-v2/WireProjection.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -179,7 +180,7 @@ export class GuestShareService extends Context.Service<
       session: string,
       itemId: string,
     ) => Effect.Effect<{ readonly path: string; readonly title: string }, GuestShareAccessError>;
-    /** One item of the shared thread, as the owner's expanded row loads it. */
+    /** One item of the shared thread, as the owner's expanded row loads it, without file diffs. */
     readonly item: (
       session: string,
       itemId: string,
@@ -658,7 +659,10 @@ const make = Effect.gen(function* () {
 
   const item = Effect.fn("GuestShareService.item")(function* (session: string, itemId: string) {
     const { item } = yield* threadItem(session, itemId);
-    return { item: projectTurnItemForDetail(item) };
+    return {
+      item:
+        item.type === "file_change" ? projectTurnItemForWire(item) : projectTurnItemForDetail(item),
+    };
   });
 
   const commandOutput = Effect.fn("GuestShareService.commandOutput")(function* (

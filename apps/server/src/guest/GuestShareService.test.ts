@@ -411,7 +411,6 @@ it.effect("serves no render for an item outside the shared thread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-/** A message from the owner, which opens a run for the command below. */
 const ownerRun = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   yield* orchestrator.dispatch({
@@ -430,12 +429,17 @@ const ownerRun = Effect.gen(function* () {
   return runs[0]!.id;
 });
 
-const writeCommand = (
+const writeItem = (
   id: string,
-  fields: Pick<
-    Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
-    "status" | "output"
-  >,
+  fields:
+    | Pick<
+        Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
+        "type" | "status" | "input" | "output"
+      >
+    | Pick<
+        Extract<OrchestrationV2TurnItem, { type: "file_change" }>,
+        "type" | "status" | "fileName" | "diffStr" | "oldStr" | "newStr"
+      >,
 ) =>
   Effect.gen(function* () {
     const runId = yield* ownerRun;
@@ -464,8 +468,6 @@ const writeCommand = (
             startedAt: now,
             completedAt: fields.status === "running" ? null : now,
             updatedAt: now,
-            type: "command_execution",
-            input: "ls /work/src",
             ...fields,
           },
         },
@@ -474,17 +476,40 @@ const writeCommand = (
     return TurnItemId.make(id);
   });
 
-it.effect("gives the guest a command's detail and output, as the owner's row loads them", () =>
+it.effect("gives the guest a command's detail and output, but no file diffs", () =>
   Effect.gen(function* () {
     const { guestShares, credential } = yield* shareThread;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
-    const command = yield* writeCommand("item:command", {
+    const command = yield* writeItem("item:command", {
+      type: "command_execution",
       status: "completed",
+      input: "ls /work/src",
       output: "/work/src/auth.ts\n",
     });
 
     const detail = (yield* guestShares.item(session, command)).item;
     assert.deepInclude(detail, { input: "ls /work/src", output: "/work/src/auth.ts\n" });
+    const edit = yield* writeItem("item:edit", {
+      type: "file_change",
+      status: "completed",
+      fileName: "src/auth.ts",
+      diffStr: "-const token = 1;\n+const token = 2;\n",
+    });
+    const write = yield* writeItem("item:write", {
+      type: "file_change",
+      status: "completed",
+      fileName: "src/config.ts",
+      oldStr: "",
+      newStr: "export const key = 1;\n",
+    });
+    for (const [id, fileName] of [
+      [edit, "src/auth.ts"],
+      [write, "src/config.ts"],
+    ] as const) {
+      const change = (yield* guestShares.item(session, id)).item;
+      assert.deepInclude(change, { type: "file_change", fileName });
+      assert.doesNotHaveAnyKeys(change, ["diffStr", "oldStr", "newStr"]);
+    }
     const frames = Array.from(
       yield* Stream.runCollect(yield* guestShares.commandOutput(session, command)),
     );
@@ -508,7 +533,11 @@ it.effect("ends a running command's output once the owner stops sharing", () =>
   Effect.gen(function* () {
     const { orchestrator, guestShares, credential } = yield* shareThread;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
-    const command = yield* writeCommand("item:running", { status: "running" });
+    const command = yield* writeItem("item:running", {
+      type: "command_execution",
+      status: "running",
+      input: "ls /work/src",
+    });
     const collecting = yield* Stream.runCollect(
       yield* guestShares.commandOutput(session, command),
     ).pipe(Effect.forkChild);
