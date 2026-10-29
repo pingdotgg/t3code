@@ -6640,10 +6640,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           completedAt: releasedAt,
         },
       });
+      const { statements, tracer } = traceSqlStatements();
       assert.deepEqual(
-        (yield* store.getRuntimeRecoveryProjection(threadId)).runs.map((run) => run.id),
+        (yield* store
+          .getRuntimeRecoveryProjection(threadId)
+          .pipe(Effect.withTracer(tracer))).runs.map((run) => run.id),
         [runId, newerRunId],
       );
+      // Live-item filters must hit the active partial indexes, not walk the thread's history.
+      const sql = yield* SqlClient.SqlClient;
+      for (const statement of statements.filter((query) => query.includes("turn_items"))) {
+        const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+          `EXPLAIN QUERY PLAN ${statement}`,
+        )).map((row) => row.detail);
+        for (const detail of plan) {
+          assert.notMatch(detail, /turn_items_(thread_ordinal|thread_run)_idx \(thread_id=\?\)$/);
+        }
+      }
     }),
   );
 });
