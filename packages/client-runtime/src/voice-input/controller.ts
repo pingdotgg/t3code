@@ -167,6 +167,9 @@ function preparationErrorMessage(error: unknown): string {
   if (errorCode(error) === "unsupported-locale") {
     return "Voice transcription is not available for this language.";
   }
+  if (errorCode(error) === "unavailable") {
+    return "On-device voice transcription is not available for this device language.";
+  }
   return "Could not prepare voice transcription.";
 }
 

@@ -1,14 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  AudioModule,
-  RecordingPresets,
-  requestRecordingPermissionsAsync,
-  type RecordingStatus,
-} from "expo-audio";
+import { AudioModule, RecordingPresets, type RecordingStatus } from "expo-audio";
 import { File } from "expo-file-system";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSyncExternalStore } from "react";
-import { AppState, Platform } from "react-native";
+import { Platform } from "react-native";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { makeMutable } from "react-native-reanimated";
 
@@ -24,6 +19,7 @@ import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input"
 import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
+import { createVoiceRecordingPermission } from "./voiceRecordingPermission";
 import {
   acquireAudioSession,
   activateAudioSession,
@@ -63,6 +59,9 @@ const voiceInputAtom = Atom.make((get) => {
   );
   let keepAwakeSequence = 0;
   let audioToken: ReturnType<typeof acquireAudioSession> | null = null;
+  const permission = createVoiceRecordingPermission(() => {
+    void session.controller.appMovedToBackground();
+  });
   const recorder = createLazyVoiceRecorder({
     create: () => new AudioModule.AudioRecorder(VOICE_RECORDING_OPTIONS),
     onStatus: (status: RecordingStatus) => {
@@ -92,10 +91,7 @@ const voiceInputAtom = Atom.make((get) => {
   const session: VoiceInputSession = new VoiceInputSession({
     recorder,
     getTranscriber: getLocalVoiceTranscriber,
-    requestPermission: async () => {
-      const permission = await requestRecordingPermissionsAsync();
-      return { granted: permission.granted, canAskAgain: permission.canAskAgain };
-    },
+    requestPermission: permission.requestPermission,
     configureRecording: async () => {
       const token = acquireAudioSession("recording");
       audioToken = token;
@@ -120,14 +116,8 @@ const voiceInputAtom = Atom.make((get) => {
     publishAudioLevels: (levels) => audioLevels.set(levels),
     keepAwake: () => keepScreenAwake(`voice-input:${++keepAwakeSequence}`),
   });
-  // iOS reports `inactive` while its permission dialog is open. Only the real
-  // background state cancels preparation; recorder status handles calls and
-  // route interruptions during capture.
-  const appStateSubscription = AppState.addEventListener("change", (nextState) => {
-    if (nextState === "background") void session.controller.appMovedToBackground();
-  });
   get.addFinalizer(() => {
-    appStateSubscription.remove();
+    permission.dispose();
     session.dispose();
     recorder.release();
   });

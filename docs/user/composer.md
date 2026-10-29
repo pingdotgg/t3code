@@ -30,6 +30,16 @@ at the end, leave the block. **Backspace** at the start of a code block turns it
 back into plain lines. Choose the language in a code block's corner to change
 it. Very large code blocks are shown without syntax highlighting.
 
+## Dictate on mobile
+
+On supported iOS and Android devices, use the microphone to dictate a draft,
+then finish recording to insert the transcript. You can edit it before sending.
+Recordings are limited to five minutes and are transcribed on your device.
+
+Android voice input requires Android 12 or later and compatible Google speech
+services. The first use may download a speech model. Keep T3 Code open while
+recording and transcribing.
+
 ## Attach files
 
 Attach up to 100 files per message. Each image can be up to 10 MiB, with at most
