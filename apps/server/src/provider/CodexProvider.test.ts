@@ -153,3 +153,44 @@ it("ignores custom models that shadow a preferred slug", () => {
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
 });
+
+it("offers cyber access programs only when the catalog has a Daybreak program", () => {
+  const model = {
+    additionalSpeedTiers: [],
+    defaultReasoningEffort: "medium",
+    description: "Test model",
+    displayName: "GPT Test",
+    hidden: false,
+    id: "gpt-test",
+    isDefault: true,
+    model: "gpt-test",
+    supportedReasoningEfforts: [],
+  };
+
+  assert.deepStrictEqual(
+    mapCodexModelCapabilities({
+      ...model,
+      availableAccessPrograms: { cyber: ["standard"] },
+    }).optionDescriptors,
+    [],
+  );
+  assert.deepStrictEqual(
+    mapCodexModelCapabilities({
+      ...model,
+      availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
+    }).optionDescriptors,
+    [
+      {
+        id: "cyberAccessProgram",
+        label: "Cyber Access",
+        type: "select",
+        options: [
+          { id: "automatic", label: "Automatic", isDefault: true },
+          { id: "standard", label: "Standard" },
+          { id: "daybreakBlue", label: "Daybreak Blue" },
+        ],
+        currentValue: "automatic",
+      },
+    ],
+  );
+});
