@@ -193,6 +193,7 @@ export function V5StackHeader(props: {
       bottom.push({
         type: "item",
         id: mailSearch.filterButtonId ?? "filter",
+        title: mailSearch.filterMenu.title ?? "Filter",
         icon: {
           type: "sfSymbol",
           name: mailSearch.filterSystemImageName ?? "line.3.horizontal.decrease",

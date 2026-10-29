@@ -8,12 +8,17 @@ const git: HeaderItem = {
   title: "Git",
   menu: { id: "git:menu", type: "menu", children: [] },
 };
+const filter: HeaderItem = {
+  type: "item",
+  id: "filter",
+  menu: { id: "filter:menu", type: "menu", title: "Model filters", children: [] },
+};
 const search: HeaderItem = { type: "item", id: "search", searchBarPlacement: true };
 
 describe("fitting a column's items into the Duo vertical bar", () => {
   it("folds the actions into More and keeps the search field when they do not fit", () => {
     const items = fitVerticalBarItems(
-      [files, git, { type: "spacer", id: "group", sizing: "fixed", width: 8 }, search],
+      [files, git, filter, { type: "spacer", id: "group", sizing: "fixed", width: 8 }, search],
       () => false,
     );
     expect(items.map((item) => item.id)).toEqual(["vertical-bar-more", "search"]);
@@ -21,6 +26,7 @@ describe("fitting a column's items into the Duo vertical bar", () => {
     expect(more.type === "item" && "menu" in more ? more.menu?.children : []).toEqual([
       expect.objectContaining({ id: "files:more", title: "Files", disabled: false }),
       expect.objectContaining({ id: "git:menu", title: "Git" }),
+      expect.objectContaining({ id: "filter:menu", title: "Model filters" }),
     ]);
   });
 

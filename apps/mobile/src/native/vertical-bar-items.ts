@@ -24,7 +24,7 @@ function verticalBarGroupSizes(items: readonly HeaderItem[]) {
 function foldIntoMoreMenu(items: readonly HeaderItem[]): HeaderItem {
   const children = items.flatMap<StackHeaderMenuElementIOS>((item) => {
     if (item.type !== "item" || "render" in item) return [];
-    if (item.menu) return [{ ...item.menu, title: item.title, icon: item.icon }];
+    if (item.menu) return [{ ...item.menu, title: item.title ?? item.menu.title, icon: item.icon }];
     return [
       {
         id: `${item.id}:more`,
