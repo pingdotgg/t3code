@@ -151,6 +151,7 @@ export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "reasoning",
   "variant",
   "reasoning_effort",
+  "thinking_level",
 ];
 
 export function formatModelSelectionEffort(

@@ -315,6 +315,15 @@ describe("getComposerReasoningStep", () => {
     }
   });
 
+  it("steps Antigravity's thinking_level like other effort controls", () => {
+    expect(
+      step({
+        provider: ProviderDriverKind.make("antigravity"),
+        models: modelWith([selectDescriptor("thinking_level", LEVELS)]),
+      })?.modelOptions,
+    ).toStrictEqual(selections(["thinking_level", "high"]));
+  });
+
   it("adds and strips the Ultrathink prefix while the caret stays on the same character", () => {
     for (const { prompt, modelOptions, direction, expected } of [
       {
