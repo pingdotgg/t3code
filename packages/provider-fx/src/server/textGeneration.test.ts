@@ -164,8 +164,17 @@ describe("makeFxTextGeneration", () => {
         stderr:
           "fx ask: fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\n",
       },
-      detail:
-        "fx ask failed: fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.",
+      detail: "fx is not signed in. Run `fx login` on the machine running T3 Code.",
+    },
+    {
+      name: "an unrecognized failure without echoing stderr",
+      run: {
+        code: 1,
+        finalOutput: "",
+        error: "ProviderRequestFailed",
+        stderr: "fx ask: request failed for prompt: diff --git a/.env\n",
+      },
+      detail: "fx ask failed with ProviderRequestFailed.",
     },
     {
       name: "an empty reply",

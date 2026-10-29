@@ -33,22 +33,19 @@ const decodeFxAskResult = Schema.decodeUnknownOption(FxAskResult);
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
-/** fx prefixes its own diagnostics; the rest of stderr is tool progress. */
-function fxAskDiagnostics(stderr: string): string | undefined {
-  const lines = stderr
-    .split("\n")
-    .flatMap((line) => (line.startsWith("fx ask: ") ? [line.slice("fx ask: ".length).trim()] : []))
-    .filter((line) => line.length > 0);
-  return lines.length > 0 ? lines.join(" ") : undefined;
-}
+// fx's stderr can echo prompt or tool text, so it never reaches the client-visible error.
+const FX_ASK_ERROR_DETAILS: Record<string, string> = {
+  NonInteractivePermissionRequired:
+    "fx asked for approval to use a tool. Text generation runs fx without approvals.",
+  MissingCredentials: "fx is not signed in. Run `fx login` on the machine running T3 Code.",
+};
 
-function fxAskFailureDetail(code: number, stdout: string, stderr: string): string {
+function fxAskFailureDetail(code: number, stdout: string): string {
   const error = Option.getOrUndefined(decodeFxAskResult(stdout.trim()))?.error;
-  if (error === "NonInteractivePermissionRequired") {
-    return "fx asked for approval to use a tool. Text generation runs fx without approvals.";
+  if (error === undefined || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(error)) {
+    return `fx ask exited with code ${code}.`;
   }
-  const detail = fxAskDiagnostics(stderr) ?? error;
-  return detail === undefined ? `fx ask exited with code ${code}.` : `fx ask failed: ${detail}`;
+  return FX_ASK_ERROR_DETAILS[error] ?? `fx ask failed with ${error}.`;
 }
 
 /**
@@ -96,9 +93,13 @@ export const makeFxTextGeneration = Effect.fn("makeFxTextGeneration")(function* 
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
       if (result.code !== 0) {
+        yield* Effect.logWarning("fx ask failed", {
+          exitCode: result.code,
+          stderr: result.stderr.slice(-2_000),
+        });
         return yield* new TextGenerationError({
           operation,
-          detail: fxAskFailureDetail(result.code, result.stdout, result.stderr),
+          detail: fxAskFailureDetail(result.code, result.stdout),
         });
       }
       const output = decodeFxAskResult(result.stdout.trim());
