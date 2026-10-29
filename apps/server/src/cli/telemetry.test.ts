@@ -25,7 +25,6 @@ const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =
     ),
   );
 
-/** A fresh base dir and its settings.json path. */
 const makeBaseDir = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
