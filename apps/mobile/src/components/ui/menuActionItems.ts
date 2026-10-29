@@ -20,6 +20,7 @@ export function appBarMenuItemsFromActions(
           title: action.title,
           subtitle: action.subtitle,
           icon: action.image,
+          iconColor: action.imageColor,
           selected: action.state === "on",
           disabled: action.attributes?.disabled,
           onPress: () => onSelect(id),
