@@ -76,7 +76,7 @@ const ProjectReadTool = Tool.make("t3_project_read", {
 const ProjectCreateTool = Tool.make("t3_project_create", {
   ...shared,
   description:
-    "Register a folder; createWorkspaceRootIfMissing if absent. Existing registrations fail. Omit workspaceRoot for a Git repo from title; commitError leaves it created. Clone first with t3_project_clone.",
+    "Register workspaceRoot; createWorkspaceRootIfMissing if absent. Duplicates fail. No root: title makes Git, README.md, assets/icon.svg, tries Initial commit; commitError keeps project. Clone if needed.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...ProjectCreatePayload.fields,
