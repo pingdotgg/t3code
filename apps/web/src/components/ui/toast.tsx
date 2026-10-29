@@ -35,6 +35,7 @@ export type ThreadToastData = {
   onClose?: (() => void) | undefined;
   dismissAfterVisibleMs?: number;
   hideCopyButton?: boolean;
+  copyErrorText?: string;
   additionalActions?: ReadonlyArray<{
     id: string;
     props: ComponentPropsWithoutRef<"button">;
@@ -306,9 +307,10 @@ function deriveToastBodyDescriptor(toast: {
     toast.data?.actionVariant ?? "default";
   const secondaryActionVariant: NonNullable<ThreadToastData["secondaryActionVariant"]> =
     toast.data?.secondaryActionVariant ?? "outline";
+  const errorText = toast.data?.copyErrorText ?? toast.description;
   const copyErrorText =
-    toast.type === "error" && typeof toast.description === "string" && !toast.data?.hideCopyButton
-      ? toast.description
+    toast.type === "error" && typeof errorText === "string" && !toast.data?.hideCopyButton
+      ? errorText
       : null;
   const hasAdditionalActions = (toast.data?.additionalActions?.length ?? 0) > 0;
   const hasSecondaryAction = toast.data?.secondaryActionProps !== undefined;
