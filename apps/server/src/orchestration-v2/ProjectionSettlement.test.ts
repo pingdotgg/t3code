@@ -78,6 +78,7 @@ const createRun = Effect.fn(function* (
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
   at = old,
+  queueHeld = false,
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -97,6 +98,7 @@ const createRun = Effect.fn(function* (
       rootNodeId: null,
       activeAttemptId: null,
       status,
+      queueHeld,
       requestedAt: at,
       startedAt: status === "queued" ? null : at,
       completedAt: ["completed", "rolled_back", "failed"].includes(status) ? at : null,
@@ -215,7 +217,12 @@ it.effect("sql: a failed latest run blocks merge settlement until a successful f
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* createThread("failed-after-merge");
-    yield* createRun(threadId, "failed", 1, DateTime.subtract(now, { minutes: 1 }));
+    const failedRunId = yield* createRun(
+      threadId,
+      "failed",
+      1,
+      DateTime.subtract(now, { minutes: 1 }),
+    );
     const resolve = Effect.gen(function* () {
       const candidates = yield* store.getSettlementCandidates(threadId);
       assert.equal(candidates.length, 1);
@@ -231,7 +238,12 @@ it.effect("sql: a failed latest run blocks merge settlement until a successful f
       });
     });
     assert.isNull(yield* resolve);
-    yield* createRun(threadId, "completed", 2, now);
+    yield* createRun(threadId, "queued", 2, now, true);
+    const [heldCandidate] = yield* store.getSettlementCandidates(threadId);
+    assert.equal(heldCandidate?.latestRunId, failedRunId);
+    assert.equal(heldCandidate?.status, "failed");
+    assert.isNull(yield* resolve);
+    yield* createRun(threadId, "completed", 3, now);
     assert.deepEqual(yield* resolve, now);
   }).pipe(Effect.provide(layerSql)),
 );
