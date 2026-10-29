@@ -1226,43 +1226,70 @@ describe("GitCafePullRequestProvider", () => {
 
   it.effect("recounts summary lines only when the compared commits move", () => {
     const landedBase = "fedcba9876543210fedcba9876543210fedcba98";
+    const mainTip = "0123012301230123012301230123012301230123";
     let comparisonBaseOid = baseOid;
+    let tips = { targetBranch: "main", observedBaseOid: baseOid };
     let pullReads = 0;
+    let listingCut = true;
+    let hunksDown = false;
+    const hunks = (request: SentRequest) => ({
+      version: 4,
+      headOid,
+      comparisonBaseOid,
+      items: (request.body as { paths: ReadonlyArray<string> }).paths.map((path) => ({
+        path,
+        additions: comparisonBaseOid === baseOid ? 3 : 1,
+        deletions: 1,
+      })),
+    });
     const server = fakeGitCafe({
       // A comment moves the version without moving the compared commits.
-      "GET /repos/owner/repo/pulls/7": () => ({ ...pull, version: 4 + pullReads++ }),
-      "GET /repos/owner/repo/pulls/7/changes": () => ({
+      "GET /repos/owner/repo/pulls/7": () => ({ ...pull, ...tips, version: 4 + pullReads++ }),
+      "GET /repos/owner/repo/pulls/7/changes": (request: SentRequest) => ({
         version: 4,
         headOid,
         comparisonBaseOid,
-        items: [{ path: "a.ts" }, { path: "b.ts" }],
-        next: null,
+        ...(!listingCut
+          ? { items: [{ path: "a.ts" }, { path: "b.ts" }], next: null }
+          : request.query.has("after")
+            ? { items: [], next: "more" }
+            : { items: [{ path: "a.ts" }], next: "more" }),
       }),
-      "POST /repos/owner/repo/pulls/7/diff-files": (request: SentRequest) => ({
-        version: 4,
-        headOid,
-        comparisonBaseOid,
-        items: (request.body as { paths: ReadonlyArray<string> }).paths.map((path) => ({
-          path,
-          additions: comparisonBaseOid === baseOid ? 3 : 1,
-          deletions: 1,
-        })),
-      }),
+      get "POST /repos/owner/repo/pulls/7/diff-files"() {
+        return hunksDown
+          ? new Response(encodeJson({ type: "https://cafe.sh/errors/conflict" }), { status: 409 })
+          : hunks;
+      },
     });
-    const hunkReads = () =>
-      server.sent.filter((request) => request.path.endsWith("/diff-files")).length;
+    const reads = (suffix: string) =>
+      server.sent.filter((request) => request.path.endsWith(suffix)).length;
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
+      // A listing that stops before its last page holds nothing for its commits.
+      yield* provider.getChangeRequestSummary!(target);
+      listingCut = false;
+      hunksDown = true;
+      // Unread hunks leave the lines unknown, and are read again next time.
+      const unread = yield* provider.getChangeRequestSummary!(target);
+      assert.strictEqual(unread.additions, undefined);
+      hunksDown = false;
       const first = yield* provider.getChangeRequestSummary!(target);
       const second = yield* provider.getChangeRequestSummary!(target);
       assert.deepInclude(first, { additions: 6, deletions: 2, changedFiles: 2 });
       assert.deepInclude(second, { additions: 6, deletions: 2, changedFiles: 2 });
-      assert.strictEqual(hunkReads(), 1);
-      // A landed parent layer moves the comparison base under the same head.
-      comparisonBaseOid = landedBase;
+      // Neither the head nor the target tip moved, so the file list is not read again.
+      assert.deepStrictEqual([reads("/changes"), reads("/diff-files")], [4, 3]);
+      // The target branch advancing keeps the merge base, so only the file list is read.
+      tips = { ...tips, observedBaseOid: mainTip };
       const third = yield* provider.getChangeRequestSummary!(target);
-      assert.deepInclude(third, { additions: 2, deletions: 2, changedFiles: 2 });
-      assert.strictEqual(hunkReads(), 2);
+      assert.deepInclude(third, { additions: 6, deletions: 2, changedFiles: 2 });
+      assert.deepStrictEqual([reads("/changes"), reads("/diff-files")], [5, 3]);
+      // A landed parent layer retargets the pull and moves the comparison base under the same head.
+      comparisonBaseOid = landedBase;
+      tips = { targetBranch: "trunk", observedBaseOid: mainTip };
+      const fourth = yield* provider.getChangeRequestSummary!(target);
+      assert.deepInclude(fourth, { additions: 2, deletions: 2, changedFiles: 2 });
+      assert.deepStrictEqual([reads("/changes"), reads("/diff-files")], [6, 4]);
     }).pipe(Effect.provide(server.layer));
   });
 
