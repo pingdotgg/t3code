@@ -973,6 +973,24 @@ function failedTimelineRunIds(
   return failed;
 }
 
+/** Usage-limit pauses keep their tool groups; any other failure itemizes the run's work. */
+function itemizedFailedRunIds(
+  entries: ReadonlyArray<TimelineEntry>,
+  failedRunIds: ReadonlySet<RunId>,
+) {
+  const usageLimited = new Set<RunId>();
+  const otherFailures = new Set<RunId>();
+  for (const entry of entries) {
+    const item = timelineEntryFailedItem(entry);
+    if (item?.runId) {
+      (item.failure.class === "usage_limit" ? usageLimited : otherFailures).add(item.runId);
+    }
+  }
+  return new Set(
+    [...failedRunIds].filter((runId) => !usageLimited.has(runId) || otherFailures.has(runId)),
+  );
+}
+
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
@@ -1410,6 +1428,7 @@ export function deriveMessagesTimelineRows(input: {
   const nextRows: MessagesTimelineRow[] = [];
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
+  const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
   const completeSupersededReplyIds = completeSupersededReplyEntryIds(timelineEntries);
   const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(
@@ -1772,7 +1791,7 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.kind === "work") {
       if (
         isPendingApproval(timelineEntry.entry) ||
-        (timelineEntry.entry.runId != null && failedRunIds.has(timelineEntry.entry.runId)) ||
+        (timelineEntry.entry.runId != null && itemizedRunIds.has(timelineEntry.entry.runId)) ||
         (timelineEntry.entry.itemType === "error" &&
           timelineEntry.entry.toolLifecycleStatus === "failed") ||
         timelineEntry.entry.tone === "error" ||
@@ -1798,6 +1817,8 @@ export function deriveMessagesTimelineRows(input: {
           !nextEntry ||
           nextEntry.kind !== "work" ||
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
+          (nextEntry.entry.itemType === "error" &&
+            nextEntry.entry.toolLifecycleStatus === "failed") ||
           nextEntry.entry.tone === "error" ||
           nextEntry.entry.sourceActivityKind === "runtime.error" ||
           nextEntry.entry.itemType === "system_notice" ||
