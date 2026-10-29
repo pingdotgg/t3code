@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -624,6 +625,35 @@ describe("releaseManagedTunnelOnShutdown", () => {
       });
       expect(yield* link.linkState()).toMatchObject({ linked: true, linkRevoked: false });
     }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
+  });
+
+  it.effect("refuses to link while T3 Connect is off", () => {
+    const { store, values } = makeMemorySecretStore([]);
+    const cloudMintPublicKey =
+      "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const error = yield* Effect.flip(
+        link.applyRelayConfig({
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "user-123",
+          environmentCredential: "credential",
+          cloudMintPublicKey,
+          endpointRuntime: null,
+        }),
+      );
+      expect(error).toMatchObject({
+        _tag: "CloudLinkInternalError",
+        operation: "connect-disabled",
+      });
+      expect(values.size).toBe(0);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_CONNECT_ENABLED: "false" } })),
+      ),
+      provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }),
+    );
   });
 
   it.effect(

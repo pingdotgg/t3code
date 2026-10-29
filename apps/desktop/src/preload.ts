@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   getRelayTelemetryEnabled: () =>
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
+  getConnectEnabled: () => ipcRenderer.sendSync(IpcChannels.GET_CONNECT_ENABLED_CHANNEL) === true,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getClientPlatform: () => clientPlatform,
   setNotificationBadge: (badge) =>

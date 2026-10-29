@@ -15,6 +15,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { RelayAgentActivityState } from "@t3tools/contracts/relay";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -355,6 +356,18 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state?.threadTitle, "Renamed thread");
     }),
+  );
+
+  it.effect("publishes nothing through a saved link while T3 Connect is off", () =>
+    Effect.gen(function* () {
+      const { relay, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 0);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_CONNECT_ENABLED: "false" } })),
+      ),
+    ),
   );
 
   it.effect("republishes unchanged state with fresh credentials after relinking", () =>

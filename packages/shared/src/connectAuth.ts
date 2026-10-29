@@ -11,6 +11,10 @@ export const DEFAULT_HOSTED_APP_URL = "https://app.t3.codes";
 
 export const CONNECT_OAUTH_SCOPES = ["openid", "profile", "email", "offline_access"] as const;
 
+/** Reads `T3CODE_CONNECT_ENABLED`: only `false` turns T3 Connect off. */
+export const isConnectEnabled = (value: string | undefined) =>
+  value?.trim().toLowerCase() !== "false";
+
 export interface ConnectAuthorizeRequest {
   readonly state: string;
   readonly challenge: string;
