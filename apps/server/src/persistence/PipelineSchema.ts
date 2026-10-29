@@ -1,7 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-export default Effect.gen(function* () {
+/**
+ * Creates the Pipelines tables. It runs after the numbered migrations instead of taking an id in
+ * their ladder: the migrator skips every id up to the highest recorded one, so a fork-only id would
+ * collide with the next upstream migration. Every statement is idempotent, so it runs on each start.
+ */
+export const ensurePipelineSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`
