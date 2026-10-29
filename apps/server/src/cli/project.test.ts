@@ -18,11 +18,14 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import { Command } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { cli } from "../binCli.ts";
@@ -37,6 +40,10 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+import {
+  makePersistedServerRuntimeState,
+  persistServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
@@ -119,6 +126,66 @@ it.effect("adds, renames, and removes projects through the V2 project CLI domain
     yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
     assert.deepEqual((yield* readProjects(baseDir)).projects, []);
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(["snapshot", "mutation"] as const)(
+  "waits for a busy live server's %s response",
+  (slowRequest) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-live-project-cli-" });
+      const baseDir = NodePath.join(root, "state");
+      const workspaceRoot = NodePath.join(root, "workspace");
+      yield* fs.makeDirectory(workspaceRoot);
+      yield* persistServerRuntimeState({
+        path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: 3_773,
+        }),
+      });
+      const now = "2026-01-01T00:00:00.000Z";
+      const requestReceived = Promise.withResolvers<void>();
+      const releaseResponse = Promise.withResolvers<void>();
+      let snapshotRequests = 0;
+      let mutations = 0;
+      const fetch: typeof globalThis.fetch = async (_input, init) => {
+        const isMutation = init?.method === "POST";
+        if (isMutation) mutations++;
+        else snapshotRequests++;
+        if (slowRequest === "mutation" ? isMutation : !isMutation && snapshotRequests === 2) {
+          requestReceived.resolve();
+          await releaseResponse.promise;
+        }
+        return Response.json(
+          isMutation
+            ? {
+                id: "live-project",
+                title: NodePath.basename(workspaceRoot),
+                workspaceRoot,
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: now,
+                updatedAt: now,
+                deletedAt: null,
+              }
+            : { projects: [], updatedAt: now },
+        );
+      };
+
+      const add = yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
+        Effect.forkChild,
+      );
+      yield* Effect.promise(() => requestReceived.promise);
+      yield* TestClock.adjust("2 seconds");
+      releaseResponse.resolve();
+      yield* Fiber.join(add);
+
+      assert.equal(snapshotRequests, 2);
+      assert.equal(mutations, 1);
+      assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixture")(function* () {
