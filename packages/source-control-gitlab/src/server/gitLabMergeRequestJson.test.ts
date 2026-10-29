@@ -13,6 +13,7 @@ import {
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodeTriggerJobChecksJson,
+  decodePipelineStageChecksJson,
 } from "./gitLabMergeRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -233,6 +234,148 @@ describe("decodeMergeRequestDetailJson", () => {
     );
 
     expect(detail.checks[0]?.status).toBe("neutral");
+  });
+});
+
+describe("decodePipelineStageChecksJson", () => {
+  function stagesJson(stages: ReadonlyArray<Record<string, unknown>> | null): string {
+    return JSON.stringify({
+      data: {
+        project: {
+          mergeRequest: {
+            headPipeline:
+              stages === null
+                ? null
+                : { path: "/fork/web/-/pipelines/9", stages: { nodes: stages } },
+          },
+        },
+      },
+    });
+  }
+
+  it("shows each stage as GitLab reports it", () => {
+    const checks = expectSuccess(
+      decodePipelineStageChecksJson(
+        stagesJson([
+          {
+            name: "build",
+            status: "success",
+            detailedStatus: { label: "passed", detailsPath: "/fork/web/-/pipelines/9#build" },
+          },
+          // A job allowed to fail leaves its stage passed with warnings.
+          {
+            name: "test",
+            status: "success",
+            detailedStatus: { label: "passed with warnings" },
+            jobs: { nodes: [{ name: "lint", status: "FAILED", allowFailure: true }] },
+          },
+          { name: "deploy", status: "manual", detailedStatus: { label: "manual action" } },
+        ]),
+        "https://gitlab.com",
+      ),
+    );
+
+    expect(checks).toEqual([
+      {
+        name: "build",
+        status: "success",
+        description: "passed",
+        url: "https://gitlab.com/fork/web/-/pipelines/9#build",
+      },
+      {
+        name: "test",
+        status: "success",
+        description: "passed with warnings",
+        url: "https://gitlab.com/fork/web/-/pipelines/9",
+      },
+      {
+        name: "deploy",
+        status: "neutral",
+        description: "manual action",
+        url: "https://gitlab.com/fork/web/-/pipelines/9",
+      },
+    ]);
+  });
+
+  it("shows a failed stage as the jobs that failed it", () => {
+    const checks = expectSuccess(
+      decodePipelineStageChecksJson(
+        stagesJson([
+          {
+            name: "test",
+            status: "failed",
+            jobs: {
+              nodes: [
+                {
+                  name: "unit",
+                  status: "FAILED",
+                  allowFailure: false,
+                  webPath: "/acme/web/-/jobs/3",
+                },
+                {
+                  name: "lint",
+                  status: "FAILED",
+                  allowFailure: true,
+                  webPath: "/acme/web/-/jobs/4",
+                },
+                {
+                  name: "e2e",
+                  status: "SUCCESS",
+                  allowFailure: false,
+                  webPath: "/acme/web/-/jobs/5",
+                },
+              ],
+            },
+          },
+        ]),
+        "https://gitlab.example.com",
+      ),
+    );
+
+    expect(checks).toEqual([
+      {
+        name: "test / unit",
+        status: "failure",
+        description: null,
+        url: "https://gitlab.example.com/acme/web/-/jobs/3",
+      },
+    ]);
+  });
+
+  it("keeps a failed stage whose failed jobs were not listed", () => {
+    const checks = expectSuccess(
+      decodePipelineStageChecksJson(
+        stagesJson([{ name: "test", status: "failed", jobs: { nodes: [] } }]),
+        "https://gitlab.com",
+      ),
+    );
+
+    expect(checks).toEqual([
+      {
+        name: "test",
+        status: "failure",
+        description: null,
+        url: "https://gitlab.com/fork/web/-/pipelines/9",
+      },
+    ]);
+  });
+
+  it("answers nothing where there are no stages to show", () => {
+    expect(
+      expectSuccess(decodePipelineStageChecksJson(stagesJson(null), "https://gitlab.com")),
+    ).toBe(null);
+    expect(expectSuccess(decodePipelineStageChecksJson(stagesJson([]), "https://gitlab.com"))).toBe(
+      null,
+    );
+    // GitLab answers an error it hit with no data at all.
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          JSON.stringify({ errors: [{ message: "boom" }] }),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toBe(null);
   });
 });
 
