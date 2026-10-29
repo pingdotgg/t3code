@@ -236,6 +236,7 @@ export function T3ConnectUserProfilePage() {
           : {}),
         actionVariant: "outline",
         data: {
+          copyErrorText: message,
           expandableContent: message,
           expandableLabels: { expand: "Show more", collapse: "Show less" },
         },
