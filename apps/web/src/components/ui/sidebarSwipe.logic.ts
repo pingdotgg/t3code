@@ -67,13 +67,9 @@ export function beginSidebarSwipe(input: {
  * the browser turns that same touch into a scroll.
  */
 export function shouldClaimSidebarSwipe(gesture: SidebarSwipeGesture): boolean {
-  if (gesture.phase === "cancelled") return false;
-  if (gesture.phase === "horizontal") return true;
-  const dx = gesture.x - gesture.startX;
-  const dy = gesture.y - gesture.startY;
-  if (dx === 0 && dy === 0) return false;
-  const towardSheet = gesture.intent === "open" ? dx > 0 : dx < 0;
-  return towardSheet && Math.abs(dx) > Math.abs(dy);
+  // Wait for axis lock so ordinary tap drift does not cancel native clicks.
+  // Claim on touchmove, before waiting for the larger commit distance.
+  return gesture.phase === "horizontal";
 }
 
 export function moveSidebarSwipe(

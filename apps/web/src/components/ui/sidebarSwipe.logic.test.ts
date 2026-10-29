@@ -92,7 +92,7 @@ describe("moveSidebarSwipe", () => {
       time: 16,
     });
     expect(moved.phase).toBe("pending");
-    expect(shouldClaimSidebarSwipe(moved)).toBe(true);
+    expect(shouldClaimSidebarSwipe(moved)).toBe(false);
   });
 
   it("locks horizontal when the drag moves toward the sheet", () => {
@@ -102,6 +102,7 @@ describe("moveSidebarSwipe", () => {
       time: 20,
     });
     expect(moved.phase).toBe("horizontal");
+    expect(shouldClaimSidebarSwipe(moved)).toBe(true);
   });
 
   it("cancels when vertical movement wins", () => {
