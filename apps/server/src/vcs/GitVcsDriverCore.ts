@@ -2097,6 +2097,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       statusArgs,
       {
         allowNonZeroExit: true,
+        maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
       },
     ).pipe(
       Effect.catchTags({
@@ -2137,24 +2138,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "GitVcsDriver.statusDetails.numstat",
           cwd,
           ["diff-index", "-M", "--numstat", "-z", "HEAD", "--"],
-          { allowNonZeroExit: true },
+          { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
         ).pipe(
           Effect.flatMap((result) => {
             if (result.exitCode === 0) return Effect.succeed(parseReviewNumstat(result.stdout));
             if (isUnbornHeadStderr(result.stderr)) {
               return Effect.map(
                 Effect.all([
-                  runGitStdout("GitVcsDriver.statusDetails.numstat.unborn", cwd, [
-                    "diff-files",
-                    "--numstat",
-                    "-z",
-                  ]),
-                  runGitStdout("GitVcsDriver.statusDetails.numstat.unborn.staged", cwd, [
-                    "diff",
-                    "--cached",
-                    "--numstat",
-                    "-z",
-                  ]),
+                  runGitStdoutWithOptions(
+                    "GitVcsDriver.statusDetails.numstat.unborn",
+                    cwd,
+                    ["diff-files", "--numstat", "-z"],
+                    { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+                  ),
+                  runGitStdoutWithOptions(
+                    "GitVcsDriver.statusDetails.numstat.unborn.staged",
+                    cwd,
+                    ["diff", "--cached", "--numstat", "-z"],
+                    { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+                  ),
                 ]),
                 ([unstagedStdout, stagedStdout]) => [
                   ...parseReviewNumstat(stagedStdout),
@@ -2444,7 +2446,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "GitVcsDriver.prepareCommitContext.stagedSummary",
             cwd,
             ["diff", "--cached", "--name-status"],
-            { env },
+            { env, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
           ).pipe(Effect.map((stdout) => stdout.trim()));
           if (stagedSummary.length === 0) {
             return null;
@@ -2508,6 +2510,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               options.progress?.onOutputLine?.({ stream: "stderr", text: line }) ?? Effect.void,
           };
     yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
+      maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),
     }).pipe(Effect.asVoid);
