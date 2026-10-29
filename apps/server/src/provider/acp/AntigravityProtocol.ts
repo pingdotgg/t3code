@@ -216,6 +216,71 @@ export function sanitizeAntigravityToolPayload(payload: unknown): unknown {
 }
 const isJsonRecord = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
+const ANTIGRAVITY_CLIENT_READ_TITLES = new Set([
+  "Running client_view_file",
+  "Run client_view_file?",
+]);
+
+function antigravityClientReadPath(update: {
+  readonly title?: string | null;
+  readonly locations?: ReadonlyArray<{ readonly path: string }> | null;
+  readonly rawInput?: unknown;
+}): string | undefined {
+  if (!update.title || !ANTIGRAVITY_CLIENT_READ_TITLES.has(update.title)) return undefined;
+  const target =
+    update.locations?.[0]?.path ??
+    (Predicate.isObject(update.rawInput) ? update.rawInput.absolute_path : undefined);
+  return typeof target === "string" && target ? target : undefined;
+}
+
+/**
+ * The agent never completes a subagent's `client_view_file` call, then fails every open call
+ * with the next unrelated step error. Report reads T3 served as completed instead.
+ */
+export function makeAntigravityReadRepair() {
+  type Outcome = "served" | "refused";
+  const openReads = new Map<string, { readonly path: string; outcome?: Outcome }>();
+  // The agent runs a client tool in a background task, so its request can precede the announcement.
+  const earlyOutcomes: Array<{ readonly path: string; readonly outcome: Outcome }> = [];
+  return {
+    /** Earlier turns' rows are already settled, and their unanswered reads must not take credit. */
+    reset: () => {
+      openReads.clear();
+      earlyOutcomes.length = 0;
+    },
+    /** Each `fs/read_text_file` request answers the oldest open read of its path, in order. */
+    attempted: (path: string, served: boolean) => {
+      const outcome = served ? "served" : "refused";
+      for (const read of openReads.values()) {
+        if (read.path !== path || read.outcome !== undefined) continue;
+        read.outcome = outcome;
+        return;
+      }
+      earlyOutcomes.push({ path, outcome });
+    },
+    repair: (
+      notification: EffectAcpSchema.SessionNotification,
+    ): EffectAcpSchema.SessionNotification => {
+      const update = notification.update;
+      if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+        return notification;
+      }
+      const path = antigravityClientReadPath(update);
+      if (path !== undefined && !openReads.has(update.toolCallId)) {
+        const early = earlyOutcomes.findIndex((entry) => entry.path === path);
+        const outcome = early === -1 ? undefined : earlyOutcomes.splice(early, 1)[0]?.outcome;
+        openReads.set(update.toolCallId, outcome === undefined ? { path } : { path, outcome });
+      }
+      if (update.status !== "completed" && update.status !== "failed") return notification;
+      const read = openReads.get(update.toolCallId);
+      openReads.delete(update.toolCallId);
+      if (update.status === "completed" || read?.outcome !== "served") return notification;
+      const { rawOutput: _stepError, ...rest } = update;
+      return { ...notification, update: { ...rest, status: "completed" } };
+    },
+  };
+}
+
 export function normalizeAntigravitySessionUpdate(
   notification: EffectAcpSchema.SessionNotification,
 ): EffectAcpSchema.SessionNotification {

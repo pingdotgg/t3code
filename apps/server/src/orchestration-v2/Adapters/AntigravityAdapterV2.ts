@@ -29,6 +29,7 @@ import {
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
+  makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
@@ -128,8 +129,22 @@ export function makeAntigravityAcpAdapterFlavor(
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
+      // Repair keeps state across updates, so each runtime must have one session-update handler.
+      const reads = makeAntigravityReadRepair();
       return {
         ...runtime,
+        handleReadTextFile: (handler) =>
+          runtime.handleReadTextFile((request, context) =>
+            handler(request, context).pipe(
+              Effect.onExit((exit) =>
+                Effect.sync(() => reads.attempted(request.path, Exit.isSuccess(exit))),
+              ),
+            ),
+          ),
+        prompt: (payload, promptOptions) =>
+          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+        handleSessionUpdate: (handler) =>
+          runtime.handleSessionUpdate((notification) => handler(reads.repair(notification))),
         start: () =>
           runtime
             .start()
@@ -138,7 +153,7 @@ export function makeAntigravityAcpAdapterFlavor(
                 (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
               ),
             ),
-      };
+      } satisfies typeof runtime;
     },
     Effect.provideService(Crypto.Crypto, options.crypto),
     Effect.mapError((cause): EffectAcpErrors.AcpError =>
