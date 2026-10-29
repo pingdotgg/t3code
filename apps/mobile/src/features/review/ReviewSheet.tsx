@@ -77,6 +77,7 @@ export function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
     readonly iconColor?: string;
     readonly onReturnToThread: () => void;
+    readonly showGitMenu?: boolean;
   },
 ) {
   const presentation = useReviewHeaderPresentation(props);
@@ -90,7 +91,7 @@ export function ReviewHeader(
       options={{ headerTintColor: props.iconColor ?? iconColor, headerTitle: props.title }}
       backInSplitView={{ accessibilityLabel: "Back to chat", icon: "chevron.left" }}
       menus={[
-        ...(presentation.gitMenu ? [presentation.gitMenu] : []),
+        ...(presentation.gitMenu && props.showGitMenu !== false ? [presentation.gitMenu] : []),
         ...(presentation.refreshAction
           ? [
               {

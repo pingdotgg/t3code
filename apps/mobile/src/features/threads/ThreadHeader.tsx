@@ -6,7 +6,9 @@ import type { AppBarAction } from "../../components/ui/AppBar.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
+import { useThreadGitMenuDefinition } from "./ThreadGitControls";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { readWorkspacePane, workspaceThreadMemoryKey } from "../workspace/workspacePaneMemory";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
 export function ThreadHeader(
@@ -25,8 +27,11 @@ export function ThreadHeader(
   const navigation = useNavigation();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
+  const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
+    const environmentId = String(props.gitControls.environmentId);
+    const threadId = String(props.gitControls.threadId);
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -36,13 +41,13 @@ export function ThreadHeader(
     }
     if (props.hasThreadCwd) {
       actions.push({
-        accessibilityLabel: "Open files",
+        accessibilityLabel: "Open workspace",
         icon: "folder",
-        onPress: () =>
-          navigation.navigate("ThreadFiles", {
-            environmentId: String(props.gitControls.environmentId),
-            threadId: String(props.gitControls.threadId),
-          }),
+        onPress: () => {
+          const pane = readWorkspacePane(workspaceThreadMemoryKey(environmentId, threadId));
+          if (pane === "files") navigation.navigate("ThreadFiles", { environmentId, threadId });
+          else navigation.navigate("ThreadReview", { environmentId, threadId });
+        },
       });
     }
     if (props.hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
@@ -52,15 +57,6 @@ export function ThreadHeader(
         onPress: () => onOpenTerminal(null),
       });
     }
-    actions.push({
-      accessibilityLabel: "Open git",
-      icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: () =>
-        navigation.navigate("ThreadReview", {
-          environmentId: String(props.gitControls.environmentId),
-          threadId: String(props.gitControls.threadId),
-        }),
-    });
     if (onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
@@ -105,6 +101,7 @@ export function ThreadHeader(
         }
         onBack={layout.usesSplitView ? undefined : goBack}
         actions={androidHeaderActions}
+        menus={gitMenu ? [gitMenu] : undefined}
         hideBottomBorder
         compact={composerKeyboardActive}
       />

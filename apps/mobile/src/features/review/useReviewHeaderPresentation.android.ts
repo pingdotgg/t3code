@@ -6,8 +6,8 @@ export function useReviewHeaderPresentation(
   const presentation = useSharedReviewHeaderPresentation(props);
   return {
     ...presentation,
-    title: "Git",
-    subtitle: props.androidSubtitle || "Select a diff",
+    title: props.title,
+    subtitle: props.androidSubtitle || (props.title ? "Select a diff" : ""),
     menuIcon: "ellipsis.circle",
     refreshAction: {
       id: "refresh",

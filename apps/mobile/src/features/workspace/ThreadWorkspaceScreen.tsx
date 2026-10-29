@@ -13,13 +13,18 @@ import {
   workspaceThreadMemoryKey,
   type WorkspacePane,
 } from "./workspacePaneMemory";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { Tabs } from "../../components/ui/Tabs";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { vcsEnvironment } from "../../state/vcs";
 import { environmentSession } from "../../state/session";
+import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
+import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useThreadSelection } from "../../state/use-thread-selection";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "../files/ThreadFilesRouteScreen";
+import { PullRequestDiffStats } from "../pull-requests/PullRequestPresentation";
+import { ThreadGitSplitButton } from "../threads/threadGitActions";
 import { ReviewHeader, ReviewSheet } from "../review/ReviewSheet";
 
 type Props = StaticScreenProps<{
@@ -108,30 +113,59 @@ function ThreadWorkspaceScreen(props: Props & { readonly defaultPane?: Workspace
       });
     }
   };
+  const workingTree = status.data?.workingTree;
+  const { selectedThread } = useThreadSelection();
+  const gitState = useSelectedThreadGitState();
+  const gitActions = useSelectedThreadGitActions();
+  // The selection-based git hooks only apply when this workspace belongs to the selected thread.
+  const gitActionsAvailable =
+    selectedThread !== null && String(selectedThread.id) === String(threadId);
   const tabs = (
-    <View className="w-full border-b border-border-subtle bg-sheet px-3 py-2">
-      <SegmentedControl
-        size="compact"
-        className="w-full"
+    <View className="w-full flex-row items-center gap-2 bg-sheet pb-1 pl-2 pr-3">
+      <Tabs
+        className="min-w-0 shrink"
         options={[
-          { value: "git" as const, label: "Git", ...(count === undefined ? {} : { badge: count }) },
+          {
+            value: "git" as const,
+            label: "Changes",
+            trailing:
+              workingTree && (workingTree.insertions > 0 || workingTree.deletions > 0) ? (
+                <PullRequestDiffStats
+                  additions={workingTree.insertions}
+                  deletions={workingTree.deletions}
+                  compact
+                />
+              ) : undefined,
+          },
           { value: "files" as const, label: "Files" },
         ]}
         selected={selectedTab ?? "files"}
         onSelect={selectTab}
-        role="tab"
       />
+      <View className="flex-1" />
+      {gitActionsAvailable ? (
+        <ThreadGitSplitButton
+          environmentId={environmentId}
+          threadId={threadId}
+          currentBranch={selectedThread.branch ?? null}
+          gitStatus={status.data}
+          gitOperationLabel={gitState.gitOperationLabel}
+          onPull={gitActions.onPullSelectedThreadBranch}
+          onRunAction={gitActions.onRunSelectedThreadGitAction}
+        />
+      ) : null}
     </View>
   );
   const workspaceHeader = (
     <ReviewHeader
       environmentId={environmentId}
       threadId={threadId}
-      title={selectedTab === "git" ? "Git" : "Files"}
+      title=""
       subtitle=""
       androidSubtitle=""
       selectedThreadCwd={cwd}
       selectedSection={null}
+      showGitMenu={false}
       onRefresh={async () => status.refresh()}
       onReturnToThread={() => navigation.goBack()}
     />
