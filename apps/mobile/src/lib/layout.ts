@@ -12,7 +12,6 @@ const SPLIT_LAYOUT_MIN_HEIGHT = 600;
 const SPLIT_SIDEBAR_MIN_WIDTH = 280;
 const SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH = 380;
 
-const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
 export const CHAT_CONTENT_MAX_WIDTH = 960;
 // Limit Android reading width for wide foldables and keyboard-open split views.
 export const ANDROID_READING_MAX_WIDTH = 640;
@@ -97,8 +96,6 @@ export function deriveThreadFeedInitialContentInset(input: {
 
   return { bottom: Math.max(0, input.bottomContentInset) };
 }
-
-export type WorkspaceAuxiliaryPaneRole = "supplementary" | "inspector";
 
 export function deriveLayout(input: {
   readonly width: number;
@@ -207,76 +204,46 @@ export function deriveWorkspacePaneLayout(input: {
   readonly nativeWorkspace?: boolean;
   readonly primarySidebarPreferredVisible: boolean;
   readonly auxiliaryPanePreferredVisible: boolean;
-  readonly auxiliaryPaneRole?: WorkspaceAuxiliaryPaneRole;
   readonly auxiliaryPanePreferredWidth?: number;
 }): WorkspacePaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
-  const auxiliaryPaneRole = input.auxiliaryPaneRole ?? "supplementary";
   const preferredPrimarySidebarVisible =
     input.layout.usesSplitView && input.primarySidebarPreferredVisible;
   const preferredPrimarySidebarWidth =
     preferredPrimarySidebarVisible && !input.layout.primarySidebarOverlaysContent
       ? (input.layout.listPaneWidth ?? 0) + (input.layout.listPaneGap ?? 0)
       : 0;
-
-  if (auxiliaryPaneRole === "inspector") {
-    const fileInspector = deriveFileInspectorPaneLayout({
-      layout: input.layout,
-      viewportWidth,
-      preferredWidth: input.auxiliaryPanePreferredWidth,
-      reservedLeadingWidth: preferredPrimarySidebarWidth,
-    });
-    const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
-    const primarySidebarSuppressedByAuxiliary =
-      !input.nativeWorkspace &&
-      preferredPrimarySidebarVisible &&
-      !input.layout.primarySidebarOverlaysContent &&
-      auxiliaryPaneVisible &&
-      fileInspector.width !== null &&
-      input.layout.listPaneWidth !== null &&
-      viewportWidth -
-        input.layout.listPaneWidth -
-        (input.layout.listPaneGap ?? 0) -
-        fileInspector.width <
-        FILE_INSPECTOR_MIN_MAIN_WIDTH;
-    const primarySidebarVisible =
-      preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
-    const primarySidebarWidth = primarySidebarVisible ? preferredPrimarySidebarWidth : 0;
-
-    return {
-      primarySidebarVisible,
-      primarySidebarWhenExpanded: input.primarySidebarPreferredVisible,
-      primarySidebarSuppressedByAuxiliary,
-      contentPaneWidth: Math.max(0, viewportWidth - primarySidebarWidth),
-      supportsAuxiliaryPane: fileInspector.supported,
-      auxiliaryPaneVisible,
-      auxiliaryPaneWidth: fileInspector.width,
-    };
-  }
-
-  const contentPaneWidth = Math.max(0, viewportWidth - preferredPrimarySidebarWidth);
-  const supportsAuxiliaryPane =
-    input.layout.usesSplitView && contentPaneWidth >= AUXILIARY_PANE_MIN_CONTENT_WIDTH;
-  const auxiliaryPaneVisible = supportsAuxiliaryPane && input.auxiliaryPanePreferredVisible;
-  const defaultAuxiliaryPaneWidth = clamp(
-    Math.round(contentPaneWidth * 0.28),
-    AUXILIARY_PANE_MIN_WIDTH,
-    AUXILIARY_PANE_DEFAULT_MAX_WIDTH,
-  );
+  const fileInspector = deriveFileInspectorPaneLayout({
+    layout: input.layout,
+    viewportWidth,
+    preferredWidth: input.auxiliaryPanePreferredWidth,
+    reservedLeadingWidth: preferredPrimarySidebarWidth,
+  });
+  const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
+  const primarySidebarSuppressedByAuxiliary =
+    !input.nativeWorkspace &&
+    preferredPrimarySidebarVisible &&
+    !input.layout.primarySidebarOverlaysContent &&
+    auxiliaryPaneVisible &&
+    fileInspector.width !== null &&
+    input.layout.listPaneWidth !== null &&
+    viewportWidth -
+      input.layout.listPaneWidth -
+      (input.layout.listPaneGap ?? 0) -
+      fileInspector.width <
+      FILE_INSPECTOR_MIN_MAIN_WIDTH;
+  const primarySidebarVisible =
+    preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
+  const primarySidebarWidth = primarySidebarVisible ? preferredPrimarySidebarWidth : 0;
 
   return {
-    primarySidebarVisible: preferredPrimarySidebarVisible,
+    primarySidebarVisible,
     primarySidebarWhenExpanded: input.primarySidebarPreferredVisible,
-    primarySidebarSuppressedByAuxiliary: false,
-    contentPaneWidth,
-    supportsAuxiliaryPane,
+    primarySidebarSuppressedByAuxiliary,
+    contentPaneWidth: Math.max(0, viewportWidth - primarySidebarWidth),
+    supportsAuxiliaryPane: fileInspector.supported,
     auxiliaryPaneVisible,
-    auxiliaryPaneWidth: supportsAuxiliaryPane
-      ? constrainAuxiliaryPaneWidth({
-          preferredWidth: input.auxiliaryPanePreferredWidth ?? defaultAuxiliaryPaneWidth,
-          availableWidth: contentPaneWidth,
-        })
-      : null,
+    auxiliaryPaneWidth: fileInspector.width,
   };
 }
 
