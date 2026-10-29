@@ -46,6 +46,8 @@ function WorkspaceStackView(props: ViewProps) {
   if (!visibleRoute) return <NativeStackView {...props} />;
 
   const visibleDescriptor = props.descriptors[visibleRoute.key]!;
+  // Home is the sidebar beside the pages, and under them the page shown when none is selected.
+  const home = workspaceRoutes.find((route) => route.name === "Home");
   const baseRoute = { key: `${props.state.key}:workspace`, name: "Workspace" };
   const baseDescriptor: Descriptor = {
     ...visibleDescriptor,
@@ -61,6 +63,7 @@ function WorkspaceStackView(props: ViewProps) {
             preloadedRoutes: props.state.preloadedRoutes.filter((route) => !isOverlay(route)),
           }}
         />,
+        home ? props.descriptors[home.key]?.render() : null,
       ),
   };
   const routes = [baseRoute, ...projection.overlays];

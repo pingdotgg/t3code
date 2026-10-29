@@ -218,6 +218,8 @@ vi.mock("./AndroidWorkspaceNavigation", () => ({
   FloatingWorkspaceTabs: () => null,
 }));
 vi.mock("./WorkspaceNoTabs", () => ({ WorkspaceNoTabs: () => null }));
+vi.mock("../../components/ui/Pane", () => ({ usePaneRole: () => "screen" }));
+vi.mock("./AndroidWorkspaceSidebar.android", () => ({ AndroidWorkspaceSidebar: () => null }));
 vi.mock("../../components/ui/WorkspaceAppBar.android", () => ({
   WorkspaceAppBarScope: ({ children }: { children: ReactNode }) => children,
 }));
