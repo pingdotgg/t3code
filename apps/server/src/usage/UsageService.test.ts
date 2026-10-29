@@ -142,6 +142,7 @@ const layerService = (input: {
   ) => Effect.Effect<Response, HttpClientError.HttpClientError>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
+  readonly hostname?: string;
 }) =>
   layerCursorUsageAccounts(
     CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
@@ -157,6 +158,7 @@ const layerService = (input: {
     ),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
+    Layer.provideMerge(Layer.succeed(HostProcess.Hostname, input.hostname ?? "usage-test-host")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
       Layer.succeed(
@@ -465,6 +467,93 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it.live("keeps the first host identity across recreation and explicit override removal", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      for (const [hostname, override, expected] of [
+        ["container-a", undefined, "container-a"],
+        ["container-b", undefined, "container-a"],
+        ["container-c", "physical-host", "physical-host"],
+        ["container-d", undefined, "container-a"],
+      ] as const) {
+        const summary = yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          return yield* service.readSummary(WINDOW);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-host-id",
+              home,
+              settings,
+              hostname,
+              environment: override === undefined ? {} : { T3CODE_HOST_ID: override },
+            }),
+          ),
+        );
+        const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
+        assert.strictEqual(source?.fingerprint.hostId, expected);
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("concurrent initialization keeps one host identity across service recreation", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const prefix = "usage-host-id-race";
+      const hostIdPath = NodePath.join(home, prefix, "usage-host-id");
+      const bothRead = yield* Deferred.make<void>();
+      let reads = 0;
+      const summaries = yield* Effect.forEach(
+        ["container-a", "container-b"],
+        (hostname) =>
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            let firstRead = true;
+            const service = yield* UsageService.make.pipe(
+              Effect.provideService(FileSystem.FileSystem, {
+                ...fileSystem,
+                readFileString: (path, encoding) =>
+                  Effect.gen(function* () {
+                    if (path !== hostIdPath || !firstRead) {
+                      return yield* fileSystem.readFileString(path, encoding);
+                    }
+                    firstRead = false;
+                    // Both instances observe the missing file before either can create it.
+                    const result = yield* Effect.exit(fileSystem.readFileString(path, encoding));
+                    reads += 1;
+                    if (reads === 2) yield* Deferred.succeed(bothRead, undefined);
+                    yield* Deferred.await(bothRead);
+                    return yield* result;
+                  }),
+              }),
+            );
+            return yield* service.readSummary(WINDOW);
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(layerService({ prefix, home, settings, hostname })),
+          ),
+        { concurrency: "unbounded" },
+      );
+      const persisted = yield* Effect.promise(() => NodeFSP.readFile(hostIdPath, "utf8"));
+      const hostId = persisted.trim();
+      assert.include(["container-a", "container-b"], hostId);
+      const restarted = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix, home, settings, hostname: "container-c" })),
+      );
+      for (const summary of [...summaries, restarted]) {
+        const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
+        assert.strictEqual(source?.fingerprint.hostId, hostId);
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.live(
     "repairs initial Codex prices after unchanged-file retries, persists evidence and corrections, and honors later native tiers",
     () =>
