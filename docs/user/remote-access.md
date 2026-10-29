@@ -40,11 +40,11 @@ previous credential expires. A failed renewal affects that request; it does not
 disconnect an otherwise healthy conversation.
 
 To turn T3 Connect off on a machine, set `T3CODE_CONNECT_ENABLED=false` in the
-server's environment before starting it. Sign-in and T3 Connect settings disappear,
-`t3 connect` is unavailable, and the server does not link, restore a saved link, or
-publish agent activity. Pairing over a LAN, Tailscale, or SSH keeps working. The
-desktop app reads the variable from your shell profile, like
-[`T3CODE_TELEMETRY_ENABLED`](./telemetry.md).
+server's environment before starting it. T3 Connect sign-in, settings, and
+`t3 connect` go away, and the server stops linking and publishing. A saved link is
+kept and resumes when you remove the variable, so unlink first if you want it gone.
+Pairing over a LAN, Tailscale, or SSH keeps working. The desktop app reads the
+variable from your shell profile, like [`T3CODE_TELEMETRY_ENABLED`](./telemetry.md).
 
 ### Scripts and agents
 

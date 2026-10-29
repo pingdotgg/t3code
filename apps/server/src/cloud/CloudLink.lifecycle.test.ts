@@ -56,9 +56,6 @@ const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
     }),
   });
 
-const CLOUD_MINT_PUBLIC_KEY_PEM =
-  "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
-
 const unusedSecretStoreOperation = () => Effect.die("unused secret-store operation");
 
 const idleAwarenessRelay = AgentAwarenessRelay.AgentAwarenessRelay.of({
@@ -496,7 +493,8 @@ describe("releaseManagedTunnelOnShutdown", () => {
           relayUrl: "https://relay.example.test",
           cloudUserId: "user-123",
           environmentCredential: "environment-credential",
-          cloudMintPublicKey: CLOUD_MINT_PUBLIC_KEY_PEM,
+          cloudMintPublicKey:
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----",
           endpointRuntime: config,
         }),
       ).toMatchObject({ ok: true, endpointRuntimeStatus: { status: "running" } });
@@ -612,6 +610,8 @@ describe("releaseManagedTunnelOnShutdown", () => {
       [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "revoked-credential"],
       [CLOUD_LINK_REVOKED, "true"],
     ]);
+    const cloudMintPublicKey =
+      "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
 
     return Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
@@ -620,7 +620,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
         relayUrl: "https://relay.example.test",
         cloudUserId: "user-123",
         environmentCredential: "fresh-credential",
-        cloudMintPublicKey: CLOUD_MINT_PUBLIC_KEY_PEM,
+        cloudMintPublicKey,
         endpointRuntime: null,
       });
       expect(yield* link.linkState()).toMatchObject({ linked: true, linkRevoked: false });
@@ -637,7 +637,8 @@ describe("releaseManagedTunnelOnShutdown", () => {
           relayUrl: "https://relay.example.test",
           cloudUserId: "user-123",
           environmentCredential: "credential",
-          cloudMintPublicKey: CLOUD_MINT_PUBLIC_KEY_PEM,
+          cloudMintPublicKey:
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----",
           endpointRuntime: null,
         }),
       );

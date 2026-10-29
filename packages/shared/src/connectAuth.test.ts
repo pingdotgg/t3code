@@ -57,7 +57,7 @@ describe("connectAuth", () => {
     ["0", true],
     ["false", false],
     [" FALSE ", false],
-  ] as const)("T3CODE_CONNECT_ENABLED=%j keeps T3 Connect on: %s", (value, expected) => {
+  ] as const)("isConnectEnabled(%j) is %s", (value, expected) => {
     expect(isConnectEnabled(value)).toBe(expected);
   });
 });

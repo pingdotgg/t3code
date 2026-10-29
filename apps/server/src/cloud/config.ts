@@ -53,6 +53,7 @@ export const readAgentActivityPublishingActive: (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
 ) => Effect.Effect<boolean> = Effect.fn("config.readAgentActivityPublishingActive")(
   function* (secrets: ServerSecretStore.ServerSecretStore["Service"]) {
+    if (!(yield* readConnectEnabled)) return false;
     const readSecretString = (name: string) =>
       secrets
         .get(name)
@@ -61,7 +62,6 @@ export const readAgentActivityPublishingActive: (
             Option.isSome(bytes) ? new TextDecoder().decode(bytes.value) : null,
           ),
         );
-    if (!(yield* readConnectEnabled)) return false;
     const [enabled, url, environmentCredential] = yield* Effect.all([
       readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET),
       readSecretString(RELAY_URL_SECRET),

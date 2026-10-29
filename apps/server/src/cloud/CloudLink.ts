@@ -238,7 +238,8 @@ export class CloudLinkEndpointUnavailableError extends Schema.TaggedError<CloudL
 const INTERNAL_OPERATION_MESSAGES = {
   "relay-url-unconfigured":
     "T3CODE_RELAY_URL must be configured as a secure absolute HTTPS origin.",
-  "connect-disabled": "T3 Connect is turned off on this computer (T3CODE_CONNECT_ENABLED=false).",
+  "connect-disabled":
+    "T3 Connect is turned off for this environment (T3CODE_CONNECT_ENABLED=false).",
   "generate-link-proof": "Could not generate environment link proof.",
   "persist-relay-config": "Could not persist environment relay configuration.",
   "register-endpoint-origin": "Could not register the managed endpoint origin.",
