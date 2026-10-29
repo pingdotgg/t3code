@@ -947,6 +947,7 @@ jobs:
           body_path: ${{ hashFiles('release-notes.md') != '' && 'release-notes.md' || '' }}
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
+          draft: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
@@ -962,10 +963,22 @@ jobs:
           generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
           body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
+          draft: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
+
+      # The action keeps a stable release a draft until its assets finish uploading, but publishes a
+      # prerelease first. Desktop clients update connected servers from the CLI archives as soon as
+      # they see the release, so a prerelease also goes public only once every asset is attached.
+      - name: Publish prerelease
+        if: needs.preflight.outputs.is_prerelease == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: gh release edit "$RELEASE_TAG" --draft=false
 
   # The `t3` npm package is a launcher that downloads this version's CLI
   # archive from the GitHub Release, so it publishes only once that release

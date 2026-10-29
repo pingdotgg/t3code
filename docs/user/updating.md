@@ -22,8 +22,9 @@ restart from the update button when you are ready. A server still restarting
 finishes on its own, and the button keeps showing it after the desktop app
 restarts.
 
-Server updates appear only after that version is published to npm. Remote
-desktop apps do not wait for npm. The confirmation lists each machine it skips
+Remote desktop apps never wait for npm. Background services do not wait either
+when the version comes from the desktop app's update. Other server updates
+appear only after that version is published to npm. The confirmation lists each machine it skips
 and why, such as a machine that is offline or needs a manual update. Use
 **Settings → Environments** for those.
 

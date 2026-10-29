@@ -68,19 +68,18 @@ export function useUpdateEverything(
     canMaintain: canUpdateServer(sessionStates[index]!),
     updateState: updateStates[index]!,
   }));
-  const { targets: behindServers, skipped: unreachable } = channelSwitch
-    ? collectChannelSwitchTargets(machines, channelSwitch)
-    : collectServerUpdateTargets(machines, targetVersion);
-  // Desktop-managed servers use their app feed; only npm installs need to wait for publication.
   // A track switch's target came from npm already.
-  const needsNpm =
-    channelSwitch === undefined &&
-    behindServers.some((server) => server.selfUpdate !== "desktop-managed");
-  const published = useNpmReleasePublished(needsNpm ? targetVersion : null);
-  const servers =
-    published || channelSwitch !== undefined
-      ? behindServers
-      : behindServers.filter((server) => server.selfUpdate === "desktop-managed");
+  const {
+    targets: behindServers,
+    skipped: unreachable,
+    waitForNpm,
+  } = channelSwitch
+    ? { ...collectChannelSwitchTargets(machines, channelSwitch), waitForNpm: [] }
+    : collectServerUpdateTargets(machines, targetVersion, localUpdateVersion !== null);
+  const published = useNpmReleasePublished(waitForNpm.length > 0 ? targetVersion : null);
+  const servers = published
+    ? behindServers
+    : behindServers.filter((server) => !waitForNpm.includes(server));
   const skipped: ReadonlyArray<SkippedMachine> = [
     ...unreachable,
     ...behindServers
