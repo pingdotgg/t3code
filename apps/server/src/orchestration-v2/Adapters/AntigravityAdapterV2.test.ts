@@ -896,6 +896,16 @@ describe("AntigravityAdapterV2 subagent reads", () => {
           : undefined;
       };
 
+      const firstEvent = (nativeId: string, status: string) =>
+        events.findIndex(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId &&
+            event.turnItem.status === status,
+        );
+      // T3 completes a served read itself instead of leaving it running until the flush.
+      assert.isAbove(firstEvent("call_served", "completed"), -1);
+      assert.isBelow(firstEvent("call_served", "completed"), firstEvent("call_native", "failed"));
       const failed = { status: "failed" as const, output: stepError };
       assert.deepEqual(read("call_served"), { status: "completed", output: undefined });
       assert.deepEqual(read("call_retried"), { status: "completed", output: undefined });

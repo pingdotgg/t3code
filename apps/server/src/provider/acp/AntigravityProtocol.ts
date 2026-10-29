@@ -239,7 +239,10 @@ function antigravityClientReadPath(update: {
  */
 export function makeAntigravityReadRepair() {
   type Outcome = "served" | "refused";
-  const openReads = new Map<string, { readonly path: string; outcome?: Outcome }>();
+  const openReads = new Map<
+    string,
+    { readonly path: string; readonly sessionId: string; outcome?: Outcome }
+  >();
   // The agent runs a client tool in a background task, so its request can precede the announcement.
   const earlyOutcomes: Array<{ readonly path: string; readonly outcome: Outcome }> = [];
   return {
@@ -248,15 +251,19 @@ export function makeAntigravityReadRepair() {
       openReads.clear();
       earlyOutcomes.length = 0;
     },
-    /** Each `fs/read_text_file` request answers the oldest open read of its path, in order. */
+    /**
+     * Each `fs/read_text_file` request answers the oldest open read of its path, in order.
+     * Returns the call a served read completes, so T3 can report it without waiting.
+     */
     attempted: (path: string, served: boolean) => {
       const outcome = served ? "served" : "refused";
-      for (const read of openReads.values()) {
+      for (const [toolCallId, read] of openReads) {
         if (read.path !== path || read.outcome !== undefined) continue;
         read.outcome = outcome;
-        return;
+        return served ? { sessionId: read.sessionId, toolCallId } : undefined;
       }
       earlyOutcomes.push({ path, outcome });
+      return undefined;
     },
     repair: (
       notification: EffectAcpSchema.SessionNotification,
@@ -269,10 +276,19 @@ export function makeAntigravityReadRepair() {
       if (path !== undefined && !openReads.has(update.toolCallId)) {
         const early = earlyOutcomes.findIndex((entry) => entry.path === path);
         const outcome = early === -1 ? undefined : earlyOutcomes.splice(early, 1)[0]?.outcome;
-        openReads.set(update.toolCallId, outcome === undefined ? { path } : { path, outcome });
+        const sessionId = notification.sessionId;
+        openReads.set(
+          update.toolCallId,
+          outcome === undefined ? { path, sessionId } : { path, sessionId, outcome },
+        );
+      }
+      const read = openReads.get(update.toolCallId);
+      if (update.status === "pending" || update.status === "in_progress") {
+        return read?.outcome === "served"
+          ? { ...notification, update: { ...update, status: "completed" } }
+          : notification;
       }
       if (update.status !== "completed" && update.status !== "failed") return notification;
-      const read = openReads.get(update.toolCallId);
       openReads.delete(update.toolCallId);
       if (update.status === "completed" || read?.outcome !== "served") return notification;
       const { rawOutput: _stepError, ...rest } = update;
