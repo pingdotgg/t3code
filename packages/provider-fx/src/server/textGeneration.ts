@@ -59,8 +59,8 @@ export const makeFxTextGeneration = Effect.fn("makeFxTextGeneration")(function* 
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
-  // A saved `yolo` or `auto` default would let tool calls write unattended;
-  // in `ask` mode a headless run fails instead of writing.
+  // A saved `yolo` or `auto` default would let tool calls write unattended; in
+  // `ask` mode a headless run fails instead, unless an fx allow rule covers it.
   const env = { ...environment, FX_PERMISSION_MODE: "ask" };
 
   const runFxJson: TextGenerationOperations.Runner = Effect.fn("FxTextGeneration.runFxJson")(

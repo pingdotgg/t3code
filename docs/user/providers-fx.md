@@ -52,7 +52,7 @@ fx doesn't pass on a sub-agent's permission requests, so a sub-agent that needs 
 
 fx can write commit messages, pull request titles and bodies, branch names, and thread titles. Choose it as the **Text generation model** in **Settings → Threads**, or as the source control writer model in **Settings → Source control**. It uses the model and effort you pick there, and unset effort runs at Medium.
 
-Each request is a one-off `fx ask` that fx does not save, so it does not show up in fx's session history. It runs outside your project in Supervised mode, whatever mode fx has saved, and never waits for approval: if the model tries something that needs approval, such as changing a file, the request fails instead.
+Each request is a one-off `fx ask` that fx does not save, so it does not show up in fx's session history. It runs outside your project in Supervised mode, whatever mode fx has saved, and never waits for approval: if the model tries something that needs approval, such as changing a file, the request fails instead. Permission rules in fx's own settings still apply, so if they let fx edit files or run commands without asking, a request can do that too, even outside the project. Keep such rules narrow, or pick another provider for these requests.
 
 ## Not supported yet
 
