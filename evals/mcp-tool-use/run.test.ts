@@ -30,6 +30,8 @@ import {
 import { briefRoute, gradeDevice, shellInvocations } from "./device-grading.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 
+const decodeCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+
 it("grades Codex shell and subagent calls with the shared rules", () => {
   const calls = [
     { name: "exec_command", input: { cmd: "sleep 60" } },
@@ -161,6 +163,59 @@ it("passes a good run and names every rule a bad run breaks", () => {
     "linked ~/pull/124",
     "linkedNumbers",
   ]);
+
+  const projectCases = NodeFS.readFileSync(
+    new URL("./cases/projects.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map((line) => decodeCase(line));
+  const preview = projectCases.find(
+    (entry) => entry.id === "title-only-project-creation-side-effects",
+  )!;
+  const disclosure = "It creates README.md and assets/icon.svg, then attempts an Initial commit.";
+  for (const text of [
+    disclosure,
+    "README.md and assets/icon.svg are created; an Initial commit is attempted.",
+    "Writes `README.md`.\nGenerates `assets/icon.svg`.\nAttempts an initial commit.",
+  ]) {
+    assert.deepEqual(failed(preview.expect, { calls: [], text, stopReason: "end_turn" }), [], text);
+  }
+  for (const run of [
+    {
+      calls: [{ step: 0, tool: "Bash", input: { command: "git init /home/user/docs" } }],
+      text: disclosure,
+      stopReason: "end_turn",
+    },
+    {
+      calls: [],
+      text: "It does not create README.md or assets/icon.svg and does not attempt an initial commit.",
+      stopReason: "end_turn",
+    },
+    {
+      calls: [],
+      text: "README.md and assets/icon.svg are not created; an initial commit is not attempted.",
+      stopReason: "end_turn",
+    },
+    {
+      calls: [],
+      text: "Creates README.md and assets/icon.svg, but does not attempt an initial commit.",
+      stopReason: "end_turn",
+    },
+    {
+      calls: [],
+      text: "It does not create README.md, but writes assets/icon.svg and attempts an Initial commit.",
+      stopReason: "end_turn",
+    },
+    {
+      calls: [],
+      text: "Creates README.md but never generates assets/icon.svg; attempts an Initial commit.",
+      stopReason: "end_turn",
+    },
+  ]) {
+    assert.isNotEmpty(failed(preview.expect, run), JSON.stringify(run));
+  }
 });
 
 it("bounds numbers and reads target.options in either schema form", () => {
@@ -182,6 +237,28 @@ it("bounds numbers and reads target.options in either schema form", () => {
   assert.deepEqual(failed(expect, run(5, { effort: "max" }, 90_000)), []);
   assert.lengthOf(failed(expect, run(21, [{ id: "effort", value: "high" }], 59_999)), 2);
   assert.lengthOf(failed(expect, run("10", {}, 60_000)), 2);
+
+  const args = {
+    environmentId: "environment:linux",
+    projectId: "project:sdk",
+    groupingIdentity: "a87b5fa1-6ade-4f2d-8ef2-4cfe1eb9b8ac",
+  };
+  const update = { tool: "t3_project_update", args };
+  const restricted = { calls: [{ ...update, allowedArgs: Object.keys(args) }] };
+  const updated = (extra: Record<string, unknown>): SampleRun => ({
+    calls: [{ step: 0, tool: update.tool, input: { ...args, ...extra } }],
+    text: "",
+    stopReason: "end_turn",
+  });
+  assert.deepEqual(failed(restricted, updated({})), []);
+  for (const extra of [
+    { title: "Other" },
+    { workspaceRoot: "/home/user/other" },
+    { scripts: [] },
+  ]) {
+    assert.deepEqual(failed({ calls: [update] }, updated(extra)), []);
+    assert.lengthOf(failed(restricted, updated(extra)), 1);
+  }
 });
 
 const template = {
@@ -426,12 +503,11 @@ it("stops a sample only once a must-not check has failed", () => {
   assert.isTrue(failedEarly({ textMustNot: ["paste"] }, run("Bash", "paste it here")));
 });
 
-const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
 const deviceCases = () =>
   NodeFS.readFileSync(new URL("./cases/device-manager.ndjson", import.meta.url), "utf8")
     .trim()
     .split("\n")
-    .map((line) => decodeDeviceCase(line));
+    .map((line) => decodeCase(line));
 
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {
