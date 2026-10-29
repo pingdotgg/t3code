@@ -48,6 +48,8 @@ import {
   useNativeWorkspaceColumnsSupported,
 } from "../../native/NativeWorkspaceColumns";
 import { V5StackHeader } from "../../native/V5StackHeader.ios";
+import { InspectorBarHeader } from "./inspector-bar";
+import { InspectorBarScope, useInspectorBarStore } from "./inspector-bar-store";
 import { PaneContext } from "../../components/ui/Pane";
 import { useWorkspaceSidebarHeaderItem } from "./useWorkspaceSidebarHeaderItem";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
@@ -248,6 +250,10 @@ function WorkspaceColumns(
       ? openNewTask
       : undefined;
   const inspector = use(NativeWorkspaceInspectorContext);
+  const inspectorBar = useInspectorBarStore();
+  const hideInspector = () => {
+    if (inspector.visible) toggleAuxiliaryPane();
+  };
   const hostRef = useRef<SplitHostCommands>(null);
   const activeDetailKey = props.detail.at(-1)?.key;
   const compactColumn = activeDetailKey ? "secondary" : "primary";
@@ -369,9 +375,7 @@ function WorkspaceColumns(
       displayModeButtonVisibility="never"
       presentsWithGesture
       showInspector={inspector.visible}
-      onInspectorHide={() => {
-        if (inspector.visible) toggleAuxiliaryPane();
-      }}
+      onInspectorHide={hideInspector}
       columnMetrics={{
         minimumPrimaryColumnWidth: 280,
         maximumPrimaryColumnWidth: Math.max(380, layout.listPaneWidth ?? 0),
@@ -435,12 +439,14 @@ function WorkspaceColumns(
         </Split.Stack>
       </Split.Column>
       <Split.Inspector>
-        <Split.HeaderConfig hidden />
-        {/* Inspector panes host their own native stacks, which UIKit insets for the Duo's
+        <InspectorBarHeader store={inspectorBar} />
+        {/* Some inspector panes host their own native stacks, which UIKit insets for the Duo's
             vertical bar wherever they sit, so each pane insets its own content instead. */}
         <ColumnContent insetHorizontally={false}>
           <View className="flex-1 bg-screen">
-            <PaneContext value="inspector">{inspector.render?.()}</PaneContext>
+            <InspectorBarScope store={inspectorBar} onClose={hideInspector}>
+              <PaneContext value="inspector">{inspector.render?.()}</PaneContext>
+            </InspectorBarScope>
             {inspector.visible ? (
               <GestureHandlerRootView
                 style={[StyleSheet.absoluteFill, { zIndex: 100 }]}

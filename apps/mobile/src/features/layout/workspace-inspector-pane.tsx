@@ -13,6 +13,7 @@ import { constrainAuxiliaryPaneWidth, type WorkspacePaneLayout } from "../../lib
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
+import { InspectorBar } from "./inspector-bar";
 
 // CSS form of WORKSPACE_PANE_TIMING's Easing.inOut(Easing.cubic).
 const PANE_EASING = cubicBezier(0.65, 0, 0.35, 1);
@@ -22,6 +23,7 @@ export function WorkspaceInspectorPane(props: {
   readonly pathname: string;
   readonly renderedInspectorWidth: SharedValue<number>;
   readonly active?: boolean;
+  readonly onClose: () => void;
   readonly onClosed?: () => void;
   readonly panes: WorkspacePaneLayout;
   readonly renderInspector?: () => ReactNode;
@@ -122,7 +124,9 @@ export function WorkspaceInspectorPane(props: {
                 <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
               )}
             >
-              <InspectorRenderer render={props.renderInspector} />
+              <InspectorBar onClose={props.onClose}>
+                <InspectorRenderer render={props.renderInspector} />
+              </InspectorBar>
             </RenderErrorBoundary>
           </Animated.View>
         </Animated.View>

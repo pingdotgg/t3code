@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { View } from "react-native";
 
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
+import { InspectorBarOwner } from "../layout/inspector-bar-store";
 import { NativeInspectorContent } from "../../native/NativeInspectorContent";
 
 export type ThreadInspectorMode = "route" | "git" | "files" | "preview";
@@ -9,6 +10,7 @@ export type ThreadInspectorMode = "route" | "git" | "files" | "preview";
 const INSPECTOR_PREWARM_DELAY_MS = 350;
 
 function InspectorContentPane(props: {
+  readonly mode: ThreadInspectorMode;
   readonly children: ReactNode;
   readonly mounted: boolean;
   readonly resetKeys: readonly [string | null, string | null];
@@ -31,16 +33,18 @@ function InspectorContentPane(props: {
         zIndex: props.visible ? 1 : 0,
       }}
     >
-      <RenderErrorBoundary
-        resetKeys={props.resetKeys}
-        renderFallback={(fallback) => (
-          <NativeInspectorContent>
-            <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
-          </NativeInspectorContent>
-        )}
-      >
-        {props.children}
-      </RenderErrorBoundary>
+      <InspectorBarOwner id={props.mode} visible={props.visible}>
+        <RenderErrorBoundary
+          resetKeys={props.resetKeys}
+          renderFallback={(fallback) => (
+            <NativeInspectorContent>
+              <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+            </NativeInspectorContent>
+          )}
+        >
+          {props.children}
+        </RenderErrorBoundary>
+      </InspectorBarOwner>
     </View>
   );
 }
@@ -88,11 +92,12 @@ export function ThreadInspectorContentStack(props: {
   return (
     <View className="flex-1">
       {props.mode === "preview" && props.renderPreview ? (
-        <InspectorContentPane mounted resetKeys={props.resetKeys} visible>
+        <InspectorContentPane mode="preview" mounted resetKeys={props.resetKeys} visible>
           <InspectorRenderer render={props.renderPreview} />
         </InspectorContentPane>
       ) : null}
       <InspectorContentPane
+        mode="files"
         mounted={mountedModes.has("files") || props.mode === "files"}
         resetKeys={props.resetKeys}
         visible={props.mode === "files"}
@@ -101,6 +106,7 @@ export function ThreadInspectorContentStack(props: {
       </InspectorContentPane>
       {props.renderGit ? (
         <InspectorContentPane
+          mode="git"
           mounted={mountedModes.has("git") || props.mode === "git"}
           resetKeys={props.resetKeys}
           visible={props.mode === "git"}
@@ -110,6 +116,7 @@ export function ThreadInspectorContentStack(props: {
       ) : null}
       {props.renderRoute ? (
         <InspectorContentPane
+          mode="route"
           mounted={mountedModes.has("route") || props.mode === "route"}
           resetKeys={props.resetKeys}
           visible={props.mode === "route"}

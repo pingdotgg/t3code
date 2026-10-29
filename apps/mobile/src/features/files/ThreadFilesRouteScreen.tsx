@@ -485,12 +485,11 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     }
     navigation.navigate("ThreadFile", params);
   };
-  const renderInspector = (headerInset: number) =>
+  const renderInspector = () =>
     environmentId !== null && cwd !== null ? (
       <ThreadFileNavigatorPane
         cwd={cwd}
         environmentId={environmentId}
-        headerInset={headerInset}
         projectName={projectName}
         selectedPath={null}
         onSelectFile={handleSelectFile}
@@ -751,12 +750,11 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     if (directoryPath !== null) navigation.dispatch(StackActions.push("ThreadFile", destination));
     else navigation.navigate("ThreadFile", destination);
   };
-  const renderInspector = (headerInset: number) =>
+  const renderInspector = () =>
     fileInspector.supported && environmentId !== null && cwd !== null ? (
       <ThreadFileNavigatorPane
         cwd={directoryPath ?? cwd}
         environmentId={environmentId}
-        headerInset={headerInset}
         projectName={directoryPath ?? projectName}
         selectedPath={directoryPath === null ? relativePath : null}
         onSelectFile={(path) => {
@@ -765,13 +763,11 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         }}
       />
     ) : undefined;
-  const safeAreaInsets = useSafeAreaInsets();
-  const inspectorHeaderInset = Platform.OS === "ios" ? 0 : safeAreaInsets.top;
   const renderWorkspaceInspector = () => (
     <ThreadInspectorContentStack
       mode="files"
       resetKeys={[threadId, cwd]}
-      renderFiles={() => renderInspector(inspectorHeaderInset)}
+      renderFiles={renderInspector}
     />
   );
   const inspector = fileInspector.supported ? (

@@ -11,6 +11,7 @@ import { View } from "react-native";
 
 import { IconButton } from "../../components/ui/IconButton";
 import { SheetHeader } from "../../components/ui/SheetHeader";
+import { InspectorCloseContext } from "../layout/inspector-bar-store";
 import { NativeInspectorContent } from "../../native/NativeInspectorContent";
 import { createV5StackNavigator } from "../../native/createV5StackNavigator";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -62,11 +63,13 @@ const PreviewStack = createV5StackNavigator<{
 export function InspectorContentScope({ children }: { readonly children: ReactNode }) {
   return (
     <WorkspaceSlotOptionsContext value={null}>
-      <WorkspaceContentWidthContext value={null}>
-        <WorkspaceSettledContentWidthContext value={null}>
-          {children}
-        </WorkspaceSettledContentWidthContext>
-      </WorkspaceContentWidthContext>
+      <InspectorCloseContext value={null}>
+        <WorkspaceContentWidthContext value={null}>
+          <WorkspaceSettledContentWidthContext value={null}>
+            {children}
+          </WorkspaceSettledContentWidthContext>
+        </WorkspaceContentWidthContext>
+      </InspectorCloseContext>
     </WorkspaceSlotOptionsContext>
   );
 }
