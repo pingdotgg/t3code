@@ -13,6 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -323,6 +324,37 @@ describe("CursorAdapterV2", () => {
       failure: null,
     },
     {
+      reason: "turn-ended while a tool is still running until tool-call-completed",
+      updates: [
+        { type: "text-delta", text: "Checking." },
+        {
+          type: "tool-call-started",
+          modelCallId: "native-model-call",
+          callId: "read-file",
+          toolCall: {
+            type: "read",
+            args: { path: "src/env.ts" },
+          },
+        },
+        { type: "turn-ended" },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
+          callId: "read-file",
+          toolCall: {
+            type: "read",
+            args: { path: "src/env.ts" },
+            result: {
+              status: "success",
+              value: { fileSize: 12, content: "ok", totalLines: 1 },
+            },
+          },
+        },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.never,
+      failure: null,
+    },
+    {
       reason: "a transport failure when run.wait never resolves after turn-ended",
       updates: [
         { type: "text-delta", text: "Error: RetriableError: WritableIterable is closed" },
@@ -462,6 +494,131 @@ describe("CursorAdapterV2", () => {
         Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
       ),
     ),
+  );
+
+  it.effect(
+    "cancels a hung run.wait after turn-ended when assistant text was already streamed",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "cursor-v2-idle-cancel-",
+        });
+        const instanceId = ProviderInstanceId.make("cursor");
+        const threadId = ThreadId.make("cursor-idle-cancel-thread");
+        const modelSelection = { instanceId, model: "claude-fable-5" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        let cancelCalls = 0;
+        const cancelGate = yield* Deferred.make<void, never>();
+        const adapter = yield* makeCursorAdapterV2({
+          instanceId,
+          environment: { HOME: workspace },
+        }).pipe(
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+            assertComplete: Effect.void,
+            open: () =>
+              Effect.succeed({
+                agentId: "native-cursor-idle-cancel",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: (input) =>
+                  Effect.gen(function* () {
+                    yield* input.onDelta!({ type: "text-delta", text: "Done." }).pipe(Effect.orDie);
+                    yield* input.onDelta!({ type: "turn-ended" }).pipe(Effect.orDie);
+                    return {
+                      agentId: "native-cursor-idle-cancel",
+                      runId: "native-cursor-run",
+                      wait: Deferred.await(cancelGate).pipe(
+                        Effect.flatMap(() =>
+                          Effect.succeed({
+                            id: "native-cursor-run",
+                            requestId: "native-request",
+                            status: "cancelled" as const,
+                            model: { id: "claude-fable-5" },
+                            durationMs: 1,
+                          }),
+                        ),
+                      ),
+                      cancel: Effect.gen(function* () {
+                        cancelCalls += 1;
+                        yield* Deferred.succeed(cancelGate, undefined);
+                      }),
+                    };
+                  }),
+              }),
+          }),
+          Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+        );
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-idle-cancel-session"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("cursor-idle-cancel-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("cursor-idle-cancel-attempt"),
+          rootNodeId: NodeId.make("cursor-idle-cancel-root"),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-idle-cancel-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor idle cancel",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make("cursor-idle-cancel-message"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "hi",
+            attachments: [],
+          },
+        });
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const terminal = events.find((event) => event.type === "turn.terminal");
+        assert.equal(terminal?.status, "completed");
+        assert.equal(cancelCalls, 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 
   it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>

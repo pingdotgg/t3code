@@ -2105,6 +2105,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             isOrchestrationV2WorkActive(subagent.task.status),
           );
 
+        const awaitCursorRunReleaseBeforeIdleFinalize = Effect.fnUntraced(function* (
+          context: ActiveCursorTurn,
+        ) {
+          if (context.assistant.nextSegment === 0) {
+            yield* Deferred.await(context.runWaitSettled);
+            return;
+          }
+          yield* context.run.cancel.pipe(Effect.ignore);
+        });
+
         const scheduleIdleTurnFinalize = Effect.fnUntraced(function* (context: ActiveCursorTurn) {
           if (context.finalized || !context.turnEnded || cursorTurnHasActiveWork(context)) {
             return;
@@ -2115,22 +2125,22 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* Effect.yieldNow;
               if (
                 context.finalized ||
+                context.interrupted ||
                 context.idleFinalizeGeneration !== generation ||
                 !context.turnEnded ||
                 cursorTurnHasActiveWork(context)
               ) {
                 return;
               }
-              if (context.assistant.nextSegment === 0) {
-                yield* Deferred.await(context.runWaitSettled);
-                if (
-                  context.finalized ||
-                  context.idleFinalizeGeneration !== generation ||
-                  !context.turnEnded ||
-                  cursorTurnHasActiveWork(context)
-                ) {
-                  return;
-                }
+              yield* awaitCursorRunReleaseBeforeIdleFinalize(context);
+              if (
+                context.finalized ||
+                context.interrupted ||
+                context.idleFinalizeGeneration !== generation ||
+                !context.turnEnded ||
+                cursorTurnHasActiveWork(context)
+              ) {
+                return;
               }
               const transportFailure = context.assistantReply.failure;
               const status = transportFailure === undefined ? "completed" : "failed";
@@ -2207,6 +2217,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* completeAssistant(context);
               yield* completeReasoning(context);
               yield* handleToolUpdate(context, update);
+              if (update.type === "tool-call-completed") {
+                yield* scheduleIdleTurnFinalize(context);
+              }
               return;
             case "step-completed":
             case "turn-ended":
@@ -2250,6 +2263,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           context.turnEnded &&
           result.status === "error" &&
           result.error?.message === CURSOR_RESUME_NO_PROGRESS_MESSAGE;
+
+        const shouldDeferWaitFinalizeToIdlePath = (context: ActiveCursorTurn, result: RunResult) =>
+          !context.interrupted &&
+          context.turnEnded &&
+          !cursorTurnHasActiveWork(context) &&
+          result.status === "cancelled";
 
         const terminalStatus = (
           context: ActiveCursorTurn,
@@ -2554,7 +2573,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                       },
                     );
                   }
-                  if (context !== null) {
+                  if (context !== null && !shouldDeferWaitFinalizeToIdlePath(context, result)) {
                     const transportFailure = context.assistantReply.failure;
                     const status =
                       transportFailure === undefined ? terminalStatus(context, result) : "failed";
