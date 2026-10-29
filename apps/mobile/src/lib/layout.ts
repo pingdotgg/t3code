@@ -6,7 +6,8 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-const SPLIT_LAYOUT_MIN_WIDTH = 720;
+const MEDIUM_LAYOUT_MIN_WIDTH = 600;
+const EXPANDED_LAYOUT_MIN_WIDTH = 720;
 const SPLIT_LAYOUT_MIN_HEIGHT = 600;
 
 const SPLIT_SIDEBAR_MIN_WIDTH = 280;
@@ -58,12 +59,16 @@ const AUXILIARY_PANE_DEFAULT_MAX_WIDTH = 320;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;
 
-export type LayoutVariant = "compact" | "split";
+/**
+ * The window's width class. Compact: the sidebar is the root and pages push over it. Medium: the
+ * sidebar floats over the content. Expanded: the sidebar sits beside the content.
+ */
+export type LayoutVariant = "compact" | "medium" | "expanded";
 
 export interface Layout {
   readonly variant: LayoutVariant;
+  /** Medium or expanded: pages replace the content beside the sidebar instead of pushing. */
   readonly usesSplitView: boolean;
-  readonly primarySidebarOverlaysContent: boolean;
   readonly listPaneWidth: number | null;
   readonly listPaneGap?: number;
   readonly shellPadding: number;
@@ -115,18 +120,29 @@ export function deriveLayout(input: {
     (metrics.hasHinge === true ||
       metrics.verticalBarEdge !== "none" ||
       metrics.reservedRegions.some((region) => region.kind === "division"));
-  const wideEnoughForSplit =
+  const variant: LayoutVariant =
     metrics && (input.nativeWorkspace || hasDuoGeometry)
       ? metrics.horizontalSizeClass === "regular" &&
         usableWidth >= SPLIT_SIDEBAR_MIN_WIDTH + 320 &&
         (input.nativeWorkspace || height >= 400)
-      : width >= SPLIT_LAYOUT_MIN_WIDTH && height >= SPLIT_LAYOUT_MIN_HEIGHT;
+        ? // The native split floats its sidebar over an unfolded portrait Duo.
+          input.nativeWorkspace === true && metrics.hasHinge === true && width < height
+          ? "medium"
+          : "expanded"
+        : "compact"
+      : height < SPLIT_LAYOUT_MIN_HEIGHT || width < MEDIUM_LAYOUT_MIN_WIDTH
+        ? "compact"
+        : width >= EXPANDED_LAYOUT_MIN_WIDTH
+          ? "expanded"
+          : // Only the Android shell floats a sidebar over a page; iOS keeps its phone stack.
+            metrics
+            ? "compact"
+            : "medium";
 
-  if (!wideEnoughForSplit) {
+  if (variant === "compact") {
     return {
-      variant: "compact",
+      variant,
       usesSplitView: false,
-      primarySidebarOverlaysContent: false,
       listPaneWidth: null,
       shellPadding: 0,
     };
@@ -140,10 +156,8 @@ export function deriveLayout(input: {
       width - region.x - region.width - metrics.safeArea.right >= 320,
   );
   return {
-    variant: "split",
+    variant,
     usesSplitView: true,
-    primarySidebarOverlaysContent:
-      input.nativeWorkspace === true && metrics?.hasHinge === true && width < height,
     listPaneWidth:
       division?.x ??
       clamp(Math.round(width * 0.32), SPLIT_SIDEBAR_MIN_WIDTH, SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH),
@@ -202,15 +216,18 @@ export function deriveWorkspacePaneLayout(input: {
   readonly layout: Layout;
   readonly viewportWidth: number;
   readonly nativeWorkspace?: boolean;
+  /** Whether the sidebar floats over the content rather than taking its room; medium by default. */
+  readonly primarySidebarFloats?: boolean;
   readonly primarySidebarPreferredVisible: boolean;
   readonly auxiliaryPanePreferredVisible: boolean;
   readonly auxiliaryPanePreferredWidth?: number;
 }): WorkspacePaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
+  const floats = input.primarySidebarFloats ?? input.layout.variant === "medium";
   const preferredPrimarySidebarVisible =
     input.layout.usesSplitView && input.primarySidebarPreferredVisible;
   const preferredPrimarySidebarWidth =
-    preferredPrimarySidebarVisible && !input.layout.primarySidebarOverlaysContent
+    preferredPrimarySidebarVisible && !floats
       ? (input.layout.listPaneWidth ?? 0) + (input.layout.listPaneGap ?? 0)
       : 0;
   const fileInspector = deriveFileInspectorPaneLayout({
@@ -223,7 +240,7 @@ export function deriveWorkspacePaneLayout(input: {
   const primarySidebarSuppressedByAuxiliary =
     !input.nativeWorkspace &&
     preferredPrimarySidebarVisible &&
-    !input.layout.primarySidebarOverlaysContent &&
+    !floats &&
     auxiliaryPaneVisible &&
     fileInspector.width !== null &&
     input.layout.listPaneWidth !== null &&
