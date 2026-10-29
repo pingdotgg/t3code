@@ -37,13 +37,7 @@ export function PullRequestSearchSheet(props: {
   if (Platform.OS === "android") {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
-        <AppBar
-          embedded
-          sidebar={false}
-          title={props.title}
-          hideBottomBorder
-          onBack={() => navigation.goBack()}
-        />
+        <AppBar embedded title={props.title} hideBottomBorder onBack={() => navigation.goBack()} />
         <View className="bg-header px-4 pb-3 pt-1">
           <SearchField
             inputRef={searchRef}

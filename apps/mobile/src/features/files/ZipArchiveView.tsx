@@ -308,7 +308,6 @@ function ZipArchiveHeader(props: {
       {isAndroid ? (
         <AppBar
           embedded
-          sidebar={false}
           title={props.name}
           subtitle={props.subtitle}
           onBack={() => {
@@ -760,7 +759,6 @@ function ZipEntryView(props: {
       {isAndroid ? (
         <AppBar
           embedded
-          sidebar={false}
           title={entry.name}
           subtitle={subtitle}
           onBack={props.onBack}

@@ -80,7 +80,6 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
       {Platform.OS === "android" ? (
         <AppBar
           sheet
-          sidebar={false}
           title="Branches & worktrees"
           onBack={() => navigation.goBack()}
           hideBottomBorder

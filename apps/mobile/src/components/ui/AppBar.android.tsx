@@ -3,9 +3,9 @@ import { Keyboard, type TextInputInstance, View } from "react-native";
 import { useHardwareBack } from "../../lib/backHandler";
 import { useToolbarLayout } from "./useToolbarLayout";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { AndroidWorkspaceSidebarButton } from "../../features/layout/workspace-sidebar-toolbar";
+import { useSidebarToggle } from "../../features/layout/useSidebarToggle";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
-import { AndroidScreenHeader } from "./AndroidScreenHeader";
+import { AndroidHeaderIconButton, AndroidScreenHeader } from "./AndroidScreenHeader";
 import { ScreenHeaderButton } from "./ScreenHeaderButton.android";
 import { Menu } from "./Menu";
 import { SearchField } from "./SearchField";
@@ -68,6 +68,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
   const { paddingTop, paddingBottom } = useToolbarLayout(props.sheet);
   const { themeVariables } = useAppearancePreferences();
   const inWorkspace = useHasWorkspaceAppBar();
+  const sidebarToggle = useSidebarToggle();
   const inline = search?.mode === "inline";
   const searching = searchState?.searching === true;
   const openSearch = () => searchState?.open();
@@ -155,7 +156,15 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       subtitle={props.subtitle}
       onBack={props.onBack}
       leading={
-        props.leading ?? (props.sidebar !== false ? <AndroidWorkspaceSidebarButton /> : undefined)
+        props.leading ??
+        // Only a real button: any leading content takes the bar's navigation slot.
+        (sidebarToggle && !props.sheet ? (
+          <AndroidHeaderIconButton
+            accessibilityLabel={sidebarToggle.accessibilityLabel}
+            icon={sidebarToggle.icon}
+            onPress={sidebarToggle.onPress}
+          />
+        ) : undefined)
       }
       embedded={props.sheet}
       hideBottomBorder={props.hideBottomBorder}
