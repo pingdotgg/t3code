@@ -871,6 +871,7 @@ export function ThreadSearchPullRequestNumber({
   enabled?: boolean;
   settled?: boolean;
 }) {
+  const colorizePullRequestText = useClientSettings((settings) => settings.colorizePullRequestText);
   const matched = pullRequestMatchesSearchQuery(thread, query);
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   const linked = useLinkedThreadPullRequest(
@@ -922,7 +923,9 @@ export function ThreadSearchPullRequestNumber({
     >
       {/* text-current opts out of the command palette's muted icon color. */}
       <presentation.Icon aria-hidden className="size-3 shrink-0 text-current" />
-      <span>{presentation.text}</span>
+      <span className={colorizePullRequestText ? undefined : "text-secondary-label"}>
+        {presentation.text}
+      </span>
     </span>
   );
 }
