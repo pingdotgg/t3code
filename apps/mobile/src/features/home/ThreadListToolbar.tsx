@@ -1,33 +1,21 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
-import {
-  BackHandler,
-  Keyboard,
-  type TextInputInstance,
-  View,
-  type LayoutChangeEvent,
-} from "react-native";
+import { BackHandler, Keyboard, type TextInputInstance } from "react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 
-import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
-import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
-import { Menu } from "../../components/ui/Menu";
 import { SearchField } from "../../components/ui/SearchField";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
-import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
+import { WorkspaceListAppBar } from "../workspace/WorkspaceListAppBar";
 import { useWorkspaceConnectionState } from "../../state/workspace";
-import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 
 export function ThreadListToolbar(props: {
   readonly searchQuery: string;
   readonly onSearchQueryChange: (query: string) => void;
   readonly filterActions: MenuAction[];
   readonly filterCustomized: boolean;
-  readonly onFilterAction: NonNullable<ComponentProps<typeof Menu>["onPressAction"]>;
+  readonly onFilterSelect: (id: string) => void;
   readonly onOpenEnvironments: () => void;
-  readonly sidebar?: boolean;
-  readonly onLayout?: (event: LayoutChangeEvent) => void;
   readonly onRequestVisibility?: () => void;
 }) {
   const navigation = useNavigation();
@@ -36,7 +24,6 @@ export function ThreadListToolbar(props: {
   const homeFocused = useNavigationState((state) => state.routes[state.index]?.name === "Home");
   const listFocused =
     homeFocused && (workspace === null || workspace.state.selectedTab === "threads");
-  const { paddingTop, paddingBottom } = useToolbarLayout();
   const connectionState = useWorkspaceConnectionState();
   const { onRequestVisibility, onSearchQueryChange } = props;
   const searchRef = useRef<TextInputInstance>(null);
@@ -75,9 +62,6 @@ export function ThreadListToolbar(props: {
     return () => subscription.remove();
   }, [closeSearch, searching, listFocused, navigation, isTabActive]);
 
-  const filterIcon = props.filterCustomized
-    ? "line.3.horizontal.decrease.circle.fill"
-    : "line.3.horizontal.decrease.circle";
   const searchField = (
     <SearchField
       inputRef={searchRef}
@@ -88,34 +72,25 @@ export function ThreadListToolbar(props: {
       onChangeText={onSearchQueryChange}
     />
   );
-  const filterButton = connectionState.hasConnections ? (
-    <AndroidAnchoredMenu actions={props.filterActions} onPressAction={props.onFilterAction}>
-      {(open) => (
-        <AndroidHeaderIconButton
-          accessibilityLabel="Filter threads"
-          icon={filterIcon}
-          onPress={open}
-        />
-      )}
-    </AndroidAnchoredMenu>
-  ) : null;
+  const filter = connectionState.hasConnections
+    ? {
+        accessibilityLabel: "Filter threads",
+        customized: props.filterCustomized,
+        actions: props.filterActions,
+        onSelect: props.onFilterSelect,
+      }
+    : undefined;
 
   return (
-    <View
-      onLayout={props.onLayout}
-      className={props.sidebar ? "absolute inset-x-0 top-0 z-[4] bg-header px-2" : "bg-header px-2"}
-      style={{ paddingTop, paddingBottom }}
-    >
-      <WorkspaceListToolbarRow
-        searching={searching}
-        searchField={searchField}
-        onCloseSearch={closeSearch}
-        onOpenSearch={openSearch}
-        searchAccessibilityLabel="Search threads"
-        titleAccessibilityLabel="T3 Code, Threads"
-        onOpenEnvironments={props.onOpenEnvironments}
-        filter={filterButton}
-      />
-    </View>
+    <WorkspaceListAppBar
+      searching={searching}
+      searchField={searchField}
+      onCloseSearch={closeSearch}
+      onOpenSearch={openSearch}
+      searchAccessibilityLabel="Search threads"
+      titleAccessibilityLabel="T3 Code, Threads"
+      onOpenEnvironments={props.onOpenEnvironments}
+      filter={filter}
+    />
   );
 }

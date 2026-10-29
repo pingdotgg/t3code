@@ -1,17 +1,14 @@
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useRef } from "react";
-import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
-import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
-import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
+import { BackHandler, Keyboard, type TextInputInstance } from "react-native";
 import { SearchField } from "../../components/ui/SearchField";
-import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
-import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
+import { WorkspaceListAppBar } from "../workspace/WorkspaceListAppBar";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import type { PullRequestFilterMenu } from "./PullRequestListFilters";
 import { openSettings } from "../settings/settings-navigation";
 
-/** PR search shares the thread list's Android header row. */
+/** PR search shares the thread list's Android header. */
 export function PullRequestToolbar(props: {
   readonly filters: PullRequestFilterMenu | null;
   readonly onRequestVisibility?: () => void;
@@ -56,47 +53,34 @@ export function PullRequestToolbar(props: {
     });
     return () => subscription.remove();
   }, [searching, closeSearch, navigation, isTabActive]);
-  const { paddingTop, paddingBottom } = useToolbarLayout();
   return (
-    <View className="bg-header px-2" style={{ paddingTop, paddingBottom }}>
-      <WorkspaceListToolbarRow
-        searching={searching}
-        searchField={
-          <SearchField
-            inputRef={input}
-            accessibilityLabel="Search pull requests"
-            clearAccessibilityLabel="Clear search"
-            placeholder="Search pull requests"
-            value={tab.query}
-            onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
-          />
-        }
-        onCloseSearch={closeSearch}
-        onOpenSearch={openSearch}
-        searchAccessibilityLabel="Search pull requests"
-        titleAccessibilityLabel="T3 Code, Pull requests"
-        onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
-        filter={
-          filters ? (
-            <AndroidAnchoredMenu
-              actions={filters.actions}
-              onPressAction={({ nativeEvent }) => filters.onSelect(nativeEvent.event)}
-            >
-              {(open) => (
-                <AndroidHeaderIconButton
-                  accessibilityLabel="Filter pull requests"
-                  icon={
-                    filters.customized
-                      ? "line.3.horizontal.decrease.circle.fill"
-                      : "line.3.horizontal.decrease.circle"
-                  }
-                  onPress={open}
-                />
-              )}
-            </AndroidAnchoredMenu>
-          ) : null
-        }
-      />
-    </View>
+    <WorkspaceListAppBar
+      searching={searching}
+      searchField={
+        <SearchField
+          inputRef={input}
+          accessibilityLabel="Search pull requests"
+          clearAccessibilityLabel="Clear search"
+          placeholder="Search pull requests"
+          value={tab.query}
+          onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
+        />
+      }
+      onCloseSearch={closeSearch}
+      onOpenSearch={openSearch}
+      searchAccessibilityLabel="Search pull requests"
+      titleAccessibilityLabel="T3 Code, Pull requests"
+      onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
+      filter={
+        filters
+          ? {
+              accessibilityLabel: "Filter pull requests",
+              customized: filters.customized,
+              actions: filters.actions,
+              onSelect: filters.onSelect,
+            }
+          : undefined
+      }
+    />
   );
 }
