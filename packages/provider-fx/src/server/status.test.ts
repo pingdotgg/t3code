@@ -65,7 +65,12 @@ interface Invocation {
  * `codex status --json`; the unscoped status is ` status --json`. HOME holds
  * an fx profile whose settings define `profileProviders`.
  */
-const check = (outputs: Record<string, string>, profileProviders: ReadonlyArray<string> = [], versionDelay: Duration.Input = 0, versionSpawned?: Deferred.Deferred<void>) =>
+const check = (
+  outputs: Record<string, string>,
+  profileProviders: ReadonlyArray<string> = [],
+  versionDelay: Duration.Input = 0,
+  versionSpawned?: Deferred.Deferred<void>,
+) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -85,8 +90,13 @@ const check = (outputs: Record<string, string>, profileProviders: ReadonlyArray<
       invoked.push({ args, backend, cwd: standard?.options.cwd });
       const stdout = args === "--version" ? "fx 0.0.15\n" : outputs[`${backend ?? ""} ${args}`];
       return Effect.gen(function* () {
-        if (args === "--version" && versionSpawned) yield* Deferred.succeed(versionSpawned, undefined);
-        return processHandle(stdout ?? "", stdout === undefined ? 2 : 0, args === "--version" ? Effect.sleep(versionDelay) : Effect.void);
+        if (args === "--version" && versionSpawned)
+          yield* Deferred.succeed(versionSpawned, undefined);
+        return processHandle(
+          stdout ?? "",
+          stdout === undefined ? 2 : 0,
+          args === "--version" ? Effect.sleep(versionDelay) : Effect.void,
+        );
       });
     });
     const draft = yield* checkFxProviderStatus(settings, { HOME: home }).pipe(
@@ -103,7 +113,14 @@ describe("checkFxProviderStatus", () => {
       status: "ready",
       version: "0.0.15",
       message: undefined,
-      invoked: ["--version", "status --json", "status --json", "status --json", "status --json", "models --json"],
+      invoked: [
+        "--version",
+        "status --json",
+        "status --json",
+        "status --json",
+        "status --json",
+        "models --json",
+      ],
     },
     {
       label: "never answers",
@@ -117,8 +134,16 @@ describe("checkFxProviderStatus", () => {
     Effect.gen(function* () {
       const versionSpawned = yield* Deferred.make<void>();
       const fiber = yield* check(
-        { " status --json": status("fx login"), "gateway status --json": status("fx login"), "gateway models --json": GATEWAY_MODELS, "codex status --json": status("missing"), "grok status --json": status("missing") },
-        [], row.versionDelay, versionSpawned,
+        {
+          " status --json": status("fx login"),
+          "gateway status --json": status("fx login"),
+          "gateway models --json": GATEWAY_MODELS,
+          "codex status --json": status("missing"),
+          "grok status --json": status("missing"),
+        },
+        [],
+        row.versionDelay,
+        versionSpawned,
       ).pipe(Effect.forkChild);
       yield* Deferred.await(versionSpawned);
       yield* TestClock.adjust("10 seconds");
@@ -126,7 +151,7 @@ describe("checkFxProviderStatus", () => {
       assert.equal(draft.status, row.status);
       assert.equal(draft.version, row.version);
       assert.equal(draft.message, row.message);
-      assert.deepEqual(invoked.map(({args}) => args).toSorted(), [...row.invoked].toSorted());
+      assert.deepEqual(invoked.map(({ args }) => args).toSorted(), [...row.invoked].toSorted());
     }),
   );
 
@@ -210,6 +235,19 @@ describe("checkFxProviderStatus", () => {
         draft.models.map((model) => model.slug),
         ["default", "codex:gpt-5.5"],
       );
+
+      // An earlier backend whose sign-in fx could not report does not hide Codex's.
+      const unreadable = yield* check({
+        " status --json": status("missing", { model: "spacexai/grok-4.7" }),
+        "gateway models --json": GATEWAY_MODELS,
+        "codex status --json": status("chatgpt subscription"),
+        "codex models --json": models(["gpt-5.5"]),
+        "grok status --json": status("missing"),
+      });
+      assert.deepEqual(unreadable.draft.auth, {
+        status: "authenticated",
+        label: "Codex subscription",
+      });
     }),
   );
 

@@ -339,10 +339,11 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     (backend) => backend.id === fxStatusBackend(status?.model_source),
   );
   const usable = backends.find((backend) => backend.signedIn !== false && backend.models?.length);
+  const signedIn = backends.find((backend) => backend.signedIn === true);
   const statusAuth = fxAuth(status?.auth);
   const auth: ServerProviderAuth =
-    statusAuth.status !== "authenticated" && usable?.signedIn === true
-      ? { status: "authenticated", label: usable.name }
+    statusAuth.status !== "authenticated" && signedIn !== undefined
+      ? { status: "authenticated", label: signedIn.name }
       : statusAuth;
   const probe =
     auth.status === "unauthenticated"
