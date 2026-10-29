@@ -1,4 +1,3 @@
-import { TextGenerationError } from "@t3tools/contracts";
 import { FxSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as Crypto from "effect/Crypto";
@@ -25,13 +24,13 @@ import {
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { discoverFxSkills } from "./skills.ts";
+import { makeFxTextGeneration } from "./textGeneration.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { FX_DRIVER_KIND } from "./acpSupport.ts";
 
 const decodeFxSettings = Schema.decodeSync(FxSettings);
@@ -41,24 +40,6 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   provider: FX_DRIVER_KIND,
   packageName: null,
 });
-
-// See `supportsTextGeneration` in status.ts.
-const unsupportedTextGeneration: ProviderTextGeneration = (() => {
-  const unsupported = (operation: string) =>
-    Effect.fail(
-      new TextGenerationError({
-        operation,
-        detail: "fx does not provide application text generation.",
-      }),
-    );
-  return {
-    generateCommitMessage: () => unsupported("generateCommitMessage"),
-    generatePrContent: () => unsupported("generatePrContent"),
-    generateBranchName: () => unsupported("generateBranchName"),
-    generateThreadTitle: () => unsupported("generateThreadTitle"),
-    generateReviewGuide: () => unsupported("generateReviewGuide"),
-  };
-})();
 
 export type FxDriverEnv =
   | FxAdapterV2DriverEnv
@@ -144,6 +125,8 @@ export const FxDriver: ProviderDriver<FxSettings, FxDriverEnv> = {
         ),
       );
 
+    const textGeneration = yield* makeFxTextGeneration(effectiveConfig, processEnv);
+
     return {
       instanceId,
       driverKind: FX_DRIVER_KIND,
@@ -163,7 +146,7 @@ export const FxDriver: ProviderDriver<FxSettings, FxDriverEnv> = {
               ),
             ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills }))),
       orchestrationAdapter,
-      textGeneration: unsupportedTextGeneration,
+      textGeneration,
     } satisfies ProviderInstance;
   }),
 };

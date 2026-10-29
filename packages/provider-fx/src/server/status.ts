@@ -75,8 +75,8 @@ const snapshot = (
   probe: ProviderProbeResult,
   defaultModel?: string,
   listed?: ReadonlyArray<string>,
-): ServerProviderDraft => ({
-  ...buildServerProvider({
+): ServerProviderDraft =>
+  buildServerProvider({
     // Gives the snapshot its version advisory; fx runs no enrichment pass.
     driver: FX_DRIVER_KIND,
     presentation: FX_PRESENTATION,
@@ -84,11 +84,7 @@ const snapshot = (
     checkedAt,
     models: fxModels(settings, defaultModel, listed),
     probe,
-  }),
-  // Every `fx acp` session is saved under `~/.fx` and ACP has no session
-  // delete, so a throwaway text-generation session would stay on disk.
-  supportsTextGeneration: false,
-});
+  });
 
 export const buildInitialFxProviderSnapshot = (
   settings: FxSettings,
