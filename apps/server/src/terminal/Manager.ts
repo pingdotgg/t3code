@@ -1067,6 +1067,10 @@ function isCsiFinalByte(codePoint: number): boolean {
   return codePoint >= 0x40 && codePoint <= 0x7e;
 }
 
+function isControlSequenceCancel(codePoint: number): boolean {
+  return codePoint === 0x18 || codePoint === 0x1a;
+}
+
 function shouldStripCsiSequence(body: string, finalByte: string): boolean {
   if (finalByte === "n") {
     return true;
@@ -1115,7 +1119,7 @@ function stripStringTerminator(value: string): string {
 function findStringTerminatorIndex(input: string, start: number): number | null {
   for (let index = start; index < input.length; index += 1) {
     const codePoint = input.charCodeAt(index);
-    if (codePoint === 0x07 || codePoint === 0x9c) {
+    if (codePoint === 0x07 || codePoint === 0x9c || isControlSequenceCancel(codePoint)) {
       return index + 1;
     }
     if (codePoint === 0x1b && input.charCodeAt(index + 1) === 0x5c) {
@@ -1177,10 +1181,11 @@ function sanitizeTerminalHistoryChunk(
       if (nextCodePoint === 0x5b) {
         let cursor = index + 2;
         while (cursor < input.length) {
-          if (isCsiFinalByte(input.charCodeAt(cursor))) {
+          const cancelled = isControlSequenceCancel(input.charCodeAt(cursor));
+          if (cancelled || isCsiFinalByte(input.charCodeAt(cursor))) {
             const sequence = input.slice(index, cursor + 1);
             const body = input.slice(index + 2, cursor);
-            if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
+            if (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? "")) {
               append(sequence);
             }
             index = cursor + 1;
@@ -1231,10 +1236,11 @@ function sanitizeTerminalHistoryChunk(
     if (codePoint === 0x9b) {
       let cursor = index + 1;
       while (cursor < input.length) {
-        if (isCsiFinalByte(input.charCodeAt(cursor))) {
+        const cancelled = isControlSequenceCancel(input.charCodeAt(cursor));
+        if (cancelled || isCsiFinalByte(input.charCodeAt(cursor))) {
           const sequence = input.slice(index, cursor + 1);
           const body = input.slice(index + 1, cursor);
-          if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
+          if (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? "")) {
             append(sequence);
           }
           index = cursor + 1;
