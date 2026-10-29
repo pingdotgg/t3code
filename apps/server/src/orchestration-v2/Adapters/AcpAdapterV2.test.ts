@@ -5413,17 +5413,16 @@ describe("AcpAdapterV2", () => {
       const terminal = untilTerminal.at(-1);
       assert.equal(terminal?.type === "turn.terminal" && terminal.status, "interrupted");
       // The agent fails the command Stop cut off, then updates its output.
-      assert.equal(
-        untilTerminal
-          .flatMap((event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.nativeItemRef?.nativeId === "native-cancel-tool"
-              ? [event.turnItem.status]
-              : [],
-          )
-          .at(-1),
-        "interrupted",
-      );
+      const command = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-cancel-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(command?.status, "interrupted");
+      assert.include(command?.type === "command_execution" ? command.output : "", "exit 130");
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
       );
