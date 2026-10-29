@@ -9,10 +9,21 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
+import {
+  HttpClient,
+  HttpClientResponse,
+  HttpServer,
+  HttpServerRequest,
+  type HttpClientRequest,
+} from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  AuthStandardClientScopes,
+  EnvironmentAuthenticatedPrincipal,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
@@ -653,6 +664,29 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(yield* Effect.flip(link.mintCredential({ proof: "proof" }))).toMatchObject({
         operation: "connect-disabled",
       });
+      const linkProof = link.linkProof(
+        {
+          challenge: "challenge",
+          relayIssuer: "https://relay.example.test",
+          endpoint: {
+            providerKind: "cloudflare_tunnel",
+            httpBaseUrl: "https://environment.example.test",
+            wsBaseUrl: "wss://environment.example.test",
+          },
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        },
+        HttpServerRequest.fromWeb(new Request("http://127.0.0.1:3773/api/connect/link-proof")),
+      );
+      expect(
+        yield* Effect.flip(linkProof).pipe(
+          Effect.provideService(EnvironmentAuthenticatedPrincipal, {
+            sessionId: AuthSessionId.make("session"),
+            subject: "test",
+            method: "bearer-access-token",
+            scopes: new Set(AuthStandardClientScopes),
+          }),
+        ),
+      ).toMatchObject({ operation: "connect-disabled" });
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_CONNECT_ENABLED: "false" } })),
