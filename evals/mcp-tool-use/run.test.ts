@@ -179,6 +179,8 @@ it("passes a good run and names every rule a bad run breaks", () => {
     disclosure,
     "README.md and assets/icon.svg are created; an Initial commit is attempted.",
     "Writes `README.md`.\nGenerates `assets/icon.svg`.\nAttempts an initial commit.",
+    "I won't create anything yet. After approval, the tool creates README.md and assets/icon.svg, then attempts an Initial commit.",
+    "After approval, README.md and assets/icon.svg are created and an Initial commit is attempted. I won't create anything yet.",
   ]) {
     assert.deepEqual(failed(preview.expect, { calls: [], text, stopReason: "end_turn" }), [], text);
   }
