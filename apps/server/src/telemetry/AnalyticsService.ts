@@ -260,18 +260,18 @@ export const make = Effect.gen(function* () {
 
   // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
-    if (!(yield* isEnabled)) {
-      // Nothing recorded before an opt-out is sent after it.
-      yield* Ref.set(bufferRef, []);
-      yield* Ref.update(deliveryRef, (delivery) => ({
-        ...delivery,
-        failedBatch: [],
-        batchAttempts: 0,
-        firstFailedAt: 0,
-      }));
-      return;
-    }
     while (true) {
+      // Checked per batch: nothing recorded before an opt-out is sent after it.
+      if (!(yield* isEnabled)) {
+        yield* Ref.set(bufferRef, []);
+        yield* Ref.update(deliveryRef, (delivery) => ({
+          ...delivery,
+          failedBatch: [],
+          batchAttempts: 0,
+          firstFailedAt: 0,
+        }));
+        return;
+      }
       const delivery = yield* Ref.get(deliveryRef);
       const batch = delivery.failedBatch.length > 0 ? delivery.failedBatch : yield* takeBatch;
       if (batch.length === 0) {
