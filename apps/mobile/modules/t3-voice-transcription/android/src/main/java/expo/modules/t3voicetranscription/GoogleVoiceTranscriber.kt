@@ -14,6 +14,7 @@ import com.google.mlkit.genai.speechrecognition.speechRecognizerRequest
 import java.io.Closeable
 import java.util.Locale
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
@@ -63,6 +64,27 @@ private suspend fun checkModelSupport(client: GoogleSpeechClient): Int = try {
   FeatureStatus.UNAVAILABLE
 }
 
+internal suspend fun collectGoogleVoiceTranscript(
+  responses: Flow<SpeechRecognizerResponse>
+): String {
+  val text = StringBuilder()
+  var partial = ""
+  responses.collect { response ->
+    when (response) {
+      // ONE_SHOT files can emit multiple final utterances, with separators supplied by the SDK.
+      is SpeechRecognizerResponse.FinalTextResponse -> {
+        text.append(response.text)
+        partial = ""
+      }
+      is SpeechRecognizerResponse.PartialTextResponse -> partial = response.text
+      is SpeechRecognizerResponse.ErrorResponse -> throw response.e
+      else -> Unit
+    }
+  }
+  // Some file sessions complete with a trailing partial instead of another final event.
+  return text.append(partial).toString().trim()
+}
+
 internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : GoogleSpeechClient {
   private val context = context.applicationContext
   private val recognizer = SpeechRecognition.getClient(
@@ -86,16 +108,8 @@ internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : 
     Uri.parse(uri)
   ).use { source ->
     val request = speechRecognizerRequest { audioSource = source }
-    var text = ""
     try {
-      recognizer.startRecognition(request).collect { response ->
-        when (response) {
-          is SpeechRecognizerResponse.FinalTextResponse -> text = response.text
-          is SpeechRecognizerResponse.ErrorResponse -> throw response.e
-          else -> Unit
-        }
-      }
-      text.trim()
+      collectGoogleVoiceTranscript(recognizer.startRecognition(request))
     } finally {
       // Stop inference before closing its audio descriptor, including coroutine cancellation.
       withContext(NonCancellable) { runCatching { recognizer.stopRecognition() } }

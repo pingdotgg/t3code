@@ -3,8 +3,10 @@ package expo.modules.t3voicetranscription
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.common.GenAiException
 import com.google.mlkit.genai.speechrecognition.SpeechRecognizerOptions
+import com.google.mlkit.genai.speechrecognition.SpeechRecognizerResponse
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -12,6 +14,33 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GoogleVoiceTranscriberTest {
+  @Test
+  fun preservesUtterancesAndTheirSpacingWithoutDuplicatingHypotheses() = runBlocking {
+    for ((finals, trailing, expected) in listOf(
+      Triple(
+        listOf("The beginning.", " The middle.", " Repeat this.", " Repeat this."),
+        emptyList(),
+        "The beginning. The middle. Repeat this. Repeat this."
+      ),
+      Triple(listOf("最初の文。", "次の文。"), emptyList(), "最初の文。次の文。"),
+      Triple(
+        listOf("The beginning."),
+        listOf(" An unfinished ending", " The final sentence."),
+        "The beginning. The final sentence."
+      )
+    )) {
+      val responses = flow {
+        for (text in finals) {
+          emit(SpeechRecognizerResponse.PartialTextResponse("Unfinished hypothesis"))
+          emit(SpeechRecognizerResponse.FinalTextResponse(text, emptyList()))
+        }
+        for (text in trailing) emit(SpeechRecognizerResponse.PartialTextResponse(text))
+        emit(SpeechRecognizerResponse.CompletedResponse)
+      }
+      assertEquals(expected, collectGoogleVoiceTranscript(responses))
+    }
+  }
+
   private class Client(
     var status: Int,
     val onStatus: () -> Unit = {},
