@@ -1212,6 +1212,35 @@ describe("runtime command runner", () => {
 });
 
 describe("persisted environment queries", () => {
+  it.effect("keeps an in-memory cached page pending until revalidation settles", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshStarted = Latch.makeUnsafe();
+        const finishRefresh = Latch.makeUnsafe();
+        let executions = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.suspend(() => {
+            if (++executions === 1) return Effect.succeed("cached");
+            refreshStarted.openUnsafe();
+            return finishRefresh.await.pipe(Effect.as("fresh"));
+          }),
+          { persistence: { load: () => Effect.succeedNone, save: () => Effect.void } },
+        );
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("cached");
+        registry.refresh(harness.atom);
+        yield* refreshStarted.await;
+        expect(registry.get(harness.atom)).toMatchObject({
+          _tag: "Success",
+          value: "cached",
+          waiting: true,
+        });
+        finishRefresh.openUnsafe();
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("fresh");
+      }),
+    ),
+  );
+
   it.effect(
     "restores cached data in a new registry while offline, then refreshes on reconnect",
     () =>
