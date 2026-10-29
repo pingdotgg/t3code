@@ -223,8 +223,23 @@ function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructi
   }
 }
 
+/** A model call's request content: up to 64 KiB per hook that T3 never reads. */
+const HOOK_MODEL_REQUEST_FIELDS = new Set(["messages", "instructions", "tools", "toolsJson"]);
+
 function normalizeInboundFrame(frame: Record<string, unknown>): Record<string, unknown> {
   const params = isRecord(frame.params) ? frame.params : undefined;
+  if (frame.method === "libfx/hook" && params?.type === "model.start" && isRecord(params.data)) {
+    const data = params.data;
+    return {
+      ...frame,
+      params: {
+        ...params,
+        data: Object.fromEntries(
+          Object.entries(data).filter(([key]) => !HOOK_MODEL_REQUEST_FIELDS.has(key)),
+        ),
+      },
+    };
+  }
   const update = isRecord(params?.update) ? params.update : undefined;
   if (
     update?.sessionUpdate === "available_commands_update" &&
@@ -461,7 +476,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
       generatedBy: "live-fx-recorder",
       fxVersion: initializeAgent.version ?? "unknown",
       normalization:
-        "Session ids are fx-session-NN, the workspace is <workspace>, HOME is /home/fx-replay and the recording user is fx-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. User skill names, emails and token-shaped strings are removed. Timestamps are kept as recorded.",
+        "Session ids are fx-session-NN, the workspace is <workspace>, HOME is /home/fx-replay and the recording user is fx-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. User skill names, emails and token-shaped strings are removed. libfx/hook model.start events keep their ids and purpose but not their request content. Timestamps are kept as recorded.",
       droppedFrames,
     },
     entries: [

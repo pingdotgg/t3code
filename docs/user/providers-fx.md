@@ -44,7 +44,9 @@ A message steered into a running turn stops that turn, and fx answers the new me
 
 ## Sub-agents
 
-When fx hands work to a sub-agent, it opens in its own thread under the parent. That thread shows the sub-agent's task and its reply, which fx shortens to a couple of lines. fx doesn't share the sub-agent's individual steps.
+When fx hands work to a sub-agent, it opens in its own thread under the parent. That thread shows the sub-agent's task, each tool it runs and what it says between them, and its full reply. A reply longer than 64 KiB is cut off with a note. Steps from a sub-agent's own sub-agents aren't shown.
+
+fx versions before 0.0.14 don't report sub-agent steps, so there the thread shows only the task and a reply shortened to a couple of lines.
 
 fx doesn't pass on a sub-agent's permission requests, so a sub-agent that needs one waits until you press **Stop**. This mostly happens in **Supervised**. In **Auto**, sub-agents can finish routine work by themselves.
 
