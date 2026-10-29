@@ -489,6 +489,52 @@ it.effect("listing uses but does not renew a verified fallback and still checks 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("listing ignores an old resolve's preference after relinking", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const probes = yield* Ref.make(0);
+      const fallback = yield* serveRaw(() =>
+        Ref.update(probes, (count) => count + 1).pipe(
+          Effect.andThen(Deferred.succeed(entered, undefined)),
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(HttpServerResponse.jsonUnsafe(box)),
+        ),
+      );
+      const first = yield* serveApart(descriptorOf("environment-other", "Other"));
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      const urls = JSON.stringify([first.url, fallback]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+      const resolving = yield* a.links.resolve(box.environmentId).pipe(Effect.forkScoped);
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(entered);
+        yield* Ref.set(first.descriptor, box);
+        yield* a.links.link({
+          url: first.url,
+          alternateUrls: [fallback],
+          pairingCode: (yield* first.auth.issuePairingCredential()).credential,
+          access: "auto",
+        });
+        // The old resolve finishes after relinking cleared its preference.
+        yield* Deferred.succeed(release, undefined);
+        expect((yield* Fiber.join(resolving)).url).toBe(fallback);
+        yield* Ref.set(first.probes, 0);
+        yield* Ref.set(probes, 0);
+        expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+        expect(yield* Ref.get(first.probes)).toBe(1);
+        expect(yield* Ref.get(probes)).toBe(0);
+      }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("listing drops a failed preference when a middle address recovers", () =>
   Effect.scoped(
     Effect.gen(function* () {
