@@ -591,6 +591,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
+    id: "transcript-view",
+    title: "Transcript view",
+    to: "/settings/chat",
+    searchTerms: [
+      "normal thinking verbose expand all turns worked for fold collapse tool calls activity log",
+    ],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/maintenance",

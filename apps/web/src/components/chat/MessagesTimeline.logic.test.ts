@@ -2688,6 +2688,24 @@ describe("v2 run and attempt history", () => {
       expect.objectContaining({ id: "work-1" }),
       expect.objectContaining({ id: "provider-recovered" }),
     ]);
+
+    // Thinking starts where Normal needs both sets; the sets then name what's closed.
+    const expandedView = (closed: Partial<Parameters<typeof deriveMessagesTimelineRows>[0]> = {}) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        transcriptView: "thinking",
+        isWorking: false,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        ...closed,
+      });
+    expect(expandedView()).toEqual(openedActivity);
+    expect(expandedView({ expandedWorkGroupIds: new Set(["work-group:work-entry-1"]) })).toEqual(
+      expandedRows,
+    );
+    expect(expandedView({ expandedRunIds: new Set(["turn-1" as never]) })).toEqual(collapsedRows);
+    // Verbose opens rows in the component; its folds match Thinking.
+    expect(expandedView({ transcriptView: "verbose" })).toEqual(openedActivity);
   });
   it("collapses only output from a superseded V2 attempt within the active logical run", () => {
     const runId = "run-steered" as never;
@@ -2857,6 +2875,16 @@ describe("v2 run and attempt history", () => {
       "steer-user-entry",
       "active-assistant-entry",
     ]);
+    const expandedView = deriveMessagesTimelineRows({ ...common, transcriptView: "thinking" });
+    expect(expandedView.find((row) => row.kind === "attempt-fold")?.expanded).toBe(true);
+    expect(expandedView.some((row) => row.id === "superseded-assistant-entry")).toBe(true);
+    expect(
+      deriveMessagesTimelineRows({
+        ...common,
+        transcriptView: "thinking",
+        expandedAttemptIds: new Set([supersededAttemptId]),
+      }).map((row) => row.id),
+    ).toEqual(collapsedRows.map((row) => row.id));
     const settledRows = deriveMessagesTimelineRows({
       ...common,
       latestRun: { ...common.latestRun, status: "completed", completedAt: "2026-01-01T00:00:08Z" },

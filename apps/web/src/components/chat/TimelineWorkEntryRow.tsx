@@ -12,6 +12,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  disclosureOpen,
+  transcriptRowsStartOpen,
+} from "@t3tools/client-runtime/work-log/disclosure";
 import { Link } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import {
@@ -185,18 +189,20 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? notificationChildThreadId(workEntry.projectedItem.item.source)
       : undefined;
   const groupView = use(WorkGroupViewCtx);
-  const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
+  const rowsStartOpen = transcriptRowsStartOpen(ctx.transcriptView);
+  // A standalone row closed by hand in Verbose stays closed when it remounts.
+  const flipped =
+    groupView?.state.expandedEntries ??
+    (rowsStartOpen ? ctx.workGroupViewState.expandedEntries : undefined);
+  const [expanded, setExpanded] = useState(() =>
+    disclosureOpen(flipped, workEntry.id, rowsStartOpen),
   );
   const toggleExpanded = () => {
     const next = !expanded;
-    if (groupView) {
-      groupView.onToggleEntry(!next);
-      if (next) groupView.state.expandedEntries.add(workEntry.id);
-      else groupView.state.expandedEntries.delete(workEntry.id);
-    } else {
-      props.onToggleEntry?.(!next);
-    }
+    if (groupView) groupView.onToggleEntry(!next);
+    else props.onToggleEntry?.(!next);
+    if (flipped && next !== rowsStartOpen) flipped.add(workEntry.id);
+    else flipped?.delete(workEntry.id);
     setExpanded(next);
   };
   const failureItem = workEntry.projectedItem?.item;
