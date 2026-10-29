@@ -342,13 +342,17 @@ const serveSimPermissions = Effect.fn("DeviceActions.serveSimPermissions")(funct
 const adb = (run: Runner, serial: string, args: ReadonlyArray<string>, operation: string) =>
   run("adb", ["-s", serial, ...args]).pipe(Effect.flatMap(ok(operation)));
 
+// adb shell joins arguments without escaping before the device's shell parses them.
+const androidShellWord = (value: string) =>
+  /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+
 const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
   run: Runner,
   input: DeviceActionInput,
 ) {
   const serial = input.deviceId;
   const shell = (args: ReadonlyArray<string>, operation: string) =>
-    adb(run, serial, ["shell", ...args], operation);
+    adb(run, serial, ["shell", ...args.map(androidShellWord)], operation);
   switch (input.type) {
     case "setAppearance":
       yield* shell(["cmd", "uimode", "night", input.value === "dark" ? "yes" : "no"], "appearance");
