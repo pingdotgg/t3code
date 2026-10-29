@@ -26,7 +26,8 @@ import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useEnvironmentScope } from "../../state/session";
 import { readWorkspacePane, workspaceThreadMemoryKey } from "../workspace/workspacePaneMemory";
 
-export const THREAD_GIT_GLYPH = "point.topleft.down.curvedto.point.bottomright.up";
+export const THREAD_GIT_GLYPH = "arrow.triangle.branch";
+export const THREAD_WORKSPACE_GLYPH = "point.topleft.down.curvedto.point.bottomright.up";
 
 const MENU_ACTION_ICONS = {
   commit: "checkmark.circle",
@@ -349,11 +350,13 @@ export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
     ...model.menuActions.map((item) => ({
       id: item.id,
       title: item.label,
+      image: MENU_ACTION_ICONS[item.icon],
       attributes: { disabled: item.disabled },
     })),
     {
       id: "branches",
       title: "Branches & worktrees…",
+      image: "arrow.triangle.branch",
       subtitle:
         props.hasThread === false
           ? "Available after the first message"
@@ -362,12 +365,7 @@ export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
     },
   ];
   return (
-    <View
-      className={cn(
-        "h-9 flex-row overflow-hidden rounded-full",
-        disabled ? "bg-subtle-strong" : "bg-primary",
-      )}
-    >
+    <View className="h-9 flex-row items-stretch overflow-hidden rounded-full border border-border-subtle bg-grouped-card">
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={model.quickAction.label}
@@ -380,8 +378,8 @@ export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
         <Text
           numberOfLines={1}
           className={cn(
-            "text-xs font-t3-bold",
-            disabled ? "text-foreground-muted" : "text-primary-foreground",
+            "text-xs font-t3-semibold",
+            disabled ? "text-foreground-muted" : "text-foreground",
           )}
         >
           {model.quickAction.label}
@@ -390,6 +388,7 @@ export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
       <Menu
         title="Git"
         actions={actions}
+        style={{ alignSelf: "stretch" }}
         onPressAction={({ nativeEvent }) => {
           if (nativeEvent.event === "branches") model.openGitInspector();
           const item = model.menuActions.find((candidate) => candidate.id === nativeEvent.event);
@@ -399,15 +398,12 @@ export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="More git actions"
-          className={cn(
-            "w-9 items-center justify-center border-l active:opacity-70",
-            disabled ? "border-border-subtle" : "border-primary-foreground/25",
-          )}
+          className="h-full w-11 items-center justify-center border-l border-border-subtle active:opacity-70"
         >
           <SymbolView
             name="chevron.down"
             size={11}
-            tintColorClassName={disabled ? "accent-icon-muted" : "accent-primary-foreground"}
+            tintColorClassName="accent-icon-muted"
             type="monochrome"
           />
         </Pressable>

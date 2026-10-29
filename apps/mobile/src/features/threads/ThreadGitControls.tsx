@@ -13,6 +13,7 @@ import {
 } from "../terminal/terminalMenu";
 import {
   THREAD_GIT_GLYPH,
+  THREAD_WORKSPACE_GLYPH,
   threadGitMenuDefinition,
   useThreadGitControlModel,
   useThreadGitMenuDefinition,
@@ -130,7 +131,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
     workspace: {
       accessibilityLabel: "Open workspace",
       disabled: !props.canOpenFiles,
-      icon: { name: "folder", type: "sfSymbol" },
+      icon: { name: THREAD_WORKSPACE_GLYPH, type: "sfSymbol" },
       identifier: "thread-right-workspace",
       label: "Workspace",
       onPress: model.openWorkspace,
@@ -259,7 +260,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
       <Toolbar.Button
         accessibilityLabel="Open workspace"
         disabled={!props.canOpenFiles}
-        icon="folder"
+        icon={THREAD_WORKSPACE_GLYPH}
         onPress={model.openWorkspace}
         separateBackground
       />

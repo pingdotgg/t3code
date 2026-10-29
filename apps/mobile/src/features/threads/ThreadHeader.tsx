@@ -7,6 +7,7 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useThreadGitMenuDefinition } from "./ThreadGitControls";
+import { THREAD_WORKSPACE_GLYPH } from "./threadGitActions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { readWorkspacePane, workspaceThreadMemoryKey } from "../workspace/workspacePaneMemory";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -42,7 +43,7 @@ export function ThreadHeader(
     if (props.hasThreadCwd) {
       actions.push({
         accessibilityLabel: "Open workspace",
-        icon: "folder",
+        icon: THREAD_WORKSPACE_GLYPH,
         onPress: () => {
           const pane = readWorkspacePane(workspaceThreadMemoryKey(environmentId, threadId));
           if (pane === "files") navigation.navigate("ThreadFiles", { environmentId, threadId });
