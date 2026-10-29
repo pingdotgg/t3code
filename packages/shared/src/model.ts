@@ -68,6 +68,16 @@ function getProviderOptionBooleanSelectionValue(
   return typeof value === "boolean" ? value : undefined;
 }
 
+/** Option ids providers use for reasoning effort, in the order they are checked. */
+export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
+  "reasoningEffort",
+  "effort",
+  "reasoning",
+  "variant",
+  "reasoning_effort",
+  "thinking_level",
+];
+
 export function getModelSelectionStringOptionValue(
   modelSelection: ModelSelection | null | undefined,
   id: string,
