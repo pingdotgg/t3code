@@ -2115,7 +2115,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           // Without a confirmed cancel the run may still own the agent, so the wait path finalizes.
           return yield* context.run.cancel.pipe(
             Effect.timeoutOption("10 seconds"),
-            Effect.map(Option.isSome),
+            Effect.flatMap((cancelled) =>
+              Option.isSome(cancelled)
+                ? Effect.succeed(true)
+                : Effect.logWarning("orchestration-v2.cursor-idle-cancel-timed-out", {
+                    providerTurnId: context.providerTurnId,
+                  }).pipe(Effect.as(false)),
+            ),
             Effect.catch((cause) =>
               Effect.logWarning("orchestration-v2.cursor-idle-cancel-failed", {
                 providerTurnId: context.providerTurnId,
