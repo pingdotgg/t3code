@@ -19,7 +19,15 @@ import {
   type NativeStackNavigatorProps,
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import { Fragment, use, useEffect, useRef, useState, type ComponentProps } from "react";
+import {
+  Fragment,
+  use,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { StyleSheet, View } from "react-native";
 import { Split, type SplitHostCommands } from "react-native-screens";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -27,7 +35,10 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { WorkspaceTabsProvider, useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
-import { WorkspaceNativeTabs } from "../workspace/WorkspaceNativeTabs.ios";
+import {
+  WorkspaceNativeTabs,
+  WorkspaceSidebarTabsFooter,
+} from "../workspace/WorkspaceNativeTabs.ios";
 import { workspaceUsesColumns } from "../workspace/workspace-tabs-state";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
@@ -92,6 +103,7 @@ function ColumnScreen(props: {
   readonly onAppearance: (type: "willAppear" | "didAppear" | "willDisappear", key: string) => void;
   readonly onCompose?: () => void;
   readonly navigation: ViewProps["navigation"];
+  readonly footer?: ReactNode;
 }) {
   const { descriptor } = props;
   // Options a screen set inside this workspace tab slot, over its route's.
@@ -160,6 +172,7 @@ function ColumnScreen(props: {
                 <Fragment key={key}>{descriptor.render()}</Fragment>
               </NativePrimaryColumnContext>
             </ColumnContent>
+            {props.footer}
           </NavigationRouteContext>
         </NavigationContext>
       </PaneContext>
@@ -387,6 +400,16 @@ function WorkspaceColumns(
           <ColumnScreen
             descriptor={primary}
             primary
+            footer={
+              deviceType === "pad" ? (
+                <View
+                  pointerEvents="box-none"
+                  style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 128 }}
+                >
+                  <WorkspaceSidebarTabsFooter />
+                </View>
+              ) : undefined
+            }
             selectedThreadKey={selectedThreadKey}
             selectedPullRequestKey={selectedPullRequestKey}
             onDismiss={handleNativeDismiss}
@@ -483,6 +506,7 @@ function WorkspaceColumns(
 
 function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean }) {
   const { layout } = useAdaptiveWorkspaceLayout();
+  const deviceType = useDeviceType();
   const workspace = useWorkspaceTabs()!;
   // Native dismiss commits the route pop after the transition. Restore the dock
   // when the primary screen starts appearing, including interactive back gestures.
@@ -516,6 +540,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     options: { headerShown: false },
     render: () => (
       <WorkspaceNativeTabs
+        tabsInSidebarColumn={props.nativeColumns && !workspacePage && deviceType === "pad"}
         hidden={
           !workspacePage &&
           projection.detail.length > 0 &&
