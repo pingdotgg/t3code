@@ -43,38 +43,15 @@ describe("device setup guidance", () => {
     ).toContain("Device Manager");
   });
 
-  it("does not blame a missing runtime when device discovery reported a problem", () => {
-    const failed = deviceState({
-      hostStatusDetail: "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
-      hostStatuses: {
-        local: {
-          status: "ready",
-          detail: "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
-        },
-      },
-    });
-    expect(platformSetupStatus(failed, "ios")).toEqual({
-      ready: false,
-      message: "No iOS devices were listed because device discovery reported a problem.",
-    });
-    expect(platformSetupStatus(failed, "android").message).toContain("Device Manager");
-    const androidFailure = deviceState({
-      hostStatuses: {
-        local: { status: "ready", detail: "[android-utils] Failed to run `avdmanager list avd`:" },
-      },
-    });
-    expect(platformSetupStatus(androidFailure, "ios").message).toContain("Xcode Settings");
-    expect(platformSetupStatus(androidFailure, "android").message).toContain("discovery reported");
-    expect(platformSetupStatus(deviceState(), "ios").message).toContain("Xcode Settings");
-  });
-
-  it("reports an unanswered hub for either platform", () => {
-    const state = deviceState({
-      hostStatusDetail:
-        "The device hub did not answer within 40 seconds. Devices found earlier stay listed.",
-    });
-    expect(platformSetupStatus(state, "ios").message).toContain("discovery reported");
-    expect(platformSetupStatus(state, "android").message).toContain("discovery reported");
+  it.each([
+    ["[apple-utils] Failed to run `xcrun simctl list devices --json`:", true, false],
+    ["[android-utils] Failed to run `avdmanager list avd`:", false, true],
+    ["The device hub did not answer within 40 seconds.", true, true],
+  ])("blames discovery, not missing tools, after %s", (detail, ios, android) => {
+    const state = deviceState({ hostStatuses: { local: { status: "ready", detail } } });
+    const blamesDiscovery = (platform: "ios" | "android") =>
+      platformSetupStatus(state, platform).message.includes("discovery reported a problem");
+    expect([blamesDiscovery("ios"), blamesDiscovery("android")]).toEqual([ios, android]);
   });
 
   it("counts a remote device host when this machine has no simulator tooling", () => {

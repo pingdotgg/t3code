@@ -101,6 +101,7 @@ const fixture = Effect.fn("fixture")(function* (
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
   const androidAvailable = yield* Ref.make(true);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
+  const listing = { hangs: false, requested: yield* Deferred.make<void>() };
   let booted = false;
   let shutDown = false;
   const connection = { online: true, kind: "local" as "local" | "ssh", failShutdown: false };
@@ -164,6 +165,10 @@ const fixture = Effect.fn("fixture")(function* (
       }
       if (request.url.endsWith("/grid/api/start")) {
         return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
+      }
+      if (listing.hangs) {
+        yield* Deferred.succeed(listing.requested, undefined);
+        return yield* Effect.never;
       }
       return HttpClientResponse.fromWeb(
         request,
@@ -327,6 +332,7 @@ const fixture = Effect.fn("fixture")(function* (
     discoveryErrors,
     androidAvailable,
     endDevice,
+    listing,
   };
 });
 
@@ -687,6 +693,55 @@ it.effect("keeps the cause from the hub's error in discovery warnings, without t
     );
     expect(state.hostStatusDetail).not.toContain("    at ");
     expect(state.hostStatusDetail).not.toContain("stderr:");
+  }).pipe(Effect.scoped),
+);
+
+const simulator = {
+  id: "iphone",
+  name: "iPhone",
+  platform: "ios",
+  version: "iOS 26",
+  booted: true,
+  physical: false,
+} as const;
+const androidPhone = { ...simulator, id: "pixel", name: "Pixel", platform: "android" } as const;
+
+it.effect.each([
+  "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
+  "[apple-utils] `xcrun simctl list devices --json` did not respond within 30 s",
+])("keeps the last simulators after %s while Android still refreshes", (message) =>
+  Effect.gen(function* () {
+    const { service, devices, discoveryErrors } = yield* fixture();
+    devices.push(simulator, androidPhone);
+    yield* service.configure({ enabled: true });
+    devices.length = 0;
+    yield* Ref.set(discoveryErrors, [{ message }]);
+    const failed = yield* service.list;
+    expect(failed.devices.map((device) => device.id)).toEqual(["iphone", "Pixel_API_35"]);
+    expect(failed.hostStatuses.local).toEqual({ status: "ready", detail: message });
+
+    yield* Ref.set(discoveryErrors, []);
+    const emptied = yield* service.list;
+    expect(emptied.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
+    expect(emptied.hostStatuses.local).toEqual({ status: "ready" });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps every device when the hub does not answer the listing within 40 seconds", () =>
+  Effect.gen(function* () {
+    const { service, devices, listing } = yield* fixture();
+    devices.push(simulator);
+    const before = yield* service.configure({ enabled: true });
+    listing.hangs = true;
+    const listed = yield* service.list.pipe(Effect.forkScoped);
+    yield* Deferred.await(listing.requested);
+    yield* TestClock.adjust("40 seconds");
+    const timedOut = yield* Fiber.join(listed);
+    expect(timedOut.devices).toEqual(before.devices);
+    expect(timedOut.hostStatuses.local).toEqual({
+      status: "ready",
+      detail: "The device hub did not answer within 40 seconds.",
+    });
   }).pipe(Effect.scoped),
 );
 
@@ -1238,132 +1293,6 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
       if (hostId === LOCAL_DEVICE_HOST_ID) expect(recovered.hostStatusDetail).toBeUndefined();
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
-);
-
-const discoveryFixture = Effect.fn("discoveryFixture")(function* (
-  simctlError = "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
-) {
-  const hubDevices = [
-    { id: "iphone", name: "iPhone", platform: "ios", physical: false },
-    { id: "emulator-5554", name: "Running_AVD", platform: "android", physical: false },
-  ].map((device) => ({ ...device, booted: true, version: "test" }));
-  const hub = {
-    mode: "listed" as "listed" | "empty" | "simctl_failed" | "hung",
-    requested: yield* Deferred.make<void>(),
-  };
-  const http = HttpClient.make((request) =>
-    Effect.gen(function* () {
-      if (hub.mode === "hung") {
-        yield* Deferred.succeed(hub.requested, undefined);
-        return yield* Effect.never;
-      }
-      return HttpClientResponse.fromWeb(
-        request,
-        Response.json(
-          hub.mode === "listed"
-            ? { simulators: hubDevices.slice(0, 1), emulators: hubDevices.slice(1) }
-            : hub.mode === "empty"
-              ? { simulators: [], emulators: [] }
-              : {
-                  simulators: [],
-                  emulators: [],
-                  errors: [
-                    {
-                      message: simctlError,
-                      error: "Unable to connect to CoreSimulatorService",
-                    },
-                  ],
-                },
-        ),
-      );
-    }),
-  );
-  const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
-  const ready: DeviceHost.DeviceHostReady = {
-    nodePath: process.execPath,
-    hub: { origin: "http://device.test" },
-    devices: makeDeviceHubOperations({
-      hostId: LOCAL_DEVICE_HOST_ID,
-      origin: "http://device.test",
-      http,
-      run,
-      androidAvailable: Effect.succeed(true),
-    }),
-    helpers: { serveSimAxSettings: null, serveSimCli: null },
-    run,
-  };
-  const host: DeviceHost.DeviceHost["Service"] = {
-    id: LOCAL_DEVICE_HOST_ID,
-    label: "This machine",
-    summary: Effect.succeed({
-      id: LOCAL_DEVICE_HOST_ID,
-      kind: "local",
-      label: "This machine",
-      platforms: [
-        { platform: "ios", available: true },
-        { platform: "android", available: true },
-      ],
-      hubInstalled: true,
-      agentDeviceInstalled: false,
-    }),
-    platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
-    ensureReady: () => Effect.succeed(ready),
-    ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
-    current: Effect.succeed(ready),
-    stop: Effect.void,
-    stopAgent: Effect.void,
-  };
-  const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
-    Effect.provide(NodeCrypto.layer),
-  );
-  const listed = hubDevices.map((device) => ({ ...device, hostId: LOCAL_DEVICE_HOST_ID }));
-  return { service, hub, listed };
-});
-
-it.effect.each([
-  "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
-  "[apple-utils] `xcrun simctl list devices --json` did not respond within 30 s; CoreSimulatorService may need restarting",
-])("keeps the last simulators after %s and drops them once a listing succeeds", (simctlError) =>
-  Effect.gen(function* () {
-    const { service, hub, listed } = yield* discoveryFixture(simctlError);
-    expect((yield* service.list).devices).toEqual(listed);
-
-    hub.mode = "simctl_failed";
-    const failed = yield* service.list;
-    expect(failed.devices).toEqual(listed.filter((device) => device.platform === "ios"));
-    expect(failed.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
-      status: "ready",
-      detail: simctlError,
-    });
-
-    hub.mode = "empty";
-    const emptied = yield* service.list;
-    expect(emptied.devices).toEqual([]);
-    expect(emptied.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({ status: "ready" });
-  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
-);
-
-it.effect("keeps devices with a warning when the hub never answers within 40 seconds", () =>
-  Effect.gen(function* () {
-    const { service, hub, listed } = yield* discoveryFixture();
-    yield* service.list;
-
-    hub.mode = "hung";
-    const listing = yield* service.list.pipe(Effect.forkScoped);
-    yield* Deferred.await(hub.requested);
-    yield* TestClock.adjust("40 seconds");
-    const timedOut = yield* Fiber.join(listing);
-    expect(timedOut.devices).toEqual(listed);
-    expect(timedOut.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
-      status: "ready",
-      detail: "The device hub did not answer within 40 seconds. Devices found earlier stay listed.",
-    });
-
-    hub.mode = "listed";
-    const recovered = yield* service.list;
-    expect(recovered.devices).toEqual(listed);
-    expect(recovered.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({ status: "ready" });
-  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 
 it.effect("retry keeps device and agent consent unchanged", () =>

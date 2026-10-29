@@ -18,6 +18,7 @@ import { Spinner } from "~/components/ui/spinner";
 import { Switch } from "~/components/ui/switch";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
+import { DeviceDiscoveryStatus } from "./DeviceDiscoveryStatus";
 import type { DeviceControls } from "./useDeviceControls";
 import { deviceEventLogAtom } from "./deviceHubAtoms";
 
@@ -78,7 +79,7 @@ const LOCATION_PRESETS = [
 
 export function DeviceToolsPanel(props: {
   readonly controls: DeviceControls;
-  readonly hostDiagnostics: string | undefined;
+  readonly hostDiagnostics: { readonly label: string; readonly detail: string } | undefined;
   readonly device: DeviceSummary;
   readonly access: DeviceHubAccess | null;
   readonly axOverlay: boolean;
@@ -119,11 +120,10 @@ export function DeviceToolsPanel(props: {
         ) : null}
 
         {props.hostDiagnostics ? (
-          <Section title="Host diagnostics">
-            <p className="whitespace-pre-line text-xs text-muted-foreground">
-              {props.hostDiagnostics}
-            </p>
-          </Section>
+          <DeviceDiscoveryStatus
+            label={props.hostDiagnostics.label}
+            detail={props.hostDiagnostics.detail}
+          />
         ) : null}
 
         <Section title="App">

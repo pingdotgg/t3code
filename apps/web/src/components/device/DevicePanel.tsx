@@ -30,6 +30,7 @@ import {
 } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { DeviceDiscoveryStatus } from "./DeviceDiscoveryStatus";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import { DeviceSetup, deviceHubReadiness, isAndroidDiscoveryUncertain } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
@@ -213,8 +214,8 @@ export function DevicePanel(props: {
         >
           <div hidden={!!activeDevice}>
             {diagnostics.map((diagnostic) => (
-              <DeviceDiscoveryWarning
-                key={`${environmentId}\u0000${diagnostic.hostId}\u0000${diagnostic.detail}`}
+              <DeviceDiscoveryStatus
+                key={`${environmentId}\u0000${diagnostic.hostId}`}
                 label={diagnostic.label}
                 detail={diagnostic.detail}
               />
@@ -228,9 +229,7 @@ export function DevicePanel(props: {
             </div>
           ) : null}
           {operationError ? (
-            <DeviceNotice tone="error" onDismiss={() => setOperation(null)}>
-              {operationError}
-            </DeviceNotice>
+            <DeviceError onDismiss={() => setOperation(null)}>{operationError}</DeviceError>
           ) : null}
         </div>
         <div className="@container relative flex min-h-0 flex-1">
@@ -241,9 +240,7 @@ export function DevicePanel(props: {
               device={activeDevice}
               hostLabel={activeHost?.label ?? "Device host"}
               hostKind={activeHost?.kind}
-              hostDiagnostics={
-                diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
-              }
+              hostDiagnostics={diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)}
               visible={props.visible}
               onFloat={floatActive}
               onClose={() => closeActive(false)}
@@ -373,20 +370,11 @@ export function DevicePanel(props: {
   );
 }
 
-function DeviceNotice(props: {
-  readonly tone: "warning" | "error";
-  readonly onDismiss: () => void;
-  readonly children: ReactNode;
-}) {
+function DeviceError(props: { readonly onDismiss: () => void; readonly children: ReactNode }) {
   return (
     <div
       role="alert"
-      className={cn(
-        "flex items-start gap-2 border-b px-3 py-2 text-xs",
-        props.tone === "warning"
-          ? "bg-warning-surface text-warning-foreground"
-          : "bg-destructive/5 text-destructive",
-      )}
+      className="flex items-start gap-2 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive"
     >
       <CircleAlert className="mt-1 size-3.5 shrink-0" />
       <div
@@ -398,23 +386,12 @@ function DeviceNotice(props: {
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label={props.tone === "warning" ? "Dismiss device warning" : "Dismiss device error"}
+        aria-label="Dismiss device error"
         onClick={props.onDismiss}
       >
         <X />
       </Button>
     </div>
-  );
-}
-
-function DeviceDiscoveryWarning(props: { readonly label: string; readonly detail: string }) {
-  const [dismissed, setDismissed] = useState(false);
-  if (dismissed) return null;
-  return (
-    <DeviceNotice tone="warning" onDismiss={() => setDismissed(true)}>
-      <p className="font-medium">Device discovery warning · {props.label}</p>
-      {props.detail}
-    </DeviceNotice>
   );
 }
 

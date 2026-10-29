@@ -17,7 +17,7 @@ export function DeviceWorkspace(props: {
   device: DeviceSummary;
   hostLabel: string;
   hostKind: DeviceHostSummary["kind"] | undefined;
-  hostDiagnostics: string | undefined;
+  hostDiagnostics: { readonly label: string; readonly detail: string } | undefined;
   visible: boolean;
   onFloat: () => void;
   onClose: () => void;

@@ -127,7 +127,7 @@ export const makeDeviceHubOperations = (options: {
     if (Option.isNone(listed)) {
       return {
         devices: [],
-        detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds. Devices found earlier stay listed.`,
+        detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds.`,
         incompletePlatforms: ["ios", "android"] as const,
       };
     }
