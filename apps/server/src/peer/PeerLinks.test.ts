@@ -466,6 +466,17 @@ it.effect("listing uses but does not renew a verified fallback and still checks 
       expect(yield* Ref.get(first.probes)).toBe(1);
       expect(yield* Ref.get(b.bearers)).toEqual([]);
 
+      // Once listing verifies the configured primary, a failed fallback is
+      // no longer preferred on the next listing.
+      yield* Ref.set(b.probes, 0);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(b.probes)).toBe(0);
+
+      yield* Ref.set(first.descriptor, descriptorOf("environment-other", "Other"));
+      yield* Ref.set(b.descriptor, box);
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      yield* Ref.set(first.descriptor, box);
+
       // A removed address cannot be probed through an old preference.
       const primaryOnly = JSON.stringify([first.url]);
       yield* a.sql`UPDATE peer_environment_links SET urls_json = ${primaryOnly}`;
@@ -474,6 +485,35 @@ it.effect("listing uses but does not renew a verified fallback and still checks 
       expect(yield* Ref.get(b.probes)).toBe(0);
       yield* a.links.unlink(box.environmentId);
       expect(yield* a.links.list).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("listing drops a failed preference when a middle address recovers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const first = yield* serveApart(descriptorOf("environment-other-a", "Other A"));
+      const middle = yield* serveApart(descriptorOf("environment-other-b", "Other B"));
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      const urls = JSON.stringify([first.url, middle.url, b.url]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      yield* Ref.set(middle.descriptor, box);
+      yield* Ref.set(b.descriptor, descriptorOf("environment-other-c", "Other C"));
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      yield* Ref.set(first.probes, 0);
+      yield* Ref.set(middle.probes, 0);
+      yield* Ref.set(b.probes, 0);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(first.probes)).toBe(1);
+      expect(yield* Ref.get(middle.probes)).toBe(1);
+      expect(yield* Ref.get(b.probes)).toBe(0);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -514,6 +554,7 @@ it.effect(
           expect(yield* Ref.get(first.probes)).toBe(0);
           yield* Fiber.interrupt(listing);
         }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+        expect(yield* Ref.get(first.probes)).toBe(0);
         yield* Ref.set(hold, false);
         expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
       }),

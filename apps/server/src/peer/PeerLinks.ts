@@ -578,6 +578,14 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+    if (
+      preferred !== undefined &&
+      Option.isSome(answered) &&
+      answered.value !== preferred.url &&
+      preferredRoutes?.get(link.environmentId) === preferred
+    ) {
+      preferredRoutes.delete(link.environmentId);
+    }
     if (Option.isNone(answered)) return { ...link, status: "unreachable" };
     return { ...(yield* withLabel(link, label)), status: "reachable" };
   });
