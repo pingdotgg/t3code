@@ -44,6 +44,7 @@ import {
   scopedPullRequestListKey as pullRequestKey,
   type EnvironmentPullRequestListEntry,
   withoutScratchProjectScope,
+  pullRequestProjectChoices,
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
@@ -221,10 +222,14 @@ export function PullRequestsScreen(
   }
   const labelColors =
     knownFacets.environmentId === environmentId ? knownFacets.labelColors : facets.labelColors;
-  const projects = allProjects.filter(
-    (project) =>
-      !project.isScratch && (environmentId === null || project.environmentId === environmentId),
-  );
+  const projects = pullRequestProjectChoices(allProjects, {
+    environmentId,
+    controls,
+    environmentLabels: new Map(
+      environments.map((item) => [item.environmentId, item.environmentLabel]),
+    ),
+    servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
+  });
   const filters = usePullRequestListFilters({
     environments: environments.map((item) => ({
       id: String(item.environmentId),

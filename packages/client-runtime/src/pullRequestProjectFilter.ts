@@ -1,8 +1,9 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
-import type { AssignableProject } from "./pullRequestProjectAssignment.logic";
-
-interface FilterProject extends AssignableProject {
+interface FilterProject {
+  readonly id: ProjectId;
+  readonly environmentId: EnvironmentId;
+  readonly repositoryIdentity?: { readonly canonicalKey?: string | undefined } | null | undefined;
   readonly title: string;
   readonly workspaceRoot: string;
 }
@@ -25,7 +26,7 @@ function distinguishTitles<Project extends FilterProject>(
 export function pullRequestFilterProjects<Project extends FilterProject>(
   projects: ReadonlyArray<Project>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
-  selectedProject?: Pick<AssignableProject, "id" | "environmentId">,
+  selectedProject?: Pick<FilterProject, "id" | "environmentId">,
 ) {
   const byRepository = new Map<string, Project>();
   for (const project of projects) {
@@ -45,7 +46,7 @@ export function pullRequestFilterProjects<Project extends FilterProject>(
   );
   const byPath = distinguishTitles(byServer, (project) => project.workspaceRoot);
   const byEnvironment = distinguishTitles(byPath, (project) => project.environmentId);
-  return distinguishTitles(byEnvironment, (project) => project.id).toSorted((left, right) =>
+  return distinguishTitles(byEnvironment, (project) => project.id).sort((left, right) =>
     left.title.localeCompare(right.title),
   );
 }
