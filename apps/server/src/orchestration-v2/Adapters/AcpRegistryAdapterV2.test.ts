@@ -1007,6 +1007,42 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  // regression: #26695 cancelling a Copilot prompt kills its background agents
+  it.effect("never steers Copilot by cancelling its prompt", () =>
+    Effect.gen(function* () {
+      const steering = Effect.fn("steering")(function* (config: Record<string, unknown>) {
+        const instanceId = ProviderInstanceId.make("acp-registry-steering");
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings(config),
+          environment: {},
+        }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+        const { turns } = yield* adapter.getCapabilities();
+        return {
+          supportsInterrupt: turns.supportsInterrupt,
+          supportsActiveSteering: turns.supportsActiveSteering,
+          supportsSteeringByInterruptRestart: turns.supportsSteeringByInterruptRestart,
+        };
+      });
+      const copilot = {
+        supportsInterrupt: true,
+        supportsActiveSteering: false,
+        supportsSteeringByInterruptRestart: false,
+      };
+
+      assert.deepEqual(yield* steering({ agentId: "github-copilot-cli" }), copilot);
+      assert.deepEqual(
+        yield* steering({ source: "local", commandPath: "C:\\tools\\copilot.cmd" }),
+        copilot,
+      );
+      assert.deepEqual(yield* steering({ agentId: "gemini" }), {
+        ...copilot,
+        supportsSteeringByInterruptRestart: true,
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("settles Claude's accepted foreground reply while retaining child output", () =>
     Effect.gen(function* () {
       const gate = makeProviderReplayGate(["accepted", "child-output", "wake"]);
