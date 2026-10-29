@@ -151,7 +151,7 @@ export function WorkspaceNativeTabs(props: {
       </Tabs.Host>
       {(deviceType === "pad" ||
         compactTabs ||
-        (layout.primarySidebarOverlaysContent &&
+        (layout.variant === "medium" &&
           !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
       !props.hidden ? (
         <View
