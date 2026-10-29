@@ -110,6 +110,8 @@ const withFakeSystemd = <A, E>(
         ...fileSystem,
         readFileString: (path, encoding) =>
           fileSystem.readFileString(path.replace("/sys/fs/cgroup", cgroupRoot), encoding),
+        readDirectory: (path, options) =>
+          fileSystem.readDirectory(path.replace("/sys/fs/cgroup", cgroupRoot), options),
         writeFileString: (path, data, options) =>
           fileSystem.writeFileString(path.replace("/sys/fs/cgroup", cgroupRoot), data, options),
       }),
@@ -243,6 +245,37 @@ describe("AgentScope service", () => {
           }),
         { oomPolicy },
       ),
+  );
+
+  it.effect("reports each live agent scope's cgroup with the thread that owns it", () =>
+    withFakeSystemd(({ scope, units, cgroupRoot, stateDir }) =>
+      Effect.gen(function* () {
+        expect(yield* scope.controlGroups).toBeUndefined();
+        units.set("app-t3code-agents.slice", {
+          activeState: "active",
+          result: "success",
+          controlGroup: "/agents",
+        });
+        const agent = yield* scope.wrap({
+          command: "agent",
+          args: [],
+          name: "claude",
+          threadId: "a",
+        });
+        const codex = yield* launchCodex(scope, "b");
+        const owned = NodePath.join("/agents", ownedAgentSlice(stateDir));
+        for (const unit of [unitOf(agent), unitOf(codex)]) {
+          NodeFS.mkdirSync(NodePath.join(cgroupRoot, owned, unit), { recursive: true });
+        }
+
+        const groups = yield* scope.controlGroups;
+        expect(groups?.slice).toBe("/agents");
+        expect(groups?.scopes.toSorted((a, b) => a.agent.localeCompare(b.agent))).toEqual([
+          { path: NodePath.join(owned, unitOf(agent)), threadId: "a", agent: "claude" },
+          { path: NodePath.join(owned, unitOf(codex)), threadId: undefined, agent: "codex" },
+        ]);
+      }),
+    ),
   );
 
   it.effect("keeps a running scope while hundreds of other threads launch", () =>

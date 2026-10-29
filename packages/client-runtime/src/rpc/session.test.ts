@@ -504,7 +504,7 @@ describe("RpcSessionFactory", () => {
     ),
   );
 
-  it.effect("replays theme updates and deletion as authoritative events", () =>
+  it.effect("replays theme updates, deletion and memory pressure as authoritative events", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { factory, sockets } = yield* makeFactory({ environmentThemes: true });
@@ -540,12 +540,20 @@ describe("RpcSessionFactory", () => {
           Stream.mapEffect((event) =>
             Deferred.succeed(subscriberStarted, undefined).pipe(Effect.as(event)),
           ),
-          Stream.take(4),
+          Stream.take(5),
           Stream.runCollect,
           Effect.forkChild,
         );
         yield* Deferred.await(subscriberStarted);
         yield* publishConfigEvents(socket, [
+          {
+            version: 1,
+            type: "memoryPressureUpdated",
+            payload: {
+              level: "severe",
+              heaviestAgents: [],
+            },
+          },
           {
             version: 1,
             type: "environmentThemesUpdated",
@@ -566,18 +574,24 @@ describe("RpcSessionFactory", () => {
         const liveEvents = Array.from(yield* Fiber.join(subscriber));
         expect(liveEvents.map((event) => event.type)).toEqual([
           "snapshot",
+          "memoryPressureUpdated",
           "environmentThemesUpdated",
           "environmentThemesUpdated",
           "environmentThemesUpdated",
         ]);
-        expect(liveEvents[2]).toMatchObject({ payload: { themes: replacementThemes } });
+        expect(liveEvents[3]).toMatchObject({ payload: { themes: replacementThemes } });
 
+        // A late subscriber also needs the live pressure, which snapshots never carry.
         const replay = Array.from(
           yield* session
             .subscribeServerConfig({ environmentThemes: true })
-            .pipe(Stream.take(2), Stream.runCollect),
+            .pipe(Stream.take(3), Stream.runCollect),
         );
-        expect(replay.map((event) => event.type)).toEqual(["snapshot", "environmentThemesUpdated"]);
+        expect(replay.map((event) => event.type)).toEqual([
+          "snapshot",
+          "environmentThemesUpdated",
+          "memoryPressureUpdated",
+        ]);
         expect(replay[1]).toMatchObject({ payload: { themes: [] } });
 
         let projection = applyServerConfigProjection(Option.none(), {
