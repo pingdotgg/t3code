@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -26,14 +28,17 @@ export const fetchLatestFxVersion = Effect.fn("fetchLatestFxVersion")(function* 
 
 /**
  * `fx upgrade` replaces the executable it runs from, so the update runs the
- * instance's resolved binary, wherever `binaryPath` points.
+ * instance's resolved binary, wherever `binaryPath` points. fx after 0.0.13
+ * needs macOS 15 (Darwin 24) and `fx upgrade` does not check, so older Macs
+ * get no update offer or latest-version check.
  */
 export const makeFxMaintenance = (
   lookupLatestVersion: Effect.Effect<string | null>,
+  osRelease: string = NodeOS.release(),
 ): ProviderMaintenanceCapabilitiesResolver => ({
   resolve: (context) =>
     Effect.succeed(
-      context === null
+      context === null || (context.platform === "darwin" && Number.parseInt(osRelease, 10) < 24)
         ? makeManualOnlyProviderMaintenanceCapabilities({
             provider: FX_DRIVER_KIND,
             packageName: null,

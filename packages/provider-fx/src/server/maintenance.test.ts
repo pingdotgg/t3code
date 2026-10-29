@@ -34,6 +34,7 @@ it.layer(NodeServices.layer)("fx maintenance", (it) => {
         fetchLatestFxVersion().pipe(
           Effect.provideService(HttpClient.HttpClient, serving(new Response("v0.0.15\n"))),
         ),
+        "24.0.0",
       ).resolve({
         binaryPath,
         resolvedCommandPath: binaryPath,
@@ -77,6 +78,21 @@ it.layer(NodeServices.layer)("fx maintenance", (it) => {
         expect(latest).toBeNull();
       }
       expect((yield* makeFxMaintenance(Effect.succeed("0.0.15")).resolve(null)).update).toBeNull();
+    }),
+  );
+
+  it.effect("offers no update or latest version on macOS 14, which newer fx cannot run on", () =>
+    Effect.gen(function* () {
+      const binaryPath = "/opt/tools/fx";
+      const capabilities = yield* makeFxMaintenance(Effect.succeed("0.0.15"), "23.6.0").resolve({
+        binaryPath,
+        resolvedCommandPath: binaryPath,
+        realCommandPath: binaryPath,
+        platform: "darwin",
+        env: {},
+      });
+      expect(capabilities.update).toBeNull();
+      expect(capabilities.lookupLatestVersion).toBeUndefined();
     }),
   );
 });

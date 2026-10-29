@@ -21,7 +21,7 @@ Every fx instance on the same machine shares that machine's fx login. T3 Code do
 
 ## Update fx
 
-When a newer fx release is out, the fx card in **Settings → Providers** shows it. **Update now** runs `fx upgrade` on the binary that instance uses, including one set in **Binary path**. You can also run `fx upgrade` on that machine yourself. T3 Code checks for new stable releases only; on fx's dev channel, run `fx upgrade` yourself to get newer dev builds.
+When a newer fx release is out, the fx card in **Settings → Providers** shows it. **Update now** runs `fx upgrade` on the binary that instance uses, including one set in **Binary path**. You can also run `fx upgrade` on that machine yourself. T3 Code checks for new stable releases only; on fx's dev channel, run `fx upgrade` yourself to get newer dev builds. On macOS 14 or earlier, which newer fx releases do not support, T3 Code does not offer fx updates.
 
 ## Models and effort
 
