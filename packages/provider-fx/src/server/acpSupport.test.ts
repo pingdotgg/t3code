@@ -30,4 +30,24 @@ describe("fx permission prompts", () => {
       "ask",
     );
   });
+
+  it("answers Full access prompts itself unless an explicit policy confines them", () => {
+    const fullAccess = {
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: "/work",
+    } as const;
+    assert.equal(
+      fxPermissionDisposition(ProviderAdapterV2RuntimePolicy.make(fullAccess), editRequest),
+      "allow",
+    );
+    // Runs fx's `ask`, so the policy decides what fx asks about.
+    assert.equal(
+      fxPermissionDisposition(
+        ProviderAdapterV2RuntimePolicy.make({ ...fullAccess, approvalPolicy: "on-request" }),
+        editRequest,
+      ),
+      "ask",
+    );
+  });
 });
