@@ -48,3 +48,41 @@ export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {
   }
   return { left, right: metrics.width - right, bottom: metrics.height - bottom };
 }
+
+const VERTICAL_BAR_ITEM_PITCH = 52;
+const VERTICAL_BAR_GROUP_TRIM = 4;
+const VERTICAL_BAR_GROUP_GAP = 12;
+const TAB_BAR_ITEM_PITCH = 50;
+const TAB_BAR_PADDING = 12;
+
+function verticalBarTopEdge(metrics: NativeLayoutMetrics) {
+  let top = metrics.safeArea.top;
+  for (const region of metrics.reservedRegions) {
+    if (region.kind !== "occlusion" || region.y > top) continue;
+    const onBarEdge =
+      metrics.verticalBarEdge === "right"
+        ? region.x + region.width > metrics.width - metrics.safeArea.right
+        : region.x < metrics.safeArea.left;
+    if (onBarEdge) top = Math.max(top, region.y + region.height);
+  }
+  return top;
+}
+
+export function verticalBarGroupsFitAboveTabBar(
+  metrics: NativeLayoutMetrics,
+  tabCount: number,
+  groupSizes: readonly number[],
+) {
+  const groups = groupSizes.filter((size) => size > 0);
+  const needed = groups.reduce(
+    (length, size) =>
+      length + size * VERTICAL_BAR_ITEM_PITCH - VERTICAL_BAR_GROUP_TRIM + VERTICAL_BAR_GROUP_GAP,
+    0,
+  );
+  const tabBarTop =
+    metrics.height -
+    (metrics.bottomBarInset ?? metrics.safeArea.bottom) -
+    tabCount * TAB_BAR_ITEM_PITCH -
+    TAB_BAR_PADDING;
+  return verticalBarTopEdge(metrics) + needed <= tabBarTop;
+}

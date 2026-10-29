@@ -60,6 +60,17 @@ preserves behavior that is easy to break when changing native headers:
   passes, which left threads shifted under the bar. Lint rejects
   `ScrollViewMarker` imported anywhere else.
 
+- On the iPhone Duo, a workspace column's bar items and the workspace tab bar
+  share the vertical bar but belong to different floating bars: the split view
+  controller's and the tab bar controller's. UIKit compresses the column's items
+  against the outer camera, which grows into the Dynamic Island for a Live
+  Activity, but not against the tab bar, so they can run underneath it.
+  `verticalBarGroupsFitAboveTabBar` in
+  [`reserved-regions.ts`](../../apps/mobile/src/lib/reserved-regions.ts) models
+  that space with item and tab pitches measured on iOS 27.1. When the items do
+  not fit, [`V5StackHeader`](../../apps/mobile/src/native/V5StackHeader.ios.tsx)
+  folds them into one More menu. Measure again if UIKit's bar metrics change.
+
 The fork adds native header props that require code generation and a new binary.
 See the [fork build instructions](../operations/mobile-screens-fork.md).
 

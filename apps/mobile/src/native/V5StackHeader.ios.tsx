@@ -7,6 +7,9 @@ import { isValidElement, useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import { isDuoDevice } from "../lib/device-type";
+import { verticalBarGroupsFitAboveTabBar } from "../lib/reserved-regions";
+import { useEnabledNavigationTabs } from "../features/workspace/navigation-tabs";
+import { nativeWorkspaceTabCount } from "../features/workspace/workspace-tabs-state";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
 import { HeaderItemsWidthContext } from "./header-items-width";
@@ -99,6 +102,40 @@ function convertMenu(menu: MenuInput, id: string): StackHeaderMenuIOS {
   return { id, type: "menu", title: menu.title, children };
 }
 
+function verticalBarGroupSizes(items: readonly HeaderItem[]) {
+  const sizes = [0];
+  for (const item of items) {
+    if (item.type === "spacer") sizes.push(0);
+    else if (item.axisBehavior !== "horizontalOnly") sizes[sizes.length - 1]! += 1;
+  }
+  return sizes;
+}
+
+function foldIntoMoreMenu(items: readonly HeaderItem[]): HeaderItem {
+  const children = items.flatMap<StackHeaderMenuElementIOS>((item) => {
+    if (item.type !== "item" || "render" in item) return [];
+    if (item.menu) return [{ ...item.menu, title: item.title, icon: item.icon }];
+    return [
+      {
+        id: `${item.id}:more`,
+        type: "menuItem" as const,
+        itemType: "action" as const,
+        title: item.title,
+        icon: item.icon,
+        onPress: item.onPress,
+        disabled: !item.onPress,
+      },
+    ];
+  });
+  return {
+    type: "item",
+    id: "vertical-bar-more",
+    title: "More",
+    icon: { type: "sfSymbol", name: "ellipsis" },
+    menu: { id: "vertical-bar-more:menu", type: "menu", children },
+  };
+}
+
 function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderItem[] {
   return items.map((item, index): HeaderItem => {
     const id =
@@ -161,6 +198,7 @@ export function V5StackHeader(props: {
   const theme = useMobileNavigationTheme();
   const nativeMetrics = useNativeLayoutMetrics();
   const deviceType = useDeviceType();
+  const workspaceTabCount = nativeWorkspaceTabCount(useEnabledNavigationTabs());
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const searchRef = useRef<SearchBarCommands>(null);
   const itemProps = { tintColor: options.headerTintColor, canGoBack: props.canGoBack };
@@ -227,6 +265,27 @@ export function V5StackHeader(props: {
       trailing.push({ type: "spacer", id: "toolbar-group", sizing: "fixed", width: 8 });
     trailing.push(...bottom);
     bottom.length = 0;
+  }
+  const sharesVerticalBar =
+    props.column !== undefined &&
+    nativeMetrics !== null &&
+    nativeMetrics.verticalBarEdge !== "none" &&
+    (props.column !== "primary" || nativeMetrics.horizontalSizeClass === "compact");
+  if (
+    sharesVerticalBar &&
+    trailing.length > 1 &&
+    !verticalBarGroupsFitAboveTabBar(nativeMetrics, workspaceTabCount, [
+      ...verticalBarGroupSizes(trailing),
+      props.onCompose ? 1 : 0,
+      keyboardVisible ? 1 : 0,
+    ])
+  ) {
+    const foldable = (item: HeaderItem) =>
+      item.type === "item" && !("render" in item) && item.axisBehavior !== "horizontalOnly";
+    const kept = trailing.filter((item) => item.type === "item" && !foldable(item));
+    const folded = trailing.filter(foldable);
+    trailing.length = 0;
+    trailing.push(foldIntoMoreMenu(folded), ...kept);
   }
   if (props.onCompose) {
     const compose: HeaderItem = {
