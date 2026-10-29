@@ -353,6 +353,7 @@ import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
+import { useSidebarSwipe } from "./ui/sidebarSwipe";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
@@ -1060,6 +1061,7 @@ export default function ChatView(props: ChatViewProps) {
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
   const rightPanelOpen = rightPanelState.isOpen;
+  const rightPanelSheetRef = useRef<HTMLDivElement | null>(null);
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const rightPanelPresenceValue = {
@@ -2369,6 +2371,20 @@ export default function ChatView(props: ChatViewProps) {
     explicitDiffOpenRef,
     onDiffPanelOpen,
     closeRightPanelSurface,
+  });
+  useSidebarSwipe({
+    enabled: shouldUsePlanSidebarSheet && activeThreadRef !== null,
+    side: "right",
+    open: rightPanelOpen,
+    openFrom: workspaceLayoutElement,
+    sheetRef: rightPanelSheetRef,
+    setOpen: (open) => {
+      if (open) {
+        if (activeThreadRef) useRightPanelStore.getState().show(activeThreadRef);
+      } else {
+        closePreviewPanelStable();
+      }
+    },
   });
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
   const {
@@ -3917,6 +3933,7 @@ export default function ChatView(props: ChatViewProps) {
 
       {rightPanelPresent && activeThreadRef && !embedded ? (
         <ChatRightPanel
+          sheetRef={rightPanelSheetRef}
           sheet={shouldUsePlanSidebarSheet}
           workspaceLayoutElement={workspaceLayoutElement}
           widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}

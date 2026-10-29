@@ -70,9 +70,22 @@ export function useSidebarSwipe(input: {
   open: boolean;
   setOpen: (open: boolean) => void;
   sheetRef: RefObject<HTMLDivElement | null>;
+  side?: "left" | "right";
+  openFrom?: HTMLElement | null;
 }) {
-  const { enabled, sheetRef } = input;
+  const { enabled, sheetRef, side = "left" } = input;
   const readOpen = useEffectEvent(() => input.open);
+  const canStartOpening = useEffectEvent((target: EventTarget | null) => {
+    if (!(target instanceof Element)) return false;
+    // A swipe on an existing sheet belongs only to that sheet, even when
+    // its closing direction would open the drawer on the opposite side.
+    if (
+      target.closest("[data-slot='sheet-viewport'], [data-slot='sheet-backdrop'], [role='dialog']")
+    ) {
+      return false;
+    }
+    return input.openFrom === undefined || (input.openFrom?.contains(target) ?? false);
+  });
   const commitOpen = useEffectEvent((open: boolean) => {
     input.setOpen(open);
   });
@@ -82,6 +95,7 @@ export function useSidebarSwipe(input: {
 
     let gesture: SidebarSwipeGesture | null = null;
     let claimed = false;
+    const projectX = (x: number) => (side === "right" ? -x : x);
 
     const reset = () => {
       gesture = null;
@@ -91,6 +105,7 @@ export function useSidebarSwipe(input: {
     const start = (event: Event, pointerType: string, pointerId: number, x: number, y: number) => {
       if (gesture !== null) return;
       const intent = readOpen() ? "close" : "open";
+      if (intent === "open" && !canStartOpening(event.target)) return;
       if (intent === "close" && !isOpenSheetTarget(event.target, sheetRef.current)) return;
       if (isTextEntry(event.target)) return;
       if (intent === "open" && startedOnHorizontalScroller(event.target)) return;
@@ -98,7 +113,7 @@ export function useSidebarSwipe(input: {
       const next = beginSidebarSwipe({
         pointerType,
         pointerId,
-        x,
+        x: projectX(x),
         y,
         time: event.timeStamp,
         intent,
@@ -110,7 +125,7 @@ export function useSidebarSwipe(input: {
 
     const trackMove = (pointerId: number, x: number, y: number, time: number, event: Event) => {
       if (gesture === null || pointerId !== gesture.pointerId) return;
-      gesture = moveSidebarSwipe(gesture, { x, y, time });
+      gesture = moveSidebarSwipe(gesture, { x: projectX(x), y, time });
       if (!shouldClaimSidebarSwipe(gesture)) return;
       claimed = true;
       if (event.cancelable) event.preventDefault();
@@ -118,7 +133,7 @@ export function useSidebarSwipe(input: {
 
     const finish = (pointerId: number, x: number, y: number, time: number) => {
       if (gesture === null || pointerId !== gesture.pointerId) return;
-      const finished = moveSidebarSwipe(gesture, { x, y, time });
+      const finished = moveSidebarSwipe(gesture, { x: projectX(x), y, time });
       const didClaim = claimed || shouldClaimSidebarSwipe(finished);
       if (endSidebarSwipe(finished) === "commit") {
         commitOpen(finished.intent === "open");
@@ -183,5 +198,5 @@ export function useSidebarSwipe(input: {
       window.removeEventListener("pointerup", onPointerUp, true);
       window.removeEventListener("pointercancel", onPointerCancel, true);
     };
-  }, [enabled, sheetRef]);
+  }, [enabled, sheetRef, side]);
 }
