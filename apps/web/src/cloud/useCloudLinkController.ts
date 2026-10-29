@@ -87,7 +87,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
 
   const reportUpdateFailure = (
     cause: unknown,
-    description = "T3 Connect couldn't save this change. See the details and try again.",
+    description = "Could not save this change. Try again.",
   ) => {
     const message = cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
     const traceId = findErrorTraceId(cause);
@@ -107,11 +107,6 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
             }
           : {}),
         actionVariant: "outline",
-        data: {
-          hideCopyButton: true,
-          expandableContent: message,
-          expandableLabels: { expand: "Show more", collapse: "Show less" },
-        },
       }),
     );
   };
@@ -171,7 +166,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         if (!isAtomCommandInterrupted(unlinkResult)) {
           reportUpdateFailure(
             squashAtomCommandFailure(unlinkResult),
-            "T3 Connect couldn't finish disconnecting. Try again.",
+            "Could not finish disconnecting. Try again.",
           );
         }
         cloudLinkState.refresh();
