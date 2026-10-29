@@ -324,14 +324,22 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
   };
 }
 
-/** ACP 1.1.1 reports subagent calls as ordinary tools without child IDs or models. */
+const ANTIGRAVITY_SUBAGENT_TITLES = new Set([
+  "Running start_subagent",
+  "Run start_subagent?",
+  "Running invoke_subagent",
+  "Run invoke_subagent?",
+]);
+
+/** The ACP agent reports subagent calls as ordinary tools without child IDs or models. */
 export function classifyAntigravitySubagentToolCall(
   toolCall: AcpToolCallState,
   rawPayload?: unknown,
 ): "subagent" | "mcp" | undefined {
   if (
     (toolCall.kind !== undefined && toolCall.kind !== "other") ||
-    (toolCall.title !== "Running start_subagent" && toolCall.title !== "Run start_subagent?")
+    toolCall.title === undefined ||
+    !ANTIGRAVITY_SUBAGENT_TITLES.has(toolCall.title)
   )
     return undefined;
   const update = Predicate.isObject(rawPayload) ? rawPayload.update : undefined;

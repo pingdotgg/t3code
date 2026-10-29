@@ -127,7 +127,7 @@ const layerSession = Layer.mergeAll(
 );
 
 describe("AntigravityAdapterV2 client file system", () => {
-  it.effect("confines agent file requests to the workspace under full access", () =>
+  it.effect("serves confined reads and leaves edits to the agent's diff tools", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -140,6 +140,8 @@ describe("AntigravityAdapterV2 client file system", () => {
       // effect-acp keeps the last handler registered per method; so does this.
       let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
       let writeTextFile: Parameters<RuntimeService["handleWriteTextFile"]>[0] | undefined;
+      const logs = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-log-" });
+      const requestLog = path.join(logs, "requests.ndjson");
       const crypto = yield* Crypto.Crypto;
       const instanceId = ProviderInstanceId.make("antigravity-containment-test");
       const adapter = yield* makeAntigravityAdapterV2({
@@ -153,7 +155,7 @@ describe("AntigravityAdapterV2 client file system", () => {
               command: process.execPath,
               args: [mockAgentPath],
               cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
+              env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_REQUEST_LOG_PATH: requestLog },
             },
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),
@@ -198,17 +200,31 @@ describe("AntigravityAdapterV2 client file system", () => {
         runtimePolicy,
       });
       yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
-      if (readTextFile === undefined || writeTextFile === undefined) {
-        return yield* Effect.die("Antigravity sessions must serve client file requests");
+      const initialize = (yield* fileSystem.readFileString(requestLog))
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              method?: string;
+              params?: { clientCapabilities?: { fs?: unknown }; clientInfo?: { name?: string } };
+            },
+        )
+        .find((request) => request.method === "initialize");
+      assert.deepEqual(initialize?.params?.clientCapabilities?.fs, {
+        readTextFile: true,
+        writeTextFile: false,
+      });
+      assert.equal(initialize?.params?.clientInfo?.name, "zed");
+      assert.isUndefined(writeTextFile);
+      if (readTextFile === undefined) {
+        return yield* Effect.die("Antigravity sessions must serve client file reads");
       }
       const context = (method: string) => ({ requestId: `test-${method}`, method });
 
       const insidePath = path.join(workspace, "src", "inside.ts");
-      yield* writeTextFile(
-        { sessionId: "mock-session-1", path: insidePath, content: "inside" },
-        context("fs/write_text_file"),
-      );
-      assert.equal(yield* fileSystem.readFileString(insidePath), "inside");
+      yield* fileSystem.makeDirectory(path.dirname(insidePath), { recursive: true });
+      yield* fileSystem.writeFileString(insidePath, "inside");
       const pasted = yield* readTextFile(
         { sessionId: "mock-session-1", path: attachment },
         context("fs/read_text_file"),
@@ -220,13 +236,6 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(outsideRead));
-      const outsideWrite = yield* writeTextFile(
-        { sessionId: "mock-session-1", path: path.join(outside, "planted.txt"), content: "x" },
-        context("fs/write_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(outsideWrite));
-      assert.isFalse(yield* fileSystem.exists(path.join(outside, "planted.txt")));
-
       const linkPath = path.join(workspace, "linked-secret.txt");
       yield* fileSystem.symlink(outsideFile, linkPath);
       const linkedRead = yield* readTextFile(
@@ -234,45 +243,6 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(linkedRead), "a read through an escaping symlink is denied");
-      const linkedWrite = yield* writeTextFile(
-        { sessionId: "mock-session-1", path: linkPath, content: "overwritten" },
-        context("fs/write_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(linkedWrite), "a write through an escaping symlink is denied");
-      assert.equal(yield* fileSystem.readFileString(outsideFile), "secret");
-      const plantedTarget = path.join(outside, "created-through-link.txt");
-      const danglingLink = path.join(workspace, "dangling.txt");
-      yield* fileSystem.symlink(plantedTarget, danglingLink);
-      const danglingWrite = yield* writeTextFile(
-        { sessionId: "mock-session-1", path: danglingLink, content: "planted" },
-        context("fs/write_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(danglingWrite), "a write through a dangling symlink is denied");
-      assert.isFalse(yield* fileSystem.exists(plantedTarget));
-      yield* fileSystem.symlink(outside, path.join(workspace, "linked-dir"));
-      const linkedDirWrite = yield* writeTextFile(
-        {
-          sessionId: "mock-session-1",
-          path: path.join(workspace, "linked-dir", "new.txt"),
-          content: "planted",
-        },
-        context("fs/write_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(linkedDirWrite), "a write under an escaping directory link");
-      assert.isFalse(yield* fileSystem.exists(path.join(outside, "new.txt")));
-      const nestedLinkedDirWrite = yield* writeTextFile(
-        {
-          sessionId: "mock-session-1",
-          path: path.join(workspace, "linked-dir", "a", "b", "file.txt"),
-          content: "planted",
-        },
-        context("fs/write_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(
-        Exit.isFailure(nestedLinkedDirWrite),
-        "a write to missing directories under an escaping directory link",
-      );
-      assert.isFalse(yield* fileSystem.exists(path.join(outside, "a")));
       const insideLink = path.join(workspace, "inside-link.ts");
       yield* fileSystem.symlink(insidePath, insideLink);
       const viaInsideLink = yield* readTextFile(

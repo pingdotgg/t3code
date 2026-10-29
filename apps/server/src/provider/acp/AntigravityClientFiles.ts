@@ -5,7 +5,6 @@ import type * as Path from "effect/Path";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-/** The agent requests permission for every write; check only path containment here. */
 const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
 
 function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean {
@@ -96,23 +95,5 @@ export const readAntigravityClientTextFile = Effect.fn("AntigravityClientFiles.r
     const start = Math.max(0, (line ?? 1) - 1);
     const end = limit === undefined ? lines.length : Math.min(lines.length, start + limit);
     return { content: lines.slice(start, end).join("\n") };
-  },
-);
-
-export const writeAntigravityClientTextFile = Effect.fn("AntigravityClientFiles.writeTextFile")(
-  function* (input: {
-    readonly fileSystem: FileSystem.FileSystem;
-    readonly path: Path.Path;
-    readonly allowedRoots: ReadonlyArray<string>;
-    readonly request: EffectAcpSchema.WriteTextFileRequest;
-  }): Effect.fn.Return<EffectAcpSchema.WriteTextFileResponse, EffectAcpErrors.AcpError> {
-    const filePath = yield* resolveClientFilePath({ ...input, requestPath: input.request.path });
-    yield* input.fileSystem.makeDirectory(input.path.dirname(filePath), { recursive: true }).pipe(
-      Effect.andThen(input.fileSystem.writeFileString(filePath, input.request.content)),
-      Effect.mapError(() =>
-        EffectAcpErrors.AcpRequestError.internalError(`Could not write '${input.request.path}'.`),
-      ),
-    );
-    return {};
   },
 );

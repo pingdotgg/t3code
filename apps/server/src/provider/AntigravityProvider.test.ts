@@ -214,6 +214,50 @@ describe("Antigravity model catalog", () => {
       "gemini-pro-agent",
     );
   });
+
+  it("offers each model the thinking levels it reported when selected", () => {
+    const thinking = (currentValue: string) =>
+      ({
+        id: "thinking_level",
+        name: "Thinking Level",
+        category: "thought_level",
+        type: "select",
+        currentValue,
+        options: [
+          { value: "low", name: "Low" },
+          { value: "high", name: "High" },
+        ],
+      }) satisfies EffectAcpSchema.SessionConfigOption;
+    const models = buildAntigravityModelsFromSession(
+      {
+        configOptions: [
+          {
+            ...modelConfig,
+            currentValue: "gemini",
+            options: [
+              { value: "gemini", name: "Gemini" },
+              { value: "claude", name: "Claude" },
+              { value: "plain", name: "Plain" },
+              { value: "unseen", name: "Unseen" },
+            ],
+          },
+          thinking("high"),
+        ],
+      },
+      new Map([
+        ["claude", thinking("low")],
+        ["plain", null],
+      ]),
+    );
+    const thinkingOf = (slug: string) =>
+      models.find((model) => model.slug === slug)?.capabilities?.optionDescriptors?.[0];
+
+    expect(thinkingOf("gemini")).toMatchObject({ id: "thinking_level", currentValue: "high" });
+    expect(thinkingOf("claude")).toMatchObject({ id: "thinking_level", currentValue: "low" });
+    expect(thinkingOf("plain")).toBeUndefined();
+    expect(thinkingOf("unseen")).toMatchObject({ id: "thinking_level" });
+    expect(thinkingOf("unseen")).not.toHaveProperty("currentValue");
+  });
 });
 
 it.layer(layerTest)("Antigravity provider snapshots", (it) => {

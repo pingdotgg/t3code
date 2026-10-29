@@ -24,7 +24,12 @@ const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 describe("native Antigravity subagent tools", () => {
   it("recognizes only native invocation titles and excludes MCP tools", () => {
     const toolCall = { toolCallId: "trajectory:4", kind: "other", data: {} };
-    for (const title of ["Running start_subagent", "Run start_subagent?"]) {
+    for (const title of [
+      "Running start_subagent",
+      "Run start_subagent?",
+      "Running invoke_subagent",
+      "Run invoke_subagent?",
+    ]) {
       expect(classifyAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBe("subagent");
       expect(
         classifyAntigravitySubagentToolCall(

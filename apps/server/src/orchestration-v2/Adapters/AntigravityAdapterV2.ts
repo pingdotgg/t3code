@@ -23,10 +23,7 @@ import {
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
-import {
-  readAntigravityClientTextFile,
-  writeAntigravityClientTextFile,
-} from "../../provider/acp/AntigravityClientFiles.ts";
+import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import {
   antigravityApprovalOptions,
   antigravitySubagentOutput,
@@ -82,7 +79,7 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
 }
 
-/** ACP 1.1.1 reports `start_subagent` tools without child session ids. */
+/** Native subagent tools report no child session ids. */
 const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractSubagentUpdate"]> = (
   toolCall,
 ) => {
@@ -126,7 +123,7 @@ export function makeAntigravityAcpAdapterFlavor(
           Scope.close(scope, Exit.void),
           options.makeRuntime({
             ...input,
-            clientFileSystem: true,
+            clientFileReads: true,
             additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
@@ -186,13 +183,6 @@ export function makeAntigravityAcpAdapterFlavor(
     clientFileSystem: {
       readTextFile: (request, cwd) =>
         readAntigravityClientTextFile({
-          fileSystem: options.fileSystem,
-          path: options.path,
-          allowedRoots: antigravityClientFileRoots(cwd),
-          request,
-        }),
-      writeTextFile: (request, cwd) =>
-        writeAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
           allowedRoots: antigravityClientFileRoots(cwd),
