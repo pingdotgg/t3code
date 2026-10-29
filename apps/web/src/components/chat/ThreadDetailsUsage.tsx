@@ -36,7 +36,7 @@ export interface ThreadDetailsUsageInput {
 }
 
 /**
- * Labs readout of the selected provider's limit windows and the thread's context window.
+ * The selected provider's limit windows and the thread's context window.
  * Every row reads as room left, so a longer bar always means more headroom.
  */
 export function ThreadDetailsUsage({
