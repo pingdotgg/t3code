@@ -3601,6 +3601,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? toolCall
               : { ...toolCall, backgroundCommandTaskId },
           );
+          // fx 0.0.15 fails the tools a Stop cut off; they read as interrupted, like ones left open.
+          const previousStatus = previous === undefined ? undefined : toolStatus(previous.status);
+          const stoppedStatus =
+            projectedStatus ??
+            (context.interrupted &&
+            toolCall.status === "failed" &&
+            (previousStatus === "pending" ||
+              previousStatus === "running" ||
+              previousStatus === "waiting")
+              ? "interrupted"
+              : undefined);
           if (
             followsAgentWorkState &&
             projectedStatus === undefined &&
@@ -3705,7 +3716,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ? undefined
             : extractSubagentUpdate(toolCall);
           if (subagentUpdate !== undefined) {
-            yield* emitSubagent(context, subagentUpdate);
+            yield* emitSubagent(
+              context,
+              stoppedStatus === "interrupted" && subagentUpdate.status === "failed"
+                ? { ...subagentUpdate, status: "interrupted" }
+                : subagentUpdate,
+            );
             if (followsAgentWorkState) yield* syncNativeChildren(context);
             if (subagentUpdate.suppressNormalTool !== false) {
               yield* rearmDeferredFinalize(context);
@@ -3713,7 +3729,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           }
           if (
-            projectedStatus === undefined &&
+            stoppedStatus === undefined &&
             !shouldPersistToolUpdate(
               context,
               toolCall.toolCallId,
@@ -3725,7 +3741,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* rearmDeferredFinalize(context);
             return;
           }
-          const status = projectedStatus ?? toolStatus(toolCall.status);
+          const status = stoppedStatus ?? toolStatus(toolCall.status);
           const now = yield* DateTime.now;
           const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);

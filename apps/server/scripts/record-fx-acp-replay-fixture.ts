@@ -1,8 +1,8 @@
 /**
- * Records an fx ACP replay transcript through the real orchestrator and
- * FxAdapterV2, teeing only the protocol logger. Run from apps/server with
- * fx 0.0.13 on PATH (or T3_FX_BIN); HOME stays the user's real login:
+ * Records an fx ACP replay transcript through the real orchestrator and FxAdapterV2.
+ * Run from apps/server with fx on PATH (or T3_FX_BIN), signed in under HOME:
  *   node scripts/record-fx-acp-replay-fixture.ts --scenario simple
+ * fx 0.0.14+ saves each recorded mode as the default in ~/.fx/settings.json; restore it after.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId, type ProviderReplayEntry } from "@t3tools/contracts";

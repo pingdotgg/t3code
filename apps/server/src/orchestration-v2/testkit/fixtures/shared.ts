@@ -99,6 +99,8 @@ export const OPENCODE2_COMMAND_PROMPT = "/hello WORLD";
 export const OPENCODE2_SKILL_PROMPT = "Use $greet to say hi in three words.";
 export const TURN_INTERRUPT_PROMPT =
   "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
+export const FX_SUBAGENT_STOP_PROMPT =
+  "Use exactly one subagent to create a file named stopped.txt containing STOP. Do not create the file yourself. Wait for the subagent, then reply DONE.";
 export const TURN_INTERRUPT_MID_TOOL_PROMPT =
   "Run this exact local command: `node -e \"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\"`. Do not answer until it completes, then respond exactly: interrupt fixture should not finish naturally.";
 const COMMAND_OUTPUT_STREAMING_COMMAND =
