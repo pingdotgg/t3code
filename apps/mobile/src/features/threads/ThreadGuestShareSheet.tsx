@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -70,6 +70,8 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
   const copied = copiedAtMs !== null && !copyFeedbackEnded;
   const creating = state.status === "creating";
   const close = () => navigation.goBack();
+  // The link is shown only once, so any dismiss mid-request (swipe, header, Android back) would lose it.
+  usePreventRemove(creating, () => {});
 
   const create = async () => {
     setState({ status: "creating" });
@@ -201,8 +203,6 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
   if (Platform.OS === "ios") {
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
-        {/* The link is shown only once, so a dismiss mid-request would lose it. */}
-        <NativeStackScreenOptions options={{ gestureEnabled: !creating }} />
         <SheetHeader
           presentation="native"
           title={TITLE}
@@ -216,7 +216,7 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
 
   return (
     <View collapsable={false} className="flex-1 bg-header">
-      <NativeStackScreenOptions options={{ sheetCornerRadius: 28, gestureEnabled: !creating }} />
+      <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
       <AndroidSheetHeader title={TITLE} hideBottomBorder onBack={close} />
       <ScreenContent>{content}</ScreenContent>
     </View>
