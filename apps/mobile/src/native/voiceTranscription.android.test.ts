@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
+  checkAvailability: vi.fn<() => Promise<boolean>>(),
   prepare: vi.fn<(id: number) => Promise<{ locale: string; mode: number }>>(),
   transcribe: vi.fn<(id: number, uri: string, locale: string, mode: number) => Promise<string>>(),
   cancel: vi.fn<(id: number) => Promise<void>>(),
@@ -20,10 +21,29 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+it.each([false, true])(
+  "waits for device support before offering a transcriber (%s)",
+  async (supported) => {
+    vi.resetAllMocks();
+    const probe = deferred<boolean>();
+    mocks.checkAvailability.mockReturnValue(probe.promise);
+    let settled = false;
+    const result = Promise.resolve(getLocalVoiceTranscriber()).then((transcriber) => {
+      settled = true;
+      return transcriber;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    probe.resolve(supported);
+    expect((await result) !== null).toBe(supported);
+  },
+);
+
 it.each(["preparation", "transcription"] as const)(
   "waits for native cancellation cleanup during %s before settling",
   async (phase) => {
     vi.resetAllMocks();
+    mocks.checkAvailability.mockResolvedValue(true);
     const prepared = { locale: "en-US", mode: 1 };
     mocks.prepare.mockResolvedValue(prepared);
     const enteredCancellation = deferred<number>();
@@ -40,7 +60,7 @@ it.each(["preparation", "transcription"] as const)(
       operationId = id;
       return pending.promise;
     };
-    const transcriber = getLocalVoiceTranscriber()!;
+    const transcriber = (await getLocalVoiceTranscriber())!;
     const transcription = phase === "transcription" ? await transcriber.prepare(options) : null;
     if (phase === "preparation")
       mocks.prepare.mockImplementation((id) => operation(id).then(() => prepared));

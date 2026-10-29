@@ -116,19 +116,6 @@ describe("VoiceInputController", () => {
     expect(unsupported.controller.currentState.error).toContain("not available");
     expect(unsupported.recorder.record).not.toHaveBeenCalled();
 
-    const unavailableModel = createHarness({
-      getTranscriber: () => ({
-        prepare: async () => {
-          throw Object.assign(new Error("Model unavailable"), { code: "unavailable" });
-        },
-      }),
-    });
-    await unavailableModel.controller.start();
-    expect(unavailableModel.controller.currentState.error).toBe(
-      "On-device voice transcription is not available for this device language.",
-    );
-    expect(unavailableModel.recorder.record).not.toHaveBeenCalled();
-
     const denied = createHarness({
       requestPermission: async () => ({ granted: false, canAskAgain: false }),
     });

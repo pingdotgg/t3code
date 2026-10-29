@@ -66,6 +66,31 @@ class GoogleVoiceTranscriberTest {
   }
 
   @Test
+  fun checksSupportWithoutDownloadingAndClosesProbedClients() = runBlocking {
+    for ((advancedStatus, basicStatus, supported) in listOf(
+      Triple(FeatureStatus.AVAILABLE, FeatureStatus.UNAVAILABLE, true),
+      Triple(FeatureStatus.DOWNLOADABLE, FeatureStatus.UNAVAILABLE, true),
+      Triple(FeatureStatus.DOWNLOADING, FeatureStatus.UNAVAILABLE, true),
+      Triple(FeatureStatus.UNAVAILABLE, FeatureStatus.AVAILABLE, true),
+      Triple(FeatureStatus.UNAVAILABLE, FeatureStatus.DOWNLOADABLE, true),
+      Triple(FeatureStatus.UNAVAILABLE, FeatureStatus.DOWNLOADING, true),
+      Triple(FeatureStatus.UNAVAILABLE, FeatureStatus.UNAVAILABLE, false)
+    )) {
+      val clients = mutableListOf<Client>()
+      assertEquals(
+        supported,
+        isGoogleVoiceTranscriptionSupported { mode ->
+          Client(
+            if (mode == SpeechRecognizerOptions.Mode.MODE_ADVANCED) advancedStatus else basicStatus
+          ).also { clients.add(it) }
+        }
+      )
+      assertTrue(clients.all { it.closed && it.downloads == 0 })
+      assertEquals(if (advancedStatus == FeatureStatus.UNAVAILABLE) 2 else 1, clients.size)
+    }
+  }
+
+  @Test
   fun preparesAdvancedBeforeConsideringBasic() = runBlocking {
     for (status in listOf(
       FeatureStatus.AVAILABLE,

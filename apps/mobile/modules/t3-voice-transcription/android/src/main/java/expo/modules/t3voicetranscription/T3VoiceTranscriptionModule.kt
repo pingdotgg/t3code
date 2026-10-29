@@ -3,6 +3,7 @@ package expo.modules.t3voicetranscription
 import android.content.res.Resources
 import android.os.Build
 import expo.modules.kotlin.Promise
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.Locale
@@ -15,6 +16,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class T3VoiceTranscriptionModule : Module() {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -25,6 +27,18 @@ class T3VoiceTranscriptionModule : Module() {
     Name("T3VoiceTranscription")
 
     Function("isAvailable") { Build.VERSION.SDK_INT >= Build.VERSION_CODES.S }
+
+    AsyncFunction("checkAvailability").Coroutine<Boolean> {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+        false
+      } else {
+        withContext(Dispatchers.IO) {
+          val context = requireNotNull(appContext.reactContext)
+          val locale = Resources.getSystem().configuration.locales[0]
+          isGoogleVoiceTranscriptionSupported { MlKitSpeechClient(context, locale, it) }
+        }
+      }
+    }
 
     AsyncFunction("prepare") { id: Int, promise: Promise ->
       runOperation(id, promise, "preparation-failed") {

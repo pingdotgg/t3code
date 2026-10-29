@@ -10,6 +10,7 @@ type PreparedGoogleTranscription = { readonly locale: string; readonly mode: num
 
 const native = requireOptionalNativeModule<{
   isAvailable(): boolean;
+  checkAvailability(): Promise<boolean>;
   prepare(id: number): Promise<PreparedGoogleTranscription>;
   transcribe(id: number, uri: string, locale: string, mode: number): Promise<string>;
   cancel(id: number): Promise<void>;
@@ -17,8 +18,8 @@ const native = requireOptionalNativeModule<{
 
 let nextOperationId = 0;
 
-export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
-  if (!native?.isAvailable()) return null;
+export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | null> {
+  if (!native?.isAvailable() || !(await native.checkAvailability())) return null;
   const module = native;
   return {
     prepare: async ({ signal }) => {

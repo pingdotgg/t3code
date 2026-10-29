@@ -25,13 +25,30 @@ internal interface GoogleSpeechClient : Closeable {
   suspend fun download()
 }
 
+private val recognitionModes = listOf(
+  SpeechRecognizerOptions.Mode.MODE_ADVANCED,
+  SpeechRecognizerOptions.Mode.MODE_BASIC
+)
+
+internal suspend fun isGoogleVoiceTranscriptionSupported(
+  createClient: (Int) -> GoogleSpeechClient
+): Boolean {
+  for (mode in recognitionModes) {
+    createClient(mode).use { client ->
+      when (checkModelSupport(client)) {
+        FeatureStatus.AVAILABLE,
+        FeatureStatus.DOWNLOADABLE,
+        FeatureStatus.DOWNLOADING -> return true
+      }
+    }
+  }
+  return false
+}
+
 internal suspend fun prepareGoogleVoiceTranscription(
   createClient: (Int) -> GoogleSpeechClient
 ): Int {
-  for (mode in listOf(
-    SpeechRecognizerOptions.Mode.MODE_ADVANCED,
-    SpeechRecognizerOptions.Mode.MODE_BASIC
-  )) {
+  for (mode in recognitionModes) {
     createClient(mode).use { client ->
       val status = checkModelSupport(client)
       when (status) {
