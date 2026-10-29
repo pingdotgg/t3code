@@ -420,7 +420,9 @@ function DeviceDiscoveryWarning(props: { readonly label: string; readonly detail
         <span className="min-w-0 flex-1 truncate">
           Some devices on {props.label} could not be listed.
         </span>
-        <CollapsibleTrigger className="shrink-0 hover:text-foreground">Details</CollapsibleTrigger>
+        <CollapsibleTrigger aria-label={`Details for ${props.label}`} className="shrink-0">
+          Details
+        </CollapsibleTrigger>
       </div>
       <CollapsiblePanel>
         <DeviceNotice tone="warning" onDismiss={() => setOpen(false)}>
