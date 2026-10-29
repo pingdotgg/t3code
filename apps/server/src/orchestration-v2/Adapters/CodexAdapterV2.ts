@@ -687,7 +687,7 @@ const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.
     additionalContext: Schema.optionalKey(
       Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),
     ),
-    cyberAccessProgram: Schema.optionalKey(CodexSchema.V2ModelListResponse__CyberAccessProgram),
+    cyberAccessProgram: Schema.optionalKey(CodexSchema.V2TurnStartParams__CyberAccessProgram),
   }),
 );
 type CodexTurnStartParamsWithCollaborationMode =
