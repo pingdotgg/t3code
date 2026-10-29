@@ -514,12 +514,9 @@ const make = Effect.gen(function* () {
               // Update parents first so children inherit names; reread each pass for newly updated descendants.
               const visited = new Set([threadId]);
               while (true) {
-                const snapshot = yield* threads.getShellSnapshot();
+                const snapshot = yield* threads.getShellSnapshot({ worktreePath: worktreeCwd });
                 const sharing = [...snapshot.threads, ...snapshot.archivedThreads].filter(
-                  (thread) =>
-                    !visited.has(thread.id) &&
-                    thread.worktreePath === worktreeCwd &&
-                    thread.branch === oldBranch,
+                  (thread) => !visited.has(thread.id) && thread.branch === oldBranch,
                 );
                 if (sharing.length === 0) break;
                 for (const thread of sharing) {

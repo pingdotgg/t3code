@@ -26,6 +26,7 @@ import {
   ThreadId,
   TurnItemId,
   type ThreadPullRequestLink,
+  isLiveSubagentShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -75,6 +76,33 @@ const traceSqlStatements = () => {
   });
   return { statements, tracer };
 };
+
+/** The shell index flags every live shell and matches its shells on the fields subscriber trims read. */
+const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const shells = (yield* store.getShellSnapshot({ location: "active" })).threads;
+  const index = yield* store.listActiveShellIndex();
+  const iso = (value: DateTime.Utc | null | undefined) =>
+    value == null ? null : DateTime.formatIso(value);
+  const trimmed = (
+    row: Pick<
+      ProjectionStore.ActiveShellIndexEntry,
+      "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pinnedAt" | "snoozedUntil"
+    >,
+  ) => ({
+    id: row.id,
+    projectId: row.projectId,
+    lineage: row.lineage,
+    settledOverride: row.settledOverride,
+    settledAt: iso(row.settledAt),
+    pinnedAt: iso(row.pinnedAt),
+    snoozedUntil: iso(row.snoozedUntil),
+  });
+  assert.deepEqual(index.map(trimmed), shells.map(trimmed));
+  shells.forEach((shell, position) => {
+    if (isLiveSubagentShell(shell)) assert.isTrue(index[position]?.mayBeLive, shell.id);
+  });
+});
 
 const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate")(function* (
   suffix: string,
@@ -272,6 +300,7 @@ it.effect("SQL shells flag only an active turn blocked solely on T3 thread waits
         assert.equal(shell?.status, "running");
         assert.equal(shell?.blockedOnThreadWait ?? false, expected);
       }
+      yield* assertShellIndexCoversShells();
     });
     const wait = {
       ...itemBase,
@@ -531,6 +560,7 @@ it.effect("SQL shells use the latest subagent owner for duplicate provider-threa
       const listed = (yield* store.getShellSnapshot()).threads.find(
         (thread) => thread.id === targetThreadId,
       );
+      yield* assertShellIndexCoversShells();
       for (const shell of [yield* store.getThreadShell(targetThreadId), listed]) {
         assert.equal(shell?.providerInstanceId, otherInstanceId);
         assert.equal(shell?.activeRunId, null);
@@ -1336,6 +1366,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
     const next = yield* list({ settledAt: DateTime.formatIso(at(4)), threadId: id("b") }, 10);
     assert.deepEqual(next.threadIds, [id("c"), id("d"), id("snoozed")]);
     assert.deepEqual(yield* list(before, 25, []), { threadIds: [], counts: [] });
+    yield* assertShellIndexCoversShells();
     const scoped = yield* list(before, 0, [ProjectId.make("project:b")]);
     assert.deepEqual(scoped, {
       threadIds: [],
@@ -3798,6 +3829,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
           (row) => row.id === threadId,
         )!;
+        yield* assertShellIndexCoversShells();
         for (const questionShell of [
           sqlShell,
           ProjectionStore.threadShellFromProjection(projection),
@@ -4860,6 +4892,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         SET status = 'running', payload_json = json_set(payload_json, '$.status', 'running')
         WHERE run_id = ${runId}
       `;
+      yield* assertShellIndexCoversShells();
       const secretOnlyShell = (yield* projectionStore.getShellSnapshot()).threads.find(
         (thread) => thread.id === threadId,
       );
@@ -6466,6 +6499,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (candidate) => candidate.id === threadId,
         );
         assert.deepEqual(listed?.pendingBackgroundTasks, shell?.pendingBackgroundTasks);
+        yield* assertShellIndexCoversShells();
         return shell && projectThreadAwarenessV2({ environmentId, project, thread: shell })?.phase;
       });
 
