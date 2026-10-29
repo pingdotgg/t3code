@@ -50,18 +50,7 @@ internal suspend fun prepareGoogleVoiceTranscription(
 ): Int {
   for (mode in recognitionModes) {
     createClient(mode).use { client ->
-      val status = checkModelSupport(client)
-      when (status) {
-        FeatureStatus.UNAVAILABLE -> return@use
-        FeatureStatus.DOWNLOADABLE, FeatureStatus.DOWNLOADING -> client.download()
-      }
-      if (client.checkStatus() != FeatureStatus.AVAILABLE) {
-        throw VoiceTranscriptionException(
-          "preparation-failed",
-          "Voice transcription could not prepare this language."
-        )
-      }
-      return mode
+      if (prepareModel(client)) return mode
     }
   }
   throw VoiceTranscriptionException(
@@ -70,16 +59,39 @@ internal suspend fun prepareGoogleVoiceTranscription(
   )
 }
 
+private suspend fun prepareModel(client: GoogleSpeechClient): Boolean = try {
+  val status = client.checkStatus()
+  if (status == FeatureStatus.UNAVAILABLE) {
+    false
+  } else {
+    if (status == FeatureStatus.DOWNLOADABLE ||
+      status == FeatureStatus.DOWNLOADING
+    ) {
+      client.download()
+    }
+    if (client.checkStatus() != FeatureStatus.AVAILABLE) {
+      throw VoiceTranscriptionException(
+        "preparation-failed",
+        "Voice transcription could not prepare this language."
+      )
+    }
+    true
+  }
+} catch (error: GenAiException) {
+  if (!isModelUnavailable(error)) throw error
+  false
+}
+
 private suspend fun checkModelSupport(client: GoogleSpeechClient): Int = try {
   client.checkStatus()
 } catch (error: GenAiException) {
-  if (error.errorCode != GenAiException.ErrorCode.NOT_AVAILABLE &&
-    error.errorCode != GenAiException.ErrorCode.NOT_SUPPORTED
-  ) {
-    throw error
-  }
+  if (!isModelUnavailable(error)) throw error
   FeatureStatus.UNAVAILABLE
 }
+
+private fun isModelUnavailable(error: GenAiException): Boolean =
+  error.errorCode == GenAiException.ErrorCode.NOT_AVAILABLE ||
+    error.errorCode == GenAiException.ErrorCode.NOT_SUPPORTED
 
 internal suspend fun collectGoogleVoiceTranscript(
   responses: Flow<SpeechRecognizerResponse>

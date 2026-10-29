@@ -110,14 +110,26 @@ class GoogleVoiceTranscriberTest {
 
   @Test
   fun fallsBackToBasicOnlyForUnavailableAdvancedModels() = runBlocking {
-    for (errorCode in listOf(
-      null,
-      GenAiException.ErrorCode.NOT_AVAILABLE,
-      GenAiException.ErrorCode.NOT_SUPPORTED
+    for ((duringDownload, errorCode) in listOf(
+      false to null,
+      false to GenAiException.ErrorCode.NOT_AVAILABLE,
+      false to GenAiException.ErrorCode.NOT_SUPPORTED,
+      true to GenAiException.ErrorCode.NOT_AVAILABLE,
+      true to GenAiException.ErrorCode.NOT_SUPPORTED
     )) {
-      val advanced = Client(FeatureStatus.UNAVAILABLE, onStatus = {
-        if (errorCode != null) throw GenAiException(Exception("Unavailable"), errorCode)
-      })
+      val advanced = Client(
+        if (duringDownload) FeatureStatus.DOWNLOADABLE else FeatureStatus.UNAVAILABLE,
+        onStatus = {
+          if (!duringDownload && errorCode != null) {
+            throw GenAiException(Exception("Unavailable"), errorCode)
+          }
+        },
+        onDownload = {
+          if (duringDownload && errorCode != null) {
+            throw GenAiException(Exception("Unavailable"), errorCode)
+          }
+        }
+      )
       val basic = Client(FeatureStatus.DOWNLOADABLE)
       val mode = prepareGoogleVoiceTranscription {
         if (it == SpeechRecognizerOptions.Mode.MODE_ADVANCED) advanced else basic
@@ -138,8 +150,7 @@ class GoogleVoiceTranscriberTest {
   fun preservesDownloadAndQuotaFailuresInsteadOfSilentlyFallingBack() = runBlocking {
     for (errorCode in listOf(
       GenAiException.ErrorCode.NOT_ENOUGH_DISK_SPACE,
-      GenAiException.ErrorCode.PER_APP_BATTERY_USE_QUOTA_EXCEEDED,
-      GenAiException.ErrorCode.NOT_SUPPORTED
+      GenAiException.ErrorCode.PER_APP_BATTERY_USE_QUOTA_EXCEEDED
     )) {
       val error = GenAiException(Exception("Preparation failed"), errorCode)
       val client = Client(FeatureStatus.DOWNLOADABLE, onDownload = { throw error })
