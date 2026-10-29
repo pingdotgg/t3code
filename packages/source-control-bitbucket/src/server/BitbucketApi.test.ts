@@ -513,7 +513,7 @@ it.effect("never puts a saved token that is unsafe for an HTTP header on the wir
 });
 
 it.effect("reports saved credentials as configured when Bitbucket cannot confirm them", () => {
-  const { layer } = makeLayer({
+  const { execute, layer } = makeLayer({
     response: () => new Response(null, { status: 401 }),
     env: { T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0" },
   });
@@ -523,6 +523,7 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
     const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
 
     assert.strictEqual((yield* bitbucket.probeAuth).status, "unauthenticated");
+    assert.strictEqual(execute.mock.calls.length, 0);
 
     yield* settings.update({
       sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },

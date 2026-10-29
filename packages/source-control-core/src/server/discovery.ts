@@ -75,6 +75,8 @@ type SourceControlCliRemoteRefinementSpec = SourceControlCliDiscoverySpec & {
 };
 
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
+/** An API host that stalls must not hold the whole discovery answer behind it. */
+const API_PROBE_TIMEOUT = "3 seconds";
 
 function probeTimeoutMs(spec: SourceControlCliDiscoverySpec): number {
   return spec.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -236,6 +238,12 @@ export function probeSourceControlProvider(input: {
   if (input.spec.type === "managed-cli") return input.spec.probe(input.cwd);
   if (input.spec.type === "api") {
     return input.spec.probeAuth.pipe(
+      Effect.timeoutOption(API_PROBE_TIMEOUT),
+      Effect.map(
+        Option.getOrElse(() =>
+          unknownAuth("The hosting service did not answer in time. Refresh to try again."),
+        ),
+      ),
       Effect.map(
         (auth) =>
           ({
@@ -253,20 +261,15 @@ export function probeSourceControlProvider(input: {
 
   const spec = input.spec;
 
-  return probeCli({
-    spec,
-    process: input.process,
-    cwd: input.cwd,
-  }).pipe(
-    Effect.flatMap((item) => {
-      if (item.status !== "available") {
-        return Effect.succeed({
-          ...item,
-          auth: unknownAuth("Hosting integration command was not found on the server PATH."),
-        } satisfies SourceControlProviderDiscoveryItem);
-      }
-
-      return input.process
+  // The auth check does not depend on the version output, so both spawn at once.
+  return Effect.all(
+    [
+      probeCli({
+        spec,
+        process: input.process,
+        cwd: input.cwd,
+      }),
+      input.process
         .run({
           operation: "source-control.discovery.auth",
           command: spec.executable,
@@ -278,21 +281,24 @@ export function probeSourceControlProvider(input: {
           appendTruncationMarker: true,
         })
         .pipe(
-          Effect.map(
-            (result) =>
-              ({
-                ...item,
-                auth: spec.parseAuth(result),
-              }) satisfies SourceControlProviderDiscoveryItem,
-          ),
+          Effect.map(spec.parseAuth),
           Effect.catch((cause) =>
-            Effect.succeed({
-              ...item,
-              auth: unknownAuth(Option.getOrUndefined(detailFromCause(cause))),
-            } satisfies SourceControlProviderDiscoveryItem),
+            Effect.succeed(unknownAuth(Option.getOrUndefined(detailFromCause(cause)))),
           ),
-        );
-    }),
+        ),
+    ],
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.map(
+      ([item, auth]) =>
+        ({
+          ...item,
+          auth:
+            item.status === "available"
+              ? auth
+              : unknownAuth("Hosting integration command was not found on the server PATH."),
+        }) satisfies SourceControlProviderDiscoveryItem,
+    ),
   );
 }
 
