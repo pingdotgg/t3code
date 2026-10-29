@@ -23,6 +23,8 @@ export type AppBarMenuItem =
       readonly id: string;
       readonly title: string;
       readonly icon?: string;
+      /** Android: tints the icon, such as a label's color dot. */
+      readonly iconColor?: ColorValue;
       readonly subtitle?: string;
       readonly disabled?: boolean;
       readonly selected?: boolean;
