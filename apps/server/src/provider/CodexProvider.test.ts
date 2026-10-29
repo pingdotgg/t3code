@@ -1,6 +1,10 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  appendCustomCodexModels,
+  applyPreferredCodexDefaultModel,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -193,4 +197,30 @@ it("offers cyber access programs only when the catalog has a Daybreak program", 
       },
     ],
   );
+});
+
+it("keeps Daybreak access off custom models that borrow built-in options", () => {
+  const capabilities = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
+    defaultReasoningEffort: "medium",
+    description: "Test model",
+    displayName: "GPT Test",
+    hidden: false,
+    id: "gpt-test",
+    isDefault: true,
+    model: "gpt-test",
+    supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Medium" }],
+  });
+  const models = appendCustomCodexModels(
+    [{ slug: "gpt-test", name: "GPT Test", isCustom: false, capabilities }],
+    [{ slug: "my-model" }],
+  );
+
+  const optionIds = (slug: string) =>
+    models
+      .find((model) => model.slug === slug)
+      ?.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id);
+  assert.deepStrictEqual(optionIds("gpt-test"), ["reasoningEffort", "cyberAccessProgram"]);
+  assert.deepStrictEqual(optionIds("my-model"), ["reasoningEffort"]);
 });

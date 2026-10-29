@@ -92,6 +92,14 @@ in the thread on web, desktop, or mobile. Some tools offer access for one reques
 the current session, or permanently. See [Permission modes](./permission-modes.md)
 for command and file approvals.
 
+## Use Daybreak
+
+If your ChatGPT account has Daybreak access, models that offer it show a Cyber
+Access choice in the model options next to the composer. Automatic, the
+default, leaves the choice to Codex. Pick Daybreak Blue or another programme to
+send it with every turn in that thread. Models without Daybreak, including
+custom models, do not show the choice.
+
 ## Codex says I hit a usage limit
 
 When Codex stops on a usage limit, the thread names the window that ran out and

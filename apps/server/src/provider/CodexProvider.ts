@@ -342,13 +342,19 @@ function applyConfiguredCodexServiceTier(
 /**
  * Codex has no static default capability set, so a bare custom slug borrows
  * the first built-in's descriptors; an entry with its own capabilities keeps
- * them.
+ * them. Daybreak access is per model, so a borrowed slug never inherits it.
  */
-function appendCustomCodexModels(
+export function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const borrowed = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const fallbackCapabilities = borrowed && {
+    ...borrowed,
+    optionDescriptors: borrowed.optionDescriptors?.filter(
+      (descriptor) => descriptor.id !== "cyberAccessProgram",
+    ),
+  };
   return providerModelsFromSettings(models, customModels, fallbackCapabilities);
 }
 
