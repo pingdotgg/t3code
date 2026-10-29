@@ -70,6 +70,7 @@ const UpdateInfo = Schema.Struct({
   version: Schema.String,
   // Malformed notes must not block update-state decoding; normalizeDesktopUpdateReleaseNotes validates separately.
   releaseNotes: Schema.optional(Schema.Unknown),
+  releaseDate: Schema.optional(Schema.String),
 });
 
 const DownloadProgressInfo = Schema.Struct({
@@ -895,6 +896,7 @@ export const make = Effect.gen(function* () {
             info.releaseNotes,
             info.version,
             state.channel,
+            info.releaseDate,
           );
           yield* setState(
             reduceDesktopUpdateStateOnUpdateAvailable(
