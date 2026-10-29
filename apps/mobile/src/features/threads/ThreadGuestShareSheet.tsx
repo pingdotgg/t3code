@@ -21,6 +21,7 @@ import { useDeadlinePassed } from "../../lib/clock";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
+import { environmentThreadDetails } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadGuestShare } from "./ThreadGuestShareBar";
 
@@ -58,6 +59,12 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
     [environmentId, threadId],
   );
   const activeShare = useThreadGuestShare(threadRef);
+  // From the thread list the detail loads only now; until it does, an active link is unknown and a
+  // new link would end it without the warning.
+  const threadLoaded = useAtomValue(
+    environmentThreadDetails.threadAtom(threadRef),
+    (thread) => thread !== null,
+  );
   const canCreate = useAtomValue(serverEnvironment.createGuestShare.permissionAtom(environmentId));
   const createGuestShare = useAtomCommand(serverEnvironment.createGuestShare, {
     reportFailure: false,
@@ -101,9 +108,10 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
 
   const share = (url: string) => {
     // Android ignores `url`; iOS turns a `message` URL into plain text instead of a link preview.
-    Share.share(Platform.OS === "ios" ? { url } : { message: url }).catch((cause: unknown) =>
-      console.error("Failed to share guest link.", cause),
-    );
+    Share.share(Platform.OS === "ios" ? { url } : { message: url }).catch((cause: unknown) => {
+      console.error("Failed to share guest link.", cause);
+      Dialog.alert("Could not share the link", "Copy it instead.");
+    });
   };
 
   const content = (
@@ -192,7 +200,7 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
             tone="primary"
             fullWidth
             loading={creating}
-            disabled={!canCreate}
+            disabled={!canCreate || !threadLoaded}
             onPress={() => void create()}
           />
         </>
