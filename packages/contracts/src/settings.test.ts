@@ -15,6 +15,7 @@ import {
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ServerSettings,
+  OnePasswordSecretProviderConfig,
   ServerSettingsPatch,
   withIdleCompaction,
 } from "./settings.ts";
@@ -25,6 +26,7 @@ const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodeOnePasswordConfig = Schema.decodeUnknownSync(OnePasswordSecretProviderConfig);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("storage cleanup settings", () => {
@@ -112,6 +114,54 @@ describe("ServerSettings usage price overrides", () => {
     ]) {
       expect(() => decodeServerSettingsPatch({ usagePriceOverrides })).toThrow();
     }
+  });
+});
+
+describe("ServerSettings secret providers", () => {
+  const onePassword = (account: string) => ({
+    kind: "one_password",
+    label: "Personal",
+    config: { account },
+  });
+
+  it("keeps an unknown kind or a longer label from invalidating the rest of the settings", () => {
+    const openbao = { kind: "openbao", label: "V".repeat(65), config: { address: "https://x" } };
+    const decoded = decodeServerSettings({
+      worktreesDirectory: "/work",
+      secretProviders: { vault: openbao, personal: onePassword("my.1password.com") },
+    });
+    expect(decoded.worktreesDirectory).toBe("/work");
+    expect(encodeServerSettings(decoded).secretProviders).toEqual({
+      vault: openbao,
+      personal: onePassword("my.1password.com"),
+    });
+  });
+
+  it("accepts slug ids and null removals but no id that is not a slug", () => {
+    expect(
+      decodeServerSettingsPatch({
+        secretProviders: { "1password": onePassword("my.1password.com"), work: null },
+      }).secretProviders,
+    ).toEqual({ "1password": onePassword("my.1password.com"), work: null });
+    for (const id of ["", "My Vault", "a/b", "-vault"]) {
+      expect(() =>
+        decodeServerSettingsPatch({ secretProviders: { [id]: onePassword("my.1password.com") } }),
+      ).toThrow();
+    }
+    expect(() =>
+      decodeServerSettingsPatch({
+        secretProviders: { work: { ...onePassword("my.1password.com"), label: "V".repeat(65) } },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a 1Password account op could misread", () => {
+    for (const account of ["", "my account", "--help"]) {
+      expect(() => decodeOnePasswordConfig({ account })).toThrow();
+    }
+    expect(decodeOnePasswordConfig({ account: "my.1password.com" }).account).toBe(
+      "my.1password.com",
+    );
   });
 });
 
