@@ -291,12 +291,12 @@ describe("serverSettings helpers", () => {
     ).toBe(false);
   });
 
-  it("falls back cleanly when persisted settings are invalid", () => {
+  it("falls back to no endpoints and telemetry off when persisted settings are invalid", () => {
     expect(parsePersistedServerObservabilitySettings("{")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
       otlpLogsUrl: undefined,
-      telemetryEnabled: true,
+      telemetryEnabled: false,
     });
   });
 
