@@ -215,6 +215,15 @@ describe("CursorAdapterV2", () => {
 
   it.effect.each([
     {
+      reason: "the SDK's detailed plan usage limit code",
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        status: "error" as const,
+        error: { message: "You've hit your usage limit", code: "PRO_USER_USAGE_LIMIT" },
+      }),
+      failure: { class: "usage_limit", message: "You've hit your usage limit" },
+    },
+    {
       reason: "the error Cursor's run ended with",
       wait: Effect.succeed({
         id: "native-cursor-run",
@@ -232,7 +241,7 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
-      reason: "the SDK error that broke the run",
+      reason: "the SDK rate limit that broke the run",
       wait: Effect.fail(
         new CursorAgentSdk.CursorAgentSdkRunnerError({
           method: "run.wait",
@@ -243,7 +252,7 @@ describe("CursorAdapterV2", () => {
         }),
       ),
       failure: {
-        class: "transport_error",
+        class: "usage_limit",
         message:
           "Cursor Agent SDK run.wait failed: Too many requests (resource_exhausted, HTTP 429)",
       },
