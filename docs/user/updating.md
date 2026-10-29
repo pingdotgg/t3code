@@ -22,11 +22,11 @@ restart from the update button when you are ready. A server still restarting
 finishes on its own, and the button keeps showing it after the desktop app
 restarts.
 
-Remote desktop apps never wait for npm. Background services do not wait either
-when the version comes from the desktop app's update. Other server updates
-appear only after that version is published to npm. The confirmation lists each machine it skips
-and why, such as a machine that is offline or needs a manual update. Use
-**Settings → Environments** for those.
+Remote desktop apps never wait for npm. When the desktop app offers the update,
+background services update right away too. Other servers, including older
+background services, update only after that version is published to npm. The
+confirmation lists each machine it skips and why, such as a machine that is
+offline or needs a manual update. Use **Settings → Environments** for those.
 
 If a desktop app restarts on its old version, T3 Code tells you the update did
 not apply. It does not install that version again on its own, even when another
