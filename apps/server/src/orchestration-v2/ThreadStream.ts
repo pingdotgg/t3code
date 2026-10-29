@@ -10,7 +10,10 @@ import {
   buildBoundedThreadProjection,
   type BoundedProjectionResult,
 } from "./threadHistoryPaging.ts";
-import { projectThreadProjectionForWire } from "./WireProjection.ts";
+import {
+  capProjectionCheckpointFilesForWire,
+  projectThreadProjectionForWire,
+} from "./WireProjection.ts";
 
 export const THREAD_RESUME_MAX_REPLAY_EVENTS = 128;
 
@@ -44,10 +47,9 @@ export function boundedSnapshotResponseFields(input: {
   readonly compactIds: boolean;
 }) {
   const { bounded } = input;
+  const capped = capProjectionCheckpointFilesForWire(bounded.projection);
   // Dedupe keeps shared items one object, which the compaction's identity check needs.
-  const projection = input.dedupeBodies
-    ? dedupeSnapshotBodies(bounded.projection)
-    : bounded.projection;
+  const projection = input.dedupeBodies ? dedupeSnapshotBodies(capped) : capped;
   const compactProjection = input.compactTurnItems ? omitLocalVisibleTurnItems(projection) : null;
   return {
     projection: compactProjection ?? projection,

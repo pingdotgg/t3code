@@ -1,4 +1,7 @@
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   MessageId,
   ContextHandoffId,
   ProviderThreadId,
@@ -379,6 +382,46 @@ describe("live body deduper", () => {
       [3, message(3, "ab").event.payload],
       [4, { ...reply(4, "ab").event.payload, text: "", textOmitted: true }],
     ]);
+  });
+
+  it("caps a large checkpoint's files for the wire and still dedupes its item", () => {
+    const files = Array.from({ length: 250 }, (_, index) => ({
+      path: `vendor/file-${index}.ts`,
+      kind: "modified",
+      additions: 2,
+      deletions: 1,
+    }));
+    const checkpointId = CheckpointId.make("checkpoint-large");
+    const scopeId = CheckpointScopeId.make("scope-large");
+    const captured = event(1, {
+      type: "checkpoint.captured",
+      payload: {
+        id: checkpointId,
+        threadId: base.threadId,
+        scopeId,
+        runId: null,
+        nodeId: NodeId.make("node-large"),
+        parentCheckpointId: null,
+        ordinalWithinScope: 1,
+        appRunOrdinal: null,
+        ref: CheckpointRef.make("refs/t3/checkpoints/large"),
+        status: "ready",
+        files,
+        capturedAt: at,
+      },
+    });
+    const item = event(2, {
+      type: "turn-item.updated",
+      payload: { ...base, type: "checkpoint", checkpointId, scopeId, files },
+    });
+    const dedupe = makeLiveBodyDeduper();
+    const [record, card] = [captured, item].map((streamed) =>
+      dedupe({ ...streamed, event: projectDomainEventForWire(streamed.event) }),
+    );
+
+    const filesTotal = { count: 250, additions: 500, deletions: 250 };
+    expect(payloadOf(record!)).toMatchObject({ files: files.slice(0, 200), filesTotal });
+    expect(payloadOf(card!)).toMatchObject({ files: [], filesOmitted: true, filesTotal });
   });
 
   it("ships a reply whole when its message arrives after it", () => {
