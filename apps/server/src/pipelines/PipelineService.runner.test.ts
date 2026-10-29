@@ -219,7 +219,7 @@ const makeHarness = Effect.gen(function* () {
       getCheckpointContext: (threadId) => {
         const { worktreePath } = shellFor(threadId);
         return Effect.succeed({
-          runs: [],
+          runs: [{ id: `run-of:${threadId}`, ordinal: 1, status: "failed" }],
           checkpoints: [],
           checkpointScopes:
             worktreePath === null

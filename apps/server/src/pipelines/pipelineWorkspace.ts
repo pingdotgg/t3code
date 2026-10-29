@@ -44,7 +44,12 @@ export const makePipelineWorkspace = Effect.fn("PipelineWorkspace.make")(functio
   const findThreadStartCheckpoint = Effect.fn("PipelineWorkspace.findThreadStartCheckpoint")(
     function* (threadId: ThreadId) {
       const context = yield* threads.getCheckpointContext(threadId);
-      const scope = context.checkpointScopes.find((candidate) => candidate.kind === "root_run");
+      // Each run has its own root scope; later ones already hold this step's own changes.
+      const firstRun = context.runs[0];
+      if (firstRun === undefined) return null;
+      const scope = context.checkpointScopes.find(
+        (candidate) => candidate.kind === "root_run" && candidate.runId === firstRun.id,
+      );
       if (scope === undefined || !(yield* isManagedWorktreePath(scope.cwd))) return null;
       const recorded = context.checkpoints.find(
         (checkpoint) =>
