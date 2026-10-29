@@ -562,7 +562,14 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<PeerLinkSummary> {
     if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
     let label = link.label;
-    const answered = yield* Effect.findFirst(link.urls, (url) =>
+    const preferred = link.urls.length > 1 ? preferredRoutes?.get(link.environmentId) : undefined;
+    const urls =
+      preferred !== undefined &&
+      preferred.until > DateTime.toEpochMillis(now) &&
+      link.urls.includes(preferred.url)
+        ? [preferred.url, ...link.urls.filter((url) => url !== preferred.url)]
+        : link.urls;
+    const answered = yield* Effect.findFirst(urls, (url) =>
       answersAs(url, link.environmentId).pipe(
         Effect.map((found) => {
           if (Option.isNone(found)) return false;

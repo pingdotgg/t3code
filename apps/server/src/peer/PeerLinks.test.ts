@@ -427,6 +427,99 @@ it.effect(
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("listing uses but does not renew a verified fallback and still checks identity", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const first = yield* serveApart(descriptorOf("environment-other", "Other"));
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      const urls = JSON.stringify([first.url, b.url]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      yield* Ref.set(first.probes, 0);
+      yield* Ref.set(b.probes, 0);
+      yield* TestClock.adjust(Duration.seconds(30));
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(first.probes)).toBe(0);
+      expect(yield* Ref.get(b.probes)).toBe(1);
+
+      // Listing has not extended the original preference deadline.
+      yield* Ref.set(first.descriptor, box);
+      yield* TestClock.adjust(Duration.seconds(31));
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(first.probes)).toBe(1);
+      expect(yield* Ref.get(b.probes)).toBe(1);
+
+      yield* Ref.set(first.descriptor, descriptorOf("environment-other", "Other"));
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      yield* Ref.set(first.descriptor, box);
+      yield* Ref.set(b.descriptor, descriptorOf("environment-other", "Other"));
+      yield* Ref.set(first.probes, 0);
+      yield* Ref.set(b.probes, 0);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(b.probes)).toBe(1);
+      expect(yield* Ref.get(first.probes)).toBe(1);
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
+
+      // A removed address cannot be probed through an old preference.
+      const primaryOnly = JSON.stringify([first.url]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${primaryOnly}`;
+      yield* Ref.set(b.probes, 0);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(b.probes)).toBe(0);
+      yield* a.links.unlink(box.environmentId);
+      expect(yield* a.links.list).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "cancelling a listing interrupts its preferred probe without trying another address",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const hold = yield* Ref.make(false);
+        const preferred = yield* serveRaw(() =>
+          Effect.gen(function* () {
+            if (yield* Ref.get(hold)) {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+            }
+            return HttpServerResponse.jsonUnsafe(box);
+          }),
+        );
+        const first = yield* serveApart(descriptorOf("environment-other", "Other"));
+        const b = yield* serveB(box);
+        const a = yield* makeA(laptop);
+        yield* a.links.link({
+          url: b.url,
+          pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+          access: "auto",
+        });
+        const urls = JSON.stringify([first.url, preferred]);
+        yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(preferred);
+        yield* Ref.set(first.probes, 0);
+        yield* Ref.set(hold, true);
+        const listing = yield* a.links.list.pipe(Effect.forkScoped);
+        yield* Effect.gen(function* () {
+          yield* Deferred.await(entered);
+          expect(yield* Ref.get(first.probes)).toBe(0);
+          yield* Fiber.interrupt(listing);
+        }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+        yield* Ref.set(hold, false);
+        expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("never follows a peer's redirect with the pairing code", () =>
   Effect.scoped(
     Effect.gen(function* () {
