@@ -17,6 +17,7 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -45,6 +46,7 @@ const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
 
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
 const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
+const STATUS_FALLBACK_DELAY = Duration.millis(100);
 /**
  * How long a peer's descriptor may take before a route counts as unreachable.
  * A tailnet or relayed route to a machine that is waking up takes longer.
@@ -556,38 +558,62 @@ const make = Effect.gen(function* () {
           WHERE environment_id = ${link.environmentId}
         `.pipe(Effect.ignoreCause({ log: true }), Effect.as({ ...link, label }));
 
+  const findStatusRoute = (urls: ReadonlyArray<string>, environmentId: EnvironmentId) =>
+    Effect.gen(function* () {
+      for (const url of urls) {
+        const found = yield* answersAs(url, environmentId);
+        if (Option.isSome(found)) return Option.some({ url, label: found.value.label });
+      }
+      return Option.none();
+    });
+
   const statusOf = Effect.fn("PeerLinks.statusOf")(function* (
     link: PeerLink,
     now: DateTime.Utc,
   ): Effect.fn.Return<PeerLinkSummary> {
     if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
-    let label = link.label;
     const preferred = link.urls.length > 1 ? preferredRoutes?.get(link.environmentId) : undefined;
-    const urls =
+    const active =
       preferred !== undefined &&
       preferred.until > DateTime.toEpochMillis(now) &&
       link.urls.includes(preferred.url)
-        ? [preferred.url, ...link.urls.filter((url) => url !== preferred.url)]
-        : link.urls;
-    const answered = yield* Effect.findFirst(urls, (url) =>
-      answersAs(url, link.environmentId).pipe(
-        Effect.map((found) => {
-          if (Option.isNone(found)) return false;
-          label = found.value.label;
-          return true;
-        }),
-      ),
-    );
+        ? preferred
+        : undefined;
+    const answering =
+      active === undefined
+        ? findStatusRoute(link.urls, link.environmentId)
+        : Effect.gen(function* () {
+            const failed = yield* Deferred.make<void>();
+            const check = (urls: ReadonlyArray<string>) =>
+              findStatusRoute(urls, link.environmentId).pipe(
+                Effect.filterOrFail(Option.isSome),
+                Effect.map((found) => found.value),
+              );
+            const preferredProbe = check([active.url]).pipe(
+              Effect.tapError(() => Deferred.succeed(failed, undefined)),
+            );
+            // Fast preferred routes still need one request. Slow ones must not
+            // add their entire timeout before the configured routes can start.
+            const otherProbes = Deferred.await(failed).pipe(
+              Effect.timeoutOrElse({
+                duration: STATUS_FALLBACK_DELAY,
+                orElse: () => Effect.void,
+              }),
+              Effect.andThen(check(link.urls.filter((url) => url !== active.url))),
+            );
+            return yield* Effect.race(preferredProbe, otherProbes).pipe(Effect.option);
+          });
+    const answered = yield* answering;
     if (
       preferred !== undefined &&
       Option.isSome(answered) &&
-      answered.value !== preferred.url &&
+      answered.value.url !== preferred.url &&
       preferredRoutes?.get(link.environmentId) === preferred
     ) {
       preferredRoutes.delete(link.environmentId);
     }
     if (Option.isNone(answered)) return { ...link, status: "unreachable" };
-    return { ...(yield* withLabel(link, label)), status: "reachable" };
+    return { ...(yield* withLabel(link, answered.value.label)), status: "reachable" };
   });
 
   const list: PeerLinks["Service"]["list"] = Effect.gen(function* () {
