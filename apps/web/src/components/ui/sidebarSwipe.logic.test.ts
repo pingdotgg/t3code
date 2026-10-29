@@ -7,7 +7,6 @@ import {
   shouldClaimSidebarSwipe,
   SIDEBAR_SWIPE_AXIS_LOCK_PX,
   SIDEBAR_SWIPE_COMMIT_PX,
-  SIDEBAR_SWIPE_EDGE_PX,
   SIDEBAR_SWIPE_FLICK_MIN_PX,
   SIDEBAR_SWIPE_FLICK_PX_PER_MS,
   type SidebarSwipeGesture,
@@ -29,7 +28,7 @@ function openGesture(overrides?: Partial<SidebarSwipeGesture>): SidebarSwipeGest
 }
 
 describe("beginSidebarSwipe", () => {
-  it("ignores a mouse drag inside the edge band", () => {
+  it("ignores a mouse drag", () => {
     expect(
       beginSidebarSwipe({
         pointerType: "mouse",
@@ -42,17 +41,17 @@ describe("beginSidebarSwipe", () => {
     ).toBeNull();
   });
 
-  it("ignores a touch that starts outside the left edge band", () => {
+  it.each([8, 200, 350])("starts an open touch drag at page x=%s", (x) => {
     expect(
       beginSidebarSwipe({
         pointerType: "touch",
         pointerId: 1,
-        x: SIDEBAR_SWIPE_EDGE_PX + 1,
+        x,
         y: 20,
         time: 0,
         intent: "open",
       }),
-    ).toBeNull();
+    ).toMatchObject({ phase: "pending", intent: "open", startX: x });
   });
 
   it("starts an open drag from a pen press on the left edge", () => {
