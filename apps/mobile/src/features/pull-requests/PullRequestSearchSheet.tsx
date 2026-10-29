@@ -2,7 +2,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useRef, type ReactNode } from "react";
 import { Platform, View, type TextInputInstance } from "react-native";
 
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { SearchField } from "../../components/ui/SearchField";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Toolbar } from "../../components/ui/Toolbar";
@@ -37,7 +37,9 @@ export function PullRequestSearchSheet(props: {
   if (Platform.OS === "android") {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
-        <AndroidScreenHeader
+        <AppBar
+          embedded
+          sidebar={false}
           title={props.title}
           hideBottomBorder
           onBack={() => navigation.goBack()}

@@ -6,7 +6,7 @@ import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { useWindowDimensions, View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
@@ -18,7 +18,7 @@ import { AndroidWorkspaceNavigation, FloatingWorkspaceTabs } from "./AndroidWork
 import { FLOATING_TABS, floatingTabsMetrics } from "./floating-workspace-tabs";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
-import { WorkspaceAppBarScope } from "./WorkspaceAppBar";
+import { WorkspaceAppBarScope } from "../../components/ui/WorkspaceAppBar.android";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
 const TABS: readonly WorkspaceTab[] = NAVIGATION_TAB_ORDER;
@@ -86,7 +86,7 @@ export function WorkspaceRootScreen() {
                   ) : layout.usesSplitView ? (
                     <>
                       <NativeStackScreenOptions options={{ headerShown: false }} />
-                      <AndroidScreenHeader title="Pull requests" />
+                      <AppBar embedded sidebar={false} title="Pull requests" />
                       <View className="flex-1 items-center justify-center px-10">
                         <EmptyState
                           title="Select a pull request"

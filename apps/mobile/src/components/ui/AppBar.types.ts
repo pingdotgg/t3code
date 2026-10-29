@@ -11,6 +11,11 @@ export interface AppBarAction {
   readonly loading?: boolean;
   readonly selected?: boolean;
   readonly tintColor?: ColorValue;
+  /** Android overflow menu: the row's second line. */
+  readonly subtitle?: string;
+  readonly destructive?: boolean;
+  /** Android: always in the overflow menu, never a toolbar button. */
+  readonly overflowOnly?: boolean;
 }
 
 export type AppBarMenuItem =
@@ -43,6 +48,8 @@ export interface AppBarSearch {
   readonly value: string;
   readonly onChangeText: (value: string) => void;
   readonly placeholder: string;
+  /** Defaults to the placeholder. */
+  readonly accessibilityLabel?: string;
   readonly mode?: "inline" | "collapsible";
   readonly compactToolbar?: boolean;
   readonly compactPlaceholder?: string;
@@ -51,16 +58,28 @@ export interface AppBarSearch {
   readonly onRefresh?: () => void;
   readonly refreshAccessibilityLabel?: string;
   readonly refreshInToolbar?: boolean;
+  /** Controlled open state. The owner then also handles back and the keyboard shortcut. */
+  readonly active?: boolean;
+  readonly onOpen?: () => void;
+  readonly onClose?: () => void;
 }
 
 export interface AppBarProps {
   readonly title: string;
-  readonly subtitle?: string;
+  /** Android: replaces the title text, such as the brand title. iOS ignores it. */
+  readonly titleContent?: ReactNode;
+  readonly subtitle?: string | null;
   readonly actions?: ReadonlyArray<AppBarAction>;
   readonly menus?: ReadonlyArray<AppBarMenu>;
   readonly search?: AppBarSearch;
   readonly onBack?: () => void;
   readonly sidebar?: boolean;
+  /** Android: replaces the sidebar button at the start of the bar. */
+  readonly leading?: ReactNode;
+  /** Leaves route options to the screen: in-screen bars, and screens that set their own. iOS draws nothing. */
+  readonly embedded?: boolean;
+  /** An embedded bar at the top of a sheet. */
+  readonly sheet?: boolean;
   readonly backInSplitView?: {
     readonly accessibilityLabel: string;
     readonly icon: string;

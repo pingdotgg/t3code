@@ -1,9 +1,10 @@
 import { useNavigation } from "@react-navigation/native";
-import { useEffect, useRef } from "react";
-import { BackHandler, Keyboard, type TextInputInstance } from "react-native";
-import { SearchField } from "../../components/ui/SearchField";
+import { useEffect } from "react";
+import { BackHandler, Keyboard } from "react-native";
+import { AppBar } from "../../components/ui/AppBar";
+import { appBarMenuItemsFromActions } from "../../components/ui/menuActionItems";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
-import { WorkspaceListAppBar } from "../workspace/WorkspaceListAppBar";
+import { WorkspaceBrandTitle } from "../workspace/WorkspaceBrandTitle";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import type { PullRequestFilterMenu } from "./PullRequestListFilters";
 import { openSettings } from "../settings/settings-navigation";
@@ -19,7 +20,6 @@ export function PullRequestToolbar(props: {
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
   const { onRequestVisibility } = props;
   const tab = workspace.state.tabs.pullRequests;
-  const input = useRef<TextInputInstance>(null);
   const searching = tab.searchMode !== "resting";
   const openSearch = () => {
     onRequestVisibility?.();
@@ -29,7 +29,6 @@ export function PullRequestToolbar(props: {
       offset: getScrollOffset("pullRequests"),
     });
     dispatch({ type: "search", tab: "pullRequests" });
-    input.current?.focus();
     return true;
   };
   useHardwareKeyboardCommand("focusSearch", openSearch);
@@ -54,31 +53,34 @@ export function PullRequestToolbar(props: {
     return () => subscription.remove();
   }, [searching, closeSearch, navigation, isTabActive]);
   return (
-    <WorkspaceListAppBar
-      searching={searching}
-      searchField={
-        <SearchField
-          inputRef={input}
-          accessibilityLabel="Search pull requests"
-          clearAccessibilityLabel="Clear search"
-          placeholder="Search pull requests"
-          value={tab.query}
-          onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
+    <AppBar
+      title="T3 Code"
+      titleContent={
+        <WorkspaceBrandTitle
+          accessibilityLabel="T3 Code, Pull requests"
+          onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
         />
       }
-      onCloseSearch={closeSearch}
-      onOpenSearch={openSearch}
-      searchAccessibilityLabel="Search pull requests"
-      titleAccessibilityLabel="T3 Code, Pull requests"
-      onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
-      filter={
+      sidebar={false}
+      search={{
+        value: tab.query,
+        onChangeText: (query) => dispatch({ type: "query", tab: "pullRequests", query }),
+        placeholder: "Search pull requests",
+        active: searching,
+        onOpen: openSearch,
+        onClose: closeSearch,
+      }}
+      menus={
         filters
-          ? {
-              accessibilityLabel: "Filter pull requests",
-              customized: filters.customized,
-              actions: filters.actions,
-              onSelect: filters.onSelect,
-            }
+          ? [
+              {
+                title: "Filter pull requests",
+                icon: filters.customized
+                  ? "line.3.horizontal.decrease.circle.fill"
+                  : "line.3.horizontal.decrease.circle",
+                items: appBarMenuItemsFromActions(filters.actions, filters.onSelect),
+              },
+            ]
           : undefined
       }
     />

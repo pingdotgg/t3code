@@ -39,7 +39,6 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
-import { WorkspaceAppBar, useHasWorkspaceAppBar } from "../workspace/WorkspaceAppBar";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -48,8 +47,6 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
-import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
-import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { UsageChartMetric } from "./usageChartData";
@@ -209,7 +206,6 @@ function UsageScreen(props: {
   );
 
   const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
-  const hasWorkspaceAppBar = useHasWorkspaceAppBar();
   const filterIcon =
     selectedEnvironmentIds === null
       ? "line.3.horizontal.decrease"
@@ -239,49 +235,26 @@ function UsageScreen(props: {
     const id = EnvironmentId.make(value);
     setSelectedEnvironmentIds((selected) => toggleUsageEnvironment(selected, environments, id));
   };
-  // Android only; iOS puts the filter in the native header below.
-  const environmentFilter = showEnvironmentFilter ? (
-    <AndroidAnchoredMenu
-      title="Environments"
-      actions={environmentActions}
-      onPressAction={({ nativeEvent }) => selectEnvironment(nativeEvent.event)}
-    >
-      {(open) => (
-        <AndroidHeaderIconButton
-          accessibilityLabel="Filter usage environments"
-          icon={
-            selectedEnvironmentIds === null
-              ? "line.3.horizontal.decrease.circle"
-              : "line.3.horizontal.decrease.circle.fill"
-          }
-          onPress={open}
-        />
-      )}
-    </AndroidAnchoredMenu>
-  ) : null;
+  const environmentMenu = {
+    title: "Filter usage environments",
+    icon:
+      selectedEnvironmentIds === null
+        ? ("line.3.horizontal.decrease.circle" as const)
+        : ("line.3.horizontal.decrease.circle.fill" as const),
+    items: environmentActions.map((action) => ({
+      id: action.id,
+      title: action.title,
+      subtitle: action.subtitle,
+      selected: action.state === "on",
+      onPress: () => selectEnvironment(action.id),
+    })),
+  };
 
   return (
     <SettingsScreen
       title="Usage"
-      trailing={environmentFilter}
+      menus={showEnvironmentFilter ? [environmentMenu] : undefined}
       workspaceRoot={props.workspace}
-      appBar={
-        props.workspace && hasWorkspaceAppBar ? (
-          <WorkspaceAppBar
-            title="Usage"
-            filter={
-              showEnvironmentFilter
-                ? {
-                    accessibilityLabel: "Filter usage environments",
-                    customized: selectedEnvironmentIds !== null,
-                    actions: environmentActions,
-                    onSelect: selectEnvironment,
-                  }
-                : undefined
-            }
-          />
-        ) : undefined
-      }
     >
       {Platform.OS === "ios" ? (
         <NativeStackScreenOptions

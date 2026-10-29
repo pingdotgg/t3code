@@ -11,12 +11,12 @@ import {
 } from "react";
 import { Pressable, View } from "react-native";
 
-import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
-import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
-import { AppText } from "../../components/ui/AppText";
-import { NativeAppBar } from "../../components/ui/NativeAppBar.android";
-import { useControlTheme } from "../../components/ui/useControlTheme";
-import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
+import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
+import { AndroidHeaderIconButton } from "./AndroidScreenHeader";
+import { AppText } from "./AppText";
+import { NativeAppBar } from "./NativeAppBar.android";
+import { useControlTheme } from "./useControlTheme";
+import { useToolbarLayout } from "./useToolbarLayout";
 
 const SEARCH_ICON = require("../../../assets/icons/search.xml");
 const FILTER_ICON = require("../../../assets/icons/filter.xml");

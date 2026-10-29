@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
-import { BackHandler, Keyboard, type TextInputInstance } from "react-native";
+import { BackHandler, Keyboard } from "react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 
-import { SearchField } from "../../components/ui/SearchField";
+import { AppBar } from "../../components/ui/AppBar";
+import { appBarMenuItemsFromActions } from "../../components/ui/menuActionItems";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
-import { WorkspaceListAppBar } from "../workspace/WorkspaceListAppBar";
+import { WorkspaceBrandTitle } from "../workspace/WorkspaceBrandTitle";
 import { useWorkspaceConnectionState } from "../../state/workspace";
 
 export function ThreadListToolbar(props: {
@@ -26,13 +27,11 @@ export function ThreadListToolbar(props: {
     homeFocused && (workspace === null || workspace.state.selectedTab === "threads");
   const connectionState = useWorkspaceConnectionState();
   const { onRequestVisibility, onSearchQueryChange } = props;
-  const searchRef = useRef<TextInputInstance>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const searching = searchOpen || props.searchQuery.length > 0;
   const openSearch = () => {
     onRequestVisibility?.();
     setSearchOpen(true);
-    searchRef.current?.focus();
     return true;
   };
   useHardwareKeyboardCommand("focusSearch", openSearch);
@@ -62,35 +61,38 @@ export function ThreadListToolbar(props: {
     return () => subscription.remove();
   }, [closeSearch, searching, listFocused, navigation, isTabActive]);
 
-  const searchField = (
-    <SearchField
-      inputRef={searchRef}
-      accessibilityLabel="Search threads"
-      clearAccessibilityLabel="Clear search"
-      placeholder="Search"
-      value={props.searchQuery}
-      onChangeText={onSearchQueryChange}
-    />
-  );
-  const filter = connectionState.hasConnections
-    ? {
-        accessibilityLabel: "Filter threads",
-        customized: props.filterCustomized,
-        actions: props.filterActions,
-        onSelect: props.onFilterSelect,
-      }
-    : undefined;
-
   return (
-    <WorkspaceListAppBar
-      searching={searching}
-      searchField={searchField}
-      onCloseSearch={closeSearch}
-      onOpenSearch={openSearch}
-      searchAccessibilityLabel="Search threads"
-      titleAccessibilityLabel="T3 Code, Threads"
-      onOpenEnvironments={props.onOpenEnvironments}
-      filter={filter}
+    <AppBar
+      title="T3 Code"
+      titleContent={
+        <WorkspaceBrandTitle
+          accessibilityLabel="T3 Code, Threads"
+          onOpenEnvironments={props.onOpenEnvironments}
+        />
+      }
+      sidebar={false}
+      search={{
+        value: props.searchQuery,
+        onChangeText: onSearchQueryChange,
+        placeholder: "Search",
+        accessibilityLabel: "Search threads",
+        active: searching,
+        onOpen: openSearch,
+        onClose: closeSearch,
+      }}
+      menus={
+        connectionState.hasConnections
+          ? [
+              {
+                title: "Filter threads",
+                icon: props.filterCustomized
+                  ? "line.3.horizontal.decrease.circle.fill"
+                  : "line.3.horizontal.decrease.circle",
+                items: appBarMenuItemsFromActions(props.filterActions, props.onFilterSelect),
+              },
+            ]
+          : undefined
+      }
     />
   );
 }
