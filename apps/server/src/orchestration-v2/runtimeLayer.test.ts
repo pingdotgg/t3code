@@ -6278,6 +6278,114 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
       assert.instanceOf(invalidVisit, Orchestrator.OrchestratorDispatchError);
     }),
   );
+
+  it.effect("marks unread before the user's last turn when an automatic compaction followed", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-mark-unread-compacted");
+      const turnCompletedAt = DateTime.makeUnsafe("2026-07-24T10:00:00.000Z");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Compacted thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const runs = [
+        { text: "Continue", at: turnCompletedAt },
+        {
+          text: "/compact",
+          idleCompaction: "beforeCacheExpires" as const,
+          at: DateTime.makeUnsafe("2026-07-24T11:00:00.000Z"),
+        },
+      ];
+      yield* (yield* EventSink.EventSinkV2).write({
+        commandId: CommandId.make(`${threadId}:seed`),
+        events: runs.flatMap(({ at, ...message }, index) => {
+          const runId = RunId.make(`${threadId}:run-${index}`);
+          const messageId = MessageId.make(`${threadId}:message-${index}`);
+          return [
+            {
+              id: EventId.make(`${messageId}:event`),
+              type: "message.updated" as const,
+              threadId,
+              occurredAt: at,
+              payload: {
+                ...message,
+                id: messageId,
+                threadId,
+                runId,
+                nodeId: null,
+                role: "user" as const,
+                attachments: [],
+                streaming: false,
+                createdBy: "user" as const,
+                creationSource: "web" as const,
+                createdAt: at,
+                updatedAt: at,
+              },
+            },
+            {
+              id: EventId.make(`${runId}:event`),
+              type: "run.created" as const,
+              threadId,
+              runId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: at,
+              payload: {
+                id: runId,
+                threadId,
+                ordinal: index + 1,
+                providerInstanceId: modelSelection.instanceId,
+                modelSelection,
+                providerThreadId: null,
+                userMessageId: messageId,
+                rootNodeId: null,
+                activeAttemptId: null,
+                status: "completed" as const,
+                queuePosition: null,
+                requestedAt: at,
+                startedAt: at,
+                completedAt: at,
+                checkpointId: null,
+                contextHandoffId: null,
+              },
+            },
+          ];
+        }),
+      });
+
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make(`${threadId}:mark-unread`),
+        threadId,
+      });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.thread.lastVisitedAt,
+        DateTime.subtract(turnCompletedAt, { milliseconds: 1 }),
+      );
+      const shell = yield* orchestrator.getThreadShell(threadId);
+      assert.deepEqual(shell!.latestRunCompletedAt, turnCompletedAt);
+      assert.deepEqual(shell!.lastVisitedAt, projection.thread.lastVisitedAt);
+
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make(`${threadId}:visit`),
+        threadId,
+        visitedAt: DateTime.formatIso(turnCompletedAt),
+      });
+      const revisited = yield* orchestrator.getThreadShell(threadId);
+      assert.deepEqual(revisited!.lastVisitedAt, turnCompletedAt);
+    }),
+  );
 });
 
 it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("thread opens", (it) => {
