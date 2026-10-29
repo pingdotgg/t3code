@@ -33,7 +33,6 @@ export function ConnectionsRouteScreen() {
       {Platform.OS === "android" ? (
         <AppBar
           embedded
-          sidebar={false}
           title="Environments"
           onBack={() => navigation.goBack()}
           actions={[

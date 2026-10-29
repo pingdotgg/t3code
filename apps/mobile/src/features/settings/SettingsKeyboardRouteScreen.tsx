@@ -48,7 +48,7 @@ export function SettingsKeyboardRouteScreen() {
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AppBar embedded sidebar={false} title="Keyboard" onBack={() => navigation.goBack()} />
+          <AppBar embedded title="Keyboard" onBack={() => navigation.goBack()} />
         </>
       ) : null}
       <ScrollView

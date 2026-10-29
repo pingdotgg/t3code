@@ -180,7 +180,7 @@ export function HomeRouteScreen() {
             />
           </Toolbar>
         ) : null}
-        {Platform.OS === "android" ? <AppBar embedded sidebar={false} title="Threads" /> : null}
+        {Platform.OS === "android" ? <AppBar embedded title="Threads" /> : null}
         <WorkspaceEmptyDetail
           onAddConnection={
             Platform.OS === "android" && !catalogState.hasConnections

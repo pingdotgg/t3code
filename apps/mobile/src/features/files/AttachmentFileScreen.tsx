@@ -241,7 +241,6 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
       {isAndroid ? (
         <AppBar
           embedded
-          sidebar={false}
           title={params.name}
           subtitle={subtitle}
           onBack={handleBack}

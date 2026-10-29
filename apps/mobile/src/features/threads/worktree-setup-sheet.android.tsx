@@ -26,7 +26,6 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
           >
             <AppBar
               sheet
-              sidebar={false}
               title="Worktree setup"
               actions={[
                 { accessibilityLabel: "Close setup details", icon: "xmark", onPress: onClose },
