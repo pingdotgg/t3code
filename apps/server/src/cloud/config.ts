@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { readConnectEnabled } from "./publicConfig.ts";
 
 export const CLOUD_MINT_PUBLIC_KEY = "cloud-mint-ed25519-public-key";
 export const CLOUD_ENDPOINT_RUNTIME_CONFIG = "cloud-endpoint-runtime-config";
@@ -60,6 +61,7 @@ export const readAgentActivityPublishingActive: (
             Option.isSome(bytes) ? new TextDecoder().decode(bytes.value) : null,
           ),
         );
+    if (!(yield* readConnectEnabled)) return false;
     const [enabled, url, environmentCredential] = yield* Effect.all([
       readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET),
       readSecretString(RELAY_URL_SECRET),

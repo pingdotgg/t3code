@@ -205,9 +205,10 @@ export function makeCloudCliOAuthConfig({
 
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
-export const connectEnabledConfig = Config.String("T3CODE_CONNECT_ENABLED").pipe(
+export const readConnectEnabled = Config.String("T3CODE_CONNECT_ENABLED").pipe(
   Config.withDefault(""),
   Config.map(isConnectEnabled),
+  Effect.orDie,
 );
 
 export const hasCloudPublicConfig = Boolean(

@@ -25,7 +25,6 @@ import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import {
   getLocalEnvironmentBootstraps,
-  getConnectEnabled,
   getRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
@@ -192,25 +191,6 @@ describe("getRelayTelemetryEnabled", () => {
         yield* getRelayTelemetryEnabled
           .handler()
           .pipe(Effect.provideService(HostProcess.Environment, {})),
-      );
-    }),
-  );
-});
-
-describe("getConnectEnabled", () => {
-  it.effect.each([
-    [undefined, true],
-    ["true", true],
-    ["0", true],
-    ["false", false],
-    [" FALSE ", false],
-  ] as const)("T3CODE_CONNECT_ENABLED=%s turns T3 Connect on: %s", ([value, expected]) =>
-    Effect.gen(function* () {
-      assert.equal(
-        yield* getConnectEnabled
-          .handler()
-          .pipe(Effect.provideService(HostProcess.Environment, { T3CODE_CONNECT_ENABLED: value })),
-        expected,
       );
     }),
   );

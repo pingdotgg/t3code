@@ -72,6 +72,9 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
   return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
 }
 
+// Web reads this in render paths; the environment cannot change while the app runs.
+let connectEnabled: boolean | undefined;
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
@@ -82,7 +85,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   getRelayTelemetryEnabled: () =>
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
-  getConnectEnabled: () => ipcRenderer.sendSync(IpcChannels.GET_CONNECT_ENABLED_CHANNEL) === true,
+  getConnectEnabled: () =>
+    (connectEnabled ??= ipcRenderer.sendSync(IpcChannels.GET_CONNECT_ENABLED_CHANNEL) === true),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getClientPlatform: () => clientPlatform,
   setNotificationBadge: (badge) =>

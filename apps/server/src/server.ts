@@ -92,7 +92,7 @@ import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
-import { connectEnabledConfig, hasCloudPublicConfig } from "./cloud/publicConfig.ts";
+import { hasCloudPublicConfig, readConnectEnabled } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
@@ -504,7 +504,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
         secrets.get(RELAY_URL_SECRET),
         secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       ]).pipe(Effect.orElseSucceed(() => [Option.none(), Option.none()] as const));
-      if (Option.isNone(relayUrl) || Option.isNone(tunnelConfig)) {
+      if (Option.isNone(relayUrl) || Option.isNone(tunnelConfig) || !(yield* readConnectEnabled)) {
         return { relayHookBaseUrl: null };
       }
       const config = decodeRuntimeConfig(new TextDecoder().decode(tunnelConfig.value));
@@ -881,7 +881,7 @@ const layerMakeServer = Layer.unwrap(
       : Layer.empty;
     const layerCloudDesiredLinkReconcile = Layer.effectDiscard(
       Effect.gen(function* () {
-        if (!(yield* connectEnabledConfig.pipe(Effect.orDie))) {
+        if (!(yield* readConnectEnabled)) {
           yield* Effect.logInfo("T3 Connect is off (T3CODE_CONNECT_ENABLED=false)");
           // Activation waits for this even when there is no link to restore.
           return yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);

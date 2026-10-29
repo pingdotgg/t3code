@@ -98,7 +98,7 @@ import {
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
-import { connectEnabledConfig, relayUrlConfig } from "./publicConfig.ts";
+import { readConnectEnabled, relayUrlConfig } from "./publicConfig.ts";
 import {
   filterRelayResponse,
   relayRequestError,
@@ -306,12 +306,10 @@ const requireRelayUrl = relayUrlConfig.pipe(
   ),
 );
 
-const requireConnectEnabled = connectEnabledConfig.pipe(
-  Effect.orDie,
-  Effect.flatMap((enabled) =>
-    enabled
-      ? Effect.void
-      : Effect.fail(new CloudLinkInternalError({ operation: "connect-disabled" })),
+const requireConnectEnabled = readConnectEnabled.pipe(
+  Effect.filterOrFail(
+    (enabled) => enabled,
+    () => new CloudLinkInternalError({ operation: "connect-disabled" }),
   ),
 );
 
