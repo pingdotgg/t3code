@@ -460,6 +460,24 @@ export function summarizeT3ToolCalls(
     case "read-pr-guide":
       label = phrase("Read", "read", quantity(selected.length, "review guide"));
       break;
+    case "read-pr":
+      label = phrase("Read", "read", quantity(selected.length, "pull request"));
+      break;
+    case "list-repo-prs":
+      label = phrase("Listed", "list", `pull requests${selected.length === 1 ? "" : ` ${times}`}`);
+      break;
+    case "create-pr":
+      label = phrase("Opened", "open", quantity(selected.length, "pull request"));
+      break;
+    case "update-pr":
+      label = phrase("Updated", "update", quantity(selected.length, "pull request"));
+      break;
+    case "respond-pr":
+      label = phrase("Responded", "respond", `on pull requests ${times}`);
+      break;
+    case "merge-pr":
+      label = phrase("Merged", "merge", quantity(selected.length, "pull request"));
+      break;
     case "browser":
       label = phrase("Used", "use", `browser ${times}`);
       break;

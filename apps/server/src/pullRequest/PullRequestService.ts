@@ -2197,7 +2197,32 @@ export const make = Effect.gen(function* () {
                     ),
                   )
                 : Effect.succeed(false);
-            return mergeSettings.pipe(
+            // Hosts that cannot pin a merge to a commit still refuse a head that already moved.
+            const headPinned =
+              input.expectedHeadSha === undefined
+                ? Effect.void
+                : project.api
+                    .getChangeRequest({
+                      cwd: project.project.workspaceRoot,
+                      repository: project.repository,
+                      host: project.host,
+                      number: input.number,
+                    })
+                    .pipe(
+                      Effect.mapError(toPullRequestError("runAction")),
+                      Effect.flatMap((current) =>
+                        current.headSha === input.expectedHeadSha
+                          ? Effect.void
+                          : Effect.fail(
+                              new PullRequestOperationError({
+                                operation: "runAction",
+                                detail: `The head is now ${current.headSha ?? "unknown"}, not ${input.expectedHeadSha}. Review the new commits first.`,
+                              }),
+                            ),
+                      ),
+                    );
+            return headPinned.pipe(
+              Effect.andThen(mergeSettings),
               Effect.flatMap((removeAgentCreditsOnMerge) =>
                 project.api
                   .runAction({
@@ -2211,6 +2236,9 @@ export const make = Effect.gen(function* () {
                     ...(input.expectedStackHeads === undefined
                       ? {}
                       : { expectedStackHeads: input.expectedStackHeads }),
+                    ...(input.expectedHeadSha === undefined
+                      ? {}
+                      : { expectedHeadSha: input.expectedHeadSha }),
                     ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
                     ...(input.updateMethod === undefined
                       ? {}

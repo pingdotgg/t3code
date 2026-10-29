@@ -1169,6 +1169,30 @@ const linkedEntry = (sample: Sample, url: string) => {
   return { ...pr, state: seeded?.state ?? "open", title: seeded?.title ?? null };
 };
 
+/** The world's PRs. `prs` is free-form world data: number, title, headRefName, checks. */
+const worldPullRequests = (sample: Sample) => {
+  const prs = sample.testCase.setup.world?.prs;
+  return Array.isArray(prs) ? prs.filter(isRecord) : [];
+};
+
+/**
+ * The PR for the sample's branch: the world's, else the one a create would open. A case that
+ * mocks `gh pr create` names that URL, so the T3 tool opens the same number.
+ */
+const branchPullRequest = (sample: Sample) => {
+  const branch = sample.testCase.setup.world?.branch;
+  const prs = worldPullRequests(sample);
+  const own = prs.find((pr) => pr.headRefName === branch);
+  if (own !== undefined) return { number: Number(own.number), created: false, pr: own };
+  const mocked = (sample.testCase.setup.shellMocks ?? []).find((mock) =>
+    /\b(pr|mr) create\b/.test(mock.match),
+  );
+  const fromMock = Number(/\/pull\/(\d+)/.exec(mocked?.output ?? "")?.[1]);
+  const number =
+    fromMock > 0 ? fromMock : Math.max(123, ...prs.map((pr) => Number(pr.number) || 0)) + 1;
+  return { number, created: true, pr: undefined };
+};
+
 /** A believable T3 result for a tool the case does not mock. */
 export const t3Default = (
   sample: Sample,
@@ -1265,6 +1289,101 @@ export const t3Default = (
         ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
       };
     }
+    case "pull_request_create": {
+      const { number, created } = branchPullRequest(sample);
+      const target = pullRequest(sample.repo, { number });
+      sample.linked.add(target.url);
+      return { ...target, created };
+    }
+    case "pull_request_read": {
+      const own = branchPullRequest(sample);
+      const number = typeof input.number === "number" ? input.number : own.number;
+      const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
+      const sections = Array.isArray(input.sections) ? input.sections : ["summary", "checks"];
+      const checks = Array.isArray(world?.checks) ? world.checks.filter(isRecord) : [];
+      return {
+        ...pullRequest(sample.repo, { number }),
+        ...(sections.includes("summary")
+          ? {
+              summary: {
+                title: valueText(
+                  world?.title ?? sample.testCase.setup.world?.commits?.[0]?.subject,
+                ),
+                body: valueText(world?.body ?? ""),
+                state: "open",
+                isDraft: false,
+                author: "user",
+                headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
+                baseBranch: "main",
+                headSha: sample.testCase.setup.world?.commits?.[0]?.sha ?? null,
+                mergeability: "mergeable",
+                behindBy: 0,
+                autoMergeEnabled: false,
+                additions: 1,
+                deletions: 1,
+                changedFiles: 1,
+                labels: [],
+                reviewers: [],
+              },
+            }
+          : {}),
+        ...(sections.includes("checks")
+          ? {
+              checks: checks.map((check) => ({
+                name: valueText(check.name),
+                status:
+                  check.state === "fail"
+                    ? "failure"
+                    : check.state === "pending"
+                      ? "pending"
+                      : "success",
+                description: null,
+                url: null,
+              })),
+            }
+          : {}),
+        ...(sections.includes("conversation")
+          ? {
+              conversation: {
+                comments: [],
+                reviewThreads: [],
+                hiddenResolvedThreads: 0,
+                truncated: false,
+              },
+            }
+          : {}),
+      };
+    }
+    case "pull_request_list":
+      return {
+        pullRequests: worldPullRequests(sample).map((pr) => ({
+          number: Number(pr.number),
+          title: valueText(pr.title),
+          url: pullRequest(sample.repo, { number: pr.number }).url,
+          author: "user",
+          headBranch: valueText(pr.headRefName),
+          baseBranch: "main",
+          state: "open",
+          isDraft: false,
+          reviewDecision: null,
+          checksState: null,
+          updatedAt: "2026-10-27T10:00:00Z",
+        })),
+        truncated: false,
+      };
+    case "pull_request_update":
+      return pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number });
+    case "pull_request_respond":
+      return {
+        ...pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number }),
+        replied: input.body !== undefined,
+        resolved: typeof input.resolved === "boolean" ? input.resolved : null,
+      };
+    case "pull_request_merge":
+      return {
+        ...pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number }),
+        state: input.auto === true ? "open" : "merged",
+      };
     case "request_secret": {
       // T3 names a ref and a file with 32 hex characters, new for each request, in its secrets dir.
       const id = NodeCrypto.createHash("sha256")
@@ -1402,6 +1521,7 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
       return listed("matches");
     case "link_pull_request":
     case "link_pull_requests":
+    case "pull_request_create":
       return child ? { ...value, next: CHILD_PULL_REQUEST_REPORT_NEXT } : value;
     default:
       return value;

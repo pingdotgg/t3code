@@ -1428,6 +1428,30 @@ it.effect(
     }),
 );
 
+it.effect("refuses a merge whose head moved past expectedHeadSha and pins the host merge", () =>
+  Effect.gen(function* () {
+    const pinned: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.succeed({ ...hostedChangeRequest("Body"), headSha: "new-head" }),
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-09-03T00:00:00Z")),
+          runAction: (input) => Effect.sync(() => void pinned.push(input.expectedHeadSha)),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const refused = yield* Effect.flip(
+      service.runAction({ ...reference, action: "merge", expectedHeadSha: "reviewed-head" }),
+    );
+    assert.include(refused.message, "new-head");
+    yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: "new-head" });
+    assert.deepStrictEqual(pinned, ["new-head"]);
+  }),
+);
+
 it.effect("publishes a merge for immediate settlement only after host confirmation", () =>
   Effect.scoped(
     Effect.gen(function* () {

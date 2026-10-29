@@ -6,6 +6,9 @@ import {
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   PullRequestOperationError,
   type OrchestrationProjectShell,
+  type PullRequestActionInput,
+  type PullRequestActivity,
+  type PullRequestDetail,
   type PullRequestRef,
   type PullRequestReviewGuideResult,
   type ThreadPullRequestLink,
@@ -20,6 +23,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
 
+import * as GitManager from "../../../git/GitManager.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import {
   type PullRequestTestThread,
@@ -28,6 +32,7 @@ import {
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -144,6 +149,8 @@ interface HarnessOptions {
     PullRequestReviewGuideResult & { started: boolean },
     PullRequestOperationError
   >;
+  readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
+  readonly git?: Partial<GitManager.GitManager["Service"]>;
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -196,6 +203,8 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
         Effect.succeed(id === thread?.id ? v2PullRequestThread(thread) : null),
       dispatch,
     }),
+    Layer.mock(PullRequestService.PullRequestService)(options.pullRequests ?? {}),
+    Layer.mock(GitManager.GitManager)(options.git ?? {}),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     McpToolAccessTestkit.liveThreadsLayer,
   );
@@ -697,6 +706,172 @@ describe("pull request guide tools", () => {
       expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.projectId)).toEqual([
         "project-azure",
       ]);
+    }),
+  );
+});
+
+describe("source control tools", () => {
+  const branchThread = {
+    ...makeThread([]),
+    worktreePath: "/workspace/worktree",
+    branchPullRequest: {
+      projectId: PROJECT_ID,
+      repository: "t3tools/t3code",
+      number: 42,
+      url: "https://github.com/t3tools/t3code/pull/42",
+    },
+  };
+  const detail = {
+    title: "Add tools",
+    body: "Adds tools.",
+    state: "open",
+    isDraft: false,
+    author: null,
+    headBranch: "tools",
+    baseBranch: "main",
+    headSha: "abc123",
+    mergeability: "mergeable",
+    additions: 1,
+    deletions: 0,
+    changedFiles: 1,
+    labels: [],
+    reviewers: [],
+    checks: [{ name: "CI", status: "success", description: null, url: null }],
+  } as unknown as PullRequestDetail;
+  const reviewThread = (id: string, isResolved: boolean) => ({
+    id,
+    path: "a.ts",
+    line: 1,
+    side: "right" as const,
+    isResolved,
+    isOutdated: false,
+    comments: [],
+  });
+  const activity: PullRequestActivity = {
+    comments: [],
+    commentCount: 0,
+    commentsTruncated: false,
+    reviewThreads: [reviewThread("open-thread", false), reviewThread("done-thread", true)],
+    commits: [],
+  };
+
+  it.effect("reads the thread's branch PR, only the sections asked, without resolved threads", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.succeed(activity),
+        },
+      });
+      const result = yield* harness.call("pull_request_read", {
+        sections: ["summary", "conversation"],
+      });
+      expect(asked).toEqual([
+        { projectId: PROJECT_ID, host: "github.com", repository: "t3tools/t3code", number: 42 },
+      ]);
+      expect(result.summary?.headSha).toBe("abc123");
+      expect(result.checks).toBeUndefined();
+      expect(result.conversation?.reviewThreads.map((thread) => thread.id)).toEqual([
+        "open-thread",
+      ]);
+      expect(result.conversation?.hiddenResolvedThreads).toBe(1);
+    }),
+  );
+
+  it.effect("asks for a number when the thread's branch has no PR", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const error = yield* harness.call("pull_request_read", {}).pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestBranchHasNoneError");
+    }),
+  );
+
+  it.effect("merges pinned to the head the agent checked", () =>
+    Effect.gen(function* () {
+      const actions: Array<PullRequestActionInput> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          runAction: (input) => Effect.sync(() => void actions.push(input)),
+          summary: () => Effect.succeed({ state: "open" } as never),
+        },
+      });
+      const result = yield* harness.call("pull_request_merge", {
+        expectedHeadSha: "abc123",
+        method: "squash",
+        auto: true,
+      });
+      expect(result).toMatchObject({ number: 42, state: "open" });
+      expect(actions).toMatchObject([
+        {
+          number: 42,
+          action: "enable-auto-merge",
+          expectedHeadSha: "abc123",
+          mergeMethod: "squash",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("opens a PR from the thread's worktree, links it, and makes it a draft", () =>
+    Effect.gen(function* () {
+      const actions: Array<PullRequestActionInput> = [];
+      const opened: Array<string> = [];
+      const harness = yield* makeHarness({
+        thread: { ...makeThread([]), worktreePath: "/workspace/worktree" },
+        git: {
+          createPullRequest: (input) =>
+            Effect.sync(() => opened.push(input.cwd)).pipe(
+              Effect.as({
+                status: "created" as const,
+                url: "https://github.com/t3tools/t3code/pull/43",
+                number: 43,
+                baseBranch: "main",
+                headBranch: "tools",
+                title: input.title,
+              }),
+            ),
+        },
+        pullRequests: { runAction: (input) => Effect.sync(() => void actions.push(input)) },
+      });
+      const result = yield* harness.call("pull_request_create", {
+        title: "Add tools",
+        body: "Adds tools.",
+        draft: true,
+      });
+      expect(result).toMatchObject({ number: 43, created: true });
+      expect(opened).toEqual(["/workspace/worktree"]);
+      expect(actions).toMatchObject([{ number: 43, action: "draft" }]);
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", number: 43, source: "created" },
+      ]);
+    }),
+  );
+
+  it.effect("replies to and resolves a review thread, and refuses resolving without one", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          replyToThread: (input) => Effect.sync(() => calls.push(`reply ${input.threadId}`)),
+          setThreadResolution: (input) =>
+            Effect.sync(() => calls.push(`resolve ${input.threadId} ${input.resolved}`)),
+        },
+      });
+      const result = yield* harness.call("pull_request_respond", {
+        reviewThreadId: "open-thread",
+        body: "Fixed.",
+        resolved: true,
+      });
+      expect(result).toMatchObject({ replied: true, resolved: true });
+      expect(calls).toEqual(["reply open-thread", "resolve open-thread true"]);
+      const error = yield* harness
+        .call("pull_request_respond", { body: "Done", resolved: true })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestNothingToDoError");
     }),
   );
 });

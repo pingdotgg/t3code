@@ -498,6 +498,8 @@ export interface PullRequestProviderApi {
       readonly action: PullRequestAction;
       readonly stackNumber?: number;
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
+      /** Hosts that can pin a merge to a head commit do; the caller has already checked it. */
+      readonly expectedHeadSha?: string;
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
