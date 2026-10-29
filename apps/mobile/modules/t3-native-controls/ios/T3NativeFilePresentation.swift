@@ -31,7 +31,7 @@ private final class FilePreviewController: QLPreviewController {
       view.addSubview(status)
       NSLayoutConstraint.activate([
         status.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-        status.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        status.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 64),
         status.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -48),
       ])
     }
