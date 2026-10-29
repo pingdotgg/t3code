@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { type RefObject, useRef, useState } from "react";
 import { Keyboard, type TextInputInstance, View } from "react-native";
 import { useHardwareBack } from "../../lib/backHandler";
 import { useToolbarLayout } from "./useToolbarLayout";
@@ -10,7 +10,7 @@ import { ScreenHeaderButton } from "./ScreenHeaderButton.android";
 import { Menu } from "./Menu";
 import { SearchField } from "./SearchField";
 import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
-import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
+import type { AppBarMenuItem, AppBarProps, AppBarSearch } from "./AppBar.types";
 import { useHasWorkspaceAppBar, WorkspaceAppBar } from "./WorkspaceAppBar.android";
 
 function selectMenuItem(items: ReadonlyArray<AppBarMenuItem>, id: string) {
@@ -18,52 +18,78 @@ function selectMenuItem(items: ReadonlyArray<AppBarMenuItem>, id: string) {
   if (action && !action.disabled) action.onPress();
 }
 
+interface SearchState {
+  readonly searching: boolean;
+  readonly open: () => void;
+  readonly close: () => void;
+  readonly inputRef: RefObject<TextInputInstance | null>;
+}
+
 export function AppBar(props: AppBarProps) {
+  return props.search ? (
+    <SearchableAppBar {...props} search={props.search} />
+  ) : (
+    <AppBarView {...props} />
+  );
+}
+
+// Only a bar with search registers for hardware back: its focus check needs a navigation
+// context, and sheet headers such as Arrange threads render outside one.
+function SearchableAppBar(props: AppBarProps & { readonly search: AppBarSearch }) {
   const { search } = props;
-  const { paddingTop, paddingBottom } = useToolbarLayout(props.sheet);
-  const { themeVariables } = useAppearancePreferences();
-  const inWorkspace = useHasWorkspaceAppBar();
   const [searchOpen, setSearchOpen] = useState(false);
   const inputRef = useRef<TextInputInstance>(null);
-  const inline = search?.mode === "inline";
-  const controlled = search?.active !== undefined;
+  const inline = search.mode === "inline";
+  const controlled = search.active !== undefined;
   const searching =
-    search !== undefined &&
-    (inline || (controlled ? search.active === true : searchOpen || search.value.length > 0));
-  const openSearch = () => {
+    inline || (controlled ? search.active === true : searchOpen || search.value.length > 0);
+  const open = () => {
     if (!controlled) setSearchOpen(true);
-    search?.onOpen?.();
+    search.onOpen?.();
     inputRef.current?.focus();
   };
-  const closeSearch = () => {
+  const close = () => {
     if (!controlled) {
-      search?.onChangeText("");
+      search.onChangeText("");
       setSearchOpen(false);
       Keyboard.dismiss();
     }
-    search?.onClose?.();
+    search.onClose?.();
   };
   useHardwareBack(searching && !inline && !controlled, () => {
-    closeSearch();
+    close();
     return true;
   });
+  return <AppBarView {...props} searchState={{ searching, open, close, inputRef }} />;
+}
+
+function AppBarView(props: AppBarProps & { readonly searchState?: SearchState }) {
+  const { search, searchState } = props;
+  const { paddingTop, paddingBottom } = useToolbarLayout(props.sheet);
+  const { themeVariables } = useAppearancePreferences();
+  const inWorkspace = useHasWorkspaceAppBar();
+  const inline = search?.mode === "inline";
+  const searching = searchState?.searching === true;
+  const openSearch = () => searchState?.open();
+  const closeSearch = () => searchState?.close();
 
   const searchLabel = search?.accessibilityLabel ?? search?.placeholder ?? "";
-  const searchField = search ? (
-    <SearchField
-      inputRef={inputRef}
-      accessibilityLabel={searchLabel}
-      clearAccessibilityLabel={search.clearAccessibilityLabel ?? "Clear search"}
-      placeholder={
-        search.compactToolbar
-          ? (search.compactPlaceholder ?? search.placeholder)
-          : search.placeholder
-      }
-      value={search.value}
-      onChangeText={search.onChangeText}
-      autoFocus={!inline}
-    />
-  ) : null;
+  const searchField =
+    search && searchState ? (
+      <SearchField
+        inputRef={searchState.inputRef}
+        accessibilityLabel={searchLabel}
+        clearAccessibilityLabel={search.clearAccessibilityLabel ?? "Clear search"}
+        placeholder={
+          search.compactToolbar
+            ? (search.compactPlaceholder ?? search.placeholder)
+            : search.placeholder
+        }
+        value={search.value}
+        onChangeText={search.onChangeText}
+        autoFocus={!inline}
+      />
+    ) : null;
 
   if (inWorkspace) {
     const menu = props.menus?.[0];
