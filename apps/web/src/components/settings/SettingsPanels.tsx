@@ -2068,15 +2068,21 @@ function ScopedProductUsageDataRow() {
           : undefined
       }
       control={
-        <ScopedSwitch
-          settingKeys={["telemetryEnabled"]}
-          checked={
-            lockedEverywhere ? overrides.every(({ value }) => value) : settings.telemetryEnabled
-          }
-          disabled={lockedEverywhere}
-          onCheckedChange={(checked) => updateSettings({ telemetryEnabled: Boolean(checked) })}
-          aria-label="Product usage data"
-        />
+        lockedEverywhere ? (
+          // Persisted values do not decide here, so they must not make the switch look mixed.
+          <Switch
+            checked={overrides.every(({ value }) => value)}
+            disabled
+            aria-label="Product usage data"
+          />
+        ) : (
+          <ScopedSwitch
+            settingKeys={["telemetryEnabled"]}
+            checked={settings.telemetryEnabled}
+            onCheckedChange={(checked) => updateSettings({ telemetryEnabled: Boolean(checked) })}
+            aria-label="Product usage data"
+          />
+        )
       }
     />
   );
