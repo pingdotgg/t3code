@@ -17,7 +17,7 @@ export function useReviewGuidesEnabled(params: PullRequestParams) {
   return settings?.reviewGuidesEnabled === true;
 }
 
-export function useReviewGuide(params: PullRequestParams) {
+export function useReviewGuide(params: PullRequestParams, visible = true) {
   const target = pullRequestTarget(params);
   const enabled = useReviewGuidesEnabled(params);
   const query = useEnvironmentQuery(enabled ? composerPullRequests.reviewGuide(target) : null);
@@ -35,7 +35,7 @@ export function useReviewGuide(params: PullRequestParams) {
   const running = starting || query.data?.run?._tag === "Running";
   const refresh = query.refresh;
   useFocusEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !visible) return;
     refresh();
     if (!running) return;
     const timer = setInterval(refresh, 5_000);

@@ -794,7 +794,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               </View>
                             </View>
                           ) : null}
-                          {tab === "guide" ? <PullRequestGuideContent params={params} /> : null}
+                          {tab === "guide" ? (
+                            <PullRequestGuideContent
+                              params={params}
+                              visible={section === "guide"}
+                            />
+                          ) : null}
                           {tab === "activity" ? (
                             <PullRequestActivityFilters
                               value={activityFilter}
