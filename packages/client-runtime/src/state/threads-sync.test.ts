@@ -415,10 +415,9 @@ describe("EnvironmentThreads", () => {
                   owner: undefined,
                   snapshot: {
                     state: {
+                      ...EMPTY_ENVIRONMENT_THREAD_STATE,
                       data: Option.some(projection),
                       status: "live",
-                      error: Option.none(),
-                      history: EMPTY_THREAD_HISTORY_META,
                     },
                     sequence: CACHED_SNAPSHOT_SEQUENCE,
                     persisted: true,
