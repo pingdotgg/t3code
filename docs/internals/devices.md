@@ -36,13 +36,13 @@ its sessions. Sessions it starts are recorded under the state directory and
 stopped by the next server if this one dies; sessions other tools started on
 the same account are never touched.
 
-Each session brings its own serve-sim preview host and agent-device daemon,
-with their own tokens. The proxy asks the host to route each request
-(`DeviceHostReady.upstream`) and adds the session token server-side, so
+Each session brings its own preview host (serve-sim, or serve-emu for Android)
+and agent-device daemon, with their own tokens. The proxy asks the host to
+route each request (`DeviceHostReady.upstream`) and adds the session token server-side, so
 clients never hold it. Agent config files are written per device
 (`DeviceOperations.agentEndpoint`), which is why `device_open` opens the
-device before targeting it. Device settings run `simctl` on the simulator's
-machine, which EAS does not expose, so they are unavailable there.
+device before targeting it. Device settings and tools run `simctl` or `adb` on
+the device's machine, which EAS does not expose, so they are unavailable there.
 
 ## Simlock hosts lease through the agent-device front
 
@@ -147,8 +147,8 @@ decoder then retains frames for seconds despite `optimizeForLatency` and an empt
 `decodeQueueSize`. The iOS AVCC viewer restores the missing metadata before
 configuring the decoder so hardware decoding can remain enabled. WebCodecs is
 secure-context only, so the viewer probes `isConfigSupported` and falls back to
-MJPEG on iOS when decoding is unavailable. Android has no MJPEG; there the panel
-reports that it cannot decode.
+MJPEG on iOS when decoding is unavailable. Android's SEMU socket has no MJPEG;
+there the panel reports that it cannot decode.
 
 serve-sim can also be locked to WebRTC, as on EAS Simulator, and then refuses
 AVCC with a 409 naming the transport. The viewer still asks for AVCC first, so
@@ -156,3 +156,6 @@ hubs that serve it pay nothing, and switches on that 409, or when its MJPEG
 image fails in a browser that has `RTCPeerConnection`. Offers are not trickled:
 serve-sim takes one offer with every candidate. The video element only feeds
 the same canvas sink, so the panel and the mobile WebView keep one surface.
+Android asks serve-emu's `/api` before opening its video socket and streams
+WebRTC when it is advertised (EAS Simulator), keeping a separate `video=0`
+socket for input so input can reconnect without restarting video.
