@@ -1583,6 +1583,108 @@ export function summarizeT3ToolCalls(
       }
       break;
     }
+    case "read-pr": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Read {count} pull request} other {Read {count} pull requests}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read {count} pull request} other {Tried to read {count} pull requests}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "list-repo-prs": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Listed pull requests {count} time} other {Listed pull requests {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to list pull requests {count} time} other {Tried to list pull requests {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "create-pr": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Opened {count} pull request} other {Opened {count} pull requests}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to open {count} pull request} other {Tried to open {count} pull requests}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "update-pr": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Updated {count} pull request} other {Updated {count} pull requests}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to update {count} pull request} other {Tried to update {count} pull requests}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "respond-pr": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Responded on pull requests {count} time} other {Responded on pull requests {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to respond on pull requests {count} time} other {Tried to respond on pull requests {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "merge-pr": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Merged {count} pull request} other {Merged {count} pull requests}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to merge {count} pull request} other {Tried to merge {count} pull requests}}",
+              { count },
+            ),
+          );
+      break;
+    }
   }
   return { label, failedCount };
 }

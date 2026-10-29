@@ -125,6 +125,16 @@ interface SourceControlTextGenerationSettings {
   readonly style: SourceControlWritingStyleSettings;
 }
 
+export interface GitCreatePullRequestResult {
+  readonly status: "created" | "opened_existing";
+  /** Absent when the host accepted the PR but did not list it back yet. */
+  readonly url?: string;
+  readonly number?: number;
+  readonly baseBranch: string;
+  readonly headBranch: string;
+  readonly title: string;
+}
+
 export class GitManager extends Context.Service<
   GitManager,
   {
@@ -175,6 +185,13 @@ export class GitManager extends Context.Service<
       input: GitRunStackedActionInput,
       options?: GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
+    /** Opens a PR for the checkout's pushed branch, or returns the one already open. */
+    readonly createPullRequest: (input: {
+      readonly cwd: string;
+      readonly title: string;
+      readonly body: string;
+      readonly baseBranch?: string | undefined;
+    }) => Effect.Effect<GitCreatePullRequestResult, GitManagerServiceError>;
     readonly subscribePullRequestStateChanges: Effect.Effect<
       Stream.Stream<ThreadPullRequestKey>,
       never,
@@ -2437,13 +2454,18 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const runPrStep = Effect.fn("runPrStep")(function* (
-    settings: SourceControlTextGenerationSettings,
+  const openPrFromBranch = Effect.fn("openPrFromBranch")(function* <E>(
     cwd: string,
     fallbackBranch: string | null,
-    threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
-    pushRemoteRef?: { readonly remoteName: string; readonly upstreamRef: string },
+    pushRemoteRef: { readonly remoteName: string; readonly upstreamRef: string } | undefined,
+    requestedBase: string | undefined,
+    content: (input: {
+      readonly provider: SourceControlProvider.SourceControlProvider["Service"];
+      readonly baseBranch: string;
+      readonly baseRef: string;
+      readonly headBranch: string;
+    }) => Effect.Effect<{ readonly title: string; readonly body: string }, E>,
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
@@ -2483,42 +2505,14 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    const { baseBranch, baseRef } = yield* resolvePrBase(
-      cwd,
-      branch,
-      details.upstreamRef,
-      headContext,
-    );
-    yield* emit({
-      kind: "phase_started",
-      phase: "pr",
-      label: `Generating ${terms.shortLabel} content...`,
-    });
-    const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
-    const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
-    const policy = yield* resolveStylePolicy(cwd, settings);
-    const changeRequestTemplate =
-      settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
-        ? Option.getOrUndefined(
-            yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
-          )
-        : undefined;
-    const threadContext = yield* readThreadContext(threadId);
-
-    const generated = yield* textGeneration.generatePrContent({
-      cwd,
+    const resolved = yield* resolvePrBase(cwd, branch, details.upstreamRef, headContext);
+    const baseBranch = requestedBase ?? resolved.baseBranch;
+    const generated = yield* content({
+      provider,
       baseBranch,
+      baseRef: requestedBase ?? resolved.baseRef,
       headBranch: headContext.headBranch,
-      commitSummary: limitContext(rangeContext.commitSummary, 20_000),
-      diffSummary: limitContext(rangeContext.diffSummary, 20_000),
-      diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-      ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
-      ...(threadContext ? { threadContext } : {}),
-      ...(policy ? { policy } : {}),
-      modelSelection: settings.modelSelection,
-      projectId: settings.projectId,
     });
-
     const bodyFile = path.join(
       tempDir,
       `t3code-pr-body-${process.pid}-${yield* randomUUIDv4(cwd)}.md`,
@@ -2585,6 +2579,68 @@ export const make = Effect.gen(function* () {
       headBranch: created.headRefName,
       title: created.title,
     };
+  });
+
+  const runPrStep = (
+    settings: SourceControlTextGenerationSettings,
+    cwd: string,
+    fallbackBranch: string | null,
+    threadId: ThreadId | undefined,
+    emit: GitActionProgressEmitter,
+    pushRemoteRef?: { readonly remoteName: string; readonly upstreamRef: string },
+  ) =>
+    openPrFromBranch(
+      cwd,
+      fallbackBranch,
+      emit,
+      pushRemoteRef,
+      undefined,
+      ({ provider, baseBranch, baseRef, headBranch }) =>
+        Effect.gen(function* () {
+          const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
+          yield* emit({
+            kind: "phase_started",
+            phase: "pr",
+            label: `Generating ${terms.shortLabel} content...`,
+          });
+          const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
+          const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
+          const policy = yield* resolveStylePolicy(cwd, settings);
+          const changeRequestTemplate =
+            settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
+              ? Option.getOrUndefined(
+                  yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
+                )
+              : undefined;
+          const threadContext = yield* readThreadContext(threadId);
+
+          return yield* textGeneration.generatePrContent({
+            cwd,
+            baseBranch,
+            headBranch,
+            commitSummary: limitContext(rangeContext.commitSummary, 20_000),
+            diffSummary: limitContext(rangeContext.diffSummary, 20_000),
+            diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+            ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
+            ...(threadContext ? { threadContext } : {}),
+            ...(policy ? { policy } : {}),
+            modelSelection: settings.modelSelection,
+            projectId: settings.projectId,
+          });
+        }),
+    );
+
+  const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
+    "GitManager.createPullRequest",
+  )(function* (input) {
+    return yield* openPrFromBranch(
+      input.cwd,
+      null,
+      () => Effect.void,
+      undefined,
+      input.baseBranch,
+      () => Effect.succeed({ title: input.title, body: input.body }),
+    );
   });
 
   const localStatus: GitManager["Service"]["localStatus"] = Effect.fn("localStatus")(
@@ -3726,6 +3782,7 @@ export const make = Effect.gen(function* () {
     resolvePullRequest,
     preparePullRequestThread,
     runStackedAction,
+    createPullRequest,
     subscribePullRequestStateChanges: PubSub.subscribe(pullRequestStateChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
     ),
