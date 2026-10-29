@@ -473,6 +473,7 @@ export function usePendingThreadRequests(input: {
       }
       return;
     }
+    if (!activePendingProgress.canAdvance) return;
     setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
   };
   const onAdvanceActivePendingUserInputStable = useStableCallback(onAdvanceActivePendingUserInput);
