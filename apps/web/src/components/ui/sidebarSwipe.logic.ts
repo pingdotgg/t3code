@@ -1,12 +1,10 @@
 /**
  * Snap the mobile sidebar sheet open or closed from a touch or pen drag.
  *
- * The closed sheet is not in the DOM, so an open drag has to start on the
- * page, inside a narrow left-edge band. A close drag starts on the open
- * sheet. Vertical movement cancels the drag so the thread list still scrolls.
+ * An open drag can start anywhere on the page. A close drag starts on the
+ * open sheet. Vertical movement cancels the drag so content still scrolls.
  */
 
-export const SIDEBAR_SWIPE_EDGE_PX = 24;
 export const SIDEBAR_SWIPE_AXIS_LOCK_PX = 12;
 export const SIDEBAR_SWIPE_COMMIT_PX = 48;
 export const SIDEBAR_SWIPE_FLICK_MIN_PX = 16;
@@ -34,7 +32,7 @@ export interface SidebarSwipeGesture {
 }
 
 /**
- * Mouse drags at the left edge would fight text selection in a narrow window.
+ * Mouse drags would fight text selection in a narrow window.
  * Touch and pen are the only pointers that should move the sheet.
  */
 function isSidebarSwipePointer(pointerType: string): boolean {
@@ -48,10 +46,8 @@ export function beginSidebarSwipe(input: {
   y: number;
   time: number;
   intent: SidebarSwipeIntent;
-  edgePx?: number;
 }): SidebarSwipeGesture | null {
   if (!isSidebarSwipePointer(input.pointerType)) return null;
-  if (input.intent === "open" && input.x > (input.edgePx ?? SIDEBAR_SWIPE_EDGE_PX)) return null;
 
   return {
     phase: "pending",

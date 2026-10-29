@@ -18,8 +18,8 @@ function isTextEntry(target: EventTarget | null): boolean {
 }
 
 /**
- * A code block or table that already scrolls sideways owns drags that start
- * on it. The edge band is wide enough to overlap those.
+ * Code blocks and tables that scroll sideways own drags that start on them,
+ * even though opening the drawer is otherwise available across the page.
  */
 function startedOnHorizontalScroller(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
