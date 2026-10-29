@@ -336,10 +336,17 @@ export const readPersistedObservabilitySettings: Effect.Effect<
 > = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(Effect.option);
-  return Option.isNone(raw)
-    ? NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS
-    : parsePersistedServerObservabilitySettings(raw.value);
+  return yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(
+    Effect.map(parsePersistedServerObservabilitySettings),
+    // A missing file saved nothing; an unreadable one may hold a telemetry opt-out.
+    Effect.catch((cause) =>
+      Effect.succeed(
+        cause.reason._tag === "NotFound"
+          ? NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS
+          : { ...NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS, telemetryEnabled: false },
+      ),
+    ),
+  );
 });
 
 const resolveOtlpEndpoints = Effect.gen(function* () {
