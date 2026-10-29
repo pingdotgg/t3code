@@ -599,13 +599,19 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           } else if (deviceOffline) {
             return true;
           }
+          // An attempt started before the network came back can hang until
+          // its setup timeout, so a recovery restarts it at once.
+          if (next.network === "online") {
+            return true;
+          }
           break;
         case "ConnectRequested":
         case "BetterRouteAvailable":
           break;
         case "Wakeup":
-          // An attempt that ran into a long suspension is likely stuck.
-          if (next.reason === "application-active-long") {
+          // An attempt that ran into a long suspension is likely stuck, and one
+          // started before a network change can hang until its setup timeout.
+          if (next.reason === "application-active-long" || next.reason === "network-changed") {
             return true;
           }
           if (next.reason === "credentials-changed" && usesRelay) {

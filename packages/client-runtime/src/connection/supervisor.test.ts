@@ -514,6 +514,75 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect.each(["network-changed", "online"] as const)(
+    "restarts a hanging setup immediately after network recovery via %s",
+    (recovery) =>
+      Effect.gen(function* () {
+        const firstAttemptStarted = yield* Deferred.make<void>();
+        const firstAttemptCancelled = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          networkStatus: recovery === "online" ? "unknown" : "online",
+          prepare: (attempt) =>
+            attempt === 1
+              ? Deferred.succeed(firstAttemptStarted, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() => Deferred.succeed(firstAttemptCancelled, undefined)),
+                )
+              : Effect.succeed(PREPARED_CONNECTION),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* Deferred.await(firstAttemptStarted);
+        yield* recovery === "online"
+          ? harness.setNetworkStatus("online")
+          : harness.wake("network-changed");
+        yield* TestClock.adjust("0 millis");
+
+        expect(yield* Deferred.isDone(firstAttemptCancelled)).toBe(true);
+        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+        const connected = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected",
+        );
+        expect(connected).toMatchObject({ attempt: 1, generation: 1, lastFailure: null });
+        expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("preserves synchronization on ordinary activation but restarts on a long resume", () =>
+    Effect.gen(function* () {
+      const synchronizing = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        ready: (attempt) =>
+          attempt === 1
+            ? Deferred.succeed(synchronizing, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(synchronizing);
+      yield* harness.wake("application-active");
+      yield* harness.wake("application-active-probe");
+      yield* TestClock.adjust("0 millis");
+
+      expect((yield* SubscriptionRef.get(supervisor.state)).stage).toBe("synchronizing");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+
+      yield* harness.wake("application-active-long");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not let platform wakeups reset an in-flight attempt", () =>
     Effect.gen(function* () {
       const firstAttemptStarted = yield* Deferred.make<void>();
