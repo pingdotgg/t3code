@@ -35,6 +35,29 @@ The confirmation counts the running threads that the restarts will interrupt,
 and how many can resume afterwards. See **Continue threads after restarts**
 below.
 
+## Switch between Stable and Nightly
+
+In the desktop app, change **Settings → About → Update track**. T3 Code shows each
+connected machine it will move and each one it skips, then moves them in one
+step. Remote servers install the latest release on the new track. Remote desktop
+apps reinstall on the new track. This app reinstalls last. Your threads,
+settings, and data stay.
+
+A background service cannot move to an older release remotely. When Stable is
+older than its Nightly, run `t3 update --channel stable --allow-downgrade` on
+that machine.
+
+A switch is blocked for a machine whose database already has changes the
+target release does not support, or when T3 Code cannot confirm that it does.
+The dialog says why: update a machine on its current track first when its
+release is too old to check, or wait until the target track includes the
+changes. A Mac running the desktop app must switch on that Mac.
+
+Each machine keeps the new track even if its switch did not finish, but it
+moves to that track only through a switch. **Update track** shows how many
+machines still run the other track. **Review** opens the same dialog with fresh
+checks.
+
 ## Before you update
 
 Server updates restart the connection and can interrupt active agents and

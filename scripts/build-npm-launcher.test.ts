@@ -13,6 +13,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
 import * as NodeHttp from "node:http";
 
+import { npmReleaseDatabaseMigration } from "@t3tools/shared/cliRelease";
+
 import { buildNpmLauncher } from "./build-npm-launcher.ts";
 
 const VERSION = "1.2.3";
@@ -118,6 +120,7 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         assert.deepStrictEqual(manifest.bin, { t3: "./bin/t3.mjs" });
         assert.isUndefined(manifest.dependencies);
         assert.isUndefined(manifest.optionalDependencies);
+        assert.isAbove(npmReleaseDatabaseMigration(manifest) ?? 0, 0);
 
         const installed = path.join(root, "installed");
         yield* fs.makeDirectory(installed);

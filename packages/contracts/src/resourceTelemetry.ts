@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
-import { DesktopUpdateStateSchema } from "./ipc.ts";
+import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
@@ -323,6 +323,9 @@ export const DesktopTelemetryRequestDesktopUpdate = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("requestDesktopUpdate"),
   requestId: TrimmedNonEmptyString,
+  /** A track switch: move to this channel first, and install only `targetVersion`. */
+  channel: Schema.optionalKey(DesktopUpdateChannelSchema),
+  targetVersion: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type DesktopTelemetryRequestDesktopUpdate = typeof DesktopTelemetryRequestDesktopUpdate.Type;
 

@@ -20,11 +20,12 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 
-import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
+import { CLI_RELEASE_BASE_URL_ENV, crossesReleaseTrack } from "@t3tools/shared/cliRelease";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -93,6 +94,26 @@ export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on
   },
 );
 
+/** The client checks this when planning; the host checks again because its database may have
+ * moved on since (another client updated it). Stable and Nightly each build their own commits,
+ * so crossing tracks needs the target release to know every migration this database holds. */
+export function trackSwitchBlockReason(input: {
+  readonly serverVersion: string;
+  readonly targetVersion: string;
+  readonly targetDatabaseMigration: number | undefined;
+  /** Read only for a crossing; undefined when the database cannot be read. */
+  readonly databaseMigration: () => number | undefined;
+}): string | null {
+  if (!crossesReleaseTrack(input.serverVersion, input.targetVersion)) return null;
+  const databaseMigration = input.databaseMigration();
+  if (input.targetDatabaseMigration === undefined || databaseMigration === undefined) {
+    return `Cannot confirm this database works with t3@${input.targetVersion}. Switch tracks from Settings → About → Update track, which checks it first.`;
+  }
+  return input.targetDatabaseMigration < databaseMigration
+    ? `This database has changes t3@${input.targetVersion} does not support yet; it stays on this release.`
+    : null;
+}
+
 export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const desktopAppUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
@@ -119,12 +140,27 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       ? new ServerSelfUpdateError({ reason })
       : new ServerSelfUpdateError({ reason, cause });
 
+  const crossesTrackUnsafely = (input: ServerSelfUpdateInput) =>
+    trackSwitchBlockReason({
+      serverVersion: packageJson.version,
+      targetVersion: input.targetVersion,
+      targetDatabaseMigration: input.targetDatabaseMigration,
+      databaseMigration: () => databaseMigrationHead(serverConfig.dbPath),
+    });
+
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(
     "cloud.server_self_update.update",
   )(function* (input, reportProgress = () => Effect.void, onHandoffAccepted = () => Effect.void) {
     if (capability === "desktop-managed") {
+      const unsafeCrossing = input.channel === undefined ? null : crossesTrackUnsafely(input);
+      if (unsafeCrossing !== null) return yield* failWith(unsafeCrossing);
       if (desktopAppUpdate.available) {
-        return yield* desktopAppUpdate.run(reportProgress);
+        return yield* desktopAppUpdate.run(
+          reportProgress,
+          input.channel === undefined
+            ? undefined
+            : { channel: input.channel, targetVersion: input.targetVersion },
+        );
       }
       return yield* failWith(
         "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
@@ -136,6 +172,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       );
     }
 
+    const unsafeCrossing = crossesTrackUnsafely(input);
+    if (unsafeCrossing !== null) return yield* failWith(unsafeCrossing);
     const targetVersion = input.targetVersion.trim();
     if (!isExactServiceVersion(targetVersion)) {
       return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);

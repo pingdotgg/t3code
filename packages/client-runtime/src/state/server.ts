@@ -969,6 +969,17 @@ export function createServerEnvironmentAtoms<R, E>(
           }),
         );
 
+        // A track switch's desktop host already on its track's newest build only saved the
+        // track; nothing restarts.
+        if (
+          result.method === "desktop-app" &&
+          result.desktopUpdateToken === undefined &&
+          result.targetVersion === fromVersion
+        ) {
+          atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
+          return result;
+        }
+
         yield* nudgeReconnectDuringUpdateRestart({
           stateChanges: environmentRegistry.stateChanges(target.environmentId),
           retryNow: environmentRegistry.retryNow(target.environmentId),

@@ -313,3 +313,36 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     }),
   );
 });
+
+it("a host crosses tracks only to a release that knows its whole database", () => {
+  const cross = (
+    serverVersion: string,
+    targetVersion: string,
+    targetDatabaseMigration: number | undefined,
+    databaseMigration = 72,
+  ) =>
+    ServerSelfUpdate.trackSwitchBlockReason({
+      serverVersion,
+      targetVersion,
+      targetDatabaseMigration,
+      databaseMigration: () => databaseMigration,
+    });
+  const nightly = "0.1.4-nightly.20261027.3796";
+
+  expect(cross(nightly, "0.1.4", 72)).toBeNull();
+  // Another client moved this host to a newer Nightly after the switch was planned.
+  expect(cross(nightly, "0.1.4", 72, 73)).toContain("does not support yet");
+  expect(cross(nightly, "0.1.4", undefined)).toContain("Cannot confirm");
+  // A Stable tag can carry a migration the latest Nightly lacks.
+  expect(cross("0.1.4", nightly, 72, 73)).toContain("does not support yet");
+  expect(cross("0.1.3", "0.1.4", undefined)).toBeNull();
+  // A database that exists but cannot be read proves nothing.
+  expect(
+    ServerSelfUpdate.trackSwitchBlockReason({
+      serverVersion: nightly,
+      targetVersion: "0.1.4",
+      targetDatabaseMigration: 72,
+      databaseMigration: () => undefined,
+    }),
+  ).toContain("Cannot confirm");
+});
