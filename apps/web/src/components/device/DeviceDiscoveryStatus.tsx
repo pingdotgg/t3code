@@ -20,12 +20,7 @@ export function DeviceDiscoveryStatus(props: { readonly label: string; readonly 
           </CollapsibleTrigger>
         </div>
         <CollapsiblePanel>
-          <p
-            className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words px-3 pb-2 font-mono"
-            tabIndex={0}
-          >
-            {props.detail}
-          </p>
+          <p className="whitespace-pre-wrap break-words px-3 pb-2 font-mono">{props.detail}</p>
         </CollapsiblePanel>
       </Collapsible>
     </div>
