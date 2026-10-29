@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { useSidebarSwipe } from "./sidebarSwipe";
+import { Sheet, SheetPopup, SheetTitle } from "./sheet";
 
 function Harness({ initiallyOpen = false }: { initiallyOpen?: boolean }) {
   const [open, setOpen] = useState(initiallyOpen);
@@ -194,5 +195,90 @@ describe("paired mobile drawers", () => {
     const state = screen.container.firstElementChild as HTMLElement;
     await act(() => swipe(state.querySelector("[data-outside]")!, 250, 150));
     expect(state.dataset.rightOpen).toBe("false");
+  });
+});
+
+function SheetHarness() {
+  const [open, setOpen] = useState(true);
+  const [clicks, setClicks] = useState(0);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useSidebarSwipe({ enabled: true, side: "right", open, setOpen, sheetRef });
+  return (
+    <section data-open={open} data-clicks={clicks}>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetPopup ref={sheetRef} side="right" transitionDurationMs={0} showCloseButton={false}>
+          <SheetTitle>Right tray</SheetTitle>
+          <button onClick={() => setClicks((count) => count + 1)}>Tray action</button>
+          <a
+            href="#tray-link"
+            onClick={(event) => {
+              event.preventDefault();
+              setClicks((count) => count + 1);
+            }}
+          >
+            Tray link
+          </a>
+          <pre style={{ width: 100, overflowX: "auto" }}>
+            <code style={{ display: "block", width: 500 }}>Wide tray code</code>
+          </pre>
+        </SheetPopup>
+      </Sheet>
+    </section>
+  );
+}
+
+describe("actual right sheet gestures", () => {
+  it.each(["button", "a"])(
+    "delivers a %s click after tiny horizontal tap drift",
+    async (selector) => {
+      await using screen = await render(<SheetHarness />, { router: false });
+      const state = screen.container.firstElementChild as HTMLElement;
+      const target = document.querySelector(`[data-slot='sheet-popup'] ${selector}`) as HTMLElement;
+      await act(() => {
+        pointer(target, "pointerdown", 150);
+        touch(target, "touchstart", 150, 200);
+        expect(touch(target, "touchmove", 152, 200).defaultPrevented).toBe(false);
+        touch(target, "touchend", 152, 200, true);
+        target.click();
+      });
+      expect(state.dataset.clicks).toBe("1");
+      expect(state.dataset.open).toBe("true");
+    },
+  );
+
+  it("leaves code scrolling to the open tray and still closes from ordinary content", async () => {
+    await using screen = await render(<SheetHarness />, { router: false });
+    const state = screen.container.firstElementChild as HTMLElement;
+    const code = document.querySelector("[data-slot='sheet-popup'] code") as HTMLElement;
+    expect(code.parentElement!.scrollWidth).toBeGreaterThan(code.parentElement!.clientWidth + 1);
+    await act(() => {
+      pointer(code, "pointerdown", 150);
+      touch(code, "touchstart", 150, 200);
+      expect(touch(code, "touchmove", 250, 201).defaultPrevented).toBe(false);
+      touch(code, "touchend", 250, 201, true);
+    });
+    expect(state.dataset.open).toBe("true");
+    const button = document.querySelector("[data-slot='sheet-popup'] button") as HTMLElement;
+    await act(() => {
+      pointer(button, "pointerdown", 150);
+      swipe(button, 150, 250);
+      button.click();
+    });
+    expect(state.dataset.open).toBe("false");
+    expect(state.dataset.clicks).toBe("0");
+  });
+
+  it("does not claim a tiny horizontal drift followed by vertical scrolling", async () => {
+    await using screen = await render(<SheetHarness />, { router: false });
+    const state = screen.container.firstElementChild as HTMLElement;
+    const target = document.querySelector("[data-slot='sheet-popup'] button") as HTMLElement;
+    await act(() => {
+      pointer(target, "pointerdown", 150);
+      touch(target, "touchstart", 150, 200);
+      expect(touch(target, "touchmove", 152, 200).defaultPrevented).toBe(false);
+      expect(touch(target, "touchmove", 153, 240).defaultPrevented).toBe(false);
+      touch(target, "touchend", 153, 240, true);
+    });
+    expect(state.dataset.open).toBe("true");
   });
 });

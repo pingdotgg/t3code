@@ -108,7 +108,7 @@ export function useSidebarSwipe(input: {
       if (intent === "open" && !canStartOpening(event.target)) return;
       if (intent === "close" && !isOpenSheetTarget(event.target, sheetRef.current)) return;
       if (isTextEntry(event.target)) return;
-      if (intent === "open" && startedOnHorizontalScroller(event.target)) return;
+      if (startedOnHorizontalScroller(event.target)) return;
 
       const next = beginSidebarSwipe({
         pointerType,
