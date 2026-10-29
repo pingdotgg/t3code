@@ -514,6 +514,15 @@ function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
   return null;
 }
 
+// `--short` and `--abbrev-ref` print `heads/<name>` when a tag shares the branch's name, so
+// branch reads take the full ref and strip the prefix themselves.
+function branchNameFromHeadRef(value: string): string | null {
+  const ref = value.trim();
+  return ref.startsWith("refs/heads/") && ref.length > "refs/heads/".length
+    ? ref.slice("refs/heads/".length)
+    : null;
+}
+
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
   const trimmed = value.trim();
   const prefix = `refs/remotes/${remoteName}/`;
@@ -1412,7 +1421,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGit(
           "GitVcsDriver.resolveRepositoryPaths.currentBranch",
           cwd,
-          ["symbolic-ref", "--quiet", "--short", "HEAD"],
+          ["symbolic-ref", "--quiet", "HEAD"],
           {
             timeoutMs: 5_000,
             allowNonZeroExit: true,
@@ -1443,11 +1452,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             Effect.map((physicalCwd) => path.relative(worktreeRoot, physicalCwd) === ""),
             Effect.orElseSucceed(() => undefined),
           );
-    const currentBranchOutput = currentBranchResult.stdout.trim();
     const currentBranch =
-      currentBranchResult.exitCode === 0 && currentBranchOutput.length > 0
-        ? currentBranchOutput
-        : null;
+      currentBranchResult.exitCode === 0 ? branchNameFromHeadRef(currentBranchResult.stdout) : null;
 
     return {
       gitCommonDir,
@@ -1938,7 +1944,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const branchResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.statusDetailsRemote.branch",
       cwd,
-      ["rev-parse", "--abbrev-ref", "HEAD"],
+      ["rev-parse", "--symbolic-full-name", "HEAD"],
       { allowNonZeroExit: true },
     ).pipe(
       Effect.catchTags({
@@ -1960,7 +1966,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ...gitCommandContext({
             operation: "GitVcsDriver.statusDetailsRemote.branch",
             cwd,
-            args: ["rev-parse", "--abbrev-ref", "HEAD"],
+            args: ["rev-parse", "--symbolic-full-name", "HEAD"],
           }),
           detail: "Git branch lookup failed.",
           exitCode: branchResult.exitCode,
@@ -1972,12 +1978,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const branchValue = yield* runGitStdout(
         "GitVcsDriver.statusDetailsRemote.unbornBranch",
         cwd,
-        ["symbolic-ref", "--quiet", "--short", "HEAD"],
+        ["symbolic-ref", "--quiet", "HEAD"],
       );
-      branch = branchValue.trim() || null;
+      branch = branchNameFromHeadRef(branchValue);
     } else {
-      const branchValue = branchResult.stdout.trim();
-      branch = branchValue.length > 0 && branchValue !== "HEAD" ? branchValue : null;
+      branch = branchNameFromHeadRef(branchResult.stdout);
     }
     const currentUpstreamRef = yield* readCurrentUpstreamRef(cwd);
     let upstreamRef =
@@ -2781,9 +2786,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         runGitStdout(
           "GitVcsDriver.pullCurrentBranch.currentBranch",
           cwd,
-          ["symbolic-ref", "--quiet", "--short", "HEAD"],
+          ["symbolic-ref", "--quiet", "HEAD"],
           true,
-        ).pipe(Effect.map((stdout) => stdout.trim())),
+        ).pipe(Effect.map(branchNameFromHeadRef)),
         runGitStdout("GitVcsDriver.pullCurrentBranch.currentSha", cwd, ["rev-parse", "HEAD"]).pipe(
           Effect.map((stdout) => stdout.trim()),
         ),
