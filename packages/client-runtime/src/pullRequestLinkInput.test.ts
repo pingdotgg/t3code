@@ -161,6 +161,13 @@ describe("parsePullRequestReference", () => {
     ).toBe("https://acme.visualstudio.com/project/_git/t3code/pullrequest/42");
   });
 
+  it.each([
+    "https://code.example.com/group/project/-/merge_requests/42",
+    "http://git.internal/group/sub/project/-/merge_requests/7",
+  ])("accepts self-hosted GitLab merge request URL %s", (url) => {
+    expect(parsePullRequestReference(url)).toBe(url);
+  });
+
   it("accepts gh pr checkout commands with raw numbers", () => {
     expect(parsePullRequestReference("gh pr checkout 42")).toBe("42");
   });
