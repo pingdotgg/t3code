@@ -1436,6 +1436,7 @@ export function deriveMessagesTimelineRows(input: {
     liveSubagentEntryIds,
     completeSupersededReplyEntryIds: completeSupersededReplyIds,
   });
+  const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
   const collapsedEntryIds = new Set<string>();
   const collapsedFoldMemberIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -1681,14 +1682,14 @@ export function deriveMessagesTimelineRows(input: {
 
     const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
     if (turnFold) {
-      const deferredWorkItemIds = timelineEntries.flatMap((entry) =>
-        turnFold.entryIds.has(entry.id) &&
-        entry.kind === "work" &&
-        entry.entry.projectedItem?.item.deferredWork &&
-        !supersededWorkItemIds.has(String(entry.entry.projectedItem.sourceItemId))
+      const deferredWorkItemIds = [...turnFold.entryIds].flatMap((entryId) => {
+        const entry = timelineEntryById.get(entryId);
+        return entry?.kind === "work" &&
+          entry.entry.projectedItem?.item.deferredWork &&
+          !supersededWorkItemIds.has(String(entry.entry.projectedItem.sourceItemId))
           ? [String(entry.entry.projectedItem.sourceItemId)]
-          : [],
-      );
+          : [];
+      });
       nextRows.push({
         kind: "turn-fold",
         id: `turn-fold:${turnFold.runId}`,
