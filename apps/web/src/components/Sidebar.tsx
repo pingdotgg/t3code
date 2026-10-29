@@ -3371,7 +3371,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className="mt-auto"
                                 label="Working"
                                 count={workingThreads.length}
-                                hostsUndoNotice
                                 toggle={{
                                   expanded: workingShelfExpanded,
                                   onToggle: toggleWorkingShelf,
@@ -3387,7 +3386,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className={cn(workingThreads.length === 0 && "mt-auto")}
                                 label="Snoozed"
                                 count={snoozedThreads.length}
-                                hostsUndoNotice={workingThreads.length === 0}
                                 toggle={{
                                   expanded: snoozedShelfExpanded,
                                   onToggle: toggleSnoozedShelf,
@@ -3405,9 +3403,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 )}
                                 label="Settled"
                                 count={settledCount}
-                                hostsUndoNotice={
-                                  workingThreads.length + snoozedThreads.length === 0
-                                }
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
                                 toggle={{
@@ -3502,9 +3497,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ) : null}
         </SidebarGroup>
       </SidebarContent>
-      <SidebarChromeFooter
-        showUndoNotice={isSearchingThreads || sidebarListItemsFresh.length === 0}
-      />
+      <SidebarChromeFooter />
     </>
   );
 }
