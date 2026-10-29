@@ -65,6 +65,7 @@ export interface RpcSession {
 export interface RpcSessionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
+  readonly memoryPressure?: boolean;
   readonly usageLimitsCommand?: boolean;
   readonly providerCatalogsOnDemand?: boolean;
 }
@@ -100,12 +101,17 @@ type UsageLimitSourcesUpdatedEvent = Extract<
   ServerConfigStreamEvent,
   { readonly type: "usageLimitSourcesUpdated" }
 >;
+type MemoryPressureUpdatedEvent = Extract<
+  ServerConfigStreamEvent,
+  { readonly type: "memoryPressureUpdated" }
+>;
 
 interface ServerConfigReplayState {
   readonly projection: ServerConfigProjection;
   readonly revision: number;
   readonly themesEvent: EnvironmentThemesUpdatedEvent | undefined;
   readonly sourcesEvent: UsageLimitSourcesUpdatedEvent | undefined;
+  readonly pressureEvent: MemoryPressureUpdatedEvent | undefined;
 }
 
 interface BufferedServerConfigEvent {
@@ -126,6 +132,7 @@ function serverConfigReplayEvents(
     snapshot,
     ...(state.themesEvent === undefined ? [] : [state.themesEvent]),
     ...(state.sourcesEvent === undefined ? [] : [state.sourcesEvent]),
+    ...(state.pressureEvent === undefined ? [] : [state.pressureEvent]),
   ];
 }
 
@@ -175,6 +182,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   const serverConfigInput: ServerConfigSubscriptionInput = {
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
+    ...(options.memoryPressure === true ? { memoryPressure: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
     ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
   };
@@ -318,6 +326,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
                 event.type === "usageLimitSourcesUpdated"
                   ? event
                   : Option.getOrUndefined(current)?.sourcesEvent,
+              pressureEvent:
+                event.type === "memoryPressureUpdated"
+                  ? event
+                  : Option.getOrUndefined(current)?.pressureEvent,
             } satisfies ServerConfigReplayState;
             return [
               Option.some({ event, replay: next, revision: next.revision }),
