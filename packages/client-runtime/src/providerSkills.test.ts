@@ -199,6 +199,63 @@ describe("provider workspace snapshot refresh atom", () => {
     unmount();
   });
 
+  it.each(["already expired", "expires during discovery"])(
+    "retries an unchanged catalog that %s after the short cooldown",
+    async (expiry) => {
+      const start = Date.parse("2026-01-01T00:05:00.000Z");
+      vi.useFakeTimers({ now: expiry === "expires during discovery" ? start - 1 : start });
+      const stale = withSnapshot("2026-01-01T00:00:00.000Z");
+      const { registry, atom, responses, run, unmount } = setup(
+        expiry === "expires during discovery"
+          ? withSnapshot("2026-01-01T00:00:00.000Z", true)
+          : stale,
+        [
+          () => {
+            if (expiry === "expires during discovery") vi.setSystemTime(start + 1);
+            return stale;
+          },
+        ],
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(9_999);
+      registry.refresh(atom);
+      expect(run).toHaveBeenCalledTimes(1);
+      responses.push(() => withSnapshot("2026-01-01T00:05:10.000Z"));
+      await vi.advanceTimersByTimeAsync(1);
+      registry.refresh(atom);
+      expect(run).toHaveBeenCalledTimes(2);
+      unmount();
+    },
+  );
+
+  it("keeps the TTL guard for a newly scanned catalog when the client clock is ahead", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T01:00:00.000Z") });
+    const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z"), [
+      () => withSnapshot("2026-01-01T00:01:00.000Z"),
+    ]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("bounds retries when discovery repeatedly returns the same expired catalog", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:05:00.000Z") });
+    const stale = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { registry, atom, run, unmount } = setup(stale, [() => stale, () => stale, () => stale]);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(3);
+    unmount();
+  });
+
   it("does not rescan a current snapshot, and rescans once it ages past the TTL", () => {
     vi.useFakeTimers({ now: Date.parse("2026-01-01T00:01:00.000Z") });
     const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z"));
