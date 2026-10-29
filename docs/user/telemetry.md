@@ -23,7 +23,7 @@ To disable product events and relay tracing for an environment, turn off **Produ
 **Settings → About** with that environment selected, or run `t3 telemetry off` on its machine
 (`t3 telemetry on` turns it back on, `t3 telemetry status` shows it). Product events stop at once;
 relay tracing stops after the server restarts, and the desktop app's own relay tracing after the app
-restarts.
+restarts. If the settings file cannot be read, T3 Code treats the setting as off until it is fixed.
 
 `T3CODE_TELEMETRY_ENABLED` in the server's environment overrides that setting: `false` disables both
 whatever the setting says, and `true` enables them. Settings shows when the variable decides. Relay tracing also stops when `T3CODE_OTEL_SDK_DISABLED` or

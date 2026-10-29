@@ -213,7 +213,8 @@ export function parsePersistedServerObservabilitySettings(
   if (Option.isSome(decoded)) {
     return extractPersistedServerObservabilitySettings(decoded.value);
   }
-  return NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS;
+  // The file may hold a telemetry opt-out we can no longer read.
+  return { ...NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS, telemetryEnabled: false };
 }
 
 function shouldReplaceTextGenerationModelSelection(
