@@ -25,6 +25,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 export const FX_DRIVER_KIND = ProviderDriverKind.make("fx");
 /** T3's slug for "Default": the model `fx status` reports, never an fx model id. */
 export const FX_DEFAULT_MODEL_SLUG = "default";
+const FX_PROVIDER_CONFIG_ID = "provider";
 const FX_MODEL_CONFIG_ID = "model";
 const FX_MODE_CONFIG_ID = "mode";
 const FX_EFFORT_CONFIG_ID = "effort";
@@ -157,36 +158,71 @@ export function withFxSessionMode(
   };
 }
 
+/** A model on one fx backend (`gateway`, `codex`, `grok`, or a configured endpoint's id). */
+export interface FxModelChoice {
+  readonly backend: string | undefined;
+  readonly model: string;
+}
+
+/** fx backend ids never contain `:`, so the first one ends the backend. */
+export const fxModelSlug = (backend: string, model: string) => `${backend}:${model}`;
+
+/** A slug without a known backend is a model id for the session's current backend. */
+function parseFxModelSlug(slug: string, backends: ReadonlyArray<string>): FxModelChoice {
+  const separator = slug.indexOf(":");
+  const backend = separator > 0 ? slug.slice(0, separator) : undefined;
+  return backend !== undefined && backends.includes(backend)
+    ? { backend, model: slug.slice(separator + 1) }
+    : { backend: undefined, model: slug };
+}
+
+const selectOption = (
+  options: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  id: string,
+): Extract<EffectAcpSchema.SessionConfigOption, { type: "select" }> | undefined => {
+  const option = options.find((entry) => entry.id === id);
+  return option?.type === "select" ? option : undefined;
+};
+
 /**
- * Writes config id `model` (fx's `provider` option shares its category).
- * "Default" picks the model `fx status` reports when the session lists it.
- * An unlisted model the thread picked is still sent: fx's backends accept or
- * refuse it themselves, so a thread never runs on a model it did not pick.
+ * Writes fx's session-only `provider` (the backend), then `model`. "Default"
+ * is what `fx status` reports for the session's folder, skipped when that
+ * backend does not list it; any other unlisted model is still sent, so a
+ * thread never runs on a model it did not pick.
  */
 export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function* (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
   modelSelection: ModelSelection,
-  defaultModel: Effect.Effect<string | undefined> | undefined,
+  defaultChoice: Effect.Effect<FxModelChoice | undefined> | undefined,
 ): Effect.fn.Return<string | undefined, EffectAcpErrors.AcpError> {
-  const option = (yield* runtime.getConfigOptions).find(
-    (entry) => entry.id === FX_MODEL_CONFIG_ID && entry.type === "select",
-  );
-  const current = option?.type === "select" ? option.currentValue : undefined;
+  const backendOption = selectOption(yield* runtime.getConfigOptions, FX_PROVIDER_CONFIG_ID);
   const requested = modelSelection.model.trim();
   const isDefault = requested.length === 0 || requested === FX_DEFAULT_MODEL_SLUG;
-  const target = isDefault ? defaultModel && (yield* defaultModel) : requested;
-  if (target === undefined || target === current) return current;
-  // The status default can belong to another fx backend than the session's
-  // (after `fx provider`, or a loaded older session); then the session's
-  // own model stands.
+  const target = isDefault
+    ? defaultChoice && (yield* defaultChoice)
+    : parseFxModelSlug(
+        requested,
+        backendOption ? collectSessionConfigOptionValues(backendOption) : [],
+      );
+  if (
+    target?.backend !== undefined &&
+    backendOption !== undefined &&
+    target.backend !== backendOption.currentValue
+  ) {
+    yield* runtime.setConfigOption(FX_PROVIDER_CONFIG_ID, target.backend);
+  }
+  const modelOption = selectOption(yield* runtime.getConfigOptions, FX_MODEL_CONFIG_ID);
+  const current = modelOption?.currentValue;
+  if (target === undefined || target.model === current) return current;
   if (
     isDefault &&
-    (option === undefined || !collectSessionConfigOptionValues(option).includes(target))
+    (modelOption === undefined ||
+      !collectSessionConfigOptionValues(modelOption).includes(target.model))
   ) {
     return current;
   }
-  yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target, { allowUnlistedValue: true });
-  return target;
+  yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target.model, { allowUnlistedValue: true });
+  return target.model;
 });
 
 /** The shared option loop writes a stored effort; a thread without one starts at medium. */

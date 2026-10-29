@@ -20,6 +20,7 @@ import {
   resolveSelectableModelSelection,
   type ModelOption,
 } from "./modelOptions";
+import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 
 describe("mobile model options", () => {
   it("distinguishes same-name OpenCode models without changing their routing", () => {
@@ -68,6 +69,49 @@ describe("mobile model options", () => {
     );
     expect(groupByProvider(options)).toEqual([
       { providerKey: "opencode_work", providerLabel: "OpenCode Work", models: options },
+    ]);
+  });
+
+  it("groups fx's models under its backends, keeping a signed-out backend", () => {
+    const subProviders = [
+      { name: "Codex subscription" },
+      { name: "Grok subscription", unavailableReason: "Signed out." },
+    ];
+    const config = {
+      providers: [
+        {
+          instanceId: "fx",
+          driver: "fx",
+          displayName: "fx",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          subProviders,
+          models: [
+            { slug: "default", name: "Default (gpt-5.5)", isCustom: false, capabilities: null },
+            {
+              slug: "codex:gpt-5.5",
+              name: "gpt-5.5",
+              subProvider: "Codex subscription",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const [group] = groupByProvider(buildModelOptions(config, null, undefined, null));
+    expect(group?.subProviders).toEqual(subProviders);
+    const { ungrouped, groups } = groupModelsBySubProvider(
+      group?.models ?? [],
+      group?.subProviders ?? [],
+      (option) => option.subtitle,
+    );
+    expect(ungrouped.map((option) => option.key)).toEqual(["fx:default"]);
+    expect(groups.map(({ subProvider, models }) => [subProvider.name, models.length])).toEqual([
+      ["Codex subscription", 1],
+      ["Grok subscription", 0],
     ]);
   });
 

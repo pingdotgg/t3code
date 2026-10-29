@@ -47,7 +47,7 @@ const testLayer = Layer.mergeAll(
 
 const SESSION_ID = "fx-session-01";
 const ENABLED_FX_SETTINGS = Schema.decodeSync(FxSettings)({ enabled: true });
-/** The model `fx status --json` reports. */
+/** The model `fx status --json` reports in the thread's folder, on the gateway. */
 const FX_DEFAULT_MODEL = "anthropic/claude-opus-5.5";
 const NAMED_MODEL = "anthropic/claude-sonnet-5.5";
 const CUSTOM_MODEL = "openai/gpt-6.1-sol";
@@ -91,10 +91,11 @@ const fxConfig = (input: {
   readonly model: string;
   readonly modes: ReadonlyArray<string>;
   readonly mode?: string;
+  readonly backend?: string;
   /** The session's own model list, on a backend other than the gateway. */
   readonly models?: ReadonlyArray<string>;
 }) => [
-  select("provider", "model", "gateway", ["gateway", "codex", "grok"]),
+  select("provider", "model", input.backend ?? "gateway", ["gateway", "codex", "grok"]),
   select(
     "model",
     "model",
@@ -112,6 +113,7 @@ const fxConfig = (input: {
 const fxSession = (input: {
   readonly model: string;
   readonly modes: ReadonlyArray<string>;
+  readonly backend?: string;
   readonly models?: ReadonlyArray<string>;
 }) => ({
   sessionId: SESSION_ID,
@@ -179,7 +181,11 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
     settings: ENABLED_FX_SETTINGS,
     environment: {},
     selfInvocation: yield* resolveSelfInvocation(),
-    defaultModel: Effect.succeed(FX_DEFAULT_MODEL),
+    defaultChoice: (cwd) =>
+      // "Default" resolves in the thread's own folder.
+      Effect.succeed(
+        cwd === replayDir ? { backend: "gateway", model: FX_DEFAULT_MODEL } : undefined,
+      ),
     makeRuntime: makeAcpReplayRuntime({
       transcript,
       statusPath,
@@ -312,10 +318,9 @@ describe("FxAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
-  // `fx status` names the gateway default, but this loaded session runs on
-  // Codex, whose catalog lacks it; fx would refuse the write and the thread
-  // could not start.
-  it.effect("keeps the session's model when its backend lacks fx's default", () =>
+  // `fx status` names a gateway model, but this loaded session runs on Codex,
+  // whose catalog lacks it: the backend goes back first.
+  it.effect("moves a loaded session on another backend back to fx's default backend", () =>
     openFxSession({
       scenario: "default-other-backend",
       runtimeMode: "approval-required",
@@ -326,13 +331,74 @@ describe("FxAdapterV2", () => {
         outbound("session/load"),
         answer(
           "session/load",
-          fxSession({ model: CODEX_MODEL, models: [CODEX_MODEL], modes: FX_0_0_13_MODES }),
+          fxSession({
+            model: CODEX_MODEL,
+            backend: "codex",
+            models: [CODEX_MODEL],
+            modes: FX_0_0_13_MODES,
+          }),
+        ),
+        // fx then runs the gateway model it saved for that backend.
+        ...setConfig(
+          "provider",
+          "gateway",
+          fxConfig({ model: NAMED_MODEL, modes: FX_0_0_13_MODES }),
+        ),
+        ...setConfig(
+          "model",
+          FX_DEFAULT_MODEL,
+          fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
+        ),
+        ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
+      ],
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("switches the session's backend, then its model, for a backend's model", () =>
+    openFxSession({
+      scenario: "backend-model",
+      runtimeMode: "approval-required",
+      model: `codex:${CODEX_MODEL}`,
+      turnModel: "gateway:openai/gpt-5.6-sol",
+      frames: [
+        ...initialize,
+        outbound("session/new"),
+        answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
+        // fx already picks the thread's model on Codex, so only the backend is written.
+        ...setConfig(
+          "provider",
+          "codex",
+          fxConfig({
+            model: CODEX_MODEL,
+            backend: "codex",
+            models: [CODEX_MODEL, "gpt-5.4-mini"],
+            modes: FX_0_0_13_MODES,
+          }),
         ),
         ...setConfig(
           "mode",
           "ask",
-          fxConfig({ model: CODEX_MODEL, models: [CODEX_MODEL], modes: FX_0_0_13_MODES }),
+          fxConfig({
+            model: CODEX_MODEL,
+            backend: "codex",
+            models: [CODEX_MODEL, "gpt-5.4-mini"],
+            modes: FX_0_0_13_MODES,
+          }),
         ),
+        // The next turn moves the same session to a gateway model; the id
+        // after the backend goes to fx whole, slash included.
+        ...setConfig(
+          "provider",
+          "gateway",
+          fxConfig({ model: NAMED_MODEL, modes: FX_0_0_13_MODES }),
+        ),
+        ...setConfig(
+          "model",
+          "openai/gpt-5.6-sol",
+          fxConfig({ model: "openai/gpt-5.6-sol", modes: FX_0_0_13_MODES }),
+        ),
+        outbound("session/prompt"),
+        answer("session/prompt", { stopReason: "end_turn" }),
       ],
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
