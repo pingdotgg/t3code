@@ -235,6 +235,10 @@ export function T3ConnectUserProfilePage() {
             }
           : {}),
         actionVariant: "outline",
+        data: {
+          expandableContent: message,
+          expandableLabels: { expand: "Show more", collapse: "Show less" },
+        },
       }),
     );
   };
