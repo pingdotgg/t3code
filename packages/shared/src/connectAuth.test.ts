@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildConnectAuthorizeRequestUrl,
   connectLoopbackRedirectUri,
-  isConnectEnabled,
   readConnectAuthorizeRequest,
 } from "./connectAuth.ts";
 
@@ -48,16 +47,5 @@ describe("connectAuth", () => {
       );
       expect(readConnectAuthorizeRequest(url), port).toBeNull();
     }
-  });
-
-  it.each([
-    [undefined, true],
-    ["", true],
-    ["true", true],
-    ["0", true],
-    ["false", false],
-    [" FALSE ", false],
-  ] as const)("isConnectEnabled(%j) is %s", (value, expected) => {
-    expect(isConnectEnabled(value)).toBe(expected);
   });
 });
