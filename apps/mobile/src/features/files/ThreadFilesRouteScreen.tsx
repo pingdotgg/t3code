@@ -4,7 +4,7 @@ import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/files
 import { environmentSession } from "../../state/session";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -37,11 +37,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { projectEnvironment } from "../../state/projects";
 import type { AssetUrlFailureReason } from "../../state/asset-url-state";
-import {
-  useAdaptiveWorkspaceLayout,
-  useAdaptiveWorkspacePaneRole,
-  useRegisterWorkspaceInspector,
-} from "../layout/AdaptiveWorkspaceLayout";
+import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
@@ -431,7 +427,6 @@ function FilesToolbarBottomFade() {
 }
 
 export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
-  useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
   const { fileInspector, layout } = useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
@@ -588,7 +583,6 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
 }
 
 export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
-  useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
   const { fileInspector } = useAdaptiveWorkspaceLayout();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
@@ -780,7 +774,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       renderFiles={() => renderInspector(inspectorHeaderInset)}
     />
   );
-  useRegisterWorkspaceInspector(fileInspector.supported ? renderWorkspaceInspector : undefined);
+  const inspector = fileInspector.supported ? (
+    <Inspector>{renderWorkspaceInspector()}</Inspector>
+  ) : null;
+  const withInspector = (content: ReactNode) => (
+    <>
+      {inspector}
+      {content}
+    </>
+  );
 
   const fileMenuActions = (() => {
     if (relativePath === null) return [];
@@ -906,35 +908,41 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   };
 
   if (environmentId === null || (threadId !== null && selectedThread === null)) {
-    return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
+    return withInspector(
+      <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />,
+    );
   }
 
   if (!canReadFiles) {
     if (fileAccess.isPending) {
-      return <LoadingScreen message="Checking file access..." messagePlacement="above-spinner" />;
+      return withInspector(
+        <LoadingScreen message="Checking file access..." messagePlacement="above-spinner" />,
+      );
     }
-    return (
-      <FilesUnavailable detail={fileAccess.error ?? "This connection cannot read host files."} />
+    return withInspector(
+      <FilesUnavailable detail={fileAccess.error ?? "This connection cannot read host files."} />,
     );
   }
   if (cwd === null) {
-    return <FilesUnavailable />;
+    return withInspector(<FilesUnavailable />);
   }
 
   if (relativePath === null) {
-    return (
+    return withInspector(
       <View className="flex-1 items-center justify-center bg-sheet px-6">
         <NativeStackScreenOptions options={{ title: "Files" }} />
         <EmptyState title="File unavailable" detail="This file path is invalid." />
-      </View>
+      </View>,
     );
   }
 
   if (metadataPending) {
-    return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
+    return withInspector(
+      <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />,
+    );
   }
   if (directoryPath !== null) {
-    return (
+    return withInspector(
       <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-sheet"}>
         <FilesBrowserHeader
           projectName={directoryPath}
@@ -967,13 +975,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           />
           <FilesToolbarBottomFade />
         </ScreenContent>
-      </View>
+      </View>,
     );
   }
 
   const headerSubtitle = fileHeaderSubtitle(projectName, relativePath);
 
-  return (
+  return withInspector(
     <View className="flex-1 bg-sheet">
       <FileHeader
         title={basename(relativePath)}
@@ -1010,6 +1018,6 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         source={fullScreenPreview}
         onRequestClose={() => setFullScreenPreview(null)}
       />
-    </View>
+    </View>,
   );
 }

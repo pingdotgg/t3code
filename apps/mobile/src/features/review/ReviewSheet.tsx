@@ -36,11 +36,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import {
-  useAdaptiveWorkspaceLayout,
-  useAdaptiveWorkspacePaneRole,
-  useRegisterWorkspaceInspector,
-} from "../layout/AdaptiveWorkspaceLayout";
+import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useReviewCacheForThread } from "./reviewState";
 import {
@@ -425,7 +421,6 @@ type ReviewSheetProps = StaticScreenProps<{
 
 export function ReviewSheet(props: ReviewSheetProps) {
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
-  useAdaptiveWorkspacePaneRole("inspector");
   const { panes } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
@@ -620,7 +615,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
     selectedSection !== null &&
     parsedDiff.kind === "files" &&
     NativeReviewDiffView !== null;
-  useRegisterWorkspaceInspector(showChangedFilesPane ? renderInspector : undefined);
   const showChangedFilesToggle = panes.supportsAuxiliaryPane && showChangedFilesPane;
 
   const listHeader = (() => {
@@ -664,6 +658,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
   return (
     <>
+      {showChangedFilesPane ? (
+        <Inspector revealKey={`${environmentId}:${threadId}`}>{renderInspector()}</Inspector>
+      ) : null}
       <ReviewHeader
         environmentId={environmentId}
         threadId={threadId}
