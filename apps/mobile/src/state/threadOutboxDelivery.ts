@@ -83,6 +83,7 @@ import {
   undoComposerDraftMerge,
   updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
+  releaseDeliveredComposerModelPick,
 } from "./use-composer-drafts";
 import {
   dispatchingQueuedMessageIdAtom,
@@ -953,6 +954,12 @@ export function createThreadOutboxDelivery(): {
       return restoreQueuedMessage(persistedMessage, failure.message);
     }
     acknowledgedExistingThreadMessageIds.add(persistedMessage.messageId);
+    if (queuedMessage.modelSelection) {
+      await releaseDeliveredComposerModelPick(
+        scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
+        queuedMessage.modelSelection,
+      );
+    }
     const delivered =
       (await completeQueuedMessageDelivery(
         persistedMessage,
