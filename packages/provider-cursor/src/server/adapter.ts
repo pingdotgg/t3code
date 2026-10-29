@@ -941,6 +941,8 @@ interface ActiveCursorTurn {
   turnEnded: boolean;
   /** Bumps when new work starts so a pending idle finalize is ignored. */
   idleFinalizeGeneration: number;
+  /** Set when `sdkRun.wait` has finished (success, failure, or interrupt). */
+  readonly runWaitSettled: Deferred.Deferred<void, never>;
 }
 
 interface CursorLiveAgent {
@@ -2119,7 +2121,31 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ) {
                 return;
               }
-              yield* finalizeTurn({ context, status: "completed" });
+              if (context.assistant.nextSegment === 0) {
+                yield* Deferred.await(context.runWaitSettled);
+                if (
+                  context.finalized ||
+                  context.idleFinalizeGeneration !== generation ||
+                  !context.turnEnded ||
+                  cursorTurnHasActiveWork(context)
+                ) {
+                  return;
+                }
+              }
+              const transportFailure = context.assistantReply.failure;
+              const status = transportFailure === undefined ? "completed" : "failed";
+              yield* finalizeTurn({
+                context,
+                status,
+                ...(status === "failed"
+                  ? {
+                      failure: makeProviderFailure({
+                        cause: transportFailure,
+                        class: "transport_error",
+                      }),
+                    }
+                  : {}),
+              });
             }),
             sessionScope,
           );
@@ -2446,6 +2472,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();
+            const runWaitSettled = yield* Deferred.make<void, never>();
             const providerTurnId = idAllocator.derive.providerTurn({
               driver: CursorAgentSdk.CURSOR_PROVIDER,
               nativeTurnId: sdkRun.runId,
@@ -2472,6 +2499,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               finalized: false,
               turnEnded: false,
               idleFinalizeGeneration: 0,
+              runWaitSettled,
             };
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
@@ -2584,6 +2612,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   });
                 }),
               ),
+              Effect.ensuring(Deferred.succeed(runWaitSettled, undefined)),
               Effect.forkIn(sessionScope),
             );
           },

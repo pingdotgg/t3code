@@ -323,6 +323,15 @@ describe("CursorAdapterV2", () => {
       failure: null,
     },
     {
+      reason: "a transport failure when run.wait never resolves after turn-ended",
+      updates: [
+        { type: "text-delta", text: "Error: RetriableError: WritableIterable is closed" },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.never,
+      failure: { class: "transport_error", message: "Provider turn failed." },
+    },
+    {
       reason: "no answer from a resume after the turn ended that made no progress",
       updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
       wait: Effect.succeed({
