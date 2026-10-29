@@ -5,7 +5,7 @@ import { AsyncResult } from "effect/reactivity";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
@@ -48,7 +48,7 @@ export function SettingsKeyboardRouteScreen() {
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Keyboard" onBack={() => navigation.goBack()} />
+          <AppBar embedded sidebar={false} title="Keyboard" onBack={() => navigation.goBack()} />
         </>
       ) : null}
       <ScrollView

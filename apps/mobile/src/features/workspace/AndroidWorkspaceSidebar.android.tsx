@@ -12,7 +12,7 @@ import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
-import { WorkspaceAppBarScope } from "./WorkspaceAppBar";
+import { WorkspaceAppBarScope } from "../../components/ui/WorkspaceAppBar.android";
 
 export function AndroidWorkspaceSidebar(props: {
   readonly children: ReactNode;

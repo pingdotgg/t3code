@@ -52,6 +52,7 @@ export function AppBar(props: AppBarProps) {
     usesNativeMailSearchToolbar;
   const visibleMenus = compactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
   const refresh = search?.refreshInToolbar ? search.onRefresh : undefined;
+  if (props.embedded || props.sheet) return null;
   return (
     <>
       <NativeStackScreenOptions
