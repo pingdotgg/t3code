@@ -499,6 +499,9 @@ importers:
 
   apps/marketing:
     dependencies:
+      '@fontsource-variable/inter':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared

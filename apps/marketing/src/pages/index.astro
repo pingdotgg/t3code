@@ -89,11 +89,6 @@ const mobileEndorsementRows = [
         <div class="hero-preview">
           <figure class="hero-screenshot-frame">
             <picture>
-              <!-- Match the hidden mobile layout without requesting a screenshot. -->
-              <source
-                media="(max-width: 820px)"
-                srcset="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
-              />
               <img
                 src={desktopScreenshot.src}
                 srcset={`${screenshot.srcSet.attribute}, ${desktopScreenshot.src} ${desktopScreenshot.width}w`}
@@ -285,7 +280,7 @@ const mobileEndorsementRows = [
           </div>
           <div class="pr-foot">
             <span class="btn btn-ghost" style="font-size:12px;padding:6px 10px">View diff</span>
-            <span class="btn btn-primary" style="font-size:12px;padding:6px 12px">
+            <span class="btn btn-ghost" style="font-size:12px;padding:6px 12px">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 007.86 10.93c.58.1.79-.25.79-.56v-2c-3.2.69-3.88-1.37-3.88-1.37-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.76 2.68 1.25 3.33.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.27-5.24-5.67 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.15 1.18a10.96 10.96 0 015.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.57.23 2.73.11 3.02.74.8 1.18 1.83 1.18 3.08 0 4.41-2.7 5.38-5.27 5.66.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.8.56A11.5 11.5 0 0023.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
               Open pull request
             </span>
@@ -327,7 +322,6 @@ const mobileEndorsementRows = [
   <section id="open" class="sec-open">
     <div class="container">
       <div class="section-head open-head">
-        <div class="eyebrow">Open source</div>
         <h2>If you don't like something, fork it.</h2>
       </div>
 
@@ -406,7 +400,7 @@ const mobileEndorsementRows = [
 
           <span id="cta-download-label">Download for macOS</span>
         </a>
-        <a class="btn btn-ghost btn-lg" href="/download">Windows · Linux · other</a>
+        <a class="btn btn-ghost btn-lg" href="/download">Other platforms</a>
       </div>
     </div>
   </section>
@@ -489,12 +483,12 @@ const mobileEndorsementRows = [
 <style>
   section {
     position: relative;
-    padding: 96px 0;
+    padding: 80px 0;
     border-top: 1px solid var(--border);
   }
 
   .section-head {
-    margin-bottom: 56px;
+    margin-bottom: 40px;
     max-width: 720px;
   }
 
@@ -505,8 +499,8 @@ const mobileEndorsementRows = [
 
   .section-head h2 {
     font-size: clamp(32px, 4vw, 48px);
-    font-weight: 500;
-    letter-spacing: -0.035em;
+    font-weight: 600;
+    letter-spacing: -0.03em;
     line-height: 1.05;
     margin-bottom: 18px;
   }
@@ -550,8 +544,8 @@ const mobileEndorsementRows = [
     inset: 0;
     pointer-events: none;
     background-image:
-      linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+      linear-gradient(to right, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
     background-size: 48px 48px;
     mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 40%, transparent 100%);
     -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 40%, transparent 100%);
@@ -574,10 +568,11 @@ const mobileEndorsementRows = [
   .hero-sub {
     color: var(--fg-muted);
     font-size: clamp(16px, 1.4vw, 19px);
-    max-width: 640px;
+    max-width: 720px;
     margin: 0 auto 36px;
     letter-spacing: -0.005em;
     line-height: 1.55;
+    text-wrap: balance;
   }
 
   .hero-actions {
@@ -622,7 +617,7 @@ const mobileEndorsementRows = [
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    color: var(--fg-dim);
+    color: var(--fg-muted);
     font-size: 13px;
     letter-spacing: -0.005em;
   }
@@ -630,7 +625,7 @@ const mobileEndorsementRows = [
   .hero-mobile-line a {
     color: var(--fg-muted);
     text-decoration: underline;
-    text-decoration-color: rgba(161, 161, 170, 0.4);
+    text-decoration-color: rgba(163, 163, 163, 0.4);
     text-underline-offset: 3px;
     transition: color 0.18s ease, text-decoration-color 0.18s ease;
   }
@@ -679,15 +674,10 @@ const mobileEndorsementRows = [
     width: 100%;
     height: 100%;
     border-radius: 25%;
-    background: radial-gradient(circle at 30% 25%, var(--tint, rgba(255, 255, 255, 0.08)), rgba(20, 20, 24, 0.92) 65%);
+    background: var(--bg-card);
     border: 1px solid var(--border);
-    box-shadow:
-      0 20px 48px -16px rgba(0, 0, 0, 0.65),
-      0 2px 0 0 rgba(255, 255, 255, 0.04) inset;
-    animation:
-      mark-in 1s cubic-bezier(0.2, 0.7, 0.2, 1) var(--d) both,
-      mark-drift var(--dur) ease-in-out calc(var(--d) + 1s) infinite;
-    animation-play-state: running, var(--home-motion-state, paused);
+    box-shadow: 0 12px 32px -16px rgba(0, 0, 0, 0.65);
+    animation: mark-in 1s cubic-bezier(0.2, 0.7, 0.2, 1) var(--d) both;
   }
 
   .hero-float-card img {
@@ -701,17 +691,13 @@ const mobileEndorsementRows = [
     from { opacity: 0; transform: translate(var(--fx), var(--fy)) rotate(calc(var(--rot) + 24deg)) scale(0.6); }
     to { opacity: 1; transform: translate(0, 0) rotate(var(--rot)) scale(1); }
   }
-  @keyframes mark-drift {
-    0%, 100% { transform: translate(0, 0) rotate(var(--rot)); }
-    50% { transform: translate(var(--dx), var(--dy)) rotate(calc(var(--rot) + var(--wob))); }
-  }
 
-  .hf-opencode    { --x: max(-300px, -19vw); --y: 20px; --s: 64px; --rot: 6deg; --depth: 0.6; --d: 620ms; --dur: 8.5s; --dx: 2px; --dy: -8px; --wob: 3deg; --fx: -40px; --fy: -80px; }
-  .hf-antigravity { --x: min(300px, 19vw); --y: 20px; --s: 64px; --rot: -5deg; --depth: 0.6; --d: 580ms; --dur: 9.8s; --dx: -2px; --dy: -9px; --wob: -3deg; --fx: 40px; --fy: -80px; }
-  .hf-claude   { --x: max(-560px, -38vw); --y: 128px; --s: 96px; --rot: -8deg; --depth: 1.2; --d: 380ms; --dur: 10.5s; --dx: 4px; --dy: -12px; --wob: -2deg; --fx: -160px; --fy: -40px; --tint: rgba(217, 119, 87, 0.22); }
-  .hf-codex    { --x: min(560px, 38vw); --y: 128px; --s: 96px; --rot: 7deg; --depth: 1.2; --d: 460ms; --dur: 9.2s; --dx: -4px; --dy: -10px; --wob: 2deg; --fx: 160px; --fy: -40px; }
-  .hf-grok     { --x: max(-440px, -30vw); --y: 440px; --s: 80px; --rot: 4deg; --depth: 0.9; --d: 540ms; --dur: 11.5s; --dx: 3px; --dy: -9px; --wob: -3deg; --fx: -120px; --fy: 80px; }
-  .hf-cursor   { --x: min(440px, 30vw); --y: 440px; --s: 80px; --rot: -5deg; --depth: 0.9; --d: 700ms; --dur: 7.8s; --dx: -3px; --dy: -11px; --wob: 3deg; --fx: 120px; --fy: 80px; }
+  .hf-opencode    { --x: max(-300px, -19vw); --y: 20px; --s: 64px; --rot: 6deg; --depth: 0.6; --d: 620ms; --fx: -40px; --fy: -80px; }
+  .hf-antigravity { --x: min(300px, 19vw); --y: 20px; --s: 64px; --rot: -5deg; --depth: 0.6; --d: 580ms; --fx: 40px; --fy: -80px; }
+  .hf-claude   { --x: max(-560px, -38vw); --y: 128px; --s: 96px; --rot: -8deg; --depth: 1.2; --d: 380ms; --fx: -160px; --fy: -40px; }
+  .hf-codex    { --x: min(560px, 38vw); --y: 128px; --s: 96px; --rot: 7deg; --depth: 1.2; --d: 460ms; --fx: 160px; --fy: -40px; }
+  .hf-grok     { --x: max(-440px, -30vw); --y: 440px; --s: 80px; --rot: 4deg; --depth: 0.9; --d: 540ms; --fx: -120px; --fy: 80px; }
+  .hf-cursor   { --x: min(440px, 30vw); --y: 440px; --s: 80px; --rot: -5deg; --depth: 0.9; --d: 700ms; --fx: 120px; --fy: 80px; }
 
   @media (prefers-reduced-motion: reduce) {
     .hero-float-card { animation: none; transform: rotate(var(--rot)); }
@@ -726,15 +712,16 @@ const mobileEndorsementRows = [
   @media (max-width: 820px) {
     .hero {
       padding-top: 132px;
+      padding-bottom: 32px;
     }
 
     .hero-title {
-      font-size: clamp(40px, 11vw, 56px);
+      font-size: clamp(32px, 9.2vw, 56px);
       margin-top: 14px;
     }
 
     .hero-actions {
-      margin-bottom: 96px;
+      margin-bottom: 40px;
     }
 
     /* Four above the headline, two beside the CTA. Keeps the copy clear. */
@@ -754,21 +741,16 @@ const mobileEndorsementRows = [
   .hero-preview {
     max-width: 1180px;
     margin: 0 auto;
-    transform: perspective(2000px) rotateX(2deg);
-    transition: transform 0.6s ease;
-  }
-
-  .hero-preview:hover {
-    transform: perspective(2000px) rotateX(0deg);
   }
 
   .hero-screenshot-frame {
     position: relative;
     overflow: hidden;
     aspect-ratio: 2880 / 1800;
-    border-radius: 14px;
-    background: #0a0a0c;
-    box-shadow: 0 28px 64px -28px rgba(0, 0, 0, 0.75);
+    border-radius: 12px;
+    background: #000;
+    /* The screenshot is true black like the page, so this edge defines the window. */
+    box-shadow: 0 0 0 1px var(--border-strong);
   }
 
   .hero-screenshot-frame picture {
@@ -785,8 +767,6 @@ const mobileEndorsementRows = [
     object-position: center top;
   }
 
-  .sec-harness { background: #09090b; }
-
   .harness-grid {
     display: grid;
     grid-template-columns: repeat(6, 1fr);
@@ -800,7 +780,6 @@ const mobileEndorsementRows = [
     padding: 22px 20px;
     display: flex; align-items: center; gap: 14px;
     border-right: 1px solid var(--border);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent);
     transition: background 0.2s ease;
   }
   .harness:last-child { border-right: 0; }
@@ -820,13 +799,14 @@ const mobileEndorsementRows = [
   }
   .harness-tag {
     font-family: var(--font-mono);
-    font-size: 11px; color: var(--fg-dim);
+    font-size: 11px; color: var(--fg-muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 
   .harness-footer {
     display: flex; gap: 24px; flex-wrap: wrap;
     margin-top: 28px; padding-top: 24px;
-    border-top: 1px dashed var(--border);
+    border-top: 1px solid var(--border);
     font-size: 13px; color: var(--fg-muted);
   }
   .harness-footer-item {
@@ -841,13 +821,13 @@ const mobileEndorsementRows = [
 
   .endorsements-head {
     max-width: 720px;
-    margin-bottom: 56px;
+    margin-bottom: 40px;
   }
 
   .endorsements-head h2 {
     font-size: clamp(32px, 4vw, 48px);
-    font-weight: 500;
-    letter-spacing: -0.035em;
+    font-weight: 600;
+    letter-spacing: -0.03em;
     line-height: 1.05;
     margin-bottom: 18px;
   }
@@ -946,7 +926,7 @@ const mobileEndorsementRows = [
     gap: 10px;
     border: 1px solid var(--border);
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.012);
+    background: var(--bg-elev);
     transition:
       border-color 0.18s ease,
       background 0.18s ease;
@@ -1017,16 +997,11 @@ const mobileEndorsementRows = [
   }
   .pr-head svg { color: var(--ok); }
   .pr-title { font-weight: 500; font-size: 15px; flex: 1; }
-  .pr-status {
-    font-family: var(--font-mono); font-size: 10px;
-    color: var(--ok); padding: 2px 8px;
-    border: 1px solid var(--ok); border-radius: 999px;
-    letter-spacing: 0.08em; text-transform: uppercase;
-  }
+  .pr-status { font-size: 12px; font-weight: 500; color: var(--ok); }
   .pr-meta {
     display: flex; gap: 14px;
     font-family: var(--font-mono); font-size: 11px;
-    color: var(--fg-dim); margin-bottom: 14px; flex-wrap: wrap;
+    color: var(--fg-muted); margin-bottom: 14px; flex-wrap: wrap;
   }
   .pr-meta span { display: inline-flex; align-items: center; gap: 5px; }
   .pr-files {
@@ -1034,13 +1009,14 @@ const mobileEndorsementRows = [
     overflow: hidden; margin-bottom: 16px;
   }
   .pr-files > div {
-    display: flex; justify-content: space-between;
+    display: flex; justify-content: space-between; gap: 12px;
     padding: 8px 12px; font-family: var(--font-mono);
     font-size: 11px; border-top: 1px solid var(--border);
     color: var(--fg-muted);
   }
   .pr-files > div:first-child { border-top: 0; }
-  .pr-files span { color: var(--fg-dim); }
+  .pr-files code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pr-files span { flex: none; color: var(--fg-dim); }
   .pr-foot { display: flex; justify-content: flex-end; gap: 8px; }
 
   .pr-trail {
@@ -1054,18 +1030,17 @@ const mobileEndorsementRows = [
   }
   .pr-trail-line {
     width: 1px; height: 28px;
-    background: linear-gradient(180deg, var(--border-strong), var(--accent));
+    background: var(--border-strong);
   }
 
   .pr-button-shell { display: flex; justify-content: center; }
   .pr-button {
     display: inline-flex; align-items: center; gap: 10px;
     padding: 12px 20px;
-    background: var(--fg); color: #09090b;
+    background: var(--fg); color: #000;
     font-weight: 600; font-size: 13px;
     line-height: normal;
     border-radius: 10px;
-    box-shadow: 0 8px 24px -8px rgba(255, 255, 255, 0.2);
   }
   .pr-button-kbd {
     font-family: var(--font-mono); font-size: 10px;
@@ -1075,7 +1050,7 @@ const mobileEndorsementRows = [
 
   .open-head {
     text-align: center;
-    margin: 0 auto 56px;
+    margin: 0 auto 40px;
   }
 
   .open-grid {
@@ -1088,11 +1063,10 @@ const mobileEndorsementRows = [
   .open-term-head {
     display: flex; align-items: center; gap: 6px;
     padding: 10px 14px; border-bottom: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.02);
   }
   .open-term-head span {
     width: 10px; height: 10px; border-radius: 999px;
-    background: #2a2a30; display: block;
+    background: #262626; display: block;
   }
   .open-term-title {
     margin-left: 10px;
@@ -1138,9 +1112,6 @@ const mobileEndorsementRows = [
     flex-direction: column;
     justify-content: center;
     gap: 32px;
-    background:
-      radial-gradient(110% 75% at 100% 0%, var(--accent-dim), transparent 60%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
   }
 
   .open-pitch-list {
@@ -1166,15 +1137,8 @@ const mobileEndorsementRows = [
 
   .open-pitch-mark {
     flex: none;
-    display: grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    margin-top: 1px;
-    border-radius: 7px;
-    color: var(--accent);
-    background: var(--accent-dim);
-    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+    margin-top: 5px;
+    color: var(--ok);
   }
 
   .open-pitch-footer {
@@ -1187,7 +1151,7 @@ const mobileEndorsementRows = [
     display: flex;
     align-items: center;
     gap: 8px;
-    color: var(--fg-dim);
+    color: var(--fg-muted);
     font-family: var(--font-mono);
     font-size: 11px;
   }
@@ -1215,18 +1179,9 @@ const mobileEndorsementRows = [
 
   .sec-cta {
     text-align: center;
-    padding: 120px 0;
+    padding: 96px 0;
     position: relative;
     overflow: hidden;
-  }
-  .sec-cta::before {
-    content: "";
-    position: absolute;
-    inset: auto 0 -50% 0;
-    height: 60%;
-    background: radial-gradient(ellipse at center, var(--accent-dim) 0%, transparent 60%);
-    pointer-events: none;
-    opacity: 0.6;
   }
   .cta-inner { position: relative; }
   .cta-title {
@@ -1250,10 +1205,7 @@ const mobileEndorsementRows = [
     .hero-preview {
       width: min(860px, calc(100vw - 24px));
       margin-left: 50%;
-      transform: translateX(-50%) perspective(1600px) rotateX(1.5deg);
-    }
-    .hero-preview:hover {
-      transform: translateX(-50%) perspective(1600px) rotateX(0deg);
+      transform: translateX(-50%);
     }
     .harness-grid { grid-template-columns: 1fr 1fr; }
     .harness { border-right: 0; border-bottom: 1px solid var(--border); }
@@ -1264,10 +1216,9 @@ const mobileEndorsementRows = [
   }
 
   @media (max-width: 820px) {
-    section { padding: 64px 0; }
-    .sec-cta { padding: 96px 0; }
+    section { padding: 56px 0; }
+    .sec-cta { padding: 80px 0; }
     .container { padding-left: 20px; padding-right: 20px; }
-    .hero-preview { display: none; }
     .endorsements-head {
       margin-bottom: 40px;
     }
@@ -1293,6 +1244,10 @@ const mobileEndorsementRows = [
     }
     .endorsement-card p {
       font-size: 13px;
+    }
+    .open-term-body {
+      padding: 16px;
+      font-size: 11px;
     }
   }
 </style>
