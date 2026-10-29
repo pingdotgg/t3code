@@ -18,7 +18,11 @@ import {
   NativeWorkspaceTabActivityContext,
   WorkspaceSlotOptionsContext,
 } from "../../native/v5-workspace-context";
-import { useCompactWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
+import {
+  useCompactWorkspaceTabs,
+  useFloatingWorkspaceTabs,
+  useSystemWorkspaceTabBar,
+} from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../components/ui/useControlTheme";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
@@ -80,7 +84,7 @@ export function WorkspaceNativeTabs(props: {
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
-  const compactSidebarTabs = deviceType === "phone" || !layout.usesSplitView;
+  const floatingTabs = useFloatingWorkspaceTabs();
   const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
@@ -158,17 +162,17 @@ export function WorkspaceNativeTabs(props: {
             bottom: 0,
             // UIKit can shrink the sidebar to 280pt independently of its preferred width.
             width:
-              deviceType === "pad"
+              deviceType === "pad" && (floatingTabs || layout.usesSplitView)
                 ? Math.min(280, layout.listPaneWidth ?? width, width)
                 : (layout.listPaneWidth ?? width),
             height: 128,
           }}
         >
           <WorkspaceSidebarTabs
-            compact={compactSidebarTabs}
-            reserveComposeSpace={compactSidebarTabs}
+            compact={floatingTabs}
+            reserveComposeSpace={floatingTabs}
             onNewTask={
-              compactSidebarTabs && !workspace.settingsOpen && selectedTab === "threads"
+              floatingTabs && !workspace.settingsOpen && selectedTab === "threads"
                 ? startNewTask
                 : undefined
             }
