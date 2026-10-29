@@ -1,5 +1,7 @@
 import {
   EnvironmentId,
+  PipelineRunId,
+  PipelineStepId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -362,6 +364,41 @@ describe("pull request toolkit handlers", () => {
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "PullRequestWatchFromSubagentError" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
+  it.effect("refuses a watch from a pipeline step, which hands back when its turn ends", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(1, { headBranch: "feature" })]),
+          pipeline: { runId: PipelineRunId.make("run-1"), stepId: PipelineStepId.make("review") },
+        },
+      });
+      const error = yield* harness
+        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestWatchFromPipelineStepError" });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+      const result = yield* harness.call("link_pull_request", {
+        url: "https://github.com/t3tools/t3code/pull/124",
+      });
+      expect(result).toMatchObject({ number: 124, next: CHILD_PULL_REQUEST_REPORT_NEXT });
+    }),
+  );
+
+  it.effect("lets a pipeline's parent thread watch its pull request", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(1, { headBranch: "feature" })]),
+          pipeline: { runId: PipelineRunId.make("run-1"), stepId: null },
+        },
+      });
+      yield* harness.call("watch_pull_request", { repository: "t3tools/t3code", number: 1 });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", number: 1, watching: true },
+      ]);
     }),
   );
 

@@ -41,6 +41,7 @@ import {
   type PullRequestTargetInput,
   PullRequestWatchFailedError,
   PullRequestWatchFromSubagentError,
+  PullRequestWatchFromPipelineStepError,
   PullRequestThreadRequiredError,
   PullRequestGuideFailedError,
   PullRequestProjectNotFoundError,
@@ -54,6 +55,11 @@ interface ResolvedTarget {
   readonly repository: string;
   readonly number: number;
   readonly url: string;
+}
+
+/** A pipeline step hands its result back when its turn ends, like a subagent reporting to its parent. */
+function isPipelineStep(thread: OrchestrationV2ThreadShell): boolean {
+  return thread.pipeline != null && thread.pipeline.stepId !== null;
 }
 
 function projectHostAndProvider(project: OrchestrationProjectShell | undefined): {
@@ -274,6 +280,10 @@ const make = Effect.gen(function* () {
     if (watching && thread.lineage.relationshipToParent === "subagent") {
       return yield* new PullRequestWatchFromSubagentError();
     }
+    // A step's watch would hold its finished pipeline on the Working shelf and wake it later.
+    if (watching && isPipelineStep(thread)) {
+      return yield* new PullRequestWatchFromPipelineStepError();
+    }
     const before = watchedLink(thread);
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
@@ -363,7 +373,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestLinkFailedError, input.threadId);
         const next =
-          thread.lineage.relationshipToParent === "subagent"
+          thread.lineage.relationshipToParent === "subagent" || isPipelineStep(thread)
             ? { next: CHILD_PULL_REQUEST_REPORT_NEXT }
             : {};
         const project = yield* projectOf(thread, PullRequestLinkFailedError);
