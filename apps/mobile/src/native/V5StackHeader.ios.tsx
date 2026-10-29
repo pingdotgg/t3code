@@ -271,19 +271,22 @@ export function V5StackHeader(props: {
     nativeMetrics !== null &&
     nativeMetrics.verticalBarEdge !== "none" &&
     (props.column !== "primary" || nativeMetrics.horizontalSizeClass === "compact");
+  const foldable = (item: HeaderItem) =>
+    item.type === "item" &&
+    !("render" in item) &&
+    item.searchBarPlacement !== true &&
+    item.axisBehavior !== "horizontalOnly";
+  const folded = trailing.filter(foldable);
   if (
     sharesVerticalBar &&
-    trailing.length > 1 &&
+    folded.length > 1 &&
     !verticalBarGroupsFitAboveTabBar(nativeMetrics, workspaceTabCount, [
       ...verticalBarGroupSizes(trailing),
       props.onCompose ? 1 : 0,
       keyboardVisible ? 1 : 0,
     ])
   ) {
-    const foldable = (item: HeaderItem) =>
-      item.type === "item" && !("render" in item) && item.axisBehavior !== "horizontalOnly";
     const kept = trailing.filter((item) => item.type === "item" && !foldable(item));
-    const folded = trailing.filter(foldable);
     trailing.length = 0;
     trailing.push(foldIntoMoreMenu(folded), ...kept);
   }
