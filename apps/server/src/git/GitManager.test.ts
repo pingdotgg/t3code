@@ -3906,7 +3906,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     return { repoDir, manager, providerCalls, firstCommit, pullHead };
   });
 
-  it.effect.each(["switch", "create-and-switch", "feature-branch"] as const)(
+  it.effect.each(["switch", "create-and-switch", "feature-branch", "commit"] as const)(
     "local PR checkout excludes a concurrent %s from a nested project with an alternate root",
     (operation) =>
       Effect.gen(function* () {
@@ -3956,7 +3956,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               ...manager,
               runStackedAction: (input, options) =>
                 Effect.sync(() => {
-                  events.push("feature-branch");
+                  events.push(input.featureBranch ? "feature-branch" : "commit");
                   NodeFS.writeFileSync(
                     NodePath.join(repoDir, "second-client.txt"),
                     "second client\n",
@@ -3993,9 +3993,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 })
               : workflows[1]!.runStackedAction({
                   cwd: nestedCwd,
-                  actionId: "second-client-feature-branch",
+                  actionId: `second-client-${operation}`,
                   action: "commit",
-                  featureBranch: true,
+                  featureBranch: operation === "feature-branch",
                   commitMessage: "Second client commit",
                 }),
           { startImmediately: true },
@@ -4008,15 +4008,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(events).toEqual([operation]);
         expect(prepared).toMatchObject({ branch: "feature/pr-safe", isOnPullRequestHead: true });
         expect((yield* runGit(repoDir, ["rev-parse", "main"])).stdout.trim()).toBe(mainCommit);
-        expect((yield* runGit(repoDir, ["rev-parse", "feature/pr-safe"])).stdout.trim()).toBe(
-          pullHead,
-        );
+        const pullBranch = operation === "commit" ? "feature/pr-safe^" : "feature/pr-safe";
+        expect((yield* runGit(repoDir, ["rev-parse", pullBranch])).stdout.trim()).toBe(pullHead);
         expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(
           operation === "switch"
             ? "main"
-            : "branch" in switched
-              ? switched.branch.name
-              : "second-client",
+            : operation === "commit"
+              ? "feature/pr-safe"
+              : "branch" in switched
+                ? switched.branch.name
+                : "second-client",
         );
         if ("commit" in switched) {
           expect(switched.commit.status).toBe("created");
