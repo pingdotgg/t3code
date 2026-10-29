@@ -33,19 +33,17 @@ const decodeFxAskResult = Schema.decodeUnknownOption(FxAskResult);
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
-// fx's stderr can echo prompt or tool text, so it never reaches the client-visible error.
+// fx's stderr can echo prompt or tool text, so neither errors nor logs carry it.
 const FX_ASK_ERROR_DETAILS: Record<string, string> = {
   NonInteractivePermissionRequired:
     "fx asked for approval to use a tool. Text generation runs fx without approvals.",
   MissingCredentials: "fx is not signed in. Run `fx login` on the machine running T3 Code.",
 };
 
-function fxAskFailureDetail(code: number, stdout: string): string {
+/** The `error` code from `fx ask --json`, when it is a plain identifier. */
+function fxAskErrorCode(stdout: string): string | undefined {
   const error = Option.getOrUndefined(decodeFxAskResult(stdout.trim()))?.error;
-  if (error === undefined || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(error)) {
-    return `fx ask exited with code ${code}.`;
-  }
-  return FX_ASK_ERROR_DETAILS[error] ?? `fx ask failed with ${error}.`;
+  return error !== undefined && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(error) ? error : undefined;
 }
 
 /**
@@ -93,13 +91,14 @@ export const makeFxTextGeneration = Effect.fn("makeFxTextGeneration")(function* 
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
       if (result.code !== 0) {
-        yield* Effect.logWarning("fx ask failed", {
-          exitCode: result.code,
-          stderr: result.stderr.slice(-2_000),
-        });
+        const error = fxAskErrorCode(result.stdout);
+        yield* Effect.logWarning("fx ask failed", { exitCode: result.code, error });
         return yield* new TextGenerationError({
           operation,
-          detail: fxAskFailureDetail(result.code, result.stdout),
+          detail:
+            error === undefined
+              ? `fx ask exited with code ${result.code}.`
+              : (FX_ASK_ERROR_DETAILS[error] ?? `fx ask failed with ${error}.`),
         });
       }
       const output = decodeFxAskResult(result.stdout.trim());
