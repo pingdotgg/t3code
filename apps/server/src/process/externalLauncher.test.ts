@@ -140,6 +140,79 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// Windows drive letters cannot resolve the POSIX editor stub.
+it.effect.skipIf(windowsHost)(
+  "a Linux editor launch without a display takes the desktop session's display from the systemd user manager",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      const codiumPath = path.join(binDir, "codium");
+      yield* fileSystem.writeFileString(codiumPath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(codiumPath, 0o755);
+
+      const launchEnv = (sessionManager: MockSpawnResult) =>
+        Effect.gen(function* () {
+          const spawned: ChildProcess.StandardCommand[] = [];
+          yield* Effect.gen(function* () {
+            const launcher = yield* ExternalLauncher.ExternalLauncher;
+            yield* launcher.launchEditor({ editor: "vscodium", cwd: "/workspace" });
+            yield* launcher.launchBrowser("https://example.com");
+          }).pipe(
+            Effect.provide(
+              layerTest({
+                platform: "linux",
+                env: { PATH: binDir },
+                onSpawn: (command) => spawned.push(command),
+                spawnResult: (command) =>
+                  command.command === "busctl" ? sessionManager : undefined,
+              }),
+            ),
+            Effect.provideService(HostProcess.Environment, { PATH: binDir }),
+          );
+          // Only editors borrow the session display; a browser must not open on that screen.
+          assert.deepEqual(spawned.find((command) => command.command === "xdg-open")?.options.env, {
+            PATH: binDir,
+          });
+          return spawned.find((command) => command.command === "codium")?.options.env;
+        });
+
+      assert.deepEqual(
+        yield* launchEnv({
+          stdout: JSON.stringify({
+            type: "as",
+            data: [
+              "DISPLAY=:0",
+              "HOME=/home/user",
+              "WAYLAND_DISPLAY=wayland-1",
+              "XAUTHORITY=/home/user/auth files/cookie",
+            ],
+          }),
+        }),
+        {
+          PATH: binDir,
+          DISPLAY: ":0",
+          WAYLAND_DISPLAY: "wayland-1",
+          // Raw, not the $'...' quoting `systemctl show-environment` would print.
+          XAUTHORITY: "/home/user/auth files/cookie",
+        },
+      );
+      assert.deepEqual(yield* launchEnv({ stdout: "invalid JSON" }), { PATH: binDir });
+      assert.deepEqual(yield* launchEnv({ stdout: '{"data":[42]}' }), { PATH: binDir });
+      assert.deepEqual(
+        yield* launchEnv({
+          spawnError: PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+          }),
+        }),
+        { PATH: binDir },
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("launches an installed editor with platform-safe arguments", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
