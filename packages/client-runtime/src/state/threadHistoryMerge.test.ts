@@ -5,6 +5,7 @@ import * as DateTime from "effect/DateTime";
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
+import { derivePendingThreadRequests } from "./threadRequests.ts";
 
 const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 
@@ -223,50 +224,95 @@ describe("threadHistoryMerge", () => {
   });
 
   // regression: #25806 a pending question card retained outside the window shows when paged in
-  it("shows a pending request card retained at cold open when its history page arrives", () => {
-    const recent = row(5);
-    const card = {
-      id: "item-question" as never,
-      type: "user_input_request" as const,
-      threadId: v2ThreadId,
-      runId: null,
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 1,
-      status: "running" as const,
-      title: null,
-      requestId: "request-question" as never,
-      questions: [],
-      startedAt: NOW,
-      completedAt: null,
-      updatedAt: NOW,
-    };
-    const coldOpen = {
-      ...v2Projection,
-      turnItems: [card, recent.item],
-      visibleTurnItems: [{ ...recent, position: 0 }],
-    };
+  it.each(["completed", "rolled_back"] as const)(
+    "keeps a pending question actionable when paging a %s run",
+    (status) => {
+      const recent = row(5);
+      const runId = "question-run" as never;
+      const nodeId = "question-node" as never;
+      const card = {
+        id: "item-question" as never,
+        type: "user_input_request" as const,
+        threadId: v2ThreadId,
+        runId,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running" as const,
+        title: null,
+        requestId: "request-question" as never,
+        responseMode: "message" as const,
+        questions: [{ id: "scope", header: "Scope", question: "Which scope?", options: [] }],
+        startedAt: NOW,
+        completedAt: null,
+        updatedAt: NOW,
+      };
+      const coldOpen = {
+        ...v2Projection,
+        runs: [
+          {
+            id: runId,
+            threadId: v2ThreadId,
+            ordinal: 1,
+            providerInstanceId: v2Projection.thread.providerInstanceId,
+            modelSelection: v2Projection.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: "question-message" as never,
+            rootNodeId: nodeId,
+            activeAttemptId: null,
+            status,
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+        runtimeRequests: [
+          {
+            id: card.requestId,
+            nodeId,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input" as const,
+            status: "pending" as const,
+            responseCapability: { type: "message" as const },
+            createdAt: NOW,
+            resolvedAt: null,
+          },
+        ],
+        turnItems: [card, recent.item],
+        visibleTurnItems: [{ ...recent, position: 0 }],
+      };
 
-    const merged = mergeOlderHistoryIntoProjection(coldOpen, [
-      { ...row(0), position: 0 },
-      {
-        position: 1,
-        visibility: "local",
-        sourceThreadId: v2ThreadId,
-        sourceItemId: card.id,
-        item: card,
-      },
-    ]);
+      const merged = mergeOlderHistoryIntoProjection(coldOpen, [
+        { ...row(0), position: 0 },
+        {
+          position: 1,
+          visibility: "local",
+          sourceThreadId: v2ThreadId,
+          sourceItemId: card.id,
+          item: card,
+        },
+      ]);
 
-    expect(merged.visibleTurnItems.map((entry) => String(entry.sourceItemId))).toEqual([
-      "item-0",
-      "item-question",
-      "item-5",
-    ]);
-  });
+      expect(merged.visibleTurnItems.map((entry) => String(entry.sourceItemId))).toEqual(
+        status === "rolled_back" ? ["item-0", "item-5"] : ["item-0", "item-question", "item-5"],
+      );
+      expect(merged.turnItems).toContain(card);
+      const pending = derivePendingThreadRequests(merged).userInputs;
+      expect(pending).toEqual(derivePendingThreadRequests(coldOpen).userInputs);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({
+        requestId: card.requestId,
+        dismissible: true,
+        questions: card.questions.map((question) => ({ ...question, multiSelect: false })),
+      });
+    },
+  );
 
   it("keeps a history-page interrupt result visible when its request was retained at cold open", () => {
     const runId = "run-interrupt-cold" as never;
