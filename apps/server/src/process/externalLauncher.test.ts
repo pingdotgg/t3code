@@ -10,11 +10,14 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { EDITORS } from "@t3tools/contracts";
+import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as ExternalLauncher from "./externalLauncher.ts";
@@ -334,6 +337,106 @@ for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
+
+for (const { layout, pathNames, fallbackNames, expected } of [
+  { layout: "PATH", pathNames: ["zed", "zeditor"], fallbackNames: [], expected: "zeditor" },
+  {
+    layout: "mixed locations",
+    pathNames: ["zed"],
+    fallbackNames: ["zeditor"],
+    expected: "fallback",
+  },
+  {
+    layout: "fallback directory",
+    pathNames: [],
+    fallbackNames: ["zed", "zeditor"],
+    expected: "fallback",
+  },
+]) {
+  it.effect.skipIf(windowsHost)(`prefers the Zed editor on Linux with ${layout}`, () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-linux-" });
+      const binDir = path.join(home, "bin");
+      const fallbackDir = path.join(home, ".local/bin");
+      for (const [dir, names] of [
+        [binDir, pathNames],
+        [fallbackDir, fallbackNames],
+      ] as const) {
+        yield* fs.makeDirectory(dir, { recursive: true });
+        for (const name of names) {
+          yield* fs.writeFileString(path.join(dir, name), "#!/bin/sh\n");
+          yield* fs.chmod(path.join(dir, name), 0o755);
+        }
+      }
+
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), "zed");
+        yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace" });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { HOME: home, PATH: binDir },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+      assert.ok(spawned);
+      assert.equal(
+        spawned.command,
+        expected === "fallback" ? path.join(fallbackDir, "zeditor") : expected,
+      );
+      assert.deepEqual(spawned.args, ["/workspace"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-fallback-" });
+    const localBin = path.join(home, ".local/bin");
+    const systemBin = path.join(home, "system-bin");
+    for (const [dir, name] of [
+      [localBin, "zed"],
+      [systemBin, "zeditor"],
+    ] as const) {
+      yield* fs.makeDirectory(dir, { recursive: true });
+      const executable = path.join(dir, name);
+      yield* fs.writeFileString(executable, "#!/bin/sh\n");
+      yield* fs.chmod(executable, 0o755);
+    }
+    const editor = EDITORS.find((editor) => editor.id === "zed")!;
+    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: "" }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(Path.Path, {
+        ...path,
+        join: (...parts) =>
+          path.join(
+            ...parts.map((part) =>
+              ["/usr/local/bin", "/usr/bin", "/snap/bin"].includes(part) ? systemBin : part,
+            ),
+          ),
+      }),
+    );
+    assert.deepEqual(
+      yield* resolve,
+      Option.some({ command: path.join(systemBin, "zeditor"), baseArgs: [] }),
+    );
+    yield* fs.remove(path.join(systemBin, "zeditor"));
+    assert.deepEqual(
+      yield* resolve,
+      Option.some({ command: path.join(localBin, "zed"), baseArgs: [] }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect.each([
   { editor: "webstorm", installPath: "Applications/WebStorm 2026.2.app/Contents/MacOS/webstorm" },
