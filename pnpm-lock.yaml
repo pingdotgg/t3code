@@ -897,6 +897,9 @@ importers:
       character-entities:
         specifier: 2.0.2
         version: 2.0.2
+      diff:
+        specifier: 8.0.3
+        version: 8.0.3
       effect:
         specifier: 4.0.5
         version: 4.0.5
