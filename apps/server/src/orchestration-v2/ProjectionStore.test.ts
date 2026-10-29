@@ -1374,6 +1374,70 @@ it.effect("lists only active subagent IDs without loading shell data", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+// regression: #25621 SQLite rejects statements binding more than 32,766 variables
+it.effect("lists every thread in the shell snapshot past SQLite's bound variable limit", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const templateId = ThreadId.make("thread:many:00000");
+    yield* store.apply({
+      id: EventId.make(`event:${templateId}:created`),
+      type: "thread.created",
+      threadId: templateId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: templateId,
+        projectId: ProjectId.make("project:many"),
+        title: "Many",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: templateId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    const threadCount = 32_767;
+    yield* sql`
+      CREATE TEMP TABLE many_threads AS
+      WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${threadCount - 1})
+      SELECT t.*, n.i AS clone_index FROM orchestration_v2_projection_threads t, n
+      WHERE t.thread_id = ${templateId}
+    `;
+    yield* sql`
+      UPDATE many_threads SET
+        thread_id = printf('thread:many:%05d', clone_index),
+        payload_json = json_set(
+          payload_json,
+          '$.id', printf('thread:many:%05d', clone_index),
+          '$.lineage.rootThreadId', printf('thread:many:%05d', clone_index)
+        )
+    `;
+    yield* sql`ALTER TABLE many_threads DROP COLUMN clone_index`;
+    yield* sql`INSERT INTO orchestration_v2_projection_threads SELECT * FROM many_threads`;
+
+    const [unscoped, active] = yield* Effect.all([
+      store.getShellSnapshot(),
+      store.getShellSnapshot({ location: "active" }),
+    ]);
+    assert.strictEqual(unscoped.threads.length, threadCount);
+    assert.strictEqual(active.threads.length, threadCount);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
   // regression: #21969 keep corrupt plan JSON in the typed read error
   it.effect("returns a typed read error for malformed stored plan JSON", () =>
