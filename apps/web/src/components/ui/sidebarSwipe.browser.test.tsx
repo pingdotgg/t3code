@@ -52,6 +52,37 @@ describe("sidebar touch events", () => {
     expect(target.dataset.open).toBe("true");
   });
 
+  it("opens from the middle of the page", async () => {
+    await using screen = await render(<Harness />, { router: false });
+    const target = screen.container.firstElementChild as HTMLElement;
+    await act(() => {
+      touch(target, "touchstart", 200, 200);
+      expect(touch(target, "touchmove", 280, 201).defaultPrevented).toBe(true);
+      touch(target, "touchend", 280, 201, true);
+    });
+    expect(target.dataset.open).toBe("true");
+  });
+
+  it("preserves horizontal scrolling inside code blocks", async () => {
+    await using screen = await render(<Harness />, { router: false });
+    const target = screen.container.firstElementChild as HTMLElement;
+    const code = document.createElement("pre");
+    code.style.cssText = "width: 100px; overflow-x: auto";
+    const content = document.createElement("code");
+    content.style.cssText = "display: block; width: 500px";
+    content.textContent = "A wide code block";
+    code.append(content);
+    target.append(code);
+    expect(getComputedStyle(code).overflowX).toBe("auto");
+    expect(code.scrollWidth).toBeGreaterThan(code.clientWidth + 1);
+    await act(() => {
+      touch(content, "touchstart", 200, 200);
+      expect(touch(content, "touchmove", 280, 201).defaultPrevented).toBe(false);
+      touch(content, "touchend", 280, 201, true);
+    });
+    expect(target.dataset.open).toBe("false");
+  });
+
   it("closes when the sheet stops touch events from bubbling", async () => {
     await using screen = await render(<Harness initiallyOpen />, { router: false });
     const target = screen.container.firstElementChild as HTMLElement;
