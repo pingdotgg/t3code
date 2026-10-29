@@ -62,7 +62,7 @@ export type SimlockTokenEntry =
 
 /**
  * The host list each environment saves: the shared fields everywhere, and each environment's own
- * token. Saved tokens arrive redacted, and sending the redacted value back keeps them.
+ * token, which may stay blank until later. Saved tokens arrive redacted; sending one back keeps it.
  */
 export function planSimlockDeviceHostSave(
   environments: ReadonlyArray<SimlockHostEnvironment>,
@@ -84,7 +84,6 @@ export function planSimlockDeviceHostSave(
     const entry = tokens.get(environment.environmentId) ?? { kind: "cleared" };
     const agentToken =
       entry.kind === "saved" ? saved : entry.kind === "new" ? entry.value.trim() : "";
-    if (!agentToken) return { problem: `Add an agent token for ${environment.label}.` };
     patches.push({
       environmentId: environment.environmentId,
       hosts: updateSimlockDeviceHosts(environment.hosts, { ...draft, agentToken }, false),

@@ -171,3 +171,14 @@ export const deviceEasAccountCheck = createEnvironmentRpcQueryAtomFamily(connect
   staleTimeMs: 0,
   idleTtlMs: 0,
 });
+
+/** Who a Simlock token is, checked as the host editor's URL and token fields change. */
+export const deviceSimlockIdentityCheck = createEnvironmentRpcQueryAtomFamily(
+  connectionAtomRuntime,
+  {
+    label: "environment-data:device:simlock-identity-check",
+    tag: WS_METHODS.deviceSimlockIdentity,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+  },
+);

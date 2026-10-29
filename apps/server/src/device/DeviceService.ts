@@ -20,6 +20,9 @@ import {
   type DeviceEasAccount,
   DeviceEasAccountError,
   type DeviceEasAccountInput,
+  type DeviceSimlockIdentity,
+  DeviceSimlockIdentityError,
+  type DeviceSimlockIdentityInput,
   type DeviceHostConfig,
   type EasDeviceHostConfig,
   type SimlockDeviceHostConfig,
@@ -69,6 +72,7 @@ import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
 import * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { makeExpoApi, resolveExpoCredential } from "./ExpoApi.ts";
 import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
@@ -142,6 +146,10 @@ export class DeviceService extends Context.Service<
     readonly easAccount: (
       input: DeviceEasAccountInput,
     ) => Effect.Effect<DeviceEasAccount, DeviceEasAccountError>;
+    /** Who a Simlock agent token is; without a gateway or token, this machine's agent-device's. */
+    readonly simlockIdentity: (
+      input: DeviceSimlockIdentityInput,
+    ) => Effect.Effect<DeviceSimlockIdentity, DeviceSimlockIdentityError>;
     /**
      * The agent-device flags that reach the device: its config and session,
      * and the id agent-device selects it by, which can differ from its id here.
@@ -1012,6 +1020,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           }),
         );
       }),
+      simlockIdentity: Effect.fn("DeviceService.simlockIdentity")(function () {
+        return Effect.fail(
+          new DeviceSimlockIdentityError({
+            reason: "Simlock hosts are unavailable in this device service.",
+          }),
+        );
+      }),
       agentTarget: Effect.fn("DeviceService.agentTarget")(function* (input) {
         const host = yield* resolveHost(input.hostId);
         const ready = yield* agentReadinessIfSupported(input.hostId);
@@ -1379,6 +1394,14 @@ export const make = Effect.gen(function* () {
             );
             hosts.set(host.id, instance);
             configured.set(host.id, { config: host, scope: hostScope });
+            // Ask the gateway now, so a refused token shows in Settings before anyone opens a device.
+            if ((yield* settings.getSettings).enableDeviceSupport)
+              yield* instance
+                .platformAvailability("ios")
+                .pipe(
+                  Effect.andThen(service.withLifecycleLock(service.refreshHosts)),
+                  Effect.forkIn(hostScope),
+                );
             continue;
           }
           if (host.kind === "eas") {
@@ -1478,9 +1501,62 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const simlockIdentity: DeviceService["Service"]["simlockIdentity"] = Effect.fn(
+    "DeviceService.simlockIdentity",
+  )(
+    function* (input) {
+      const environment = yield* HostProcess.Environment;
+      const gatewayUrl = (
+        input.gatewayUrl || SimlockDeviceHost.machineSimlockToken(environment)?.gatewayUrl
+      )?.replace(/\/$/, "");
+      if (!gatewayUrl)
+        return yield* new DeviceSimlockIdentityError({
+          reason: "This machine's agent-device does not point at a Simlock gateway.",
+        });
+      const savedHost =
+        input.hostId === undefined
+          ? undefined
+          : (yield* settings.getSettings).simlockDeviceHosts.find(
+              (host) => host.id === input.hostId,
+            );
+      const token = input.agentToken
+        ? { agentToken: input.agentToken, source: "entered" as const }
+        : SimlockDeviceHost.resolveSimlockToken(gatewayUrl, savedHost, environment);
+      if (!token)
+        return yield* new DeviceSimlockIdentityError({
+          reason: savedHost?.agentToken
+            ? "The saved token is for another gateway. Enter one for this gateway."
+            : "No agent token for this gateway on this machine.",
+        });
+      const identity = yield* SimlockDeviceHost.simlockIdentity(gatewayUrl, token.agentToken).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeviceSimlockIdentityError({
+              reason: SimlockDeviceHost.describeGatewayFailure(
+                cause,
+                gatewayUrl,
+                token.source === "env" ? "this machine" : "this environment",
+              ),
+            }),
+        ),
+      );
+      if (identity.role !== "agent")
+        return yield* new DeviceSimlockIdentityError({
+          reason: `That is a ${identity.role} token. Create one with --role agent.`,
+        });
+      return { gatewayUrl, signedInAs: identity.name, tokenSource: token.source };
+    },
+    Effect.catchTags({
+      ServerSettingsError: () =>
+        Effect.fail(new DeviceSimlockIdentityError({ reason: "Could not read the saved token." })),
+    }),
+    Effect.provide(simlockContext),
+  );
+
   return {
     ...service,
     easAccount,
+    simlockIdentity,
   };
 });
 
