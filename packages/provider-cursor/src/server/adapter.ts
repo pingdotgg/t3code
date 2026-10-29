@@ -2110,9 +2110,19 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         ) {
           if (context.assistant.nextSegment === 0) {
             yield* Deferred.await(context.runWaitSettled);
-            return;
+            return true;
           }
-          yield* context.run.cancel.pipe(Effect.ignore);
+          // Without a confirmed cancel the run may still own the agent, so the wait path finalizes.
+          return yield* context.run.cancel.pipe(
+            Effect.timeoutOption("10 seconds"),
+            Effect.map(Option.isSome),
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration-v2.cursor-idle-cancel-failed", {
+                providerTurnId: context.providerTurnId,
+                cause,
+              }).pipe(Effect.as(false)),
+            ),
+          );
         });
 
         const scheduleIdleTurnFinalize = Effect.fnUntraced(function* (context: ActiveCursorTurn) {
@@ -2132,8 +2142,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ) {
                 return;
               }
-              yield* awaitCursorRunReleaseBeforeIdleFinalize(context);
+              const released = yield* awaitCursorRunReleaseBeforeIdleFinalize(context);
               if (
+                !released ||
                 context.finalized ||
                 context.interrupted ||
                 context.idleFinalizeGeneration !== generation ||
