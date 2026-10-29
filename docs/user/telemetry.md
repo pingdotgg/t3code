@@ -19,6 +19,16 @@ separate from product events. Depending on the client version, traces can includ
 timings, environment identifiers and the connected machine's name. Failed spans can include error
 messages and stack traces; error text can quote a value the app was handling.
 
+To disable product events and relay tracing for an environment, turn off **Product usage data** in
+**Settings → About** with that environment selected, or run `t3 telemetry off` on its machine
+(`t3 telemetry on` turns it back on, `t3 telemetry status` shows it). Product events stop at once;
+relay tracing stops after the server restarts, and the desktop app's own relay tracing after the app
+restarts.
+
+`T3CODE_TELEMETRY_ENABLED` in the server's environment overrides that setting: `false` disables both
+whatever the setting says, and `true` enables them. Settings shows when the variable decides. Relay tracing also stops when `T3CODE_OTEL_SDK_DISABLED` or
+`OTEL_SDK_DISABLED` turns OpenTelemetry export off.
+
 To disable product events and relay tracing from the server, set
 `T3CODE_TELEMETRY_ENABLED=false` in its environment before starting it. Relay tracing also stops
 when `T3CODE_OTEL_SDK_DISABLED` or `OTEL_SDK_DISABLED` turns OpenTelemetry export off.
