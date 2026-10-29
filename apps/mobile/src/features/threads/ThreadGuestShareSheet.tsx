@@ -65,6 +65,11 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
     environmentThreadDetails.threadAtom(threadRef),
     (thread) => thread !== null,
   );
+  const threadDeleted = useAtomValue(
+    environmentThreadDetails.statusAtom(threadRef),
+    (status) => status === "deleted",
+  );
+  const threadLoadError = useAtomValue(environmentThreadDetails.errorAtom(threadRef));
   const canCreate = useAtomValue(serverEnvironment.createGuestShare.permissionAtom(environmentId));
   const createGuestShare = useAtomCommand(serverEnvironment.createGuestShare, {
     reportFailure: false,
@@ -170,7 +175,13 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
             </Text>
           </View>
           <View className="gap-1.5">
-            {activeShare !== null ? (
+            {!threadLoaded ? (
+              <Text className="text-sm text-foreground-muted">
+                {threadDeleted
+                  ? "This thread was deleted."
+                  : (threadLoadError ?? "Checking for an active link…")}
+              </Text>
+            ) : activeShare !== null ? (
               <Text className="text-sm text-foreground">
                 {activeShare.guestName !== null
                   ? `${activeShare.guestName} is a guest. A new link ends their access.`
