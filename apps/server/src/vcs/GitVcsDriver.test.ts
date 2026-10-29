@@ -682,9 +682,13 @@ it.effect.each(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each(["normal", "flags", "sparse"] as const)(
-  "checkpoint index inspection handles entries beyond the output cap (index=%s)",
-  (indexMode) =>
+it.effect.each(
+  (["normal", "flags", "sparse"] as const).flatMap((indexMode) =>
+    [1, 3, 4096].map((chunkSize) => ({ indexMode, chunkSize })),
+  ),
+)(
+  "checkpoint index inspection handles entries beyond the output cap (index=$indexMode, chunk=$chunkSize)",
+  ({ indexMode, chunkSize }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -720,8 +724,8 @@ it.effect.each(["normal", "flags", "sparse"] as const)(
                     ...input,
                     maxOutputBytes: 8,
                     onStdoutChunk: (chunk) => {
-                      for (let i = 0; i < chunk.length; i++)
-                        input.onStdoutChunk?.(chunk.subarray(i, i + 1));
+                      for (let i = 0; i < chunk.length; i += chunkSize)
+                        input.onStdoutChunk?.(chunk.subarray(i, i + chunkSize));
                     },
                   }
                 : input,
