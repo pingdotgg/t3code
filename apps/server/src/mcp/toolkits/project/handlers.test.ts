@@ -42,6 +42,7 @@ const clientLaunchHarness = (input: {
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
+  readonly webOrigin?: string;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -75,6 +76,7 @@ const clientLaunchHarness = (input: {
         sessionId: "session-1",
         label: "Claude Code",
         access: input.runtimeModeCeiling,
+        webOrigin: input.webOrigin,
       },
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
@@ -155,15 +157,17 @@ it.effect(
           readonly runtimeMode?: RuntimeMode;
           readonly targeted?: false;
           readonly overrideModel?: ModelSelection;
+          readonly webOrigin?: string;
         },
       ) {
-        const { targeted, overrideModel, ...input } = params;
+        const { targeted, overrideModel, webOrigin, ...input } = params;
         const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
         const { projectId, modelSelection, dependencies } = clientLaunchHarness({
           runtimeModeCeiling,
           defaultRuntimeMode,
           launched,
           ...(overrideModel === undefined ? {} : { overrideModel }),
+          ...(webOrigin === undefined ? {} : { webOrigin }),
         });
         const toolkit = yield* ProjectToolkit.pipe(
           Effect.provide(
@@ -190,8 +194,14 @@ it.effect(
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
 
-      const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", { title: "Fix" });
+      const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
+        title: "Fix",
+        webOrigin: "https://box.example.ts.net",
+      });
       expect(aboveCeiling.launched[0]?.runtimeMode).toBe("auto-accept-edits");
+      expect(aboveCeiling.result).toMatchObject({
+        link: `https://box.example.ts.net/environment/${encodeURIComponent(aboveCeiling.launched[0]?.threadId ?? "")}`,
+      });
 
       const requested = yield* launchWith("full-access", "approval-required", {
         title: "Fix",
