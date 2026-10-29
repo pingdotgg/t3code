@@ -16,6 +16,7 @@ import {
   type RightPanelSurface,
 } from "~/rightPanelStore";
 import { Button } from "~/components/ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { DiscoveryList } from "~/components/ui/discovery-list";
 import { Dialog } from "~/components/ui/dialog";
 import { WizardPopup } from "~/components/ui/wizard";
@@ -30,7 +31,6 @@ import {
 } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { DeviceDiscoveryStatus } from "./DeviceDiscoveryStatus";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import { DeviceSetup, deviceHubReadiness, isAndroidDiscoveryUncertain } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
@@ -214,8 +214,8 @@ export function DevicePanel(props: {
         >
           <div hidden={!!activeDevice}>
             {diagnostics.map((diagnostic) => (
-              <DeviceDiscoveryStatus
-                key={`${environmentId}\u0000${diagnostic.hostId}`}
+              <DeviceDiscoveryWarning
+                key={`${environmentId}\u0000${diagnostic.hostId}\u0000${diagnostic.detail}`}
                 label={diagnostic.label}
                 detail={diagnostic.detail}
               />
@@ -229,7 +229,9 @@ export function DevicePanel(props: {
             </div>
           ) : null}
           {operationError ? (
-            <DeviceError onDismiss={() => setOperation(null)}>{operationError}</DeviceError>
+            <DeviceNotice tone="error" onDismiss={() => setOperation(null)}>
+              {operationError}
+            </DeviceNotice>
           ) : null}
         </div>
         <div className="@container relative flex min-h-0 flex-1">
@@ -240,7 +242,9 @@ export function DevicePanel(props: {
               device={activeDevice}
               hostLabel={activeHost?.label ?? "Device host"}
               hostKind={activeHost?.kind}
-              hostDiagnostics={diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)}
+              hostDiagnostics={
+                diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
+              }
               visible={props.visible}
               onFloat={floatActive}
               onClose={() => closeActive(false)}
@@ -370,11 +374,20 @@ export function DevicePanel(props: {
   );
 }
 
-function DeviceError(props: { readonly onDismiss: () => void; readonly children: ReactNode }) {
+function DeviceNotice(props: {
+  readonly tone: "warning" | "error";
+  readonly onDismiss: () => void;
+  readonly children: ReactNode;
+}) {
   return (
     <div
       role="alert"
-      className="flex items-start gap-2 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive"
+      className={cn(
+        "flex items-start gap-2 border-b px-3 py-2 text-xs",
+        props.tone === "warning"
+          ? "bg-warning-surface text-warning-foreground"
+          : "bg-destructive/5 text-destructive",
+      )}
     >
       <CircleAlert className="mt-1 size-3.5 shrink-0" />
       <div
@@ -386,12 +399,35 @@ function DeviceError(props: { readonly onDismiss: () => void; readonly children:
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label="Dismiss device error"
+        aria-label={props.tone === "warning" ? "Dismiss device warning" : "Dismiss device error"}
         onClick={props.onDismiss}
       >
         <X />
       </Button>
     </div>
+  );
+}
+
+function DeviceDiscoveryWarning(props: { readonly label: string; readonly detail: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div
+        role="status"
+        className="flex items-center gap-2 border-b px-3 py-1.5 text-xs text-muted-foreground"
+      >
+        <CircleAlert className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          Some devices on {props.label} could not be listed.
+        </span>
+        <CollapsibleTrigger className="shrink-0 hover:text-foreground">Details</CollapsibleTrigger>
+      </div>
+      <CollapsiblePanel>
+        <DeviceNotice tone="warning" onDismiss={() => setOpen(false)}>
+          {props.detail}
+        </DeviceNotice>
+      </CollapsiblePanel>
+    </Collapsible>
   );
 }
 
