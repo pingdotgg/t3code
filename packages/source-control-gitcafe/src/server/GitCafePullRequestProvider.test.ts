@@ -677,6 +677,34 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
+  it.effect("reads a GitHub-mirrored check's log, and re-runs only GitCafe Actions runs", () => {
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/ci/github/checks/555/log": {
+        content: "install\ntest\nFAIL a.test.ts\n",
+        truncated: true,
+      },
+      "POST /repos/owner/repo/actions/runs/actwfrun_abc/rerun": {},
+    });
+    const mirrored = { name: "Test", url: "https://github.com/owner/repo/runs/555" };
+    const native = { name: "Build", url: "https://git.cafe/owner/repo/actions/runs/actwfrun_abc" };
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const logs = yield* provider.getCheckLogs!({ ...target, checks: [mirrored], tailLines: 1 });
+      assert.deepInclude(logs[0], { log: "FAIL a.test.ts", truncated: true, detail: null });
+      const reruns = yield* provider.rerunChecks!({ ...target, checks: [mirrored, native] });
+      assert.deepStrictEqual(
+        reruns.map(({ name, rerun }) => [name, rerun]),
+        [
+          ["Test", false],
+          ["Build", true],
+        ],
+      );
+      assert.deepStrictEqual(server.writes(), [
+        "POST /repos/owner/repo/actions/runs/actwfrun_abc/rerun",
+      ]);
+    }).pipe(Effect.provide(server.layer));
+  });
+
   it.effect(
     "lands a stack through a layer only while its heads are the ones the reader saw",
     () => {

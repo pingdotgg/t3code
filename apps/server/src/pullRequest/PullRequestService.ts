@@ -89,6 +89,8 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import {
   type ProviderChangeRequest,
   type ProviderChangeRequestDetail,
+  type ProviderCheckLog,
+  type ProviderCheckRerun,
   type ProviderDiffFilePaths,
   type ProviderFilterOptionPage,
   type ProviderListCursor,
@@ -270,6 +272,14 @@ export class PullRequestService extends Context.Service<
     readonly runAction: (
       input: PullRequestActionInput,
     ) => Effect.Effect<PullRequestSummary | undefined, PullRequestError>;
+    /** Tails of the failing checks' logs, or only the named check's. */
+    readonly checkLogs: (
+      input: PullRequestRef & { readonly check?: string; readonly tailLines: number },
+    ) => Effect.Effect<ReadonlyArray<ProviderCheckLog>, PullRequestError>;
+    /** Re-runs the failing checks, or only the named check. */
+    readonly rerunChecks: (
+      input: PullRequestRef & { readonly check?: string },
+    ) => Effect.Effect<ReadonlyArray<ProviderCheckRerun>, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
     readonly updateComment: (
@@ -621,6 +631,12 @@ function withRateLimitBackoff(
       ? {}
       : { getFileRevisions: wrap("getFileRevisions", api.getFileRevisions) }),
     runAction: interactive("runAction", api.runAction),
+    ...(api.getCheckLogs === undefined
+      ? {}
+      : { getCheckLogs: interactive("getCheckLogs", api.getCheckLogs) }),
+    ...(api.rerunChecks === undefined
+      ? {}
+      : { rerunChecks: interactive("rerunChecks", api.rerunChecks) }),
     ...(api.updateChangeRequest === undefined
       ? {}
       : {
@@ -3743,6 +3759,83 @@ export const make = Effect.gen(function* () {
         );
         yield* SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
       });
+  const selectChecks = Effect.fn("PullRequestService.selectChecks")(function* (
+    project: SupportedProject,
+    input: PullRequestRef & { readonly check?: string },
+    operation: string,
+  ) {
+    const ref = {
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      number: input.number,
+    };
+    const { checks } = yield* (
+      project.api.getChangeRequestChecks === undefined
+        ? project.api.getChangeRequest(ref)
+        : project.api.getChangeRequestChecks(ref)
+    ).pipe(Effect.mapError(toPullRequestError(operation)));
+    const named = input.check?.trim().toLowerCase();
+    if (named === undefined) {
+      return checks
+        .filter((check) => check.status === "failure" || check.status === "cancelled")
+        .map(({ name, url }) => ({ name, url }));
+    }
+    const matches = checks.filter((check) => check.name.toLowerCase() === named);
+    if (matches.length === 0) {
+      return yield* new PullRequestOperationError({
+        operation,
+        detail: `No check is named ${input.check}. Checks: ${checks.map((check) => check.name).join(", ") || "none"}.`,
+      });
+    }
+    return matches.map(({ name, url }) => ({ name, url }));
+  });
+
+  const checkLogs: PullRequestService["Service"]["checkLogs"] = Effect.fn(
+    "PullRequestService.checkLogs",
+  )(function* (input) {
+    const project = yield* requireProject(input);
+    const read = project.api.getCheckLogs;
+    if (read === undefined) {
+      return yield* new PullRequestOperationError({
+        operation: "checkLogs",
+        detail: "This host cannot read check logs.",
+      });
+    }
+    const checks = yield* selectChecks(project, input, "checkLogs");
+    if (checks.length === 0) return [];
+    return yield* read({
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      checks,
+      tailLines: input.tailLines,
+    }).pipe(Effect.mapError(toPullRequestError("checkLogs")));
+  });
+
+  const rerunChecks: PullRequestService["Service"]["rerunChecks"] = Effect.fn(
+    "PullRequestService.rerunChecks",
+  )(function* (input) {
+    const project = yield* requireProject(input);
+    const rerun = project.api.rerunChecks;
+    if (rerun === undefined) {
+      return yield* new PullRequestOperationError({
+        operation: "rerunChecks",
+        detail: "This host cannot re-run checks.",
+      });
+    }
+    const checks = yield* selectChecks(project, input, "rerunChecks");
+    if (checks.length === 0) return [];
+    const outcomes = yield* rerun({
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      checks,
+    }).pipe(Effect.mapError(toPullRequestError("rerunChecks")));
+    yield* readCache.invalidate(refScope(yield* canonicalRef(input)));
+    return outcomes;
+  });
+
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(
     "PullRequestService.runActionAndInvalidate",
   )(function* (input) {
@@ -3942,6 +4035,8 @@ export const make = Effect.gen(function* () {
       Cache.get(changeBreakdownCache, refCacheKey(input)),
     ),
     runAction: runActionAndInvalidate,
+    checkLogs,
+    rerunChecks,
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),
     updateComment: invalidatedByMutation(updateComment),

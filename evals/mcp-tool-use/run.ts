@@ -1453,6 +1453,30 @@ export const t3Default = (
         ...pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number }),
         state: input.auto === true ? "open" : "merged",
       };
+    case "ci_logs":
+    case "ci_rerun": {
+      const number =
+        typeof input.number === "number" ? input.number : branchPullRequest(sample).number;
+      const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
+      const checks = (Array.isArray(world?.checks) ? world.checks.filter(isRecord) : []).filter(
+        (check) =>
+          typeof input.check === "string" ? check.name === input.check : check.state === "fail",
+      );
+      return {
+        ...pullRequest(sample.repo, { number }),
+        checks: checks.map((check) =>
+          name === "ci_rerun"
+            ? { name: valueText(check.name), rerun: true, detail: null }
+            : {
+                name: valueText(check.name),
+                url: null,
+                log: valueText(check.log ?? `Error: ${valueText(check.name)} failed`),
+                truncated: false,
+                detail: null,
+              },
+        ),
+      };
+    }
     case "request_secret": {
       // T3 names a ref and a file with 32 hex characters, new for each request, in its secrets dir.
       const id = NodeCrypto.createHash("sha256")

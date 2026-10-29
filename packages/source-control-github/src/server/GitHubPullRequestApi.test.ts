@@ -796,6 +796,61 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("tails Actions job logs and re-runs a run's failed jobs together", () =>
+    Effect.gen(function* () {
+      const runOf: Record<string, number> = { "11": 10, "12": 10, "21": 20 };
+      mockedExecute.mockImplementation((call) => {
+        if (call.kind !== "rest") return Effect.succeed(output("{}"));
+        const log = /actions\/jobs\/(\d+)\/logs$/.exec(call.path);
+        if (log) return Effect.succeed(output("setup\nbuild\nError: boom\n"));
+        const job = /actions\/jobs\/(\d+)$/.exec(call.path);
+        if (job) return Effect.succeed(output(encodeJson({ run_id: runOf[job[1]!] })));
+        return Effect.succeed(output("{}"));
+      });
+      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const job = (id: number, run: number) => ({
+        name: `job ${id}`,
+        url: `https://github.com/octo/repo/actions/runs/${run}/job/${id}`,
+      });
+      const external = { name: "Vercel", url: "https://vercel.com/octo/repo/deployments/1" };
+      const logs = yield* api.readCheckLogs({
+        host: "github.com",
+        repository: "octo/repo",
+        checks: [job(11, 10), external],
+        tailLines: 2,
+      });
+      expect(logs).toMatchObject([
+        { name: "job 11", log: "build\nError: boom", truncated: true, detail: null },
+        { name: "Vercel", log: null },
+      ]);
+
+      const reruns = yield* api.rerunChecks({
+        host: "github.com",
+        repository: "octo/repo",
+        checks: [
+          job(11, 10),
+          job(12, 10),
+          { name: "solo", url: "https://github.com/octo/repo/runs/21" },
+          external,
+        ],
+      });
+      expect(reruns.map(({ name, rerun }) => [name, rerun])).toEqual([
+        ["job 11", true],
+        ["job 12", true],
+        ["solo", true],
+        ["Vercel", false],
+      ]);
+      expect(
+        mockedExecute.mock.calls.flatMap(([call]) =>
+          call.kind === "rest" && call.method === "POST" ? [call.path] : [],
+        ),
+      ).toEqual([
+        "repos/octo/repo/actions/runs/10/rerun-failed-jobs",
+        "repos/octo/repo/actions/jobs/21/rerun",
+      ]);
+    }),
+  );
+
   it.effect.each(["mixed", "merges", "unavailable"] as const)(
     "reads stats only for displayed non-merge commits (%s)",
     (kind) =>

@@ -1105,6 +1105,28 @@ const make = Effect.gen(function* () {
         return { ...identityOf(target), state: after.state };
       }),
     ),
+    ci_logs: McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        const { target, ref } = yield* locate(input);
+        const checks = yield* pullRequests
+          .checkLogs({
+            ...ref,
+            tailLines: input.tailLines ?? 200,
+            ...(input.check === undefined ? {} : { check: input.check }),
+          })
+          .pipe(Effect.mapError(forgeFailure));
+        return { ...identityOf(target), checks };
+      }),
+    ),
+    ci_rerun: McpToolAccess.writesWithCapability((input) =>
+      Effect.gen(function* () {
+        const { target, ref } = yield* locate(input);
+        const checks = yield* pullRequests
+          .rerunChecks({ ...ref, ...(input.check === undefined ? {} : { check: input.check }) })
+          .pipe(Effect.mapError(forgeFailure));
+        return { ...identityOf(target), checks };
+      }),
+    ),
   } satisfies McpToolAccess.Handlers<typeof PullRequestsToolkit.tools>;
 });
 

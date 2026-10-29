@@ -504,6 +504,12 @@ export function summarizeT3ToolCalls(
             );
       break;
     }
+    case "ci-logs":
+      label = phrase("Read", "read", `CI logs ${times}`);
+      break;
+    case "ci-rerun":
+      label = phrase("Re-ran", "re-run", `CI ${times}`);
+      break;
     case "browser":
       label = phrase("Used", "use", `browser ${times}`);
       break;

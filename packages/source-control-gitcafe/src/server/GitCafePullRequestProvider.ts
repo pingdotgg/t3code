@@ -13,7 +13,11 @@ import {
   type PullRequestStackHead,
 } from "@t3tools/contracts";
 import {
+  gitHubActionsJobId,
   PullRequestProviderError,
+  tailLogLines,
+  type ProviderCheckLog,
+  type ProviderCheckRerun,
   type ProviderRepositoryRef,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -228,6 +232,9 @@ const withDetails = (
 };
 
 /** @public */
+const CHECK_LOG_TAIL_BYTES = 256 * 1024;
+const CheckLog = Schema.Struct({ content: Schema.String, truncated: Schema.Boolean });
+
 export const make = Effect.gen(function* () {
   const api = yield* GitCafeApi.GitCafeApi;
   // GitCafe filters by actor id and has no lookup from a GitHub login to the actor sync made for
@@ -1129,6 +1136,81 @@ export const make = Effect.gen(function* () {
         return { oldContents, newContents };
       },
     ),
+    getCheckLogs: Effect.fn("GitCafePullRequestProvider.getCheckLogs")(function* (input) {
+      const base = yield* repositoryPath("getCheckLogs", input);
+      return yield* Effect.forEach(
+        input.checks,
+        (check): Effect.Effect<ProviderCheckLog> => {
+          // GitCafe reads the log of a check its GitHub mirror ran.
+          const checkId = gitHubActionsJobId(check.url);
+          if (checkId === null) {
+            return Effect.succeed({
+              ...check,
+              log: null,
+              truncated: false,
+              detail: "GitCafe holds no log for this check. Open its url.",
+            });
+          }
+          return read(
+            "getCheckLogs",
+            input,
+            { path: `${base}/ci/github/checks/${checkId}/log?tailBytes=${CHECK_LOG_TAIL_BYTES}` },
+            CheckLog,
+          ).pipe(
+            Effect.map((log) => {
+              const tail = tailLogLines(log.content, input.tailLines);
+              return {
+                ...check,
+                log: tail.log,
+                truncated: tail.truncated || log.truncated,
+                detail: null,
+              };
+            }),
+            Effect.catch((error) =>
+              Effect.succeed({ ...check, log: null, truncated: false, detail: error.detail }),
+            ),
+          );
+        },
+        { concurrency: 4 },
+      );
+    }),
+    rerunChecks: Effect.fn("GitCafePullRequestProvider.rerunChecks")(function* (input) {
+      const base = yield* repositoryPath("rerunChecks", input);
+      const runIds = new Set<string>();
+      const located = input.checks.map((check) => {
+        const runId = /\/actions\/runs\/(actwfrun_[A-Za-z0-9]+)/.exec(check.url ?? "")?.[1] ?? null;
+        if (runId !== null) runIds.add(runId);
+        return { check, runId };
+      });
+      const outcomes = new Map<string, string | null>();
+      yield* Effect.forEach(
+        runIds,
+        (runId) =>
+          send("rerunChecks", input, {
+            method: "POST",
+            path: `${base}/actions/runs/${runId}/rerun`,
+          }).pipe(
+            Effect.as(null),
+            Effect.catch((error) => Effect.succeed(error.detail)),
+            Effect.map((detail) => outcomes.set(runId, detail)),
+          ),
+        { concurrency: 2, discard: true },
+      );
+      return located.map(({ check, runId }): ProviderCheckRerun => {
+        if (runId === null) {
+          return {
+            name: check.name,
+            rerun: false,
+            detail:
+              gitHubActionsJobId(check.url) === null
+                ? "GitCafe cannot re-run this check."
+                : "This check ran on the GitHub mirror, so GitCafe cannot re-run it. Re-run it on GitHub.",
+          };
+        }
+        const detail = outcomes.get(runId) ?? null;
+        return { name: check.name, rerun: detail === null, detail };
+      });
+    }),
     runAction: Effect.fn("GitCafePullRequestProvider.runAction")(function* (input) {
       if (input.stackNumber !== undefined)
         return yield* runStackAction({ ...input, stackNumber: input.stackNumber });

@@ -190,6 +190,48 @@ export interface ProviderBatchedChangeRequestPage {
   readonly unresolved?: ReadonlyArray<string>;
 }
 
+/** A check as the change request's checks name it; the host finds its log or run from the URL. */
+export interface ProviderCheckReference {
+  readonly name: string;
+  readonly url: string | null;
+}
+
+export interface ProviderCheckLog {
+  readonly name: string;
+  readonly url: string | null;
+  /** Null when the host holds no log for this check; `detail` says why. */
+  readonly log: string | null;
+  readonly truncated: boolean;
+  readonly detail: string | null;
+}
+
+export interface ProviderCheckRerun {
+  readonly name: string;
+  readonly rerun: boolean;
+  readonly detail: string | null;
+}
+
+/** The job id of a GitHub Actions check run, from its run link or its job link. */
+export function gitHubActionsJobId(url: string | null): string | null {
+  if (url === null) return null;
+  return (
+    /\/actions\/runs\/\d+\/job\/(\d+)(?:[/?#]|$)/.exec(url)?.[1] ??
+    /^https:\/\/[^/]+\/[^/]+\/[^/]+\/runs\/(\d+)(?:[/?#]|$)/.exec(url)?.[1] ??
+    null
+  );
+}
+
+/** The last `lines` lines of a log, where a failure usually is. */
+export function tailLogLines(
+  text: string,
+  lines: number,
+): { readonly log: string; readonly truncated: boolean } {
+  const all = text.replace(/\n$/, "").split("\n");
+  return all.length <= lines
+    ? { log: all.join("\n"), truncated: false }
+    : { log: all.slice(-lines).join("\n"), truncated: true };
+}
+
 export interface ProviderChangeRequestStat {
   readonly repository: string;
   readonly number: number;
@@ -505,6 +547,19 @@ export interface PullRequestProviderApi {
       readonly updateMethod?: PullRequestUpdateMethod;
     },
   ) => Effect.Effect<ProviderChangeRequestSummary | void, PullRequestProviderError>;
+
+  /** Tails of the named checks' logs. A check the host holds no log for gets a `detail`. */
+  readonly getCheckLogs?: (
+    input: ProviderRepositoryRef & {
+      readonly checks: ReadonlyArray<ProviderCheckReference>;
+      readonly tailLines: number;
+    },
+  ) => Effect.Effect<ReadonlyArray<ProviderCheckLog>, PullRequestProviderError>;
+
+  /** Re-runs the named checks' jobs. A check the host cannot re-run gets a `detail`. */
+  readonly rerunChecks?: (
+    input: ProviderRepositoryRef & { readonly checks: ReadonlyArray<ProviderCheckReference> },
+  ) => Effect.Effect<ReadonlyArray<ProviderCheckRerun>, PullRequestProviderError>;
 
   /** Requires edit capability and at least one field. */
   readonly updateChangeRequest?: (

@@ -125,9 +125,14 @@ import {
   type GitHubViewerAccess,
   IMMEDIATELY_MERGEABLE,
 } from "./gitHubPullRequestJson.ts";
-import type {
-  ProviderChangeRequestSummary,
-  ProviderListCursor,
+import {
+  gitHubActionsJobId,
+  tailLogLines,
+  type ProviderChangeRequestSummary,
+  type ProviderCheckLog,
+  type ProviderCheckReference,
+  type ProviderCheckRerun,
+  type ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 export class GitHubPullRequestReadError extends Schema.TaggedError<GitHubPullRequestReadError>()(
@@ -715,6 +720,17 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly applied: boolean;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
+    readonly readCheckLogs: (input: {
+      readonly host: string;
+      readonly repository: string;
+      readonly checks: ReadonlyArray<ProviderCheckReference>;
+      readonly tailLines: number;
+    }) => Effect.Effect<ReadonlyArray<ProviderCheckLog>>;
+    readonly rerunChecks: (input: {
+      readonly host: string;
+      readonly repository: string;
+      readonly checks: ReadonlyArray<ProviderCheckReference>;
+    }) => Effect.Effect<ReadonlyArray<ProviderCheckRerun>>;
     readonly runPullRequestAction: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -794,6 +810,19 @@ export class GitHubPullRequestApi extends Context.Service<
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
   }
 >()("@t3tools/source-control-github/server/GitHubPullRequestApi") {}
+
+const CHECK_LOG_MAX_BYTES = 16 * 1024 * 1024;
+const NOT_A_JOB = "This check is not a GitHub Actions job, so GitHub cannot re-run it.";
+const decodeActionsJob = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ run_id: Schema.Number })),
+);
+
+interface LocatedCheckJob {
+  readonly check: ProviderCheckReference;
+  readonly jobId: string | null;
+  readonly runId: number | null;
+  readonly detail: string | null;
+}
 
 function parseRepositorySelector(value: string): {
   readonly owner: string;
@@ -2780,6 +2809,98 @@ export const make = Effect.gen(function* () {
         ),
         Effect.asVoid,
       );
+    }),
+
+    readCheckLogs: Effect.fn("GitHubPullRequestApi.readCheckLogs")(function* (input) {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      return yield* Effect.forEach(
+        input.checks,
+        (check) => {
+          const jobId = gitHubActionsJobId(check.url);
+          if (jobId === null) {
+            return Effect.succeed({
+              ...check,
+              log: null,
+              truncated: false,
+              detail: "This check is not a GitHub Actions job, so GitHub holds no log for it.",
+            });
+          }
+          // The log is a redirect to storage; fetch drops the credential when it leaves GitHub.
+          return api
+            .rest({
+              host: input.host,
+              operation: "readCheckLog",
+              path: `repos/${owner}/${name}/actions/jobs/${jobId}/logs`,
+              maxResponseBytes: CHECK_LOG_MAX_BYTES,
+              timeout: "60 seconds",
+            })
+            .pipe(
+              Effect.map((response) => ({
+                ...check,
+                ...tailLogLines(response.body, input.tailLines),
+                detail: response.truncated ? "The log is too large; this is from its start." : null,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({ ...check, log: null, truncated: false, detail: error.message }),
+              ),
+            );
+        },
+        { concurrency: 4 },
+      );
+    }),
+
+    rerunChecks: Effect.fn("GitHubPullRequestApi.rerunChecks")(function* (input) {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const root = `repos/${owner}/${name}/actions`;
+      const located = yield* Effect.forEach(
+        input.checks,
+        (check): Effect.Effect<LocatedCheckJob> => {
+          const jobId = gitHubActionsJobId(check.url);
+          if (jobId === null)
+            return Effect.succeed({ check, jobId, runId: null, detail: NOT_A_JOB });
+          return api
+            .rest({ host: input.host, operation: "readCheckJob", path: `${root}/jobs/${jobId}` })
+            .pipe(
+              Effect.flatMap((response) => decodeActionsJob(response.body)),
+              Effect.map((job) => ({ check, jobId, runId: job.run_id, detail: null })),
+              Effect.catch((error) =>
+                Effect.succeed({ check, jobId, runId: null, detail: error.message }),
+              ),
+            );
+        },
+        { concurrency: 4 },
+      );
+      // GitHub refuses a second job re-run while the run re-runs, so a run's failed jobs go together.
+      const byRun = new Map<number, Array<LocatedCheckJob>>();
+      for (const entry of located) {
+        if (entry.runId === null) continue;
+        byRun.set(entry.runId, [...(byRun.get(entry.runId) ?? []), entry]);
+      }
+      const outcomes = new Map<number, string | null>();
+      yield* Effect.forEach(
+        byRun,
+        ([runId, jobs]) =>
+          api
+            .rest({
+              host: input.host,
+              operation: "rerunChecks",
+              method: "POST",
+              path:
+                jobs.length === 1
+                  ? `${root}/jobs/${jobs[0]!.jobId}/rerun`
+                  : `${root}/runs/${runId}/rerun-failed-jobs`,
+            })
+            .pipe(
+              Effect.as(null),
+              Effect.catch((error) => Effect.succeed(error.message)),
+              Effect.map((detail) => outcomes.set(runId, detail)),
+            ),
+        { concurrency: 2, discard: true },
+      );
+      return located.map(({ check, runId, detail }) => {
+        const outcome = runId === null ? detail : (outcomes.get(runId) ?? null);
+        return { name: check.name, rerun: runId !== null && outcome === null, detail: outcome };
+      });
     }),
 
     submitReview: Effect.fn("GitHubPullRequestApi.submitReview")(function (input) {

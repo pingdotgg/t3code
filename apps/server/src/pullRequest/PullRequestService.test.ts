@@ -1431,6 +1431,51 @@ it.effect(
     }),
 );
 
+it.effect(
+  "reads logs of the failing checks, or of the one named, and names the checks it lacks",
+  () =>
+    Effect.gen(function* () {
+      const asked: Array<ReadonlyArray<string>> = [];
+      const check = (name: string, status: "success" | "failure" | "cancelled") => ({
+        name,
+        status,
+        description: null,
+        url: `https://github.com/acme/web/runs/${name.length}`,
+      });
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestChecks: () =>
+              Effect.succeed({
+                state: "open",
+                checks: [
+                  check("Lint", "success"),
+                  check("Test", "failure"),
+                  check("E2E", "cancelled"),
+                ],
+              }),
+            getCheckLogs: (input) =>
+              Effect.sync(() => {
+                asked.push(input.checks.map((entry) => entry.name));
+                return [];
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      yield* service.checkLogs({ ...reference, tailLines: 50 });
+      yield* service.checkLogs({ ...reference, check: "lint", tailLines: 50 });
+      const missing = yield* Effect.flip(
+        service.checkLogs({ ...reference, check: "Deploy", tailLines: 50 }),
+      );
+      assert.deepStrictEqual(asked, [["Test", "E2E"], ["Lint"]]);
+      assert.include(missing.message, "Lint, Test, E2E");
+    }),
+);
+
 it.effect("refuses a merge whose head moved past expectedHeadSha and pins the host merge", () =>
   Effect.gen(function* () {
     const pinned: Array<string | undefined> = [];
