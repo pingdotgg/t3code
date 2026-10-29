@@ -102,11 +102,16 @@ function convertMenu(menu: MenuInput, id: string): StackHeaderMenuIOS {
   return { id, type: "menu", title: menu.title, children };
 }
 
+function isSearchPlacement(item: HeaderItem) {
+  return "searchBarPlacement" in item && item.searchBarPlacement === true;
+}
+
 function verticalBarGroupSizes(items: readonly HeaderItem[]) {
   const sizes = [0];
   for (const item of items) {
     if (item.type === "spacer") sizes.push(0);
-    else if (item.axisBehavior !== "horizontalOnly") sizes[sizes.length - 1]! += 1;
+    else if (item.axisBehavior !== "horizontalOnly" && !isSearchPlacement(item))
+      sizes[sizes.length - 1]! += 1;
   }
   return sizes;
 }
@@ -274,7 +279,7 @@ export function V5StackHeader(props: {
   const foldable = (item: HeaderItem) =>
     item.type === "item" &&
     !("render" in item) &&
-    item.searchBarPlacement !== true &&
+    !isSearchPlacement(item) &&
     item.axisBehavior !== "horizontalOnly";
   const folded = trailing.filter(foldable);
   if (
