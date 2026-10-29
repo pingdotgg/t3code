@@ -1535,6 +1535,102 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("ignores sessions without visible messages without spending the import budget", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const codexRollout = (name: string) =>
+          path.join(codexHomePath, "sessions", "2026", "08", "24", `rollout-${name}.jsonl`);
+        // Newer empty sessions would exhaust the 100-transcript import budget before any real one.
+        const emptySessions = Array.from({ length: 100 }, (_, index) =>
+          index % 2 === 0
+            ? {
+                filePath: codexRollout(`empty-${index}`),
+                records: [
+                  {
+                    type: "session_meta",
+                    payload: { id: `codex-empty-${index}`, cwd: workspace, source: "vscode" },
+                  },
+                  {
+                    type: "event_msg",
+                    payload: {
+                      type: "thread_settings_applied",
+                      thread_settings: { cwd: workspace },
+                    },
+                  },
+                ],
+              }
+            : {
+                filePath: path.join(
+                  claudeHomePath,
+                  "projects",
+                  "-slug",
+                  `claude-empty-${index}.jsonl`,
+                ),
+                records: [
+                  { type: "system", subtype: "informational", content: "Status", cwd: workspace },
+                  {
+                    type: "user",
+                    isMeta: true,
+                    message: {
+                      role: "user",
+                      content: "<local-command-caveat>Caveat</local-command-caveat>",
+                    },
+                    cwd: workspace,
+                  },
+                ],
+              },
+        );
+        const transcripts = [
+          ...emptySessions,
+          {
+            // Without session_meta there is no resumable session ID.
+            filePath: codexRollout("unusable"),
+            records: [
+              { type: "turn_context", payload: { cwd: workspace } },
+              {
+                type: "event_msg",
+                payload: { type: "user_message", message: "Import this prompt" },
+              },
+            ],
+          },
+          {
+            filePath: codexRollout("real"),
+            records: [
+              { type: "session_meta", payload: { id: "real-session", cwd: workspace } },
+              {
+                type: "event_msg",
+                payload: { type: "user_message", message: "Import this prompt" },
+              },
+            ],
+          },
+        ];
+        for (const [index, { filePath, records }] of transcripts.entries()) {
+          yield* writeTranscript({
+            filePath,
+            contents: records.map((record) => encodeTranscriptRecord(record)).join("\n"),
+            mtimeMs: nowMs - index * 60_000,
+          });
+        }
+
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(
+          outcomes.map((outcome) =>
+            outcome._tag === "Importable" ? outcome.thread.providerSessionId : outcome._tag,
+          ),
+        ).toEqual(["Skipped", "real-session"]);
+      }),
+    );
+
     it.effect("skips excessive records without blocking an older valid transcript", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
