@@ -3,6 +3,7 @@ import {
   ModelSelection,
   ProjectId,
   ProjectScript,
+  keepUnknownOverrideKeys,
   ProjectSettingsOverrides,
   type ProviderInstanceConfig,
   type ProviderInstanceMutation,
@@ -292,10 +293,12 @@ const ServerSettingsJson = fromLenientJson(
     ),
     projectSettingsOverrides: Schema.Record(
       ProjectId,
-      Schema.Struct({
-        ...ProjectSettingsOverrides.fields,
-        responseStreamingMode: Schema.optionalKey(PersistedResponseStreamingMode),
-      }),
+      keepUnknownOverrideKeys(
+        Schema.Struct({
+          ...ProjectSettingsOverrides.fields,
+          responseStreamingMode: Schema.optionalKey(PersistedResponseStreamingMode),
+        }),
+      ),
     ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }),
 );
