@@ -296,7 +296,6 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         draft: {
           environmentId: reservedDestinationProject.environmentId,
           projectId: reservedDestinationProject.id,
-          title: reservedDestinationProject.title,
           incomingShareId: incomingShare.id,
         },
       },

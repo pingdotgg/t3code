@@ -878,7 +878,6 @@ function ThreadRouteContent(
           draftId: restoredNewTaskDraftKey(creation.messageId),
           environmentId: String(creation.environmentId),
           projectId: String(creation.creation.projectId),
-          ...(selectedThreadProject ? { title: selectedThreadProject.title } : {}),
         },
       }),
     );
