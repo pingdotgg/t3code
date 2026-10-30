@@ -13,22 +13,23 @@ import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Stream from "effect/Stream";
 
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { idleCompactionWindow } from "./IdleCompaction.ts";
+import { idleCompactionWindow, usageLimitOutlastsCache } from "./IdleCompaction.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 /**
- * Beta: when a run completes on a Claude instance set to compact before the
- * cache expires, waits until shortly before its prompt cache expires and sends
- * `/compact` as a visible T3 Code turn. Timers live in
- * memory, so a server restart skips compactions that were still waiting.
+ * Beta: sends `/compact` shortly before a completed Claude run's prompt cache
+ * expires, or at once with `compactBeforeUsageLimit` when a nearly spent usage
+ * limit outlasts the cache. Timers live in memory; a restart skips waiting ones.
  */
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const providers = yield* ProviderRegistry.ProviderRegistry;
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
     function* (threadId: ThreadId, runId: RunId) {
@@ -48,9 +49,11 @@ export const make = Effect.gen(function* () {
           ],
           { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
         );
+        const beforeCacheExpires =
+          resolveIdleCompaction(current, records.thread.providerInstanceId) ===
+          "beforeCacheExpires";
         if (
-          resolveIdleCompaction(current, records.thread.providerInstanceId) !==
-            "beforeCacheExpires" ||
+          (!beforeCacheExpires && !current.compactBeforeUsageLimit) ||
           !resolveProjectProviderInstanceEnabled(
             current,
             records.thread.projectId,
@@ -61,7 +64,13 @@ export const make = Effect.gen(function* () {
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         const window = idleCompactionWindow(records, nowMs);
         if (window?.runId !== runId) return;
-        if (nowMs < window.startMs) {
+        const usageWindows = current.compactBeforeUsageLimit
+          ? ((yield* providers.getProviders).find(
+              (provider) => provider.instanceId === records.thread.providerInstanceId,
+            )?.usageLimits?.windows ?? [])
+          : [];
+        if (nowMs < window.startMs && !usageLimitOutlastsCache(usageWindows, window.endMs)) {
+          if (!beforeCacheExpires) return;
           yield* Effect.sleep(Duration.millis(window.startMs - nowMs));
           continue;
         }

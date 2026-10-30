@@ -1,4 +1,7 @@
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ThreadProjection,
+  ServerProviderUsageWindow,
+} from "@t3tools/contracts";
 import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
@@ -10,6 +13,8 @@ const MIN_CONTEXT_TOKENS = COMPACTION_SUGGESTION_MIN_TOKENS;
 // Start this long before the cache expires: enough for the session to resume
 // and send the compaction while the cache is still warm.
 const LEAD_MS = 2 * 60_000;
+// Close enough to a usage limit that the next turn may well be the one it stops.
+const NEAR_USAGE_LIMIT_PERCENT = 95;
 
 export type IdleCompactionRecords = Pick<
   OrchestrationV2ThreadProjection,
@@ -100,4 +105,20 @@ export function idleCompactionWindow(
   const endMs = expiresAt === undefined ? Number.NaN : Date.parse(expiresAt);
   if (!Number.isFinite(endMs) || nowMs >= endMs) return null;
   return { runId: latestRun.id, startMs: endMs - LEAD_MS, endMs };
+}
+
+/**
+ * Whether a usage window is nearly spent and resets after `cacheExpiresMs`: a
+ * stop on that limit would resume against an expired cache.
+ */
+export function usageLimitOutlastsCache(
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+  cacheExpiresMs: number,
+): boolean {
+  return windows.some(
+    (window) =>
+      window.usedPercent >= NEAR_USAGE_LIMIT_PERCENT &&
+      window.resetsAt !== undefined &&
+      Date.parse(window.resetsAt) > cacheExpiresMs,
+  );
 }

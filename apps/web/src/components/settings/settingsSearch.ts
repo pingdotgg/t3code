@@ -432,6 +432,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset wake recover continue"],
   },
   {
+    id: "compact-before-usage-limit",
+    title: "Compact before usage limits",
+    to: "/settings/threads",
+    searchTerms: ["usage quota rate limit compaction compact context prompt cache expire cost"],
+  },
+  {
     id: "auto-resume-limited-threads",
     title: "Resume after usage limits",
     to: "/settings/threads",

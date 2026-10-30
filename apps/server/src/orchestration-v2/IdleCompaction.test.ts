@@ -12,7 +12,11 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { idleCompactionWindow, type IdleCompactionRecords } from "./IdleCompaction.ts";
+import {
+  idleCompactionWindow,
+  usageLimitOutlastsCache,
+  type IdleCompactionRecords,
+} from "./IdleCompaction.ts";
 
 const NOW_MS = Date.parse("2026-10-19T12:00:00.000Z");
 const MINUTE_MS = 60_000;
@@ -152,5 +156,22 @@ describe("idleCompactionWindow", () => {
     const archived = records(cache);
     archived.thread = { ...archived.thread, archivedAt: at() };
     expect(idleCompactionWindow(archived, NOW_MS)).toBeNull();
+  });
+});
+
+describe("usageLimitOutlastsCache", () => {
+  it("needs a nearly spent window that resets after the cache expires", () => {
+    const cacheExpiresMs = NOW_MS + 60 * MINUTE_MS;
+    const window = (usedPercent: number, resetsInMs?: number) => ({
+      id: "five_hour",
+      kind: "session" as const,
+      label: "Session",
+      usedPercent,
+      ...(resetsInMs === undefined ? {} : { resetsAt: DateTime.formatIso(at(resetsInMs)) }),
+    });
+    expect(usageLimitOutlastsCache([window(95, 90 * MINUTE_MS)], cacheExpiresMs)).toBe(true);
+    expect(usageLimitOutlastsCache([window(94, 90 * MINUTE_MS)], cacheExpiresMs)).toBe(false);
+    expect(usageLimitOutlastsCache([window(95, 30 * MINUTE_MS)], cacheExpiresMs)).toBe(false);
+    expect(usageLimitOutlastsCache([window(95)], cacheExpiresMs)).toBe(false);
   });
 });
