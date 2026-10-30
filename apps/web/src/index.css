@@ -2065,8 +2065,13 @@ code {
   margin: 0.65rem 0;
 }
 
-/* Preflight already draws the 1px rule, as it does in chat; only the block
-   spacing needs to match. */
+/* Surface borders can blend into dark message bubbles; rules need a readable color. */
+:is(.chat-markdown, .composer-tiptap) hr {
+  @variant dark {
+    border-color: var(--contrast-muted-foreground);
+  }
+}
+
 .composer-tiptap hr {
   margin: 0.65rem 0;
 }
