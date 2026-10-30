@@ -22,6 +22,8 @@ import {
   readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
+  requestServiceLauncherStop,
+  serviceControlPipePath,
   writeServiceState,
 } from "./serviceLauncher.ts";
 import {
@@ -31,6 +33,7 @@ import {
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
+  SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
@@ -922,6 +925,76 @@ if (context.update?.status === "pending") {
       assert.isFalse(trialStarted);
       assert.equal(state.activeVersion, "1.0.0");
       assert.isUndefined(state.update);
+    }),
+  );
+
+  it.effect("stops the server over IPC when asked on the control socket, with the marker set", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-control-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      const reportPath = path.join(root, "stopped-with-marker");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "database");
+      const encoded = JSON.stringify({
+        databasePath,
+        reportPath,
+        markerPath: path.join(root, "runtime", SERVICE_STOP_MARKER_FILE),
+      });
+      const childSource = `
+const fs = require("node:fs");
+const paths = ${encoded};
+process.on("message", (message) => {
+  if (message.type !== "stop") return;
+  fs.writeFileSync(paths.reportPath, String(fs.existsSync(paths.markerPath)));
+  process.exit(0);
+});
+process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.databasePath });
+`;
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      const controlPath =
+        (yield* HostProcess.Platform) === "win32"
+          ? serviceControlPipePath(root)
+          : path.join(root, "control.sock");
+      const serving = Promise.withResolvers<void>();
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          controlPath,
+          stopChildOverIpc: true,
+          // The update request proves the child is up; refusing it leaves the server running.
+          backupSpaceProbe: {
+            readFreeBytes: () => {
+              serving.resolve();
+              return Promise.resolve(0);
+            },
+            canClone: () => Promise.resolve(false),
+          },
+        },
+      );
+      const running = launcher.run();
+      yield* Effect.promise(() => Promise.race([serving.promise, running]));
+
+      assert.isTrue(yield* Effect.promise(() => requestServiceLauncherStop(controlPath)));
+      yield* Effect.promise(() => running);
+      assert.equal(yield* fs.readFileString(reportPath), "true");
+      assert.isFalse(yield* Effect.promise(() => requestServiceLauncherStop(controlPath)));
     }),
   );
 

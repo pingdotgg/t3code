@@ -120,6 +120,25 @@ it.effect("preserves a launcher rejection as a distinct error", () =>
   }),
 );
 
+it.effect("stops the server when the launcher asks over IPC", () =>
+  Effect.gen(function* () {
+    const host = new FakeLauncherProcess({
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: "1.0.0",
+    });
+    const stopped = yield* Effect.forkChild(
+      ServiceLauncherClient.awaitServiceLauncherStop({ currentVersion: "1.0.0" }).pipe(
+        Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, host),
+        Effect.provideService(HostProcess.Environment, host.env),
+      ),
+      { startImmediately: true },
+    );
+    yield* Effect.yieldNow;
+    host.emit({ type: "stop" });
+    yield* Fiber.join(stopped);
+  }),
+);
+
 it.effect("rejects contradictory trial context instead of leaving activation closed", () =>
   Effect.gen(function* () {
     const host = new FakeLauncherProcess({
