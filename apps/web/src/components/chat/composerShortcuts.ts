@@ -18,6 +18,12 @@ export function composerShortcutCommands(
     "modelPicker.toggle": ({ event }) => {
       if (!event.repeat) composerRef.current?.toggleModelPicker();
     },
+    "composer.toggleRichText": ({ event }) => {
+      // The flip remounts the editor, which would drop an unsaved citation comment.
+      if (event.target instanceof Element && event.target.closest("[data-citation-comment-editor]"))
+        return false;
+      if (!event.repeat) composerRef.current?.toggleRichText();
+    },
     "composer.increaseEffort": ({ event }) => {
       if (!event.repeat) composerRef.current?.stepReasoningEffort(1);
     },

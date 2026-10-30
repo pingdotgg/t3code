@@ -133,6 +133,7 @@ import {
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
+import { persistClientSettingsUpdate } from "../../hooks/useSettings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -198,6 +199,7 @@ import {
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerRichTextToggle } from "./ComposerRichTextToggle";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -304,6 +306,7 @@ export interface ChatComposerHandle {
   openModelPicker: () => void;
   stepReasoningEffort: (direction: 1 | -1) => void;
   toggleModelPicker: () => void;
+  toggleRichText: () => void;
   openControl: (command: KeybindingCommand) => void;
   isModelPickerOpen: () => boolean;
   isCaretAtStart: () => boolean;
@@ -2852,6 +2855,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           openModelPickerStable();
         }
       },
+      toggleRichText: () => {
+        if (isLiteralPendingAnswer) return;
+        persistClientSettingsUpdate((current) => ({
+          ...current,
+          composerRichTextEnabled: !current.composerRichTextEnabled,
+        })).catch(console.error);
+      },
       openControl: (command) => {
         if (composerBlurFrameRef.current !== null) {
           window.cancelAnimationFrame(composerBlurFrameRef.current);
@@ -3429,7 +3439,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   showMobilePendingAnswerActions && "hidden sm:flex",
                 )}
               >
-                {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+                {composerAttachButton || !isLiteralPendingAnswer ? (
+                  <div className="me-2 flex items-center gap-0.5">
+                    {composerAttachButton}
+                    {isLiteralPendingAnswer ? null : (
+                      <ComposerRichTextToggle
+                        richTextEnabled={settings.composerRichTextEnabled}
+                        shortcutLabel={shortcutLabelForCommand(
+                          keybindings,
+                          "composer.toggleRichText",
+                          {
+                            context: { terminalFocus: false, terminalOpen, modelPickerOpen: false },
+                          },
+                        )}
+                      />
+                    )}
+                  </div>
+                ) : null}
                 <div
                   data-chat-composer-actions="right"
                   data-chat-composer-transition-actions="true"

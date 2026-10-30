@@ -768,12 +768,21 @@ describe("composer and pull request shortcuts", () => {
   });
 
   it.each(["MacIntel", "Win32", "Linux"])(
-    "reserves the alternate send chord for the focused composer on %s",
+    "resolves composer toggle and alternate send chords in their contexts on %s",
     (platform) => {
       const modifier = {
         metaKey: platform === "MacIntel",
         ctrlKey: platform !== "MacIntel",
       };
+      for (const terminalFocus of [false, true]) {
+        assert.strictEqual(
+          resolveShortcutCommand(event({ key: "/", ...modifier }), DEFAULT_RESOLVED_KEYBINDINGS, {
+            platform,
+            context: { terminalFocus },
+          }),
+          terminalFocus ? null : "composer.toggleRichText",
+        );
+      }
       const shiftedEnter = event({ key: "Enter", shiftKey: true, ...modifier });
       for (const composerRequiresModifier of [false, true]) {
         const context = {
