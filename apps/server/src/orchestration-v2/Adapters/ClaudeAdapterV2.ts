@@ -3432,13 +3432,14 @@ export function permissionResultFromDecision(input: {
     };
   }
 
+  const feedback = input.feedback?.trim();
   return {
     behavior: "deny",
-    message:
-      input.feedback?.trim() ||
-      (input.decision === "cancel"
+    message: feedback
+      ? `The user declined this tool call and said:\n${feedback}`
+      : input.decision === "cancel"
         ? "User cancelled tool execution."
-        : "User declined tool execution."),
+        : "User declined tool execution.",
     toolUseID: input.toolUseID,
     decisionClassification: "user_reject",
     ...(input.decision === "cancel" ? { interrupt: true } : {}),
