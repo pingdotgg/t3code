@@ -7498,6 +7498,96 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live("lets a caller abandon Stop while hard teardown stalls, and finishes the teardown", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const teardownStarted = yield* Deferred.make<void>();
+      const releaseTeardown = yield* Deferred.make<void>();
+      let runtimeOrdinalSeen = 0;
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          interruptPromptOnCancel: true,
+          restartRuntimeAfterInterrupt: true,
+          terminateRuntimeProcessGroupOnInterrupt: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            ownDetachedProcessGroup: true,
+            processGroupPlatform: "win32",
+            windowsProcessTreeTerminator: () =>
+              Deferred.succeed(teardownStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseTeardown)),
+              ),
+            environment: (runtimeOrdinal) => {
+              runtimeOrdinalSeen = runtimeOrdinal;
+              return runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {};
+            },
+            protocolEvents,
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-abandoned-hard-teardown");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-abandoned-hard-teardown"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime
+        .startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+        )
+        .pipe(Effect.forkScoped);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      yield* pollProtocolMethods(protocolEvents);
+      const interruptFiber = yield* runtime
+        .interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(teardownStarted);
+
+      // The session manager's Stop timeout interrupts this call; it must not wait for teardown.
+      yield* Fiber.interrupt(interruptFiber);
+
+      const startFiber = yield* runtime
+        .startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.succeed(releaseTeardown, undefined);
+      yield* Fiber.join(startFiber);
+      assert.equal(runtimeOrdinalSeen, 2);
+      const replacementMethods = yield* pollProtocolMethods(protocolEvents);
+      assert.equal(replacementMethods.filter((method) => method === "session/resume").length, 1);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect(
     "direct Stop on a deferred subagent hold terminalizes the subagent and does not carry it forward",
     () =>

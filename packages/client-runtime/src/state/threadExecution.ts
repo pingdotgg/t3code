@@ -294,6 +294,55 @@ const BACKGROUND_WORK_KINDS: Record<
   background_task: { order: 3, singular: "background task", plural: "background tasks" },
 };
 
+export interface RunStopPresentation {
+  /** `unresponsive`: the provider did not confirm the stop in time, so Force stop is offered. */
+  readonly state: "stopping" | "unresponsive";
+  readonly runId: ThreadStructure["runs"][number]["id"];
+  readonly requestedAt: string;
+  /** The run already ended; the Stop targeted its background work. */
+  readonly background: boolean;
+}
+
+/**
+ * A Stop the provider has not finished yet. It stays `stopping` while the agent winds down,
+ * since some providers confirm the request before the turn actually ends. On a run that
+ * already ended, only an unanswered Stop of its background work counts.
+ */
+export function presentRunStop(
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+): RunStopPresentation | null {
+  let active: ThreadStructure["runs"][number] | null = null;
+  let latest: ThreadStructure["runs"][number] | null = null;
+  for (const candidate of projection.runs) {
+    // Queued follow-ups never ran, so they hold no Stop of their own.
+    if (candidate.status !== "queued" && candidate.ordinal > (latest?.ordinal ?? -1))
+      latest = candidate;
+    if (
+      INTERRUPTIBLE_RUN_STATUSES.has(candidate.status) &&
+      candidate.ordinal > (active?.ordinal ?? -1)
+    )
+      active = candidate;
+  }
+  const run = active ?? latest;
+  if (run === null) return null;
+  let request:
+    | Extract<ThreadStructure["turnItems"][number], { type: "run_interrupt_request" }>
+    | undefined;
+  for (const item of projection.turnItems) {
+    if (item.runId !== run.id) continue;
+    if (item.type === "run_interrupt_result") return null;
+    if (item.type === "run_interrupt_request") request = item;
+  }
+  if (request === undefined || (active === null && request.unresponsiveAt === undefined))
+    return null;
+  return {
+    state: request.unresponsiveAt === undefined ? "stopping" : "unresponsive",
+    runId: run.id,
+    requestedAt: DateTime.formatIso(request.startedAt ?? request.updatedAt),
+    background: active === null,
+  };
+}
+
 export interface PendingBackgroundWorkItem {
   readonly taskId: string;
   readonly kind: BackgroundWorkKind;

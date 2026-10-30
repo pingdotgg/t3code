@@ -1552,3 +1552,115 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
       );
     }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("an unanswered Stop is flagged until Force stop ends the run with its own reason", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:force-stop");
+    yield* createWatchingThread(threadId, 6);
+    yield* send(threadId, "work", "start_immediately");
+    const now = yield* DateTime.now;
+    const started = yield* orchestrator.getThreadProjection(threadId);
+    const run = started.runs[0]!;
+    const providerThreadId = run.providerThreadId!;
+    const providerTurnId = ProviderTurnId.make("provider-turn:force-stop");
+    const apply = (event: Omit<OrchestrationV2DomainEvent, "id" | "threadId">) =>
+      projections.apply({
+        ...event,
+        id: EventId.make(`event:force-stop:${event.type}`),
+        threadId,
+      } as OrchestrationV2DomainEvent);
+    const attempt = started.attempts[0]!;
+    const attemptId = attempt.id;
+    yield* apply({
+      type: "run.updated",
+      runId: run.id,
+      occurredAt: now,
+      payload: { ...run, status: "running", startedAt: now, activeAttemptId: attemptId },
+    });
+    yield* apply({
+      type: "run-attempt.updated",
+      occurredAt: now,
+      payload: { ...attempt, status: "running", startedAt: now },
+    });
+    yield* apply({
+      type: "provider-turn.updated",
+      occurredAt: now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId,
+        nodeId: run.rootNodeId!,
+        runAttemptId: attemptId,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+    yield* apply({
+      type: "turn-item.updated",
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("turn-item:force-stop:interrupt-request"),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1_000,
+        status: "completed",
+        title: "Interrupt requested",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "run_interrupt_request",
+        message: "Stopped by user",
+      },
+    });
+    const target = { threadId, providerThreadId, providerTurnId };
+    const request = Effect.map(orchestrator.getThreadProjection(threadId), (projection) =>
+      projection.turnItems.find((item) => item.type === "run_interrupt_request"),
+    );
+
+    yield* orchestrator.dispatch({
+      ...target,
+      type: "thread.interrupt.unresponsive",
+      commandId: CommandId.make("force-stop:unresponsive"),
+    });
+    const flagged = yield* request;
+    assert.isTrue(
+      flagged?.type === "run_interrupt_request" && flagged.unresponsiveAt !== undefined,
+    );
+    assert.deepEqual((yield* threadState(threadId)).runs, ["running"]);
+
+    yield* orchestrator.dispatch({
+      ...target,
+      type: "thread.background-work.settle",
+      commandId: CommandId.make("force-stop:settle"),
+      reason: "Force stopped by user",
+    });
+    const settled = yield* orchestrator.getThreadProjection(threadId);
+    assert.deepEqual(
+      settled.runs.map((candidate) => candidate.status),
+      ["interrupted"],
+    );
+    const result = settled.turnItems.find((item) => item.type === "run_interrupt_result");
+    assert.equal(
+      result?.type === "run_interrupt_result" ? result.message : undefined,
+      "Force stopped by user",
+    );
+
+    // A provider confirming late changes nothing once the run has ended.
+    const late = yield* orchestrator.dispatch({
+      ...target,
+      type: "thread.interrupt.unresponsive",
+      commandId: CommandId.make("force-stop:late-unresponsive"),
+    });
+    assert.lengthOf(late.storedEvents, 0);
+  }).pipe(Effect.provide(layerTest)),
+);

@@ -25,6 +25,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  presentRunStop,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 
@@ -256,6 +257,74 @@ describe("thread execution presentation", () => {
       activeRunId: null,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
+  });
+});
+
+describe("presentRunStop", () => {
+  const signal = (type: "run_interrupt_request" | "run_interrupt_result", runId: RunId) => ({
+    id: TurnItemId.make(`${type}:${runId}`),
+    threadId: v2Projection.thread.id,
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: type === "run_interrupt_result" ? ("interrupted" as const) : ("completed" as const),
+    title: "Interrupt",
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+    type,
+    message: "Stopped by user",
+  });
+  const running = run("run-stopping", 1, "running");
+  const request = signal("run_interrupt_request", running.id);
+
+  it.each([
+    { name: "no Stop", runs: [running], turnItems: [], state: null },
+    {
+      name: "a Stop the agent is winding down",
+      runs: [running],
+      turnItems: [request],
+      state: "stopping",
+    },
+    {
+      name: "a Stop the provider never confirmed",
+      runs: [running],
+      turnItems: [{ ...request, unresponsiveAt: now }],
+      state: "unresponsive",
+    },
+    {
+      name: "a Stop that ended the run",
+      runs: [running],
+      turnItems: [request, signal("run_interrupt_result", running.id)],
+      state: null,
+    },
+    {
+      name: "a settled run's background work still stopping",
+      runs: [{ ...running, status: "completed" as const, completedAt: now }],
+      turnItems: [request],
+      state: null,
+    },
+    {
+      name: "a settled run whose background work ignored Stop",
+      runs: [{ ...running, status: "completed" as const, completedAt: now }],
+      turnItems: [{ ...request, unresponsiveAt: now }],
+      state: "unresponsive",
+    },
+    {
+      name: "a settled run whose background work ignored Stop, with a queued follow-up",
+      runs: [
+        { ...running, status: "completed" as const, completedAt: now },
+        run("run-queued", 2, "queued"),
+      ],
+      turnItems: [{ ...request, unresponsiveAt: now }],
+      state: "unresponsive",
+    },
+  ])("presents $name", ({ runs, turnItems, state }) => {
+    expect(presentRunStop({ runs, turnItems })?.state ?? null).toBe(state);
   });
 });
 

@@ -110,6 +110,8 @@ const withFakeSystemd = <A, E>(
         ...fileSystem,
         readFileString: (path, encoding) =>
           fileSystem.readFileString(path.replace("/sys/fs/cgroup", cgroupRoot), encoding),
+        writeFileString: (path, data, options) =>
+          fileSystem.writeFileString(path.replace("/sys/fs/cgroup", cgroupRoot), data, options),
       }),
     );
     const { stateDir } = yield* ServerConfig.ServerConfig;
@@ -210,6 +212,36 @@ describe("AgentScope service", () => {
             calls.filter(([, verb, unit]) => verb === "show" && unit === unitOf(codex)),
           ).toEqual([]);
         }),
+      ),
+  );
+
+  it.effect.each([{ oomPolicy: true }, { oomPolicy: false }])(
+    "Force stop kills a thread's own scope but never a shared Codex scope (OOM policy $oomPolicy)",
+    ({ oomPolicy }) =>
+      withFakeSystemd(
+        ({ scope, units, calls, cgroupRoot }) =>
+          Effect.gen(function* () {
+            const agent = yield* scope.wrap({
+              command: "agent",
+              args: [],
+              name: "t",
+              threadId: "a",
+            });
+            exitedAgent(units, cgroupRoot, unitOf(agent), { populated: true, oomKills: 0 });
+            const codex = yield* launchCodex(scope, "b");
+            exitedAgent(units, cgroupRoot, unitOf(codex), { populated: true, oomKills: 0 });
+
+            expect(yield* scope.kill("a")).toBe(true);
+            expect(
+              NodeFS.readFileSync(NodePath.join(cgroupRoot, unitOf(agent), "cgroup.kill"), "utf8"),
+            ).toBe("1");
+            expect(yield* scope.kill("b")).toBe(false);
+            expect(NodeFS.existsSync(NodePath.join(cgroupRoot, unitOf(codex), "cgroup.kill"))).toBe(
+              false,
+            );
+            expect(calls.filter(([, verb]) => verb === "kill")).toEqual([]);
+          }),
+        { oomPolicy },
       ),
   );
 
