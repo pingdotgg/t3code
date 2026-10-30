@@ -7,7 +7,34 @@ import {
   type PullRequestListResult,
   type PullRequestSummary,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
+
+const listAnswers = vi.hoisted(() => new Map<string, unknown>());
+
+vi.mock("@effect/atom-react", async (importOriginal) => {
+  const { AtomRegistry } = await import("effect/reactivity");
+  const registry = AtomRegistry.make();
+  return {
+    ...(await importOriginal<typeof import("@effect/atom-react")>()),
+    useAtomValue: (atom: Atom.Atom<unknown>) => registry.get(atom),
+  };
+});
+vi.mock("@t3tools/client-runtime/state/pull-requests", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@t3tools/client-runtime/state/pull-requests")>();
+  return {
+    ...actual,
+    createPullRequestEnvironmentAtoms: (
+      ...args: Parameters<typeof actual.createPullRequestEnvironmentAtoms>
+    ) => ({
+      ...actual.createPullRequestEnvironmentAtoms(...args),
+      list: ({ environmentId }: { readonly environmentId: string }) =>
+        listAnswers.get(environmentId),
+    }),
+  };
+});
 
 import {
   newestPullRequestObservation,
@@ -19,6 +46,7 @@ import {
   restorePullRequestList,
   restoredPullRequestList,
   threadPullRequestLinkToSummary,
+  usePullRequestList,
 } from "./pullRequests";
 
 function summary(overrides: Partial<PullRequestSummary> = {}): PullRequestSummary {
@@ -454,6 +482,32 @@ describe("pull request list answers across a reload", () => {
         remote,
       ]);
     }
+  });
+
+  it("names the environment whose list failed while the others' rows still show", () => {
+    listAnswers.set(local, Atom.make(AsyncResult.success(answer([listEntry(1)]))));
+    listAnswers.set(
+      remote,
+      Atom.make(
+        AsyncResult.failure(
+          Cause.fail(
+            new Error("Relay could not reach the environment endpoint (endpoint_request_failed)."),
+          ),
+        ),
+      ),
+    );
+
+    const view = usePullRequestList([
+      { environmentId: local, input },
+      { environmentId: remote, input },
+    ]);
+
+    expect(view.data?.entries.map((row) => [row.environmentId, row.number])).toEqual([[local, 1]]);
+    // Shape-agnostic: whatever the view reports must say which environment failed and why.
+    const reported = JSON.stringify(view.error);
+    expect(reported).toContain("endpoint_request_failed");
+    expect(reported).toContain(remote);
+    expect(reported).not.toContain(local);
   });
 
   it("removes the composite snapshots it replaced", () => {
