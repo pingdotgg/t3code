@@ -45,6 +45,8 @@ interface AdaptiveWorkspaceContextValue {
     options?: { readonly columns?: boolean },
   ) => void;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
+  readonly nativeInspectorWidth: number;
+  readonly setNativeInspectorWidth: (width: number) => void;
   /**
    * Android split view while the thread composer has the soft keyboard: the
    * sidebar and rail step aside and the thread header drops to one line.
@@ -86,6 +88,8 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   setPrimarySidebarVisible: () => undefined,
   openWorkspaceTab: () => undefined,
   setAuxiliaryPaneWidth: () => undefined,
+  nativeInspectorWidth: 0,
+  setNativeInspectorWidth: () => undefined,
   composerKeyboardActive: false,
   sidebarByOrientation: null,
   setComposerEditing: () => undefined,

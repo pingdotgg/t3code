@@ -20,7 +20,7 @@ import {
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
 import { Fragment, use, useEffect, useRef, useState, type ComponentProps } from "react";
-import { StyleSheet, useWindowDimensions, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { Split, type SplitHostCommands } from "react-native-screens";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -194,16 +194,11 @@ function WorkspaceColumns(
     startNewTask,
     openWorkspaceTab,
     sidebarByOrientation,
+    nativeInspectorWidth,
+    setNativeInspectorWidth,
   } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
-  const windowDimensions = useWindowDimensions();
-  const nativeMetrics = useNativeLayoutMetrics();
-  const viewportWidth = nativeMetrics?.width ?? windowDimensions.width;
-  const [inspectorWidthFraction, setInspectorWidthFraction] = useState(0.4);
-  const inspectorWidth = Math.max(
-    260,
-    Math.min(viewportWidth * 0.6, viewportWidth * inspectorWidthFraction),
-  );
+  const inspectorWidth = nativeInspectorWidth;
   const resizeStartWidth = useRef(inspectorWidth);
   const settingsDetailIn = (detail: readonly Route[]) =>
     layout.usesSplitView && detail[0] && isSettingsRoute(detail[0].name) ? detail[0] : undefined;
@@ -470,13 +465,9 @@ function WorkspaceColumns(
                         onResizeStart={() => {
                           resizeStartWidth.current = inspectorWidth;
                         }}
-                        onResizeBy={(delta) => {
-                          const width = Math.max(
-                            260,
-                            Math.min(viewportWidth * 0.6, resizeStartWidth.current + delta),
-                          );
-                          setInspectorWidthFraction(width / viewportWidth);
-                        }}
+                        onResizeBy={(delta) =>
+                          setNativeInspectorWidth(resizeStartWidth.current + delta)
+                        }
                       />
                     </View>
                   </View>
