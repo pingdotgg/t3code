@@ -1121,6 +1121,21 @@ export function findRevertCheckpoint(
   );
 }
 
+/** A run with no ready checkpoint (stopped, failed capture) may have touched files. */
+export function runsChangedFiles(
+  checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
+  runIds: Iterable<RunId>,
+): boolean {
+  for (const runId of runIds) {
+    const checkpoint = checkpoints.findLast(
+      (candidate) => candidate.runId === runId && candidate.status === "ready",
+    );
+    if (checkpoint === undefined) return true;
+    if (checkpoint.files.length > 0 || (checkpoint.filesTotal?.count ?? 0) > 0) return true;
+  }
+  return false;
+}
+
 export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhase {
   if (runtime === null) return "disconnected";
   if (

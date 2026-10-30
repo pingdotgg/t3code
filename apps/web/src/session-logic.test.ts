@@ -13,6 +13,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Checkpoint,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
@@ -33,6 +34,7 @@ import {
   selectMessageImageResources,
   createMessageAttachmentPreviewProjector,
   providerErrorPresentation,
+  runsChangedFiles,
   type TimelineEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
@@ -1786,4 +1788,43 @@ it("renders automatic completion as a work entry instead of a user bubble", () =
       ],
     })[0]?.kind,
   ).toBe("message");
+});
+
+describe("runsChangedFiles", () => {
+  const checkpoint = (
+    run: string,
+    overrides: Partial<OrchestrationV2Checkpoint> = {},
+  ): OrchestrationV2Checkpoint => ({
+    id: CheckpointId.make(`checkpoint-${run}`),
+    threadId: ThreadId.make("thread"),
+    scopeId: CheckpointScopeId.make("scope"),
+    runId: RunId.make(run),
+    nodeId: NodeId.make("node"),
+    parentCheckpointId: null,
+    ordinalWithinScope: 1,
+    appRunOrdinal: 1,
+    ref: "ref" as never,
+    status: "ready",
+    files: [],
+    capturedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+    ...overrides,
+  });
+  const file = { path: "a.ts", kind: "modified", additions: 1, deletions: 0 };
+  const runs = (...ids: string[]) => ids.map((id) => RunId.make(id));
+
+  it("is false only when every run has a ready checkpoint with no files", () => {
+    expect(runsChangedFiles([checkpoint("a"), checkpoint("b")], runs("a", "b"))).toBe(false);
+    expect(
+      runsChangedFiles([checkpoint("a"), checkpoint("b", { files: [file] })], runs("a", "b")),
+    ).toBe(true);
+    expect(
+      runsChangedFiles(
+        [checkpoint("a", { filesTotal: { count: 3, additions: 1, deletions: 1 } })],
+        runs("a"),
+      ),
+    ).toBe(true);
+    // A stopped run without a checkpoint, or a failed capture, may still have edited files.
+    expect(runsChangedFiles([checkpoint("a")], runs("a", "b"))).toBe(true);
+    expect(runsChangedFiles([checkpoint("a", { status: "error" })], runs("a"))).toBe(true);
+  });
 });

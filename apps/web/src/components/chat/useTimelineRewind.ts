@@ -18,7 +18,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { readLocalApi } from "../../localApi";
-import { findRevertCheckpoint } from "../../session-logic";
+import { findRevertCheckpoint, runsChangedFiles } from "../../session-logic";
 import { type ChatMessage } from "../../types";
 import { newThreadId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -125,7 +125,18 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       return;
     }
     if (restoreFiles === undefined) {
-      openRevertConfirm(routeThreadKey, { turnCount, messageId });
+      openRevertConfirm(routeThreadKey, {
+        turnCount,
+        messageId,
+        hasFileChanges: runsChangedFiles(
+          serverProjection?.checkpoints ?? [],
+          new Set(
+            timelineMessages
+              .slice(timelineMessages.indexOf(message))
+              .flatMap((later) => (later.runId === null ? [] : [later.runId])),
+          ),
+        ),
+      });
       return;
     }
 
