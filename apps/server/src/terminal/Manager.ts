@@ -63,6 +63,7 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
+import packageJson from "../../package.json" with { type: "json" };
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
@@ -1403,6 +1404,8 @@ function createTerminalSpawnEnv(
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
     spawnEnv.COLORTERM = "truecolor";
   }
+  spawnEnv.TERM_PROGRAM = "t3code";
+  spawnEnv.TERM_PROGRAM_VERSION = packageJson.version;
   // fish 4.1+ can wait 10s at startup for a DA1 reply before a renderer can answer.
   // Skip the query unless the user or provider already chose `query-term` or `no-query-term`.
   const fishFeaturesKey =

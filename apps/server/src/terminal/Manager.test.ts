@@ -31,6 +31,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
@@ -1429,6 +1430,33 @@ it.layer(
           ),
         );
         expect.soft(fishFeatures, JSON.stringify({ platform, env, runtimeEnv })).toEqual(expected);
+      }
+    }),
+  );
+
+  it.effect("identifies T3 Code to shells on open and reopen", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          TERM_PROGRAM: "parent-terminal",
+          TERM_PROGRAM_VERSION: "parent-version",
+          TEST_TERMINAL_KEEP: "keep-me",
+          T3CODE_PORT: "3773",
+        },
+      });
+      yield* manager.open(openInput());
+      yield* manager.close({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      for (const { env } of ptyAdapter.spawnInputs) {
+        expect(env).toMatchObject({
+          TERM_PROGRAM: "t3code",
+          TERM_PROGRAM_VERSION: packageJson.version,
+          COLORTERM: "truecolor",
+          TEST_TERMINAL_KEEP: "keep-me",
+        });
+        expect(env.T3CODE_PORT).toBeUndefined();
       }
     }),
   );
