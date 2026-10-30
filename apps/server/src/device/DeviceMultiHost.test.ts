@@ -6,6 +6,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
+import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import * as DeviceService from "./DeviceService.ts";
@@ -16,19 +17,23 @@ it.effect("keeps hosts independent when serials collide and another host fails",
       Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
-          Response.json({
-            simulators: [],
-            emulators: [
-              {
-                id: "emulator-5554",
-                name: "Pixel",
-                version: "36",
-                platform: "android",
-                booted: true,
-                physical: false,
-              },
-            ],
-          }),
+          Response.json(
+            request.url.endsWith("/rpc")
+              ? { result: { ok: true } }
+              : {
+                  simulators: [],
+                  emulators: [
+                    {
+                      id: "emulator-5554",
+                      name: "Pixel",
+                      version: "36",
+                      platform: "android",
+                      booted: true,
+                      physical: false,
+                    },
+                  ],
+                },
+          ),
         ),
       ),
     );
@@ -50,6 +55,10 @@ it.effect("keeps hosts independent when serials collide and another host fails",
           androidAvailable: Effect.succeed(true),
         }),
         agentDevice: { baseUrl: `http://${id}`, token: "test", entryPath: "/agent-device" },
+        releaseAgentSession: releaseAgentDeviceSession(http, {
+          baseUrl: `http://${id}`,
+          token: "test",
+        }),
         run,
         helpers: { serveSimAxSettings: null, serveSimCli: null },
       };

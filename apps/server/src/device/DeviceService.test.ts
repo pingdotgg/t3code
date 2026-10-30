@@ -36,7 +36,7 @@ import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
-import { agentDeviceSession } from "./AgentDeviceTarget.ts";
+import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
@@ -52,26 +52,65 @@ const fixture = Effect.fn("fixture")(function* (
     | DeviceHost.AgentDeviceStartError,
   inspectError = false,
   installTool?: Parameters<typeof DeviceService.makeWithHosts>[3],
-  options: { readonly endsDevices?: boolean; readonly routesStreams?: boolean } = {},
+  options: {
+    readonly endsDevices?: boolean;
+    readonly routesStreams?: boolean;
+    readonly onClose?: Effect.Effect<"ok" | "missing" | "reject" | "http_error" | "malformed">;
+    readonly onPlatformAvailability?: Effect.Effect<void>;
+  } = {},
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
   const agentStarts: string[] = [];
   const agentStops: string[] = [];
   const requests: string[] = [];
+  const closedSessions: unknown[] = [];
   const devices: Array<Omit<DeviceSummary, "hostId">> = [];
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
   const androidAvailable = yield* Ref.make(true);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
   let booted = false;
   let shutDown = false;
+  const connection = { online: true, kind: "local" as "local" | "ssh", failShutdown: false };
   const http = HttpClient.make((request) =>
     Effect.gen(function* () {
       requests.push(request.url);
+      if (request.url === "http://agent.test/rpc") {
+        if (request.body._tag !== "Uint8Array") throw new Error("Missing close body");
+        const body = decodeJson(new TextDecoder().decode(request.body.body));
+        closedSessions.push(body);
+        expect(request.headers.authorization).toBe("Bearer test");
+        const outcome = yield* options.onClose ?? Effect.succeed("ok");
+        return HttpClientResponse.fromWeb(
+          request,
+          outcome === "missing"
+            ? Response.json(
+                {
+                  error: {
+                    code: -32000,
+                    message: "No active session",
+                    data: { code: "SESSION_NOT_FOUND" },
+                  },
+                },
+                { status: 404 },
+              )
+            : outcome === "http_error"
+              ? new Response("Offline", { status: 503 })
+              : outcome === "malformed"
+                ? new Response("not JSON")
+                : Response.json(
+                    outcome === "ok"
+                      ? { result: { ok: true } }
+                      : { error: { code: -32000, message: "offline" } },
+                  ),
+        );
+      }
       if (request.url.includes("/api/screenshot")) {
         return HttpClientResponse.fromWeb(request, new Response(new Uint8Array([137, 80, 78, 71])));
       }
       if (request.url.endsWith("/shutdown")) {
+        if (connection.failShutdown)
+          return HttpClientResponse.fromWeb(request, Response.json({ ok: false }));
         shutDown = true;
         booted = false;
         return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
@@ -153,9 +192,9 @@ const fixture = Effect.fn("fixture")(function* (
       : {}),
     id: LOCAL_DEVICE_HOST_ID,
     label: "This machine",
-    summary: Effect.succeed({
+    summary: Effect.sync(() => ({
       id: LOCAL_DEVICE_HOST_ID,
-      kind: "local",
+      kind: connection.kind,
       label: "Test server",
       platforms: [
         { platform: "android", available: true },
@@ -163,8 +202,11 @@ const fixture = Effect.fn("fixture")(function* (
       ],
       hubInstalled: true,
       agentDeviceInstalled: false,
-    }),
-    platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+    })),
+    platformAvailability: (platform) =>
+      (options.onPlatformAvailability ?? Effect.void).pipe(
+        Effect.as({ platform, available: true }),
+      ),
     ensureReady: (onPhase) =>
       Effect.gen(function* () {
         if (runtimeFailure && runtimeFailure._tag !== "AgentDeviceStartError")
@@ -183,7 +225,21 @@ const fixture = Effect.fn("fixture")(function* (
           agentDevice: { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" },
         };
       }),
-    current: Effect.succeed(null),
+    current: Effect.sync(() =>
+      connection.online
+        ? {
+            ...ready,
+            ...(agentStarts.length > agentStops.length
+              ? {
+                  releaseAgentSession: releaseAgentDeviceSession(http, {
+                    baseUrl: "http://agent.test",
+                    token: "test",
+                  }),
+                }
+              : {}),
+          }
+        : null,
+    ),
     stopAgent: Effect.sync(() => {
       agentStops.push("stop");
     }),
@@ -194,7 +250,7 @@ const fixture = Effect.fn("fixture")(function* (
   const service = yield* DeviceService.makeWithHosts(
     new Map([[host.id, host]]),
     undefined,
-    undefined,
+    () => Effect.succeed("/host.json"),
     installTool,
   ).pipe(
     Effect.provide(NodeCrypto.layer),
@@ -232,6 +288,8 @@ const fixture = Effect.fn("fixture")(function* (
     agentStops,
     requests,
     settings,
+    closedSessions,
+    connection,
     devices,
     encoderResult,
     discoveryErrors,
@@ -801,8 +859,8 @@ it.effect.each(["shutdown", "close"] as const)(
         operation === "shutdown" ? service.shutdown(input) : service.close({ threadId }),
       );
       expect((yield* PubSub.take(updates)).sessions).toEqual([]);
-      // list writes through the same state lock, so the retirement has committed.
-      expect((yield* service.list).sessions).toEqual([]);
+      yield* service.refreshHosts;
+      expect((yield* service.state).sessions).toEqual([]);
       yield* Effect.sync(() => retiring.interruptUnsafe());
       yield* Deferred.succeed(pauseBind.proceed, undefined);
       yield* Fiber.join(binding);
@@ -1362,6 +1420,229 @@ it.effect("a failed tool update reports npm's exit code but not its output", () 
     Effect.scoped,
   ),
 );
+
+describe("agent session release on close", () => {
+  const openClaim = (
+    service: DeviceService.DeviceService["Service"],
+    threadId: ThreadId,
+    deviceId = "Pixel_API_35",
+  ) => service.open({ threadId, deviceId, platform: "android" });
+
+  it.effect("releases only the caller's session, keeps the device booted, and is idempotent", () =>
+    Effect.gen(function* () {
+      const { service, closedSessions, requests } = yield* fixture();
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("closing");
+      const other = ThreadId.make("other");
+      const session = yield* openClaim(service, threadId);
+      yield* openClaim(service, other, session.deviceId);
+      yield* service.close({ threadId, deviceId: session.deviceId });
+      yield* service.close({ threadId, deviceId: session.deviceId });
+      const name = yield* agentDeviceSession(threadId, session.hostId, session.deviceId).pipe(
+        Effect.provide(NodeCrypto.layer),
+      );
+      expect(closedSessions).toEqual([
+        {
+          jsonrpc: "2.0",
+          id: name,
+          method: "agent_device.command",
+          params: { command: "close", session: name, positionals: [], flags: {} },
+        },
+      ]);
+      const state = yield* service.state;
+      expect(state.sessions.map((entry) => entry.threadId)).toEqual([other]);
+      expect(state.devices.find((entry) => entry.id === session.deviceId)?.booted).toBe(true);
+      expect(requests.some((url) => url.endsWith("/shutdown"))).toBe(false);
+    }),
+  );
+
+  it.effect.each(["reject", "http_error", "malformed"] as const)(
+    "retains retryable state on %s",
+    (failure) =>
+      Effect.gen(function* () {
+        let fail = true;
+        const { service, requests, closedSessions } = yield* fixture(
+          Effect.void,
+          undefined,
+          false,
+          undefined,
+          false,
+          undefined,
+          { onClose: Effect.sync(() => (fail ? failure : "ok")) },
+        );
+        yield* service.configure({ enabled: true, agentAccessEnabled: true });
+        const threadId = ThreadId.make("retry");
+        yield* openClaim(service, threadId);
+        const exit = yield* Effect.exit(service.close({ threadId, shutdown: true }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect((yield* service.state).sessions).toHaveLength(1);
+        expect(requests.some((url) => url.endsWith("/shutdown"))).toBe(false);
+        fail = false;
+        yield* service.close({ threadId });
+        expect((yield* service.state).sessions).toHaveLength(0);
+        expect(closedSessions).toHaveLength(2);
+      }),
+  );
+
+  it.effect.each([false, true])("accepts a missing agent session, shutdown=%s", (shutdown) =>
+    Effect.gen(function* () {
+      const { service, requests } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        { onClose: Effect.succeed("missing") },
+      );
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("no-claim");
+      yield* openClaim(service, threadId);
+      yield* service.close({ threadId, shutdown });
+      expect((yield* service.state).sessions).toHaveLength(0);
+      expect(requests.some((url) => url.endsWith("/shutdown"))).toBe(shutdown);
+    }),
+  );
+
+  it.effect("retries shutdown after the first attempt already released the agent session", () =>
+    Effect.gen(function* () {
+      let released = false;
+      const { service, connection } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        {
+          onClose: Effect.sync(() => {
+            const result = released ? "missing" : "ok";
+            released = true;
+            return result;
+          }),
+        },
+      );
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("retry-shutdown");
+      yield* openClaim(service, threadId);
+      connection.failShutdown = true;
+      expect(Exit.isFailure(yield* Effect.exit(service.close({ threadId, shutdown: true })))).toBe(
+        true,
+      );
+      expect((yield* service.state).sessions).toHaveLength(1);
+      connection.failShutdown = false;
+      yield* service.close({ threadId, shutdown: true });
+      expect((yield* service.state).sessions).toHaveLength(0);
+    }),
+  );
+
+  it.effect("releases the post-boot agentTarget session for a cold Android AVD", () =>
+    Effect.gen(function* () {
+      const { service, closedSessions } = yield* fixture();
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("cold-avd");
+      const before = yield* service.agentTarget({
+        threadId,
+        hostId: "local",
+        deviceId: "Pixel_API_35",
+      });
+      const session = yield* openClaim(service, threadId);
+      const after = yield* service.agentTarget({
+        threadId,
+        hostId: session.hostId,
+        deviceId: session.deviceId,
+      });
+      expect(session.deviceId).toBe("emulator-5554");
+      expect(after.args[3]).not.toBe(before.args[3]);
+      yield* service.close({ threadId });
+      expect(closedSessions).toEqual([
+        expect.objectContaining({ params: expect.objectContaining({ session: after.args[3] }) }),
+      ]);
+    }),
+  );
+
+  it.effect("retains an SSH record during reconnect and releases it on retry", () =>
+    Effect.gen(function* () {
+      const { service, connection, closedSessions, agentStarts } = yield* fixture();
+      connection.kind = "ssh";
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("ssh-reconnect");
+      yield* openClaim(service, threadId);
+      const starts = agentStarts.length;
+      connection.online = false;
+      expect(Exit.isFailure(yield* Effect.exit(service.close({ threadId })))).toBe(true);
+      expect((yield* service.state).sessions).toHaveLength(1);
+      expect(closedSessions).toHaveLength(0);
+      expect(agentStarts).toHaveLength(starts);
+      connection.online = true;
+      yield* service.close({ threadId });
+      expect((yield* service.state).sessions).toHaveLength(0);
+      expect(closedSessions).toHaveLength(1);
+    }),
+  );
+  it.effect("releases peer claims before a close shuts down", () =>
+    Effect.gen(function* () {
+      const { service, closedSessions } = yield* fixture();
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("shutting-down");
+      const other = ThreadId.make("peer");
+      const session = yield* openClaim(service, threadId);
+      yield* openClaim(service, other, session.deviceId);
+      yield* service.close({ threadId, shutdown: true });
+      expect((yield* service.state).sessions).toHaveLength(0);
+      yield* service.close({ threadId: other });
+      expect((yield* service.state).sessions).toHaveLength(0);
+      const names = yield* Effect.forEach([threadId, other], (thread) =>
+        agentDeviceSession(thread, session.hostId, session.deviceId),
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      expect(
+        closedSessions.map((body) => (body as { params: { session: string } }).params.session),
+      ).toEqual(names);
+    }),
+  );
+
+  it.effect("publishes a reopened session only after the old claim is released and removed", () =>
+    Effect.gen(function* () {
+      const entered = yield* Queue.unbounded<void>();
+      const releasing = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const { service } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        {
+          onClose: Effect.gen(function* () {
+            yield* Deferred.succeed(releasing, undefined);
+            yield* Deferred.await(finish);
+            return "ok" as const;
+          }),
+          onPlatformAvailability: Queue.offer(entered, undefined),
+        },
+      );
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("reopen");
+      const session = yield* openClaim(service, threadId);
+      yield* Queue.take(entered);
+      const publications = yield* service.subscribe;
+      const closing = yield* service.close({ threadId }).pipe(Effect.forkChild);
+      yield* Deferred.await(releasing);
+      const opening = yield* openClaim(service, threadId, session.deviceId).pipe(Effect.forkChild);
+      yield* Queue.take(entered);
+      yield* Deferred.succeed(finish, undefined);
+      yield* Fiber.join(closing);
+      const reopened = yield* Fiber.join(opening);
+      const published = (yield* PubSub.takeAll(publications))
+        .map(({ sessions }) =>
+          sessions.includes(session) ? "old" : sessions.includes(reopened) ? "reopened" : "none",
+        )
+        .filter((label, index, labels) => label !== labels[index - 1]);
+      expect(published).toEqual(["none", "reopened"]);
+    }).pipe(Effect.scoped),
+  );
+});
 
 describe("locating a device id across hosts", () => {
   const threadId = ThreadId.make("thread-locate");
