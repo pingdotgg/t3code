@@ -67,7 +67,7 @@ import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
-import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
+import { resolveCyberAccessProgram, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -3373,6 +3373,38 @@ describe("OrchestratorMcpService provider resolution", () => {
       Effect.gen(function* () {
         assert.equal(yield* resolveRuntimeMode("full-access", "inherit", muse), "full-access");
         assert.equal(yield* resolveRuntimeMode("auto", undefined, muse), "approval-required");
+      }),
+    );
+  });
+
+  describe("resolveCyberAccessProgram", () => {
+    const codex = (options?: ReadonlyArray<{ id: string; value: string }>) => ({
+      instanceId: codexInstanceId,
+      model: "gpt-6-sol",
+      ...(options === undefined ? {} : { options }),
+    });
+    const requested = (value: string) => [{ id: "cyberAccessProgram", value }];
+
+    it.effect("refuses a cyber access program the parent thread did not choose", () =>
+      Effect.gen(function* () {
+        const error = yield* resolveCyberAccessProgram(codex(), requested("daybreakRed")).pipe(
+          Effect.flip,
+        );
+        assert.equal(error.code, "invalid_request");
+        const switched = yield* resolveCyberAccessProgram(
+          codex(requested("daybreakBlue")),
+          requested("daybreakRed"),
+        ).pipe(Effect.flip);
+        assert.equal(switched.code, "invalid_request");
+      }),
+    );
+
+    it.effect("allows the parent's program, the default, or no request", () =>
+      Effect.gen(function* () {
+        const parent = codex(requested("daybreakBlue"));
+        yield* resolveCyberAccessProgram(parent, requested("daybreakBlue"));
+        yield* resolveCyberAccessProgram(parent, requested("default"));
+        yield* resolveCyberAccessProgram(codex(), [{ id: "reasoningEffort", value: "high" }]);
       }),
     );
   });

@@ -709,7 +709,7 @@ const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.
     additionalContext: Schema.optionalKey(
       Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),
     ),
-    // Experimental field the generated schema omits; Codex still enforces authorization.
+    // Experimental: the generated struct lacks this field; Codex still enforces authorization.
     cyberAccessProgram: Schema.optionalKey(CodexSchema.V2TurnStartParams__CyberAccessProgram),
   }),
 );
@@ -798,9 +798,11 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       input.modelSelection,
       "cyberAccessProgram",
     );
-    const cyberAccessProgram = isTurnCyberAccessProgram(selectedCyberAccessProgram)
-      ? selectedCyberAccessProgram
-      : undefined;
+    const cyberAccessProgram =
+      isTurnCyberAccessProgram(selectedCyberAccessProgram) &&
+      selectedCyberAccessProgram !== "standard"
+        ? selectedCyberAccessProgram
+        : undefined;
     // MCP-written app context must be quoted user input, not developer instructions.
     const appContext = Object.fromEntries(
       (input.appContext ?? []).map((entry) => [

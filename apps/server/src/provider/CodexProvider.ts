@@ -260,10 +260,16 @@ export function mapCodexModelCapabilities(
       label: "Cyber Access",
       type: "select",
       options: [
-        { id: DEFAULT_CYBER_ACCESS_PROGRAM_ID, label: "Automatic", isDefault: true },
+        {
+          id: DEFAULT_CYBER_ACCESS_PROGRAM_ID,
+          label: "Automatic",
+          description: "Codex's default treatment",
+          isDefault: true,
+        },
         ...cyberAccessPrograms.map((program) => ({
           id: program,
           label: CYBER_ACCESS_PROGRAM_LABELS[program],
+          description: `Request ${CYBER_ACCESS_PROGRAM_LABELS[program]} on each turn`,
         })),
       ],
       currentValue: DEFAULT_CYBER_ACCESS_PROGRAM_ID,
@@ -341,14 +347,21 @@ function applyConfiguredCodexServiceTier(
 
 /**
  * Codex has no static default capability set, so a bare custom slug borrows
- * the first built-in's descriptors; an entry with its own capabilities keeps
- * them.
+ * the first built-in's descriptors, except cyber access, which Codex grants
+ * per catalog model; an entry with its own capabilities keeps them.
  */
-function appendCustomCodexModels(
+export function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const borrowed = models.find((model) => model.capabilities)?.capabilities;
+  const fallbackCapabilities = borrowed
+    ? createModelCapabilities({
+        optionDescriptors: (borrowed.optionDescriptors ?? []).filter(
+          (descriptor) => descriptor.id !== "cyberAccessProgram",
+        ),
+      })
+    : null;
   return providerModelsFromSettings(models, customModels, fallbackCapabilities);
 }
 
