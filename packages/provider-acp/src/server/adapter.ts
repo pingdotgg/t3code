@@ -4913,26 +4913,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (context.finalized) return;
             if (flavor.extractSubagentUpdate === undefined) return;
             let subagent = context.subagentsBySessionId.get(notification.sessionId);
+            if (subagent === undefined) {
+              const adopted = adoptedSubagents.get(notification.sessionId);
+              if (adopted?.nativeThreadId === context.nativeThreadId) {
+                subagent = adopted.subagent;
+                context.subagents.set(
+                  subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
+                  subagent,
+                );
+                context.subagentsBySessionId.set(notification.sessionId, subagent);
+              }
+            }
             if (
               update.sessionUpdate === "tool_call" ||
               update.sessionUpdate === "tool_call_update"
             ) {
               if (subagent === undefined && flavor.adoptChildSession !== undefined) {
-                const adopted = adoptedSubagents.get(notification.sessionId);
-                if (adopted?.nativeThreadId === context.nativeThreadId) {
-                  const existing = adopted.subagent;
-                  context.subagents.set(
-                    existing.task.nativeTaskRef?.nativeId ?? String(existing.task.id),
-                    existing,
-                  );
-                  context.subagentsBySessionId.set(notification.sessionId, existing);
-                  const buffered =
-                    context.pendingSubagentNotifications.get(notification.sessionId) ?? [];
-                  context.pendingSubagentNotifications.delete(notification.sessionId);
-                  for (const pending of buffered) {
-                    yield* projectSubagentNotification(existing, pending);
-                  }
-                }
                 yield* emitSubagent(context, flavor.adoptChildSession(notification.sessionId));
                 subagent = context.subagentsBySessionId.get(notification.sessionId);
                 if (subagent !== undefined) {
