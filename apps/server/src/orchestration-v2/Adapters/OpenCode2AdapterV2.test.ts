@@ -4552,6 +4552,62 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
 
+  it.effect("does not show T3's own prompt that OpenCode admitted after its turn ended", () =>
+    Effect.gen(function* () {
+      const late = `msg_t3_turn_${SESSION}:attempt:late`;
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const offered = yield* Deferred.make<void>();
+      const { runtime, thread } = yield* resumed([
+        event("session.inbox.enqueued", {
+          inboxID: late,
+          sessionID: SESSION,
+          item: { type: "user", payload: { text: "mine", files: [] }, delivery: "steer" },
+        }),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: late }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_late_reply",
+          ordinal: 0,
+          text: "Hello!",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) =>
+            Effect.sync(() => void offers.push(request)).pipe(
+              Effect.andThen(Deferred.succeed(offered, undefined)),
+              Effect.asVoid,
+            ),
+          take: Effect.never,
+        }),
+      );
+      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const ended = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            collected.push(event);
+            if (event.type === "turn.terminal") yield* Deferred.succeed(ended, undefined);
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(offered);
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+      yield* Deferred.await(ended);
+      assert.deepEqual(
+        collected.flatMap((event) =>
+          event.type === "message.updated" && event.message.role === "user"
+            ? [event.message.text]
+            : [],
+        ),
+        [],
+      );
+    }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
+  );
+
   it.effect("reverts OpenCode at another client's prompt when rewinding its continuation", () =>
     Effect.gen(function* () {
       const kept = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;

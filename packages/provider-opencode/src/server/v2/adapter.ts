@@ -559,6 +559,7 @@ const turnPromptId = (sessionId: string, attemptId: string) =>
   SessionMessage.ID.make(`msg_t3_turn_${sessionId}:${attemptId}`);
 const steerPromptId = (sessionId: string, messageId: string) =>
   SessionMessage.ID.make(`msg_t3_steer_${sessionId}:${messageId}`);
+const isOwnPrompt = (inboxId: string) => inboxId.startsWith("msg_t3_");
 
 const promptOf = (turn: OrchestrationV2ProviderTurn) => {
   const nativeId = turn.nativeTurnRef?.nativeId;
@@ -2481,12 +2482,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         (state.active === undefined || (held && state.subagent === undefined))
       ) {
         const text = event.data.item.payload.text;
-        if (state.subagent === undefined) {
+        if (state.subagent !== undefined) state.subagent.prompt ??= text;
+        // T3's own prompts can be admitted after a failed submit ended their turn.
+        else if (!isOwnPrompt(event.data.inboxID)) {
           state.externalPrompts.set(event.data.inboxID, {
             text,
             leads: !held && state.reports.size === 0,
           });
-        } else state.subagent.prompt ??= text;
+        }
         return;
       }
       const started =
