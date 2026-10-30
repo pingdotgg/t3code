@@ -307,6 +307,8 @@ interface ThreadState {
   >;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
+  /** Prompts other clients queued while no T3 turn ran, shown once delivered. */
+  readonly externalPrompts: Map<string, string>;
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
@@ -753,6 +755,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       reports: new Map(),
       stoppedChildren: new Set(),
       strandedSteers: new Set(),
+      externalPrompts: new Map(),
       mcp: undefined,
       instructions: undefined,
     });
@@ -958,6 +961,57 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           messageId,
           text: entry.text,
           streaming: !completed,
+        },
+      });
+    });
+
+    // T3's own prompts are sent while their turn is active, so only other clients reach here.
+    const emitExternalPrompt = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      inboxId: string,
+      text: string,
+    ) {
+      const now = yield* DateTime.now;
+      const base = {
+        ...itemBase(state, turn, inboxId, "completed", now, now, now),
+        nodeId: turn.input.rootNodeId,
+      };
+      // History derives the same ID from the message ID, so a later snapshot does not duplicate it.
+      const messageId = idAllocator.derive.messageFromProviderItem({
+        driver,
+        nativeItemId: inboxId,
+      });
+      yield* emit({
+        type: "message.updated",
+        driver,
+        message: {
+          createdBy: "user",
+          creationSource: "provider",
+          id: messageId,
+          threadId: turn.input.threadId,
+          runId: turn.input.runId,
+          nodeId: base.nodeId,
+          role: "user",
+          text,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          ...base,
+          createdBy: "user",
+          creationSource: "provider",
+          type: "user_message",
+          messageId,
+          inputIntent: "turn_start",
+          text,
+          attachments: [],
         },
       });
     });
@@ -2397,21 +2451,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       if (event.type === "session.inbox.cancelled" || event.type === "session.inbox.delivered") {
         state.reports.delete(event.data.inboxID);
+        const external = state.externalPrompts.get(event.data.inboxID);
+        state.externalPrompts.delete(event.data.inboxID);
         const turn = state.active;
         if (turn !== undefined && turn.steers.delete(event.data.inboxID)) {
           turn.settledInbox.add(event.data.inboxID);
           if (event.type === "session.inbox.cancelled") yield* endIfSettled(state, turn);
+        }
+        if (
+          event.type === "session.inbox.delivered" &&
+          external !== undefined &&
+          turn !== undefined
+        ) {
+          yield* emitExternalPrompt(state, turn, event.data.inboxID, external);
         }
         return;
       }
       if (
         event.type === "session.inbox.enqueued" &&
         event.data.item.type === "user" &&
-        state.subagent !== undefined &&
-        state.subagent.prompt === undefined &&
         state.active === undefined
       ) {
-        state.subagent.prompt = event.data.item.payload.text;
+        const text = event.data.item.payload.text;
+        if (state.subagent === undefined) state.externalPrompts.set(event.data.inboxID, text);
+        else state.subagent.prompt ??= text;
         return;
       }
       const started =
