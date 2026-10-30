@@ -210,6 +210,8 @@ export interface ServerBrowserViewer {
   readonly input: (message: unknown) => Effect.Effect<void>;
 }
 
+export type ProfileReporter = (input: PreviewReportProfilesInput) => Effect.Effect<void>;
+
 export class ServerBrowser extends Context.Service<
   ServerBrowser,
   {
@@ -244,7 +246,7 @@ export class ServerBrowser extends Context.Service<
 
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
 
-    readonly reportProfiles: (input: PreviewReportProfilesInput) => Effect.Effect<void>;
+    readonly profileReporter: Effect.Effect<ProfileReporter, never, Scope.Scope>;
   }
 >()("t3/preview/ServerBrowser") {}
 
@@ -809,6 +811,7 @@ const make = Effect.gen(function* () {
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
       ServerBrowserPage.invalidateRefs(page),
     );
+    let pendingFileChooserOffer = Promise.resolve();
     const tab: ServerTab = {
       threadId: ThreadId.make(snapshot.threadId),
       tabId: snapshot.tabId,
@@ -824,7 +827,11 @@ const make = Effect.gen(function* () {
       control,
       agentOperating: false,
       fileChooserIntercepted: false,
-      onFileChooser: (chooser) => void offerFileChooser(tab, chooser),
+      onFileChooser: (chooser) => {
+        pendingFileChooserOffer = pendingFileChooserOffer
+          .then(() => offerFileChooser(tab, chooser))
+          .catch(constVoid);
+      },
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
@@ -886,6 +893,12 @@ const make = Effect.gen(function* () {
       void reportLoaded(tab);
     });
     page.on("framenavigated", (frame) => {
+      const open = tab.fileChooser;
+      if (open) {
+        void isFileChooserCurrent(open.chooser).then((current) => {
+          if (!current && tab.fileChooser?.chooser === open.chooser) closeFileChooser(tab);
+        });
+      }
       // Same-document navigations (SPA routes) fire no load event.
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
       if (!desktop) void recordFrameCopies(tab, frame);
@@ -990,6 +1003,12 @@ const make = Effect.gen(function* () {
   };
 
   const downloadsRoot = NodePath.join(config.stateDir, "server-browser", "downloads");
+  // Saved downloads are indexed in memory, so an earlier run's files can never be opened again.
+  yield* Effect.tryPromise(() => NodeFSP.rm(downloadsRoot, { recursive: true, force: true })).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("server preview could not clear earlier downloads", { cause }),
+    ),
+  );
   // Tab ids are opaque server strings; hashing keeps them out of the path.
   const downloadDir = (tab: ServerTab) =>
     NodePath.join(
@@ -1089,6 +1108,17 @@ const make = Effect.gen(function* () {
         }
       : null;
 
+  // Not isConnected: upload helpers often click an input never added to the page. The handle's
+  // context is destroyed with its document, so a replaced document rejects.
+  const isFileChooserCurrent = (chooser: FileChooser) =>
+    chooser
+      .element()
+      .evaluate(
+        (element) =>
+          element.ownerDocument === (globalThis as unknown as { document: unknown }).document,
+      )
+      .catch(() => false);
+
   const offerFileChooser = async (tab: ServerTab, chooser: FileChooser) => {
     const previous = tab.fileChooser;
     const accept =
@@ -1096,6 +1126,7 @@ const make = Effect.gen(function* () {
         .element()
         .getAttribute("accept")
         .catch(() => null)) ?? "";
+    if (!(await isFileChooserCurrent(chooser))) return;
     if (previous) closeFileChooser(tab);
     tab.fileChooser = {
       id: NodeCrypto.randomUUID(),
@@ -1384,6 +1415,8 @@ const make = Effect.gen(function* () {
         ? ("agent" as const)
         : ("unclaimed" as const);
 
+  const reportsByClient = new Map<number, PreviewReportProfilesInput>();
+  let nextClient = 0;
   let reportedProfiles: {
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly defaultProfileId: string;
@@ -1392,16 +1425,45 @@ const make = Effect.gen(function* () {
   // last report outlives the client, which lets agents record while no client is connected.
   let recordingFrameRate = DEFAULT_BROWSER_RECORDING_FRAME_RATE;
 
-  const reportProfiles: ServerBrowser["Service"]["reportProfiles"] = (input) =>
-    Effect.sync(() => {
-      if (input.recordingFrameRate !== undefined) recordingFrameRate = input.recordingFrameRate;
-      const profiles = resolveBrowserProfiles(input.profiles);
-      reportedProfiles = {
-        profiles,
-        defaultProfileId:
-          findBrowserProfile(profiles, input.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
-      };
-    });
+  // Each client reports only the profiles in its own settings, so the catalog is
+  // their union while they stay connected. The last catalog stays usable after
+  // every client disconnects, as a single report did before.
+  const rebuildReportedProfiles = () => {
+    const byId = new Map<string, BrowserProfile>();
+    let latest: PreviewReportProfilesInput | undefined;
+    for (const report of reportsByClient.values()) {
+      for (const profile of report.profiles) byId.set(profile.id, profile);
+      latest = report;
+    }
+    if (latest === undefined) return;
+    const profiles = resolveBrowserProfiles([...byId.values()]);
+    reportedProfiles = {
+      profiles,
+      defaultProfileId:
+        findBrowserProfile(profiles, latest.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
+    };
+  };
+
+  const profileReporter: ServerBrowser["Service"]["profileReporter"] = Effect.acquireRelease(
+    Effect.sync(() => nextClient++),
+    (client) =>
+      Effect.sync(() => {
+        reportsByClient.delete(client);
+        rebuildReportedProfiles();
+      }),
+  ).pipe(
+    Effect.map(
+      (client): ProfileReporter =>
+        (input) =>
+          Effect.sync(() => {
+            if (input.recordingFrameRate !== undefined)
+              recordingFrameRate = input.recordingFrameRate;
+            reportsByClient.delete(client);
+            reportsByClient.set(client, input);
+            rebuildReportedProfiles();
+          }),
+    ),
+  );
 
   const profileStatus = () => {
     const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;
@@ -2517,9 +2579,17 @@ const make = Effect.gen(function* () {
                   : {}),
               });
             } else {
-              await tab.control.human(viewer.id, () =>
-                dispatchViewerInput(tab, session, viewer, message),
-              );
+              const dispatch = () => dispatchViewerInput(tab, session, viewer, message);
+              if (
+                message.type === "mouse" &&
+                message.action === "move" &&
+                message.button === "none" &&
+                message.buttons === 0
+              ) {
+                await tab.control.humanLatest(viewer.id, `hover:${modifiersOf(message)}`, dispatch);
+              } else {
+                await tab.control.human(viewer.id, dispatch);
+              }
             }
           } catch {
             broadcastControl(tab);
@@ -2618,7 +2688,7 @@ const make = Effect.gen(function* () {
   return ServerBrowser.of({
     attachViewer,
     clearProfile,
-    reportProfiles,
+    profileReporter,
     openDownload,
     answerFileChooser,
   });
