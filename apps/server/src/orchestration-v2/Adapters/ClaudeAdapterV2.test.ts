@@ -6359,8 +6359,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     threshold: number | undefined;
     userSettings?: string;
     projectSettings?: string;
-    launchArgs?: string;
-    environment?: NodeJS.ProcessEnv;
   }>([
     { autoCompactWindow: "", model: "claude-sonnet-4-6", threshold: undefined },
     { autoCompactWindow: "150000", model: "claude-sonnet-4-6", threshold: 150_000 },
@@ -6390,13 +6388,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       threshold: undefined,
     },
     {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
-      launchArgs: `--settings '{"autoCompactWindow":250000}'`,
-      threshold: 250_000,
-    },
-    {
       autoCompactWindow: "250000",
       model: "claude-opus-5-5",
       userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
@@ -6408,46 +6399,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       userSettings: '{"autoCompactWindow":150000.5}',
       threshold: undefined,
     },
-    // --autocompact reads 100 to 1000 as thousands and beats T3's setting and settings files.
-    {
-      autoCompactWindow: "300000",
-      model: "claude-opus-5-5",
-      userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
-      launchArgs: "--autocompact 250",
-      threshold: 250_000,
-    },
-    {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
-      launchArgs: "--autocompact auto",
-      threshold: undefined,
-    },
-    // The env var beats every other source, takes k/M suffixes, and clamps to 100k.
-    {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      launchArgs: "--autocompact 250k",
-      environment: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200k" },
-      threshold: 200_000,
-    },
-    {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      environment: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200" },
-      threshold: 100_000,
-    },
   ])(
     "ignores stale snapshots after compaction and reports threshold $threshold for $model",
-    ({
-      autoCompactWindow,
-      model,
-      threshold,
-      userSettings = "{}",
-      projectSettings,
-      launchArgs = "",
-      environment,
-    }) =>
+    ({ autoCompactWindow, model, threshold, userSettings = "{}", projectSettings }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -6462,8 +6416,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
         }
         const harness = yield* makeWakeHarnessWithOptions({
-          settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow, homePath: home, launchArgs },
-          ...(environment === undefined ? {} : { environment }),
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow, homePath: home },
         });
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
