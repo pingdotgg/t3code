@@ -57,7 +57,7 @@ catalog:
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
   "@pierre/diffs": 1.6.1
-  "@pierre/highlights": 0.2.0
+  "@pierre/highlights": 0.3.0
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
@@ -224,7 +224,7 @@ minimumReleaseAgeExclude:
   - "@expo/schema-utils@58.0.2"
   - pele@1.8.0
   - "@pierre/diffs@1.6.1"
-  - "@pierre/highlights@0.2.0"
+  - "@pierre/highlights@0.3.0"
   - "@pierre/theming@1.0.2"
   - agent-device@0.21.32
 
@@ -243,6 +243,7 @@ overrides:
   "@ff-labs/fff-node": 0.11.0
   "@legendapp/list": 3.3.5
   "@pierre/diffs": 1.6.1
+  "@pierre/highlights": "catalog:"
   "@react-native-ai/apple": 0.12.0
   "@react-native-menu/menu": 2.0.0
   "@react-navigation/native-stack": 7.21.0
