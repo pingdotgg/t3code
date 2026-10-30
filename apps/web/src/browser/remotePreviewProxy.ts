@@ -6,12 +6,13 @@ import type {
 } from "@t3tools/contracts";
 import { remotePreviewProxyDialHost } from "@t3tools/shared/remotePreviewProxy";
 import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 
 import { isElectron } from "~/env";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentPresentations } from "~/state/presentation";
 import { previewEnvironment } from "~/state/preview";
-import { readPreparedConnection } from "~/state/session";
+import { environmentSession, readPreparedConnection } from "~/state/session";
 
 import { reachesEnvironmentLoopback } from "./browserTargetResolver";
 
@@ -49,6 +50,28 @@ const pending = new Map<EnvironmentId, Promise<DesktopRemotePreviewProxyStatus |
 /** Ports the user opened per environment, so a failed approval can finish after reconnecting. */
 const wanted = new Map<EnvironmentId, Set<number>>();
 const waitingForConnection = new Map<EnvironmentId, () => void>();
+
+const routeSubscriptions = new Map<EnvironmentId, () => void>();
+
+const watchSelectedRoute = (environmentId: EnvironmentId) => {
+  if (routeSubscriptions.has(environmentId)) return;
+  let endpoint = readPreparedConnection(environmentId)?.httpBaseUrl;
+  let active = true;
+  const unsubscribe = appAtomRegistry.subscribe(
+    environmentSession.preparedConnectionValueAtom(environmentId),
+    (prepared) => {
+      if (!active) return;
+      const connection = Option.getOrNull(prepared);
+      if (connection === null || connection.httpBaseUrl === endpoint) return;
+      endpoint = connection.httpBaseUrl;
+      void approveRemotePreviewPorts(environmentId, [], { refresh: true }).catch(() => undefined);
+    },
+  );
+  routeSubscriptions.set(environmentId, () => {
+    active = false;
+    unsubscribe();
+  });
+};
 
 const issueAndConfigure = async (
   bridge: DesktopRemotePreviewProxyBridge,
@@ -153,6 +176,8 @@ export async function revokeRemotePreview(environmentId: EnvironmentId): Promise
   generations.set(environmentId, generationOf(environmentId) + 1);
   pending.delete(environmentId);
   wanted.delete(environmentId);
+  routeSubscriptions.get(environmentId)?.();
+  routeSubscriptions.delete(environmentId);
   waitingForConnection.get(environmentId)?.();
   waitingForConnection.delete(environmentId);
   await remoteProxyBridge()?.revoke(environmentId);
@@ -168,6 +193,13 @@ export function startRemotePreviewProxyMaintenance(): () => void {
   let disposed = false;
   const reconcile = (status: DesktopRemotePreviewProxyStatus) => {
     if (disposed) return;
+    if (status.state === "revoked") {
+      routeSubscriptions.get(status.environmentId)?.();
+      routeSubscriptions.delete(status.environmentId);
+      return;
+    }
+    if (status.state === "ready" || status.state === "expired")
+      watchSelectedRoute(status.environmentId);
     if (status.state !== "expired") return;
     void approveRemotePreviewPorts(status.environmentId, status.ports, { refresh: true }).catch(
       () => undefined,
@@ -181,14 +213,22 @@ export function startRemotePreviewProxyMaintenance(): () => void {
       for (const status of statuses) {
         if (
           generationOf(status.environmentId) === (initialGenerations.get(status.environmentId) ?? 0)
-        )
+        ) {
           reconcile(status);
+          if (status.state === "ready") {
+            void approveRemotePreviewPorts(status.environmentId, [], { refresh: true }).catch(
+              () => undefined,
+            );
+          }
+        }
       }
     })
     .catch(() => undefined);
   return () => {
     disposed = true;
     unsubscribe();
+    for (const dispose of routeSubscriptions.values()) dispose();
+    routeSubscriptions.clear();
     for (const dispose of waitingForConnection.values()) dispose();
     waitingForConnection.clear();
   };

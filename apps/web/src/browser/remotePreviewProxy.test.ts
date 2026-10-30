@@ -1,5 +1,10 @@
-import { EnvironmentId, type DesktopRemotePreviewProxyStatus } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type DesktopRemotePreviewProxyStatus,
+  type DesktopRemotePreviewProxyConfigureInput,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({ command: vi.fn(), connection: vi.fn(), subscribe: vi.fn() }));
@@ -15,7 +20,10 @@ vi.mock("~/state/presentation", () => ({
   environmentPresentations: { presentationAtom: () => "presentation" },
 }));
 vi.mock("~/state/preview", () => ({ previewEnvironment: { issueProxyGrant: "issue" } }));
-vi.mock("~/state/session", () => ({ readPreparedConnection: mocks.connection }));
+vi.mock("~/state/session", () => ({
+  readPreparedConnection: mocks.connection,
+  environmentSession: { preparedConnectionValueAtom: () => "prepared" },
+}));
 
 const ENV = EnvironmentId.make("remote");
 const expired: DesktopRemotePreviewProxyStatus = {
@@ -47,7 +55,7 @@ async function setup() {
   const bridge = {
     getStatus: vi.fn(async () => state),
     getStatuses: vi.fn(async () => [state]),
-    configure: vi.fn(async () => {
+    configure: vi.fn(async (_input: DesktopRemotePreviewProxyConfigureInput) => {
       state = { ...state, state: "ready" };
       configured.resolve();
       return state;
@@ -101,5 +109,34 @@ it("reconciles an already expired desktop proxy on renderer startup without a mo
   expect(h.bridge.getStatuses).toHaveBeenCalled();
   await h.configured;
   expect(h.state().state).toBe("ready");
+  stop();
+});
+
+it("moves a running proxy to the newly selected route without waiting for grant expiry", async () => {
+  using h = await setup();
+  mocks.command.mockResolvedValue({
+    _tag: "Success",
+    value: { grant: "fresh", ports: [3000], expiresAt: DateTime.makeUnsafe(600_000) },
+  });
+  const stop = h.module.startRemotePreviewProxyMaintenance();
+  await h.configured;
+  const subscription = mocks.subscribe.mock.calls.find(([atom]) => atom === "prepared");
+  expect(subscription).toBeDefined();
+  const next = { httpBaseUrl: "https://connect.test", label: "remote" };
+  mocks.connection.mockReturnValue(next);
+  const moved = deferred<void>();
+  h.bridge.configure.mockImplementationOnce(async (input) => {
+    expect(input.httpBaseUrl).toBe(next.httpBaseUrl);
+    moved.resolve();
+    return h.state();
+  });
+  subscription![1](Option.some(next));
+  await moved.promise;
+  await h.module.revokeRemotePreview(ENV);
+  const count = mocks.command.mock.calls.length;
+  mocks.connection.mockReturnValue({ ...next, httpBaseUrl: "https://another.test" });
+  subscription![1](Option.some(mocks.connection()));
+  await Promise.resolve();
+  expect(mocks.command).toHaveBeenCalledTimes(count);
   stop();
 });
