@@ -113,7 +113,7 @@ describe("remote", () => {
   });
 
   it.each(["10.0.0.10:3773", "[fd7a:115c:a1e0::1]:3773", "localhost:3773", "studio.local:3773"])(
-    "uses plain http for bare host %s, which cannot carry a publicly trusted certificate",
+    "uses plain http for bare direct-address host %s",
     (host) => {
       expect(resolveRemotePairingTarget({ host, pairingCode: "pairing-token" })).toEqual({
         credential: "pairing-token",
