@@ -90,6 +90,7 @@ export class ProviderRegistry extends Context.Service<
       readonly instanceId: ProviderInstanceId;
       readonly action: ProviderMaintenanceActionKind;
       readonly state: ServerProviderUpdateState | null;
+      readonly targetVersion?: string | undefined;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
@@ -424,7 +425,10 @@ export const layer = Layer.effect(
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
+      ReadonlyMap<
+        ProviderInstanceId,
+        { readonly update?: ServerProviderUpdateState; readonly targetVersion?: string | undefined }
+      >
     >(new Map());
 
     const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ProviderInstance>>(
@@ -537,6 +541,21 @@ export const layer = Layer.effect(
         readonly publish?: boolean;
       },
     ) {
+      // Latest-version status cannot resolve a failed recommended-version install.
+      if (provider.versionAdvisory?.status === "current") {
+        yield* Ref.update(maintenanceActionStatesRef, (previous) => {
+          const action = previous.get(provider.instanceId);
+          if (
+            action?.targetVersion !== undefined ||
+            (action?.update?.status !== "unchanged" && action?.update?.status !== "failed")
+          ) {
+            return previous;
+          }
+          const next = new Map(previous);
+          next.delete(provider.instanceId);
+          return next;
+        });
+      }
       const providers = yield* upsertProviders([provider], options);
       // Reclassify the current model after fetch; republishing the old probe could overwrite newer health results.
       if (!(yield* Ref.getAndSet(compatibilityRefreshRunning, true))) {
@@ -554,21 +573,14 @@ export const layer = Layer.effect(
         readonly instanceId: ProviderInstanceId;
         readonly action: "update";
         readonly state: ServerProviderUpdateState | null;
+        readonly targetVersion?: string | undefined;
       }) {
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
-          const previousActions = previous.get(input.instanceId);
-          const nextActions = { ...previousActions };
-          if (input.state === null || input.state.status === "idle") {
-            delete nextActions[input.action];
-          } else {
-            nextActions[input.action] = input.state;
-          }
-
           const next = new Map(previous);
-          if (Object.keys(nextActions).length === 0) {
+          if (input.state === null || input.state.status === "idle") {
             next.delete(input.instanceId);
           } else {
-            next.set(input.instanceId, nextActions);
+            next.set(input.instanceId, { update: input.state, targetVersion: input.targetVersion });
           }
           return next;
         });

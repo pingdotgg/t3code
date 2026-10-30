@@ -30,6 +30,8 @@ import {
   ServerSettingsError,
   ServerProvider,
   type ServerProviderSlashCommand,
+  type ServerProviderUpdateState,
+  type ServerProviderVersionAdvisoryStatus,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -307,6 +309,85 @@ const awaitPersistedProvider = (
     Stream.runDrain,
     Effect.forkScoped,
   );
+
+const codexUpdateSnapshot = (advisory: ServerProviderVersionAdvisoryStatus) =>
+  ({
+    instanceId: ProviderInstanceId.make("codex"),
+    driver: ProviderDriverKind.make("codex"),
+    status: "ready",
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    checkedAt: "2026-06-10T00:00:00.000Z",
+    version: "1.0.0",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    versionAdvisory: {
+      status: advisory,
+      currentVersion: "1.0.0",
+      latestVersion: advisory === "unknown" ? null : advisory === "current" ? "1.0.0" : "2.0.0",
+      updateCommand: null,
+      canUpdate: true,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      message: null,
+    },
+  }) as const satisfies ServerProvider;
+
+const makeUpdateState = (status: ServerProviderUpdateState["status"]) =>
+  ({
+    status,
+    startedAt: "2026-06-10T00:00:00.000Z",
+    finishedAt: status === "queued" || status === "running" ? null : "2026-06-10T00:01:00.000Z",
+    message: `update ${status}`,
+    output: null,
+  }) satisfies ServerProviderUpdateState;
+
+// One Codex instance whose probe returns whatever `snapshot` currently holds.
+const buildRegistryOverSnapshot = Effect.fn("buildRegistryOverSnapshot")(function* (
+  snapshot: Ref.Ref<ServerProvider>,
+) {
+  const driver = ProviderDriverKind.make("codex");
+  const instance = {
+    instanceId: ProviderInstanceId.make("codex"),
+    driverKind: driver,
+    continuationIdentity: { driverKind: driver, continuationKey: "codex:instance:codex" },
+    displayName: undefined,
+    enabled: true,
+    snapshot: {
+      resolveMaintenance: () =>
+        Effect.succeed(
+          makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
+        ),
+      getSnapshot: Ref.get(snapshot),
+      refresh: Ref.get(snapshot),
+      streamChanges: Stream.empty,
+      applyUsageLimits: () => Effect.void,
+    },
+    orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+    textGeneration: {} as ProviderInstance["textGeneration"],
+  } satisfies ProviderInstance;
+  const layerInstanceRegistry = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+    getInstance: (instanceId) =>
+      Effect.succeed(instanceId === instance.instanceId ? instance : undefined),
+    listInstances: Effect.succeed([instance]),
+    listUnavailable: Effect.succeed([]),
+    streamChanges: Stream.empty,
+    subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+  });
+  const scope = yield* Scope.make();
+  yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+  return yield* Layer.build(
+    ProviderRegistry.layer.pipe(
+      Layer.provideMerge(layerInstanceRegistry),
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-update-state-" }),
+      ),
+      Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  ).pipe(Scope.provide(scope));
+});
 
 const layerTestNodeServices = Layer.mergeAll(
   ProviderLatestVersions.layer,
@@ -1946,6 +2027,98 @@ it.layer(
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
+
+    describe("update results across refreshes", () => {
+      const instanceId = ProviderInstanceId.make("codex");
+
+      it.effect.each([
+        { status: "unchanged", advisory: "current", retired: true },
+        { status: "failed", advisory: "current", retired: true },
+        { status: "unchanged", advisory: "behind_latest", retired: false },
+        { status: "failed", advisory: "behind_latest", retired: false },
+        // The probe publishes `unknown` until the latest-version check lands.
+        { status: "unchanged", advisory: "unknown", retired: false },
+        { status: "queued", advisory: "current", retired: false },
+        { status: "running", advisory: "current", retired: false },
+        { status: "succeeded", advisory: "current", retired: false },
+        { status: "failed", advisory: "unknown", retired: false },
+      ] as const)(
+        "a $status update result is retired: $retired when a refresh reports the provider $advisory",
+        ({ status, advisory, retired }) =>
+          Effect.gen(function* () {
+            const snapshot = yield* Ref.make<ServerProvider>(codexUpdateSnapshot("behind_latest"));
+            const runtimeServices = yield* buildRegistryOverSnapshot(snapshot);
+
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry.ProviderRegistry;
+              const state = makeUpdateState(status);
+              yield* registry.setProviderMaintenanceActionState({
+                instanceId,
+                action: "update",
+                state,
+              });
+              yield* Ref.set(snapshot, codexUpdateSnapshot(advisory));
+
+              const [refreshed] = yield* registry.refresh(ProviderDriverKind.make("codex"));
+
+              expect(refreshed?.updateState).toEqual(retired ? undefined : state);
+            }).pipe(Effect.provide(runtimeServices));
+          }),
+      );
+
+      it.effect.each(["failed", "unchanged"] as const)(
+        "keeps a %s recommended-version install after a current refresh",
+        (status) =>
+          Effect.gen(function* () {
+            const snapshot = yield* Ref.make<ServerProvider>(codexUpdateSnapshot("current"));
+            const runtimeServices = yield* buildRegistryOverSnapshot(snapshot);
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry.ProviderRegistry;
+              const state = makeUpdateState(status);
+              const input = {
+                instanceId,
+                action: "update" as const,
+                state,
+                targetVersion: "0.9.0",
+              };
+              yield* registry.setProviderMaintenanceActionState(input);
+              const [refreshed] = yield* registry.refresh(ProviderDriverKind.make("codex"));
+              expect(refreshed?.updateState).toEqual(state);
+            }).pipe(Effect.provide(runtimeServices));
+          }),
+      );
+
+      it.effect("does not bring a retired result back, and a later update still reports", () =>
+        Effect.gen(function* () {
+          const snapshot = yield* Ref.make<ServerProvider>(codexUpdateSnapshot("behind_latest"));
+          const runtimeServices = yield* buildRegistryOverSnapshot(snapshot);
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const codex = ProviderDriverKind.make("codex");
+            yield* registry.setProviderMaintenanceActionState({
+              instanceId,
+              action: "update",
+              state: makeUpdateState("unchanged"),
+            });
+            yield* Ref.set(snapshot, codexUpdateSnapshot("current"));
+            yield* registry.refresh(codex);
+
+            yield* Ref.set(snapshot, codexUpdateSnapshot("unknown"));
+            const [reprobed] = yield* registry.refresh(codex);
+            expect(reprobed?.updateState).toBeUndefined();
+
+            const running = makeUpdateState("running");
+            const [updating] = yield* registry.setProviderMaintenanceActionState({
+              instanceId,
+              action: "update",
+              state: running,
+            });
+            expect(updating?.updateState).toEqual(running);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+    });
 
     it.effect("re-probes when settings change the codex binaryPath", () =>
       Effect.gen(function* () {
