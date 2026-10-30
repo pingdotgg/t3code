@@ -36,7 +36,7 @@ export type PromptLinkResult<T> =
 
 // Hidden characters let models read instructions invisible to the person reviewing the prompt.
 const HIDDEN_CHARACTERS =
-  // oxlint-disable-next-line no-control-regex, no-misleading-character-class -- these are the characters it removes.
+  // oxlint-disable-next-line no-misleading-character-class -- these are the characters it removes.
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0D\uFEFF\uFFA0\uFFF0-\uFFFB\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E0FFF}]/gu;
 // Numeric emoji ranges because Hermes lacks Unicode property escapes.
 const isEmojiPart = (codePoint: number | undefined) =>

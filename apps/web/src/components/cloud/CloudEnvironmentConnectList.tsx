@@ -123,6 +123,7 @@ export function CloudEnvironmentConnectRows({
       .map((environment) => environment.environmentId),
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches relay discovery when its inputs change, unless hidden polling covers it, and reports readiness
   useEffect(() => {
     let active = true;
     if (onDiscoveryReady || !refreshWhileEmpty || document.visibilityState === "visible") {
@@ -220,6 +221,7 @@ export function CloudEnvironmentConnectRows({
       }
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- auto-selects newly discovered machines from the discovery store and starts their relay connections
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- Discovery results arrive from an external store and auto-selection starts relay connections, which mark themselves connecting.
     selectNewComputers(environmentsState.environments);
@@ -229,6 +231,7 @@ export function CloudEnvironmentConnectRows({
   const shouldRefreshWhileEmpty =
     refreshWhileEmpty && visibleEnvironments.length === 0 && !environmentsState.offline;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls relay discovery on a timer, focus and visibility change while no machine is found
   useEffect(() => {
     if (!shouldRefreshWhileEmpty) return;
     let timer: ReturnType<typeof setTimeout> | undefined;

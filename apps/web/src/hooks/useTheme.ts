@@ -1,7 +1,8 @@
+import { pipe } from "effect/Function";
 import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import {
   applyThemePalette,
   CUSTOM_THEMES_STORAGE_KEY,
@@ -485,6 +486,25 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+/** For shortcuts and other handlers outside React that read the theme at event time. */
+export function getThemeSnapshot(): ThemeSnapshot {
+  return getSnapshot();
+}
+
+/** For code outside React (worker pools) that follows the rendered appearance. */
+export function subscribeRenderedAppearance(listener: () => void): () => void {
+  const unsubscribeTheme = subscribe(listener);
+  const unsubscribePreview = subscribeToThemePreview(listener);
+  return () => {
+    unsubscribeTheme();
+    unsubscribePreview();
+  };
+}
+
+export function getRenderedAppearance(): ThemeAppearance {
+  return getThemePreviewAppearance() ?? getSnapshot().resolvedTheme;
+}
+
 export function useRenderedAppearance() {
   const { resolvedTheme } = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const previewAppearance = useSyncExternalStore(
@@ -495,11 +515,11 @@ export function useRenderedAppearance() {
   return previewAppearance ?? resolvedTheme;
 }
 
-function setTheme(next: Theme): boolean {
+export function setTheme(next: Theme): boolean {
   if (typeof window === "undefined") return false;
   try {
     // Save the current mode first; inferring it from the new theme can switch dark to light.
-    writeAppearanceModePreference(readAppearanceModePreference(getStored()));
+    pipe(getStored(), readAppearanceModePreference, writeAppearanceModePreference);
     // A whole theme replaces the mix; retain it to restore on a failed preference write.
     const previousHalvesRaw = window.localStorage.getItem(THEME_HALVES_STORAGE_KEY);
     window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
@@ -535,7 +555,7 @@ function setTheme(next: Theme): boolean {
   return true;
 }
 
-function setAppearanceMode(nextAppearanceMode: ThemePreferenceMode): boolean {
+export function setAppearanceMode(nextAppearanceMode: ThemePreferenceMode): boolean {
   if (typeof window === "undefined") return false;
   try {
     writeAppearanceModePreference(nextAppearanceMode);
@@ -612,7 +632,7 @@ function clearThemeHalves(): boolean {
   return true;
 }
 
-function refreshTheme({ preservePreview = false } = {}): void {
+export function refreshTheme({ preservePreview = false } = {}): void {
   if (typeof window === "undefined") return;
   lastAppliedTheme = null;
   applyTheme(getStored(), { suppressTransitions: true, preservePreview });
@@ -632,10 +652,6 @@ export function useTheme() {
         : currentMode;
     return setAppearanceMode(nextMode);
   };
-
-  useEffect(() => {
-    applyTheme(snapshot.theme);
-  }, [snapshot]);
 
   return {
     theme,

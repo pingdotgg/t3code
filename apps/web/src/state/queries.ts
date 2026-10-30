@@ -27,7 +27,6 @@ import type {
   VcsRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
@@ -82,6 +81,7 @@ const threadSearch = createThreadSearchResultsAtomFamily({
 export function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- debounce timer that publishes the value after delayMs
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setDebounced(value);
@@ -140,6 +140,7 @@ export function useThreadSearch(
     : { query: "", matches: EMPTY_THREAD_SEARCH_MATCHES };
   // The shown results' rows stay mounted until newer results replace them.
   const shownKey = visible.query === "" ? null : searchKeyOf(visible.query);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the shown search results' rows into the thread family registry until newer results replace them
   useEffect(() => {
     if (shownKey === null) return;
     const environments = (JSON.parse(shownKey) as [ReadonlyArray<EnvironmentId>])[0];
@@ -206,7 +207,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
     pagesKey === null ? EMPTY_VCS_REF_PAGES_ATOM : vcsRefPagesAtom(pagesKey),
   );
   const values = results.flatMap((result) => {
-    const value = Option.getOrNull(AsyncResult.value(result));
+    const value = AsyncResult.getOrElse(result, () => null);
     return value === null ? [] : [value];
   });
   const refs = new Map<string, VcsRef>();

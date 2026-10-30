@@ -225,16 +225,6 @@ jobs:
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
-      # Blacksmith boots GitHub's Ubuntu runner image (gcc is usually present),
-      # but ACP process-tree live tests compile a small pthread fixture with `cc`
-      # and soft-skip when it is missing. Install build-essential so that path
-      # always runs in CI instead of silently no-oping.
-      - name: Install C toolchain for process-tree fixtures
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential
-          command -v cc
-
       - uses: ./.github/actions/setup-apt-mirrors
 
       # The desktop tests compile the browser secret helper. The install runs in
@@ -344,6 +334,12 @@ jobs:
       - name: Test
         run: vp run --filter @t3tools/web test
 
+      # Browser tests run source modules; this boots the production chunk graph.
+      - name: Boot the built web client
+        run: |
+          vp run --filter @t3tools/web build
+          node apps/web/scripts/verify-built-boot.ts
+
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
   # separate workers, so no two server test files ever share a machine and the
@@ -358,7 +354,9 @@ jobs:
       id-token: write
     name: Test Server ${{ matrix.shard }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 10
+    # Shards take 2-5 minutes. When the shared task cache throttles reads, each
+    # failed fetch stalls vp for 15-90s, which pushed shards past 10 minutes.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -420,7 +418,18 @@ jobs:
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
-        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: >-
+          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          --uncached apps/server/integration/transferBudgetV2.integration.test.ts
+          --verify-hits 1 --report "${{ runner.temp }}/test-cache-${{ matrix.shard }}.json" apps/server
+
+      - name: Upload test cache measurements
+        if: always() && steps.changes.outputs.test_server != 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-cache-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-cache-${{ matrix.shard }}.json
+          if-no-files-found: error
 
       # integration/transferBudgetV2.integration.test.ts writes the report; exactly one shard
       # produces these files. Gating the upload on their presence keeps a

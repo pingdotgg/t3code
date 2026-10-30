@@ -6,17 +6,28 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { useAtomMount } from "@effect/atom-react";
+import { type ReactNode, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
-import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
+import {
+  selectThreadRightPanelState,
+  useRightPanelStore,
+  type RightPanelSurface,
+} from "~/rightPanelStore";
 import { Button } from "~/components/ui/button";
 import { DiscoveryList } from "~/components/ui/discovery-list";
 import { Dialog } from "~/components/ui/dialog";
 import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
-import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { focusPanelTerminalAfterClose } from "~/lib/terminalFocus";
+import {
+  deviceEnvironment,
+  deviceHostProbeAtom,
+  NO_DEVICE_PROBE_ATOM,
+  useDeviceState,
+} from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
@@ -56,11 +67,11 @@ export function DevicePanel(props: {
 
   const hostDisabled = state.hostStatus === "disabled";
 
-  // Opening setup never grants permission to install or start helpers.
-  useEffect(() => {
-    if (!props.visible || !loaded || hostDisabled) return;
-    void list({ environmentId, input: {} });
-  }, [environmentId, list, loaded, props.visible, hostDisabled]);
+  useAtomMount(
+    props.visible && loaded && !hostDisabled
+      ? deviceHostProbeAtom(environmentId)
+      : NO_DEVICE_PROBE_ATOM,
+  );
 
   const sessions = state.sessions.filter((session) => session.threadId === threadId);
   const activeSession = props.surface.target
@@ -74,6 +85,9 @@ export function DevicePanel(props: {
     ? state.devices.find(
         (device) => device.hostId === activeSession.hostId && device.id === activeSession.deviceId,
       )
+    : undefined;
+  const activeHost = activeDevice
+    ? state.hosts.find((host) => host.id === activeDevice.hostId)
     : undefined;
 
   const grouped = groupDevices(state);
@@ -126,9 +140,16 @@ export function DevicePanel(props: {
     useRightPanelStore.getState().close(props.threadRef);
   };
 
+  const closeSurface = () => {
+    const store = useRightPanelStore.getState();
+    const { activeSurfaceId } = selectThreadRightPanelState(store.byThreadKey, props.threadRef);
+    store.closeSurface(props.threadRef, props.surface.id);
+    focusPanelTerminalAfterClose(props.threadRef, activeSurfaceId);
+  };
+
   const closeActive = (powerOff: boolean) => {
     if (!powerOff) {
-      useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      closeSurface();
       return;
     }
     if (!activeSession) return;
@@ -143,7 +164,7 @@ export function DevicePanel(props: {
       },
     }).then((result) => {
       if (result._tag === "Failure") settleOperation(formatEnvironmentQueryError(result.cause));
-      else useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      else closeSurface();
     });
   };
 
@@ -216,9 +237,8 @@ export function DevicePanel(props: {
               key={`${environmentId}\u0000${deviceKey(activeDevice)}`}
               environmentId={environmentId}
               device={activeDevice}
-              hostLabel={
-                state.hosts.find((host) => host.id === activeDevice.hostId)?.label ?? "Device host"
-              }
+              hostLabel={activeHost?.label ?? "Device host"}
+              hostKind={activeHost?.kind}
               hostDiagnostics={
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
               }

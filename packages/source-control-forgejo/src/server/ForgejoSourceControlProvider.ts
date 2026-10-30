@@ -356,11 +356,12 @@ export const make = Effect.gen(function* () {
       },
       (effect, input) => effect.pipe(mapError("listChangeRequests", input.cwd)),
     ),
-    getChangeRequest: (input) =>
-      getPull(input).pipe(
+    getChangeRequest: Effect.fn("ForgejoSourceControlProvider.getChangeRequest")(function (input) {
+      return getPull(input).pipe(
         Effect.map(toForgejoChangeRequest),
         mapError("getChangeRequest", input.cwd),
-      ),
+      );
+    }),
     createChangeRequest: Effect.fn("ForgejoSourceControlProvider.createChangeRequest")(
       function* (input) {
         const repo = yield* cli.resolveRepository(input);

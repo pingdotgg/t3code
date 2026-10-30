@@ -202,7 +202,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         "resolve",
         "The managed Codex installation record is invalid. Reinstall Codex.",
       );
-    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(
+    return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(
       yield* fs.readFileString(file),
     );
   });

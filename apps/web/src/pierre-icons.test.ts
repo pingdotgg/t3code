@@ -1,8 +1,19 @@
 import { assert, describe, it } from "vite-plus/test";
 
-import { resolvePierreIconForEntry, T3_PIERRE_ICONS } from "./pierre-icons";
+import {
+  hasSpecificPierreIconForFileName,
+  resolvePierreIconForEntry,
+  T3_PIERRE_ICONS,
+} from "./pierre-icons";
 
 describe("Pierre file icons", () => {
+  it.each(["photo.heic", "photo.heif", "PHOTO.HEIC", "folder/photo.HEIF"])(
+    "uses the image icon for %s",
+    (name) => {
+      assert.equal(resolvePierreIconForEntry(name, "file")?.token, "image");
+      assert.isTrue(hasSpecificPierreIconForFileName(name));
+    },
+  );
   it("uses detected types for extensionless files while keeping known filename icons", () => {
     assert.equal(
       resolvePierreIconForEntry("custom-script", "file", "text/x-python")?.token,
@@ -18,6 +29,28 @@ describe("Pierre file icons", () => {
       resolvePierreIconForEntry("unknown", "file", "application/octet-stream")?.token,
       "default",
     );
+  });
+
+  it.each([
+    ["pdf", "pdf"],
+    ["doc", "word"],
+    ["docx", "word"],
+    ["odt", "word"],
+    ["rtf", "word"],
+    ["xls", "spreadsheet"],
+    ["xlsx", "spreadsheet"],
+    ["ods", "spreadsheet"],
+    ["csv", "spreadsheet"],
+    ["tsv", "spreadsheet"],
+    ["ppt", "slides"],
+    ["pptx", "slides"],
+    ["odp", "slides"],
+    ["epub", "epub"],
+  ])("uses the document family icon for %s", (extension, family) => {
+    for (const path of [`report.${extension}`, `folder/REPORT.${extension.toUpperCase()}`]) {
+      assert.equal(resolvePierreIconForEntry(path, "file")?.name, `t3-file-icon-${family}`);
+      assert.isTrue(hasSpecificPierreIconForFileName(path));
+    }
   });
 
   it("ships every custom icon referenced by the extended resolver", () => {

@@ -19,6 +19,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { act, render, type Screen } from "../../test/render";
 
 const state = vi.hoisted(() => ({
+  catalog: null as unknown as Atom.Writable<{
+    readonly isReady: boolean;
+    readonly entries: ReadonlyMap<string, unknown>;
+  }>,
   settings: new Map<string, unknown>(),
   connections: new Map<
     EnvironmentId,
@@ -29,10 +33,18 @@ const state = vi.hoisted(() => ({
 
 vi.mock(import("~/connection/catalog"), async (original) => {
   const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  state.catalog = Atom.keepAlive(
+    Atom.make<{ readonly isReady: boolean; readonly entries: ReadonlyMap<string, unknown> }>({
+      isReady: true,
+      entries: new Map(),
+    }),
+  );
   return {
     ...actual,
     environmentCatalog: {
       ...actual.environmentCatalog,
+      catalogValueAtom: state.catalog as never,
       stateAtom: ((id: EnvironmentId) => state.connections.get(id)) as never,
     },
   };
@@ -52,6 +64,10 @@ vi.mock(import("~/state/server"), async (original) => {
     serverEnvironment: {
       ...actual.serverEnvironment,
       settingsValueAtom: ((id: EnvironmentId) => state.settings.get(id)) as never,
+      updateSettings: {
+        ...actual.serverEnvironment.updateSettings,
+        run: (_registry: unknown, input: unknown) => state.persist(input),
+      } as never,
     },
   };
 });
@@ -60,7 +76,12 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
   useAtomCommand: (() => state.persist) as never,
 }));
 
-import { useEnvironmentModelPreferences, useToggleEnvironmentModelFavorite } from "./useSettings";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import {
+  ensureClientSettingsHydrated,
+  startModelPreferencesMigration,
+  useToggleEnvironmentModelFavorite,
+} from "./useSettings";
 
 const primaryId = EnvironmentId.make("primary");
 const remoteId = EnvironmentId.make("remote");
@@ -242,17 +263,11 @@ describe("environment favorite toggles", () => {
   });
 });
 
-function ModelPreferencesReader({ environmentId }: { environmentId: EnvironmentId }) {
-  useEnvironmentModelPreferences(environmentId);
-  return null;
-}
-
 describe("legacy model preferences migration", () => {
   it.each(["succeeds", "fails"] as const)(
     "waits for connection and retries only after reconnect when the first save %s",
     async (outcome) => {
-      await using fixture = await setup();
-      const { registry, show } = fixture;
+      await using _fixture = await setup();
       const environmentId = EnvironmentId.make(`migration-${outcome}`);
       const otherId = EnvironmentId.make(`other-${outcome}`);
       for (const id of [environmentId, otherId]) {
@@ -281,59 +296,58 @@ describe("legacy model preferences migration", () => {
       state.persist
         .mockReturnValueOnce(firstSave)
         .mockResolvedValue(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
-      const renderReader = (id = environmentId) =>
-        show(<ModelPreferencesReader key={id} environmentId={id} />);
       const connect = (id: EnvironmentId, generation: number) =>
-        act(() =>
-          registry.set(
-            state.connections.get(id)!,
-            AsyncResult.success({
-              ...AVAILABLE_CONNECTION_STATE,
-              desired: true,
-              generation,
-              phase: "connected",
-            }),
-          ),
+        appAtomRegistry.set(
+          state.connections.get(id)!,
+          AsyncResult.success({
+            ...AVAILABLE_CONNECTION_STATE,
+            desired: true,
+            generation,
+            phase: "connected",
+          }),
         );
       const pushSettings = (id = environmentId) =>
-        act(() => registry.set(settingsAtom(id), { ...DEFAULT_SERVER_SETTINGS }));
+        appAtomRegistry.set(settingsAtom(id), { ...DEFAULT_SERVER_SETTINGS });
       const migration = (id: EnvironmentId) => ({
         environmentId: id,
         input: { patch: { migrateModelPreferences: { favorites: [{ provider, model }] } } },
       });
 
-      await renderReader();
-      await pushSettings();
+      appAtomRegistry.set(state.catalog, {
+        isReady: true,
+        entries: new Map([
+          [environmentId, {}],
+          [otherId, {}],
+        ]),
+      });
+      using _migration = { [Symbol.dispose]: startModelPreferencesMigration() };
+      await ensureClientSettingsHydrated();
+      pushSettings();
       expect(state.persist).not.toHaveBeenCalled();
 
-      await connect(environmentId, 1);
+      connect(environmentId, 1);
       expect(state.persist).toHaveBeenCalledExactlyOnceWith(migration(environmentId));
-      await pushSettings();
+      pushSettings();
       expect(state.persist).toHaveBeenCalledTimes(1);
-      await act(finishFirstSave);
-      await pushSettings();
-      await pushSettings();
+      finishFirstSave();
+      await firstSave;
+      pushSettings();
+      pushSettings();
       expect(state.persist).toHaveBeenCalledTimes(1);
 
-      await connect(otherId, 7);
-      await pushSettings(otherId);
-      expect(state.persist).toHaveBeenCalledTimes(1);
-      await renderReader(otherId);
+      connect(otherId, 7);
       expect(state.persist).toHaveBeenLastCalledWith(migration(otherId));
-      await renderReader();
-      await pushSettings();
+      pushSettings(otherId);
       expect(state.persist).toHaveBeenCalledTimes(2);
 
-      await act(() =>
-        registry.set(
-          state.connections.get(environmentId)!,
-          AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, generation: 1 }),
-        ),
+      appAtomRegistry.set(
+        state.connections.get(environmentId)!,
+        AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, generation: 1 }),
       );
-      await pushSettings();
+      pushSettings();
       expect(state.persist).toHaveBeenCalledTimes(2);
-      await connect(environmentId, 2);
-      await pushSettings();
+      connect(environmentId, 2);
+      pushSettings();
       expect(state.persist.mock.calls).toEqual([
         [migration(environmentId)],
         [migration(otherId)],

@@ -370,12 +370,15 @@ export function applyOrchestrationV2ProjectionEvent(
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
     case "turn-item.updated": {
-      const payload = restoreTurnItemBodies(event.payload, latestBodies(projection));
+      let payload = restoreTurnItemBodies(event.payload, latestBodies(projection));
       // Streamed updates land on the newest items, so search from the end.
       let itemIndex = projection.turnItems.length - 1;
       while (itemIndex >= 0 && projection.turnItems[itemIndex]!.id !== payload.id) {
         itemIndex -= 1;
       }
+      const deferredWork =
+        itemIndex === -1 ? undefined : projection.turnItems[itemIndex]?.deferredWork;
+      if (deferredWork !== undefined) payload = { ...payload, deferredWork };
       if (
         partialTimeline &&
         itemIndex === -1 &&

@@ -1,6 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { StorageSettingsPanel } from "../components/settings/StorageSettings";
 
-export const Route = createFileRoute("/_chat/settings/storage")({
-  component: StorageSettingsPanel,
-});
+// Renamed to /settings/maintenance; the settings route redirects old links.
+export const Route = createFileRoute("/_chat/settings/storage")({});

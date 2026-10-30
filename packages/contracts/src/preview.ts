@@ -160,6 +160,8 @@ export const PreviewSessionSnapshot = Schema.Struct({
   /** Fixed at open; Electron cannot change a webview partition after attach without losing page state. */
   profileId: Schema.optional(BrowserProfileId),
   runtime: Schema.optional(PreviewRuntime),
+  /** The server runs this tab in headless Chromium, so the desktop streams it like other clients. */
+  headless: Schema.optional(Schema.Boolean),
   automationOwner: Schema.optional(Schema.String),
   reveal: Schema.optional(Schema.Boolean),
   revealRequest: Schema.optional(Schema.Struct({ id: Schema.String, force: Schema.Boolean })),
@@ -177,14 +179,6 @@ export const PreviewOpenInput = Schema.Struct({
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
-export const PreviewNavigateInput = Schema.Struct({
-  threadId: ThreadId,
-  tabId: PreviewTabId,
-  url: Url,
-  resolvedTitle: Schema.optional(Title),
-});
-export type PreviewNavigateInput = typeof PreviewNavigateInput.Type;
-
 export const PreviewReportStatusInput = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
@@ -193,12 +187,6 @@ export const PreviewReportStatusInput = Schema.Struct({
   canGoForward: Schema.Boolean,
 });
 export type PreviewReportStatusInput = typeof PreviewReportStatusInput.Type;
-
-export const PreviewRefreshInput = Schema.Struct({
-  threadId: ThreadId,
-  tabId: PreviewTabId,
-});
-export type PreviewRefreshInput = typeof PreviewRefreshInput.Type;
 
 export const PreviewResizeInput = Schema.Struct({
   threadId: ThreadId,
@@ -312,9 +300,11 @@ export const PreviewEvent = Schema.Union([
 ]);
 export type PreviewEvent = typeof PreviewEvent.Type;
 
+const LocalServerPort = Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536));
+
 export const DiscoveredLocalServer = Schema.Struct({
   host: TrimmedNonEmptyString,
-  port: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536)),
+  port: LocalServerPort,
   url: Url,
   processName: Schema.NullOr(TrimmedNonEmptyString),
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
@@ -324,8 +314,37 @@ export const DiscoveredLocalServer = Schema.Struct({
       terminalId: TrimmedNonEmptyString,
     }),
   ),
+  /** Started by the thread's agent. Older servers omit it. */
+  agent: Schema.optionalKey(Schema.NullOr(Schema.Struct({ threadId: ThreadId }))),
 });
 export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type;
+
+export const PreviewStopLocalServerInput = Schema.Struct({
+  pid: PositiveInt,
+  port: LocalServerPort,
+});
+export type PreviewStopLocalServerInput = typeof PreviewStopLocalServerInput.Type;
+
+export class PreviewStopLocalServerError extends Schema.TaggedError<PreviewStopLocalServerError>()(
+  "PreviewStopLocalServerError",
+  {
+    reason: Schema.Literals(["not-found", "shared-group", "unsupported", "signal-failed"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message() {
+    switch (this.reason) {
+      case "not-found":
+        return "This server is no longer running.";
+      case "shared-group":
+        return "This server shares a process group with T3 Code, an agent, or a terminal shell, so it can't be stopped on its own.";
+      case "unsupported":
+        return "Stopping servers is not supported on this environment's platform.";
+      case "signal-failed":
+        return "The server's processes could not be signaled.";
+    }
+  }
+}
 
 export const DiscoveredLocalServerList = Schema.Struct({
   servers: Schema.Array(DiscoveredLocalServer),

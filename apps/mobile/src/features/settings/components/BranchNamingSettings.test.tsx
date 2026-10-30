@@ -23,7 +23,7 @@ vi.mock("../../../components/ui/AppText", () => ({
     return null;
   },
 }));
-vi.mock("./SettingsChoiceRow", () => ({ SettingsChoiceRow: () => null }));
+vi.mock("../../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
 vi.mock("./SettingsSection", () => ({
   SettingsSection: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));

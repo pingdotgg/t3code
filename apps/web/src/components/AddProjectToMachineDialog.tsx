@@ -17,7 +17,7 @@ import {
   cloneUrlProtocol,
 } from "@t3tools/shared/cloneUrl";
 import { ArrowRightIcon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { create } from "zustand";
 
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -31,7 +31,7 @@ import {
 } from "../lib/addProjectToMachine";
 import { formatBytes } from "../lib/formatBytes";
 import { newProjectId } from "../lib/utils";
-import { useProject } from "../state/entities";
+import { readProject, subscribeProject, useProject } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
@@ -58,20 +58,35 @@ interface AddProjectToMachineRequest {
   readonly targetEnvironmentId: EnvironmentId | null;
 }
 
-const useRequest = create<{ request: AddProjectToMachineRequest | null }>(() => ({
+const useRequest = create<{ request: AddProjectToMachineRequest | null; session: number }>(() => ({
   request: null,
+  session: 0,
 }));
+
+let endRequestWithProject: (() => void) | null = null;
 
 /** Opens the dialog that clones a project onto another connected machine. */
 export function openAddProjectToMachine(request: AddProjectToMachineRequest) {
-  useRequest.setState({ request });
+  if (readProject(request.projectRef) === null) return;
+  endRequestWithProject?.();
+  // The request ends when its project goes away, so a project that comes back
+  // later cannot reopen a dialog nobody asked for.
+  endRequestWithProject = subscribeProject(request.projectRef, (project) => {
+    if (project === null) close();
+  });
+  useRequest.setState((state) => ({ request, session: state.session + 1 }));
 }
 
-const close = () => useRequest.setState({ request: null });
+function close() {
+  endRequestWithProject?.();
+  endRequestWithProject = null;
+  useRequest.setState({ request: null });
+}
 
 export function AddProjectToMachineDialogHost() {
   const request = useRequest((state) => state.request);
-  return request ? <AddProjectToMachineDialog request={request} /> : null;
+  const session = useRequest((state) => state.session);
+  return request ? <AddProjectToMachineDialog key={session} request={request} /> : null;
 }
 
 function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRequest }) {
@@ -128,10 +143,6 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     project === null ||
     target === null ||
     (canListFiles && ignoredFiles.data === null && ignoredFiles.error === null);
-  useEffect(() => {
-    if (project === null) close();
-  }, [project]);
-
   const toggleFile = (path: string, checked: boolean) => {
     const next = new Set(selectedFiles);
     if (checked) next.add(path);

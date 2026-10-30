@@ -56,9 +56,12 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
   readonly onChunk: (chunk: string) => Effect.Effect<void>;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const pause = Effect.raceFirst(
-    Effect.sleep(CLAUDE_TASK_OUTPUT_POLL_MS).pipe(Effect.as(false)),
-    Deferred.await(input.stop).pipe(Effect.as(true)),
+  const pause = Deferred.await(input.stop).pipe(
+    Effect.as(true),
+    Effect.timeoutOrElse({
+      duration: CLAUDE_TASK_OUTPUT_POLL_MS,
+      orElse: () => Effect.succeed(false),
+    }),
   );
   let file = Option.none<string>();
   for (let attempt = 0; Option.isNone(file); attempt += 1) {

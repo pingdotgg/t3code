@@ -1,9 +1,8 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { type DesktopBridge, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import type { DesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import * as imageCompression from "../../lib/imageCompression";
 import {
   questionAttachmentDraftId,
@@ -126,7 +125,7 @@ describe("open question delivery", () => {
   };
   const makeBridge = (readSnapShot: () => Promise<typeof capture> = async () => capture) => {
     const acknowledgeSnapShot = vi.fn(async () => undefined);
-    const bridge = { readSnapShot, acknowledgeSnapShot } as unknown as DesktopSnapShotBridge;
+    const bridge = { readSnapShot, acknowledgeSnapShot } as unknown as DesktopBridge;
     return { bridge, acknowledgeSnapShot };
   };
 
@@ -226,7 +225,7 @@ describe("durable snapshot delivery", () => {
       const bridge = {
         readSnapShot: async () => capture,
         acknowledgeSnapShot,
-      } as unknown as DesktopSnapShotBridge;
+      } as unknown as DesktopBridge;
       const write = storage.setItem.getMockImplementation()!;
       storage.setItem.mockImplementation(() => {
         throw new Error("QuotaExceededError");

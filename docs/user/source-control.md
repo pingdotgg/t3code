@@ -10,10 +10,20 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+On web and desktop, open the Diff pane source picker and choose **Commits** to review one local
+commit at a time. The list shows the newest 100 commits in the branch comparison. A merge commit
+shows its changes against its first parent.
+
+A commit link from a supported code host opens in the Diff pane when the thread's repository has
+that commit locally, on any branch. Otherwise a pull request commit link opens the pull request. Other
+commit links follow your **Open links in** setting; on web, when that opens a new tab, T3 Code first
+shows an **Open link** button. Command/Ctrl+Click always opens the link in your browser. Commit links follow the **Open pull requests in T3 Code**
+setting in **Settings → Diffs**.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote
-environment, do this on the remote machine. After signing in, open **Settings → Source Control**
+environment, do this on the remote machine. After signing in, open **Settings → Source control**
 and choose **Rescan**.
 
 ### GitHub
@@ -21,7 +31,7 @@ and choose **Rescan**.
 T3 Code talks to GitHub's API directly and only needs a token. Any of these works, in this
 order of precedence:
 
-1. A token saved in **Settings → Source Control → GitHub**. It is kept in the server's secret
+1. A token saved in **Settings → Source control → GitHub**. It is kept in the server's secret
    store, and works without the GitHub CLI.
 2. `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` with `GH_HOST` for GitHub Enterprise Server) in the
    server's environment.
@@ -64,7 +74,7 @@ glab auth login
 
 ### Bitbucket
 
-Open **Settings → Source Control**, expand **Bitbucket**, and enter one of:
+Open **Settings → Source control**, expand **Bitbucket**, and enter one of:
 
 - **Access token**: a token created for one repository, project, or workspace. It can only reach
   what it was created for.
@@ -110,7 +120,7 @@ bun install -g @gitcafe/cli
 cafe auth login --host https://git.cafe/api
 ```
 
-Alternatively, open **Settings → Source Control**, expand **GitCafe**, and enter a token. It is
+Alternatively, open **Settings → Source control**, expand **GitCafe**, and enter a token. It is
 kept in the server's secret store, applies right away, and is used before `CAFE_TOKEN` and the
 `cafe` login. Or set `CAFE_TOKEN` in the server's environment and restart it. Both tokens are only
 sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories on
@@ -152,7 +162,7 @@ An existing fork PR can appear beside the branch even if you pushed without sett
 If its badge is missing because several remotes hold that branch, set the branch's upstream to
 the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 
-Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
+Choose the writing style and model in **Settings → Source control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
 
 ## Review and merge
@@ -170,7 +180,7 @@ Previously loaded lists, review details, guides, and diff pages remain readable 
 without a connection, including after restarting the app. Saved content refreshes when the
 environment reconnects; submitting changes requires a connection.
 
-Enable **Remove agent credits when merging** in Settings → Source Control to remove recognized
+Enable **Remove agent credits when merging** in Settings → Source control to remove recognized
 agent co-author and generated-by lines from GitHub merge and squash commit messages. Human
 co-authors stay credited. The setting is off by default and projects can override it. It also
 applies to auto-merge, but not merge queues or native stack merges. Original commits keep their
@@ -183,7 +193,7 @@ Press **Escape** before releasing to cancel. Failed closes stay in the list so y
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
 
-Pull request sharing is off by default. In Settings → Connections → Pull request sharing (Pull
+Pull request sharing is off by default. In Settings → Environments → Pull request sharing (Pull
 request routing under Environments on mobile), choose **Read PRs** or **Read and act** for each
 environment you trust to share its source control access.
 Enable both the original environment and the environment answering its requests on this client.
@@ -205,7 +215,7 @@ declined pull request.
 
 ### Review guides
 
-Review guides are in beta. Turn on **Review guides** in Settings → Source Control to add the
+Review guides are in beta. Turn on **Review guides** in Settings → Source control to add the
 **Guide** tab to pull requests on that server. On mobile, move between stops with **Next**
 and the back button; a stale guide offers a rewrite and hides excerpts that no longer match
 the current change.
@@ -217,7 +227,7 @@ snapshots are grouped at the end, and every changed file appears somewhere on th
 Conversations already resolved in review are left out. For a pull request in a stack, the guide
 covers that layer only, and may point out what a lower layer introduced or what a higher one uses.
 
-Choose **Write guide** to have the review guide model from Settings → Source Control read the
+Choose **Write guide** to have the review guide model from Settings → Source control read the
 change in a temporary checkout; without one set, the source control writer model is used. Nothing
 in the checkout is changed, and a large pull request takes a few minutes; you can go elsewhere in
 the app. On web, you are told when the guide is ready; on mobile, return to the guide to check
@@ -233,7 +243,7 @@ are on. **Finish review** on the last stop opens the review with everything you 
 Agents can write guides too: ask one to prepare guides for a set of pull requests, and it starts
 them for you. Each is read through the project whose checkout has that repository.
 
-To shape guides to your taste, write **Review guide instructions** in Settings → Source Control,
+To shape guides to your taste, write **Review guide instructions** in Settings → Source control,
 such as what to show first or what to skip; projects can override them. They change emphasis and
 ordering, not the guide's layout or which files it covers.
 
@@ -254,9 +264,9 @@ and their marks follow the same rules as on web and desktop.
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
-  check the credentials saved in Settings → Source Control, or confirm the running server received
+  check the credentials saved in Settings → Source control, or confirm the running server received
   the environment variables.
-- **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0, or save a token in Settings → Source Control.
+- **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0, or save a token in Settings → Source control.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
@@ -270,8 +280,8 @@ pull request link in the conversation. Creating a pull request from Git actions 
 and so does an agent creating one with `gh pr create` or `glab mr create`. Agents can link other
 pull requests with the `link_pull_request` tool.
 
-Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
-on the Pull Requests page, **Link to thread** lets you search for an active thread. The review header
+Use **Link pull request to thread** in the command palette to keep a pull request with the thread. From a review
+on the Pull requests page, **Link to thread** lets you search for an active thread. The review header
 also lists the threads that link to it, including archived threads, so you can return to their context.
 
 Thread badges show a stack's layer count or the current review number with a count of additional
@@ -307,7 +317,7 @@ out from the matching organization and repository.
 
 ## GitHub stacks
 
-The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a
+The Pull requests page shows each PR's position in its GitHub stack. Open the stack badge in a
 review to navigate its layers. **Merge stack** submits the selected pull request and every unmerged
 layer below it to GitHub together, respecting branch rules and merge queues. The confirmation shows
 the scope and merge strategy. GitHub rebases the remaining stack after merging.

@@ -367,7 +367,7 @@ function normalizeEntries(input: {
   });
 }
 
-const DEFAULT_GROK_SETTINGS = Schema.decodeUnknownSync(GrokSettings)({});
+const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
 const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: string) {
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);

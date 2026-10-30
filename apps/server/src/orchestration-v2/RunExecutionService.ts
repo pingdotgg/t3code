@@ -39,6 +39,7 @@ import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
+import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -506,6 +507,8 @@ export function routeProviderEvent(
             state.ownedProviderTurns.has(event.runtimeRequest.providerTurnId)),
         state,
       ];
+    case "background_work.updated":
+      return [state.ownedProviderTurns.has(event.providerTurnId), state];
     case "command_output.delta":
       // The session manager hands live output to the command output hub; runs never see it.
       return [false, state];
@@ -595,6 +598,7 @@ export const layer: Layer.Layer<
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ServerSettings.ServerSettingsService
   | McpAppModelContext.McpAppModelContext
+  | PreviewAgentActivity.PreviewAgentActivity
   | TurnItemPositionStore.TurnItemPositionStoreV2
 > = Layer.effect(
   RunExecutionServiceV2,
@@ -606,6 +610,7 @@ export const layer: Layer.Layer<
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
+    const previewAgentActivity = yield* PreviewAgentActivity.PreviewAgentActivity;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
@@ -620,7 +625,8 @@ export const layer: Layer.Layer<
         readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
         readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
-        readonly interruptedProviderTurn?: OrchestrationV2ProviderTurn;
+        // Root turn snapshot written with the run when T3 ends the run itself.
+        readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
         readonly terminal: ProviderTerminalEvent;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
@@ -631,7 +637,7 @@ export const layer: Layer.Layer<
         };
       }) {
         const completedAt = input.completedAt ?? (yield* DateTime.now);
-        const finalizedAttempt: OrchestrationV2RunAttempt | null = {
+        const finalizedAttempt: OrchestrationV2RunAttempt = {
           ...input.attempt,
           status: input.terminal.status,
           completedAt,
@@ -747,7 +753,7 @@ export const layer: Layer.Layer<
               : [],
           events: [
             ...cascadedSubagentEvents,
-            ...(input.interruptedProviderTurn === undefined
+            ...(input.abandonedProviderTurn === undefined
               ? []
               : [
                   {
@@ -758,27 +764,19 @@ export const layer: Layer.Layer<
                     nodeId: input.rootNode.id,
                     providerInstanceId: input.run.providerInstanceId,
                     occurredAt: completedAt,
-                    payload: {
-                      ...input.interruptedProviderTurn,
-                      status: "interrupted" as const,
-                      completedAt,
-                    },
+                    payload: input.abandonedProviderTurn,
                   },
                 ]),
-            ...(finalizedAttempt === null
-              ? []
-              : [
-                  {
-                    id: yield* allocateEventId(),
-                    type: "run-attempt.updated" as const,
-                    threadId: input.run.threadId,
-                    runId: input.run.id,
-                    nodeId: input.rootNode.id,
-                    providerInstanceId: input.run.providerInstanceId,
-                    occurredAt: completedAt,
-                    payload: finalizedAttempt,
-                  },
-                ]),
+            {
+              id: yield* allocateEventId(),
+              type: "run-attempt.updated" as const,
+              threadId: input.run.threadId,
+              runId: input.run.id,
+              nodeId: input.rootNode.id,
+              providerInstanceId: input.run.providerInstanceId,
+              occurredAt: completedAt,
+              payload: finalizedAttempt,
+            },
             ...(input.terminal.status === "interrupted"
               ? [
                   {
@@ -926,13 +924,13 @@ export const layer: Layer.Layer<
               ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
             })
             .pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning(
-                      "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                      { runId: input.run.id },
-                    ),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (_cause) =>
+                  Effect.logWarning(
+                    "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                    { runId: input.run.id },
+                  ),
               ),
             );
           if (
@@ -1034,6 +1032,7 @@ export const layer: Layer.Layer<
         const rootTerminalSeen = yield* Ref.make(false);
         const rootRunFinalized = yield* Ref.make(false);
         const providerThreadOwnerLost = yield* Ref.make(false);
+        const pendingBackgroundProviderTurns = new Set<ProviderTurnId>();
         const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
         const activeChildSubagents = yield* Ref.make<ReadonlyMap<NodeId, ThreadId>>(new Map());
         const activeBackgroundTurnItems = yield* Ref.make<
@@ -1223,7 +1222,7 @@ export const layer: Layer.Layer<
             }
           }
         });
-        const shouldStopProviderEventIngestion = Effect.gen(function* () {
+        const agentTurnsSettled = Effect.gen(function* () {
           if (!(yield* Ref.get(rootTerminalSeen))) {
             return false;
           }
@@ -1235,13 +1234,27 @@ export const layer: Layer.Layer<
           ) {
             return true;
           }
+          if (pendingBackgroundProviderTurns.size > 0) {
+            return false;
+          }
           const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
           if (childProviderTurns.size > 0) {
             return false;
           }
           const childSubagents = yield* Ref.get(activeChildSubagents);
-          if (childSubagents.size > 0) {
+          return childSubagents.size === 0;
+        });
+        const shouldStopProviderEventIngestion = Effect.gen(function* () {
+          if (!(yield* agentTurnsSettled)) {
             return false;
+          }
+          const terminal = yield* Ref.get(terminalEvent);
+          if (
+            terminal !== null &&
+            terminal.status !== "completed" &&
+            !childTurnsContinue(terminal)
+          ) {
+            return true;
           }
           // Newly owned items depend on adapters emitting a non-terminal event before the root
           // terminal. Owner loss (a newer run claimed lastRunOrdinal) must not close this stream
@@ -1272,6 +1285,9 @@ export const layer: Layer.Layer<
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
         const reservedHeldTurnItemIds = new Set<TurnItemId>();
+        // Ends once the root turn and the children it drives settle. Background commands such
+        // as a dev server keep this consumer alive afterwards and must not pin preview focus.
+        const endPreviewActivity = yield* previewAgentActivity.begin(input.run.threadId);
         const providerEventFiber = yield* eventSubscription.events.pipe(
           Stream.mapEffect((event) =>
             Effect.gen(function* () {
@@ -1340,6 +1356,11 @@ export const layer: Layer.Layer<
                   (current) =>
                     new Set([...current].filter((id) => routing.ownedProviderTurns.has(id))),
                 );
+                for (const id of pendingBackgroundProviderTurns) {
+                  if (!routing.ownedProviderTurns.has(id)) {
+                    pendingBackgroundProviderTurns.delete(id);
+                  }
+                }
                 yield* Ref.update(
                   activeBackgroundTurnItems,
                   (current) => new Set([...current].filter((id) => !detached.itemIds.has(id))),
@@ -1444,7 +1465,20 @@ export const layer: Layer.Layer<
                 yield* Ref.set(rootTerminalSeen, true);
                 yield* finalizeRootRun(event);
               }
+              if (event.type === "background_work.updated") {
+                if (event.pending) {
+                  pendingBackgroundProviderTurns.add(event.providerTurnId);
+                } else {
+                  pendingBackgroundProviderTurns.delete(event.providerTurnId);
+                }
+              }
               yield* trackChildLifecycle(event, deliveredEvent !== null);
+            }),
+          ),
+          // Also after events this run does not accept, such as a child handed to another run.
+          Stream.tap(() =>
+            Effect.gen(function* () {
+              if (yield* agentTurnsSettled) yield* endPreviewActivity;
             }),
           ),
           Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),
@@ -1482,8 +1516,9 @@ export const layer: Layer.Layer<
                 if (yield* Ref.get(rootRunFinalized)) return;
                 const providerThread = yield* Ref.get(latestProviderThread);
                 const routing = yield* Ref.get(eventRouting);
+                const rootProviderTurn = yield* Ref.get(latestRootProviderTurn);
                 // Stop background work too; the failed consumer cannot persist terminal events.
-                const interruptedProviderTurn =
+                const abandonedProviderTurn =
                   routing.rootProviderTurnId !== null && !routing.rootTurnEnded
                     ? yield* input.session
                         .interruptTurn({
@@ -1492,14 +1527,28 @@ export const layer: Layer.Layer<
                           requestRuntimeRestart: true,
                         })
                         .pipe(
-                          Effect.as(yield* Ref.get(latestRootProviderTurn)),
+                          Effect.as(true),
                           Effect.catchCauseIf(
                             (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
                             (interruptCause) =>
                               Effect.logWarning(
                                 "orchestration V2 failed to interrupt turn after ingestion failure",
                                 { runId: input.run.id, cause: interruptCause },
-                              ).pipe(Effect.as(null)),
+                              ).pipe(Effect.as(false)),
+                          ),
+                          // A failed interrupt leaves the stored turn running so the next start
+                          // retries it. The snapshot is cached before it is published, so it may
+                          // not be stored: replay a terminal one as-is.
+                          Effect.map((interrupted) =>
+                            !interrupted || rootProviderTurn === null
+                              ? null
+                              : isTerminalProviderTurnStatus(rootProviderTurn.status)
+                                ? rootProviderTurn
+                                : {
+                                    ...rootProviderTurn,
+                                    status: "interrupted" as const,
+                                    completedAt,
+                                  },
                           ),
                         )
                     : null;
@@ -1517,7 +1566,7 @@ export const layer: Layer.Layer<
                     expectedStatus: "running",
                   },
                   openRunOwnedSubagents: openSubagents,
-                  ...(interruptedProviderTurn === null ? {} : { interruptedProviderTurn }),
+                  ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
                   completedAt,
                   terminal: makeFailedTerminalEvent(
                     makeProviderFailure({ cause: Cause.squash(cause), class: "unknown" }),
@@ -1562,6 +1611,7 @@ export const layer: Layer.Layer<
                 );
               }),
           ),
+          Effect.ensuring(endPreviewActivity),
           Effect.ensuring(eventSubscription.close),
           Effect.forkDetach,
         );

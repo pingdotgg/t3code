@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState } from "react";
+import { useState } from "react";
 import { observeResize } from "../../lib/observeResize";
 
 function measureComposerMultilinePrompt(body: HTMLElement): boolean | null {
@@ -19,10 +19,13 @@ function measureComposerMultilinePrompt(body: HTMLElement): boolean | null {
   return bounds.height > lineHeight + 1 || bounds.width > expandedWidth + 1;
 }
 
-export function useComposerMultilinePrompt(body: HTMLElement | null): boolean {
+/** Whether the prompt wraps, and the ref callback that measures it on the composer body. */
+export function useComposerMultilinePrompt(): readonly [
+  boolean,
+  (body: HTMLElement | null) => (() => void) | undefined,
+] {
   const [isMultiline, setIsMultiline] = useState(false);
-
-  useLayoutEffect(() => {
+  const observeBody = (body: HTMLElement | null) => {
     if (!body) return;
     const measure = () => {
       const next = measureComposerMultilinePrompt(body);
@@ -37,7 +40,6 @@ export function useComposerMultilinePrompt(body: HTMLElement | null): boolean {
       stopObserving();
       mutationObserver.disconnect();
     };
-  }, [body]);
-
-  return isMultiline;
+  };
+  return [isMultiline, observeBody] as const;
 }

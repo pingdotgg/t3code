@@ -51,7 +51,7 @@ const decodeTranscript = Schema.decodeUnknownEffect(
 const now = DateTime.makeUnsafe("2026-09-29T00:00:00.000Z");
 const environmentId = EnvironmentId.make("source-بيئة");
 const output = "Full tool output. ".repeat(4_000);
-const thread = Schema.decodeUnknownSync(OrchestrationV2AppThread)({
+const thread = Schema.decodeSync(OrchestrationV2AppThread)({
   id: "source-thread",
   projectId: "source-project",
   title: "Source 界\nconversation",

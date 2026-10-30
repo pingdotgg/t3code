@@ -10,6 +10,7 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -246,12 +247,6 @@ export function parseCgroup2Mounts(
   return mounts;
 }
 
-export function parseCgroup2Mount(
-  contents: string,
-): { readonly mountPoint: string; readonly root: string } | undefined {
-  return parseCgroup2Mounts(contents)[0];
-}
-
 export function wrapCommandForLinuxCgroup(
   lease: AcpLinuxCgroupLease,
   command: string,
@@ -482,19 +477,18 @@ export function terminateLinuxCgroupLease(
     let lastRemovalFailure: { readonly cause: unknown } | null = null;
     for (let attempt = 0; attempt < 200; attempt += 1) {
       if (!lease.exists()) return;
-      try {
-        lease.kill();
-      } catch (cause) {
+      const killed = yield* Effect.try(() => lease.kill()).pipe(Effect.result);
+      if (Result.isFailure(killed)) {
+        const cause = killed.failure.cause;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code !== "ENOENT") return yield* failure("kill", cause);
         if (!lease.exists()) return;
         yield* Effect.sleep("10 millis");
         continue;
       }
-      let populated: boolean;
-      try {
-        populated = lease.populated();
-      } catch (cause) {
+      const populated = yield* Effect.try(() => lease.populated()).pipe(Effect.result);
+      if (Result.isFailure(populated)) {
+        const cause = populated.failure.cause;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code === "ENOENT") {
@@ -503,21 +497,22 @@ export function terminateLinuxCgroupLease(
         }
         return yield* failure("read state for", cause);
       }
-      if (populated) {
+      if (populated.success) {
         lastRemovalFailure = null;
         yield* Effect.sleep("10 millis");
         continue;
       }
-      try {
-        lease.remove();
-        lastRemovalFailure = null;
-      } catch (cause) {
+      const removed = yield* Effect.try(() => lease.remove()).pipe(Effect.result);
+      if (Result.isFailure(removed)) {
+        const cause = removed.failure.cause;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code !== "EBUSY" && code !== "ENOTEMPTY" && code !== "ENOENT") {
           return yield* failure("remove", cause);
         }
         lastRemovalFailure = { cause };
+      } else {
+        lastRemovalFailure = null;
       }
       if (!lease.exists()) return;
       yield* Effect.sleep("10 millis");
@@ -1162,11 +1157,6 @@ export class AcpSessionRuntime extends Context.Service<
       options?: { readonly dispatched?: Deferred.Deferred<void> },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
-    readonly processContainment:
-      | "cgroup-v2"
-      | "process-ledger-reduced-guarantee"
-      | "process-group"
-      | "none";
     readonly terminateProcessGroup?: Effect.Effect<void, AcpProcessGroupTerminationError>;
     readonly setMode: (
       modeId: string,
@@ -1175,9 +1165,16 @@ export class AcpSessionRuntime extends Context.Service<
       modelId: string,
       meta?: EffectAcpSchema.SetSessionModelRequest["_meta"],
     ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Writes a session configuration option. A select value the option does
+     * not list is refused unless `allowUnlistedValue` is set, for agents that
+     * take any value and judge it themselves (a custom model id the agent
+     * does not list).
+     */
     readonly setConfigOption: (
       configId: string,
       value: string | boolean,
+      options?: { readonly allowUnlistedValue?: boolean },
     ) => Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError>;
     readonly setModel: (model: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     readonly request: (
@@ -1773,6 +1770,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ...options.clientCapabilities?.fs,
     },
     terminal: options.clientCapabilities?.terminal ?? false,
+    // ACP v1 agents send session notices only to clients that advertise them; v2 needs no capability.
+    session: { ...options.clientCapabilities?.session, notices: {} },
     ...(options.clientCapabilities?.auth ? { auth: options.clientCapabilities.auth } : {}),
     ...(options.clientCapabilities?.elicitation
       ? { elicitation: options.clientCapabilities.elicitation }
@@ -1796,6 +1795,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     function* (
       configId: string,
       value: string | boolean,
+      allowUnlistedValue: boolean,
     ): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
       const configOptions = yield* Ref.get(configOptionsRef);
       const configOption = findSessionConfigOption(configOptions, configId);
@@ -1828,7 +1828,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         });
       }
       const allowedValues = collectSessionConfigOptionValues(configOption);
-      if (allowedValues.includes(value)) {
+      if (allowUnlistedValue || allowedValues.includes(value)) {
         return;
       }
       if (
@@ -1958,18 +1958,16 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
             Effect.timeoutOption(sessionLoadTimeout),
             Effect.flatMap((result) =>
-              Option.match(result, {
-                onNone: () =>
-                  Effect.fail(
-                    new EffectAcpErrors.AcpTransportError({
-                      operation: "call-rpc",
-                      method: "session/load",
-                      detail: "session/load timed out waiting for RPC response or replay idle gap",
-                      cause: undefined,
-                    }),
-                  ),
-                onSome: Effect.succeed,
-              }),
+              Effect.fromOption(
+                result,
+                () =>
+                  new EffectAcpErrors.AcpTransportError({
+                    operation: "call-rpc",
+                    method: "session/load",
+                    detail: "session/load timed out waiting for RPC response or replay idle gap",
+                    cause: undefined,
+                  }),
+              ),
             ),
             Effect.tap((result) =>
               logRequest({
@@ -2003,9 +2001,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const setConfigOption = (
     configId: string,
     value: string | boolean,
+    options?: { readonly allowUnlistedValue?: boolean },
   ): Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError> =>
-    validateConfigOptionValue(configId, value).pipe(
-      Effect.flatMap(() => getStartedState),
+    validateConfigOptionValue(configId, value, options?.allowUnlistedValue === true).pipe(
+      Effect.andThen(getStartedState),
       Effect.flatMap((started) =>
         Ref.get(configOptionsRef).pipe(
           Effect.flatMap((configOptions) => {
@@ -2222,10 +2221,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       );
     }
     const { sessionId, sessionSetupResult } = yield* setupSession.pipe(
-      Effect.catch((error) =>
-        !isAcpAuthenticationRequired(error) || options.authenticateOnAuthRequired === false
-          ? Effect.fail(error)
-          : authenticateAfterRequired(error).pipe(Effect.andThen(setupSession)),
+      Effect.catchIf(
+        (error) =>
+          !(!isAcpAuthenticationRequired(error) || options.authenticateOnAuthRequired === false),
+        (error) => authenticateAfterRequired(error).pipe(Effect.andThen(setupSession)),
       ),
     );
 
@@ -2356,14 +2355,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   });
 
   return {
-    processContainment:
-      linuxCgroupLease !== undefined
-        ? "cgroup-v2"
-        : options.ownDescendantProcessGroups === true
-          ? "process-ledger-reduced-guarantee"
-          : options.ownDetachedProcessGroup === true
-            ? "process-group"
-            : "none",
     handleRequestPermission: acp.handleRequestPermission,
     handleElicitation: acp.handleElicitation,
     handleMcpConnect: acp.handleMcpConnect,
@@ -2579,12 +2570,13 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           ),
           (activePrompt) =>
             Fiber.join(activePrompt.fiber).pipe(
-              Effect.catchCause((cause) =>
-                options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause)
-                  ? Effect.succeed({
-                      stopReason: "cancelled",
-                    } satisfies EffectAcpSchema.PromptResponse)
-                  : Effect.failCause(cause),
+              Effect.catchCauseIf(
+                (cause) =>
+                  options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause),
+                (_cause) =>
+                  Effect.succeed({
+                    stopReason: "cancelled",
+                  } satisfies EffectAcpSchema.PromptResponse),
               ),
               Effect.tap(() =>
                 closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),

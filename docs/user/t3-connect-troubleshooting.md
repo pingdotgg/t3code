@@ -7,12 +7,12 @@ A T3 Connect connection goes through four parts, in this order:
 3. **The host's tunnel** (cloudflared on the host) carries the request to the host.
 4. **T3 Code on the host** answers.
 
-When a connection fails, open **Settings > Connections**, find the environment,
+When a connection fails, open **Settings > Environments**, find the environment,
 and select **Details**. The first part marked as failed is the cause. Find its
 section below.
 
 To see the host's side, run `t3 connect status` on the host, or open
-**Settings > Connections** on the host. Both check the host's T3 Connect
+**Settings > Sharing & access** on the host. Both check the host's T3 Connect
 address from the host, and say why it fails. `t3 connect` runs the same check
 when it finishes setup. This check cannot test another device's network. For a
 problem on one device, use **Details** on that device.
@@ -105,14 +105,16 @@ T3 Connect does not have an active link between your account and the host.
   account on this device and on the host. On the host, run `t3 connect logout`,
   then `t3 connect`.
 - **T3 Connect is off on the host, or the host only publishes agent activity.**
-  On the host, open **Settings > Connections** and turn **T3 Connect** on, or
+  On the host, open **Settings > Sharing & access** and turn **T3 Connect** on, or
   run `t3 connect`.
 - **The host was linked, but the server did not apply the link yet.** Run
   `t3 service restart` on the host, or restart `t3 serve`.
 - **This device's sign-in expired, or the host no longer accepts this
   device.** Sign out of T3 Connect and sign in again.
 - **Your account reached its tunnel limit.** Remove an environment you do not
-  use from your T3 account's T3 Connect page, then restart T3 Code on the host.
+  use from your T3 account's T3 Connect page, or
+  [link a paid T3 Chat account](./remote-access.md#more-machines-with-t3-chat)
+  for a higher limit. Then restart T3 Code on the host.
 
 ## The clock is off
 
@@ -129,7 +131,7 @@ This app needs a newer T3 Code on the host. Update T3 Code on the host. See
 
 | Error                                                     | Fix                                                                                                                                         |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `environment_link_limit_exceeded` or managed tunnel limit | Remove an unused environment, then restart T3 Code on the host.                                                                             |
+| `environment_link_limit_exceeded` or managed tunnel limit | Remove an unused environment or link a paid T3 Chat account, then restart T3 Code on the host.                                              |
 | `auth_invalid` or `invalid_bearer`                        | Run `t3 connect login`. If credentials were revoked, run `t3 connect logout`, then `t3 connect` again. Restart the server after signing in. |
 | Expired or invalid link proof                             | Check the host's date and time, update T3 Code, then restart it.                                                                            |
 | HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                               |

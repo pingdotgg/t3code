@@ -10,7 +10,7 @@ On web or desktop, open **Settings > Providers**, choose the environment that ru
 your project, and enable Antigravity. Install its runtime there, then choose
 **Sign in** and complete the browser sign-in. Wait for T3 Code to confirm
 account access and load models before starting a thread. Once the runtime is installed,
-you can also sign in from **Settings > Provider accounts** in the mobile app.
+you can also sign in from **Settings > Providers** in the mobile app.
 
 Installation continues if you leave settings or reconnect. Setup requires
 permission to operate the environment; update an older server if it does not offer
@@ -68,9 +68,15 @@ Leave the field blank to use the managed runtime, or a compatible executable on
 
 ## Models and threads
 
-The model list comes from your Antigravity account and can differ from other
-Antigravity apps. A resumed thread keeps its selected model. If access to that
-model ends, select another available model before continuing.
+The model list comes from your Antigravity account, including Claude and GPT models
+when your plan has them. Pick a thinking level in the composer's effort menu; it
+shows only the levels the selected model supports. A resumed thread keeps its
+selected model. If access to that model ends, select another available model
+before continuing.
+
+Antigravity creates empty `.gemini/skills` and `.agents/skills` folders in the
+workspace when a session starts. Git does not track empty folders, so they never
+appear in commits.
 
 Use Antigravity's native `/plan` command for planning. T3 Code's separate Plan mode
 is unavailable. Tool approvals follow [Permission modes](./permission-modes.md).
@@ -134,7 +140,7 @@ until a session, a refresh, or a sign-out reports something new.
 
 To check access and reload models, use **Refresh provider status** in web or desktop
 provider settings, or **Refresh models** in mobile thread settings. If asked to
-sign in again, use provider settings on web or desktop, or **Provider accounts** on mobile.
+sign in again, use provider settings on web or desktop, or **Settings > Providers** on mobile.
 
 If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage limit,
 follow the provider's message and any retry time. See [Google's account plans][plans]

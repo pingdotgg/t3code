@@ -13,8 +13,8 @@ const testState = vi.hoisted(() => ({
   updateServer: vi.fn(),
   toast: vi.fn(),
   clipboard: vi.fn(),
-  continueThreadsAfterServerUpdate: false,
   sessionAtom: null as unknown,
+  serverVersions: new Map<string, string>(),
 }));
 
 vi.mock(import("~/hooks/useCopyToClipboard"), async (original) => ({
@@ -27,16 +27,6 @@ vi.mock(import("~/hooks/useCopyToClipboard"), async (original) => ({
     isCopied: false,
   })) as never,
 }));
-vi.mock(import("~/hooks/useSettings"), async (original) => ({
-  ...(await original()),
-  useEnvironmentSettings: ((
-    _environmentId: EnvironmentId,
-    selector: (settings: { continueThreadsAfterServerUpdate: boolean }) => unknown,
-  ) =>
-    selector({
-      continueThreadsAfterServerUpdate: testState.continueThreadsAfterServerUpdate,
-    })) as never,
-}));
 vi.mock(import("~/state/session"), async (original) => {
   const actual = await original();
   return {
@@ -47,6 +37,16 @@ vi.mock(import("~/state/session"), async (original) => {
     },
   };
 });
+vi.mock(import("~/state/entities"), async (original) => ({
+  ...(await original()),
+  useServerConfigs: (() =>
+    new Map(
+      [...testState.serverVersions].map(([id, serverVersion]) => [
+        id,
+        { environment: { serverVersion } },
+      ]),
+    )) as never,
+}));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => testState.updateServer) as never,
@@ -95,7 +95,7 @@ function setup(): Disposable {
   testState.updateServer.mockReset();
   testState.toast.mockReset();
   testState.clipboard.mockReset();
-  testState.continueThreadsAfterServerUpdate = false;
+  testState.serverVersions.clear();
   sessionAtom = Atom.make<SessionResult>(AsyncResult.success(currentSession));
   testState.sessionAtom = sessionAtom;
   resetConfirmDialogForTests();
@@ -188,16 +188,12 @@ describe("ServerUpdatesAction", () => {
       serverLabel: "Laptop",
       selfUpdate: "boot-service",
       targetVersion: "0.0.31",
-      threadContinuation: true,
-      continueThreadsAfterServerUpdate: true,
     },
     {
       environmentId: "batch-b" as EnvironmentId,
       serverLabel: "Office",
       selfUpdate: "respawn",
       targetVersion: "0.0.31",
-      threadContinuation: true,
-      continueThreadsAfterServerUpdate: false,
     },
     {
       environmentId: "batch-c" as EnvironmentId,
@@ -227,5 +223,18 @@ describe("ServerUpdatesAction", () => {
       expect.objectContaining({ type: "success", title: "Office updated" }),
     );
     expect(button(screen, "Update all")!.disabled).toBe(false);
+  });
+
+  it("skips a machine whose update would cross Stable and Nightly", async () => {
+    using _state = setup();
+    testState.serverVersions.set("batch-a", "0.0.30-nightly.20261001.1");
+    testState.updateServer.mockResolvedValue(success());
+    await using screen = await mount();
+    await click(screen, "Update all");
+
+    expect(testState.updateServer).toHaveBeenCalledTimes(1);
+    expect(testState.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", title: "Office updated" }),
+    );
   });
 });

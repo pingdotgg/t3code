@@ -160,7 +160,7 @@ function normalizeSshErrorMessage(input: {
   return cleanedStdout.length > 0 ? cleanedStdout : input.fallbackMessage;
 }
 
-function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
+export function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
   return {
     alias: target.alias,
     hostname: target.hostname,
@@ -308,22 +308,22 @@ export const runSshCommand = Effect.fn("ssh/command.runSshCommand")(function* (
     Effect.flatMap((result) =>
       Option.match(result, {
         onSome: Effect.succeed,
-        onNone: () =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning("ssh.command.timedOut", {
-              ...sshTargetLogFields(target),
-              timeoutMs: input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS,
-              remoteCommandArgs: input.remoteCommandArgs ?? [],
-              preHostArgs: input.preHostArgs ?? [],
-              hasStdin: input.stdin !== undefined,
-            });
-            return yield* new SshCommandError({
-              command: ["ssh"],
-              exitCode: null,
-              stderr: "",
-              message: `SSH command timed out after ${input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS}ms.`,
-            });
-          }),
+        // The enclosing operation owns the span for this inline handler.
+        onNone: Effect.fnUntraced(function* () {
+          yield* Effect.logWarning("ssh.command.timedOut", {
+            ...sshTargetLogFields(target),
+            timeoutMs: input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS,
+            remoteCommandArgs: input.remoteCommandArgs ?? [],
+            preHostArgs: input.preHostArgs ?? [],
+            hasStdin: input.stdin !== undefined,
+          });
+          return yield* new SshCommandError({
+            command: ["ssh"],
+            exitCode: null,
+            stderr: "",
+            message: `SSH command timed out after ${input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS}ms.`,
+          });
+        }),
       }),
     ),
   );

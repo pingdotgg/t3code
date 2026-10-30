@@ -62,7 +62,7 @@ export type ToolKind = V2.ToolKind;
 export type ClientCapabilities = {
   readonly fs?: { readonly readTextFile?: boolean; readonly writeTextFile?: boolean };
   readonly terminal?: boolean;
-  readonly session?: { readonly list?: Meta } | null;
+  readonly session?: { readonly list?: Meta; readonly notices?: Meta } | null;
   readonly plan?: Meta;
   readonly auth?: { readonly terminal?: boolean };
   readonly elicitation?: V2.ElicitationCapabilities | null;
@@ -358,6 +358,13 @@ export type SessionUpdate =
     }
   | { readonly sessionUpdate: "plan"; readonly entries: ReadonlyArray<V2.PlanEntry> }
   | { readonly sessionUpdate: "current_mode_update"; readonly currentModeId: string }
+  | {
+      readonly sessionUpdate: "notice";
+      readonly severity: string;
+      readonly title: string;
+      readonly description?: string | null;
+      readonly _meta?: Meta;
+    }
   | {
       readonly sessionUpdate: "_t3_unknown";
       readonly originalSessionUpdate: string;

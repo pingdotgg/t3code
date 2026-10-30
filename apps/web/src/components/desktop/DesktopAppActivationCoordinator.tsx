@@ -4,7 +4,10 @@ import { useEffect, useEffectEvent, useRef } from "react";
 
 import { handleDesktopAppActivationRequest } from "../../desktopAppActivation";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import { findProjectByPath, inferProjectTitleFromPath } from "../../lib/projectPaths";
+import {
+  findProjectByPath,
+  inferProjectTitleFromPath,
+} from "@t3tools/client-runtime/state/projects";
 import { newProjectId } from "../../lib/utils";
 import { readProjects, waitForProject } from "../../state/entities";
 import { usePrimaryEnvironment } from "../../state/environments";
@@ -71,6 +74,7 @@ export function DesktopAppActivationCoordinator() {
     }),
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop activation requests over the bridge and marks the renderer ready
   useEffect(() => {
     if (!ready || activation === undefined) return;
 

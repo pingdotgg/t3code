@@ -1,7 +1,6 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   AuthProvidersManageScope,
-  type AuthSessionState,
   type EnvironmentId,
   type ProjectId,
   type ProjectSettingsOverrides,
@@ -73,7 +72,7 @@ export type ProviderEnvironmentAccess =
 
 export type ProviderOperateAccess = "granted" | "denied" | "pending";
 
-function resolveSessionOperateAccess(input: {
+export function resolveRemoteOperateAccess(input: {
   readonly session: SessionGrantInput | null;
   readonly isPending: boolean;
   readonly hasError: boolean;
@@ -81,24 +80,6 @@ function resolveSessionOperateAccess(input: {
   if (input.hasError) return "denied";
   if (input.session === null) return input.isPending ? "pending" : "denied";
   return sessionGrantsScope(input.session, AuthProvidersManageScope) ? "granted" : "denied";
-}
-
-export function resolvePrimaryOperateAccess(input: {
-  readonly isPrimary: boolean;
-  readonly hasDesktopBridge: boolean;
-  readonly session: SessionGrantInput | null;
-  readonly isPending: boolean;
-  readonly hasError: boolean;
-}): ProviderOperateAccess {
-  return resolveSessionOperateAccess(input);
-}
-
-export function resolveRemoteOperateAccess(input: {
-  readonly session: SessionGrantInput | null;
-  readonly isPending: boolean;
-  readonly hasError: boolean;
-}): ProviderOperateAccess {
-  return resolveSessionOperateAccess(input);
 }
 
 /** Send providerInstances even when empty; omission preserves the stored map for older clients. */

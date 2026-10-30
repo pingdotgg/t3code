@@ -56,6 +56,39 @@ describe("ssh config", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("skips directory Include matches without losing file aliases or known hosts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* makeTempHomeDir();
+      const sshDir = path.join(homeDir, ".ssh");
+      yield* fs.makeDirectory(path.join(sshDir, "config.d", "ignored"), { recursive: true });
+      yield* fs.makeDirectory(path.join(sshDir, "explicit-directory"));
+      yield* fs.writeFileString(
+        path.join(sshDir, "config"),
+        "Include config.d/*\nInclude explicit-directory\nHost real\n  HostName real.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config.d", "team.conf"),
+        "Host team\n  HostName team.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "known_hosts"),
+        "known.example.com ssh-ed25519 AAAA\n",
+      );
+
+      const hosts = yield* discoverSshHosts({ homeDir });
+      assert.deepEqual(
+        hosts.map((host) => [host.alias, host.hostname, host.source]),
+        [
+          ["known.example.com", "known.example.com", "known-hosts"],
+          ["real", "real.example.com", "ssh-config"],
+          ["team", "team.example.com", "ssh-config"],
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("discovers ssh config hosts across included files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

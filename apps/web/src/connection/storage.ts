@@ -387,15 +387,15 @@ export interface CatalogBackend {
 
 export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
   const bridge = window.desktopBridge;
-  if (bridge?.getConnectionCatalog !== undefined && bridge.setConnectionCatalog !== undefined) {
+  if (bridge !== undefined) {
     return {
       read: Effect.tryPromise({
-        try: () => bridge.getConnectionCatalog!(),
+        try: () => bridge.getConnectionCatalog(),
         catch: (cause) => catalogError("load", cause),
       }),
       write: (raw) =>
         Effect.tryPromise({
-          try: () => bridge.setConnectionCatalog!(raw),
+          try: () => bridge.setConnectionCatalog(raw),
           catch: (cause) => catalogError("save", cause),
         }).pipe(
           Effect.flatMap((stored) =>
@@ -543,11 +543,12 @@ export function makeBrowserPullRequestRoutingPermissions(
       catch: (cause) => catalogError("save pull request routing permissions in", cause),
     });
   return PullRequestRoutingPermissions.of({
-    get: (entry) =>
-      Effect.sync(() => {
+    get: Effect.fn("PullRequestRoutingPermissions.get")(function (entry) {
+      return Effect.sync(() => {
         const value = read(`${PULL_REQUEST_ROUTING_KEY_PREFIX}${entry.target.environmentId}`);
         return pullRequestRoutingPermissionFor(entry, value === null ? [] : [value]);
-      }),
+      });
+    }),
     changes: Stream.callback<ReadonlyArray<StoredPullRequestRoutingPermission>>((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -570,16 +571,14 @@ export function makeBrowserPullRequestRoutingPermissions(
           }),
       ).pipe(Effect.asVoid),
     ),
-    set: (entry, permission) => {
+    set: Effect.fn("PullRequestRoutingPermissions.set")(function* (entry, permission) {
       const connectionKey = pullRequestRoutingConnectionKey(entry);
       if (connectionKey === null)
-        return Effect.fail(
-          new ConnectionBlockedError({
-            reason: "configuration",
-            detail: "This environment does not have a saved connection endpoint.",
-          }),
-        );
-      return write(
+        return yield* new ConnectionBlockedError({
+          reason: "configuration",
+          detail: "This environment does not have a saved connection endpoint.",
+        });
+      return yield* write(
         entry.target.environmentId,
         permission === "off"
           ? null
@@ -589,8 +588,10 @@ export function makeBrowserPullRequestRoutingPermissions(
               permission,
             },
       );
-    },
-    forget: (environmentId) => write(environmentId, null),
+    }),
+    forget: Effect.fn("PullRequestRoutingPermissions.forget")(function (environmentId) {
+      return write(environmentId, null);
+    }),
   });
 }
 
@@ -635,22 +636,32 @@ export const layer = Layer.effectContext(
       ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
-      register: (registration, routes) =>
-        catalog
-          .update((document) => registerConnectionInCatalog(document, registration, routes))
-          .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause))),
-      setRoutes: (environmentId, routes) =>
-        catalog
-          .update((document) => setRoutesInCatalog(document, environmentId, routes))
-          .pipe(Effect.mapError((cause) => persistenceError("set-connection-routes", cause))),
-      remove: (environmentId) =>
-        catalog
+      register: Effect.fn("Persistence.ConnectionRegistrationStore.register")(
+        function (registration, routes) {
+          return catalog
+            .update((document) => registerConnectionInCatalog(document, registration, routes))
+            .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause)));
+        },
+      ),
+      setRoutes: Effect.fn("Persistence.ConnectionRegistrationStore.setRoutes")(
+        function (environmentId, routes) {
+          return catalog
+            .update((document) => setRoutesInCatalog(document, environmentId, routes))
+            .pipe(Effect.mapError((cause) => persistenceError("set-connection-routes", cause)));
+        },
+      ),
+      remove: Effect.fn("Persistence.ConnectionRegistrationStore.remove")(function (environmentId) {
+        return catalog
           .update((document) => removeConnectionFromCatalog(document, environmentId))
-          .pipe(Effect.mapError((cause) => persistenceError("remove-connection", cause))),
-      setEnabled: (environmentId, enabled) =>
-        catalog
-          .update((document) => setConnectionEnabledInCatalog(document, environmentId, enabled))
-          .pipe(Effect.mapError((cause) => persistenceError("set-connection-enabled", cause))),
+          .pipe(Effect.mapError((cause) => persistenceError("remove-connection", cause)));
+      }),
+      setEnabled: Effect.fn("Persistence.ConnectionRegistrationStore.setEnabled")(
+        function (environmentId, enabled) {
+          return catalog
+            .update((document) => setConnectionEnabledInCatalog(document, environmentId, enabled))
+            .pipe(Effect.mapError((cause) => persistenceError("set-connection-enabled", cause)));
+        },
+      ),
     });
     const profileStore = ProfileStore.make({
       get: (connectionId) =>
@@ -724,8 +735,8 @@ export const layer = Layer.effectContext(
         })),
     });
     const cacheStore = Persistence.EnvironmentCacheStore.of({
-      loadShell: (environmentId) =>
-        readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
+      loadShell: Effect.fn("Persistence.EnvironmentCacheStore.loadShell")(function (environmentId) {
+        return readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
           Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate())),
           Effect.flatMap((raw) => {
             if (typeof raw !== "string") {
@@ -744,7 +755,8 @@ export const layer = Layer.effectContext(
             );
           }),
           Effect.mapError((cause) => persistenceError("load-shell", cause)),
-        ),
+        );
+      }),
       saveShell: Effect.fn("storage.saveShell")(
         function* (environmentId, snapshot) {
           const encoded = yield* encodeStoredShellSnapshot({
@@ -760,25 +772,30 @@ export const layer = Layer.effectContext(
             : persistenceError("save-shell", cause),
         ),
       ),
-      loadServerConfig: (environmentId) =>
-        readDatabaseValue(database, SERVER_CONFIG_STORE_NAME, environmentId).pipe(
-          Effect.flatMap((raw) => {
-            if (typeof raw !== "string") {
-              return Effect.succeedNone;
-            }
-            return decodeStoredServerConfig(raw).pipe(
-              Effect.mapError((cause) => persistenceError("load-server-config", cause)),
-              Effect.map((stored) =>
-                stored.environmentId === environmentId ? Option.some(stored.config) : Option.none(),
-              ),
-            );
-          }),
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("load-server-config", cause),
-          ),
-        ),
+      loadServerConfig: Effect.fn("Persistence.EnvironmentCacheStore.loadServerConfig")(
+        function (environmentId) {
+          return readDatabaseValue(database, SERVER_CONFIG_STORE_NAME, environmentId).pipe(
+            Effect.flatMap((raw) => {
+              if (typeof raw !== "string") {
+                return Effect.succeedNone;
+              }
+              return decodeStoredServerConfig(raw).pipe(
+                Effect.mapError((cause) => persistenceError("load-server-config", cause)),
+                Effect.map((stored) =>
+                  stored.environmentId === environmentId
+                    ? Option.some(stored.config)
+                    : Option.none(),
+                ),
+              );
+            }),
+            Effect.mapError((cause) =>
+              cause._tag === "ConnectionPersistenceError"
+                ? cause
+                : persistenceError("load-server-config", cause),
+            ),
+          );
+        },
+      ),
       saveServerConfig: Effect.fn("storage.saveServerConfig")(
         function* (environmentId, config) {
           const encoded = yield* encodeStoredServerConfig({
@@ -794,34 +811,37 @@ export const layer = Layer.effectContext(
             : persistenceError("save-server-config", cause),
         ),
       ),
-      loadThread: (environmentId, threadId) =>
-        readDatabaseValue(
-          database,
-          THREAD_STORE_NAME,
-          threadCacheKey(environmentId, threadId),
-        ).pipe(
-          Effect.flatMap((raw) => {
-            if (typeof raw !== "string") {
-              return Effect.succeedNone;
-            }
-            return decodeOrDiscardOrchestrationCache(
-              decodeStoredThreadSnapshot(raw).pipe(
-                Effect.mapError((cause) => persistenceError("load-thread", cause)),
-                Effect.map((stored) =>
-                  stored.environmentId === environmentId && stored.threadId === threadId
-                    ? Option.some(stored.snapshot)
-                    : Option.none(),
+      loadThread: Effect.fn("Persistence.EnvironmentCacheStore.loadThread")(
+        function (environmentId, threadId) {
+          return readDatabaseValue(
+            database,
+            THREAD_STORE_NAME,
+            threadCacheKey(environmentId, threadId),
+          ).pipe(
+            Effect.flatMap((raw) => {
+              if (typeof raw !== "string") {
+                return Effect.succeedNone;
+              }
+              return decodeOrDiscardOrchestrationCache(
+                decodeStoredThreadSnapshot(raw).pipe(
+                  Effect.mapError((cause) => persistenceError("load-thread", cause)),
+                  Effect.map((stored) =>
+                    stored.environmentId === environmentId && stored.threadId === threadId
+                      ? Option.some(stored.snapshot)
+                      : Option.none(),
+                  ),
                 ),
-              ),
-              removeDatabaseValue(
-                database,
-                THREAD_STORE_NAME,
-                threadCacheKey(environmentId, threadId),
-              ),
-            );
-          }),
-          Effect.mapError((cause) => persistenceError("load-thread", cause)),
-        ),
+                removeDatabaseValue(
+                  database,
+                  THREAD_STORE_NAME,
+                  threadCacheKey(environmentId, threadId),
+                ),
+              );
+            }),
+            Effect.mapError((cause) => persistenceError("load-thread", cause)),
+          );
+        },
+      ),
       saveThread: Effect.fn("storage.saveThread")(
         function* (environmentId, snapshot) {
           const encoded = yield* encodeStoredThreadSnapshot({
@@ -843,27 +863,34 @@ export const layer = Layer.effectContext(
             : persistenceError("save-thread", cause),
         ),
       ),
-      loadVcsRefs: (environmentId, cwd) =>
-        readDatabaseValue(database, VCS_REFS_STORE_NAME, vcsRefsCacheKey(environmentId, cwd)).pipe(
-          Effect.flatMap((raw) => {
-            if (typeof raw !== "string") {
-              return Effect.succeedNone;
-            }
-            return decodeStoredVcsRefs(raw).pipe(
-              Effect.mapError((cause) => persistenceError("load-vcs-refs", cause)),
-              Effect.map((stored) =>
-                stored.environmentId === environmentId && stored.cwd === cwd
-                  ? Option.some(stored.refs)
-                  : Option.none(),
-              ),
-            );
-          }),
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("load-vcs-refs", cause),
-          ),
-        ),
+      loadVcsRefs: Effect.fn("Persistence.EnvironmentCacheStore.loadVcsRefs")(
+        function (environmentId, cwd) {
+          return readDatabaseValue(
+            database,
+            VCS_REFS_STORE_NAME,
+            vcsRefsCacheKey(environmentId, cwd),
+          ).pipe(
+            Effect.flatMap((raw) => {
+              if (typeof raw !== "string") {
+                return Effect.succeedNone;
+              }
+              return decodeStoredVcsRefs(raw).pipe(
+                Effect.mapError((cause) => persistenceError("load-vcs-refs", cause)),
+                Effect.map((stored) =>
+                  stored.environmentId === environmentId && stored.cwd === cwd
+                    ? Option.some(stored.refs)
+                    : Option.none(),
+                ),
+              );
+            }),
+            Effect.mapError((cause) =>
+              cause._tag === "ConnectionPersistenceError"
+                ? cause
+                : persistenceError("load-vcs-refs", cause),
+            ),
+          );
+        },
+      ),
       saveVcsRefs: Effect.fn("storage.saveVcsRefs")(
         function* (environmentId, cwd, refs) {
           const encoded = yield* encodeStoredVcsRefs({
@@ -885,26 +912,35 @@ export const layer = Layer.effectContext(
             : persistenceError("save-vcs-refs", cause),
         ),
       ),
-      removeVcsRefs: (environmentId, cwd) =>
-        removeDatabaseValue(
-          database,
-          VCS_REFS_STORE_NAME,
-          vcsRefsCacheKey(environmentId, cwd),
-        ).pipe(Effect.mapError((cause) => persistenceError("remove-vcs-refs", cause))),
-      clearVcsRefs: (environmentId) =>
-        removeDatabaseValuesInRange(
-          database,
-          VCS_REFS_STORE_NAME,
-          IDBKeyRange.bound(`${environmentId}:`, `${environmentId}:\uffff`),
-        ).pipe(Effect.mapError((cause) => persistenceError("clear-vcs-refs", cause))),
-      removeThread: (environmentId, threadId) =>
-        removeDatabaseValue(
-          database,
-          THREAD_STORE_NAME,
-          threadCacheKey(environmentId, threadId),
-        ).pipe(Effect.mapError((cause) => persistenceError("remove-thread", cause))),
-      clear: (environmentId) =>
-        Effect.all(
+      removeVcsRefs: Effect.fn("Persistence.EnvironmentCacheStore.removeVcsRefs")(
+        function (environmentId, cwd) {
+          return removeDatabaseValue(
+            database,
+            VCS_REFS_STORE_NAME,
+            vcsRefsCacheKey(environmentId, cwd),
+          ).pipe(Effect.mapError((cause) => persistenceError("remove-vcs-refs", cause)));
+        },
+      ),
+      clearVcsRefs: Effect.fn("Persistence.EnvironmentCacheStore.clearVcsRefs")(
+        function (environmentId) {
+          return removeDatabaseValuesInRange(
+            database,
+            VCS_REFS_STORE_NAME,
+            IDBKeyRange.bound(`${environmentId}:`, `${environmentId}:\uffff`),
+          ).pipe(Effect.mapError((cause) => persistenceError("clear-vcs-refs", cause)));
+        },
+      ),
+      removeThread: Effect.fn("Persistence.EnvironmentCacheStore.removeThread")(
+        function (environmentId, threadId) {
+          return removeDatabaseValue(
+            database,
+            THREAD_STORE_NAME,
+            threadCacheKey(environmentId, threadId),
+          ).pipe(Effect.mapError((cause) => persistenceError("remove-thread", cause)));
+        },
+      ),
+      clear: Effect.fn("Persistence.EnvironmentCacheStore.clear")(function (environmentId) {
+        return Effect.all(
           [
             Effect.promise(() => projectFaviconCache.clearEnvironment(environmentId)),
             removeDatabaseValue(database, SHELL_STORE_NAME, environmentId),
@@ -921,7 +957,8 @@ export const layer = Layer.effectContext(
             ),
           ],
           { concurrency: "unbounded", discard: true },
-        ).pipe(Effect.mapError((cause) => persistenceError("clear-environment", cause))),
+        ).pipe(Effect.mapError((cause) => persistenceError("clear-environment", cause)));
+      }),
     });
 
     return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(

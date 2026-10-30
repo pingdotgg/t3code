@@ -34,11 +34,10 @@ export function resolvePendingHandoff(
   const source = providers.find((provider) => provider.instanceId === from.instanceId);
   const target = providers.find((provider) => provider.instanceId === selection.instanceId);
   const needsHandoff =
-    from.instanceId === selection.instanceId
-      ? from.model !== selection.model && target?.requiresNewThreadForModelChange === true
-      : source?.continuation?.groupKey === undefined ||
-        source.driver !== target?.driver ||
-        source.continuation.groupKey !== target.continuation?.groupKey;
+    from.instanceId !== selection.instanceId &&
+    (source?.continuation?.groupKey === undefined ||
+      source.driver !== target?.driver ||
+      source.continuation.groupKey !== target.continuation?.groupKey);
   return needsHandoff ? { from: [from], to: selection } : null;
 }
 

@@ -2,7 +2,7 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentType } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   FlatList,
   Platform,
@@ -37,6 +37,7 @@ import { SourceText } from "@t3tools/mobile-source-text";
 
 import { boundedSelectableSourceTokens, prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
+import { createSourceLineScroll } from "./source-file-scroll";
 
 interface SourceFileSurfaceProps {
   readonly contents: string;
@@ -241,20 +242,22 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
   const listRef = useRef<FlatList<string>>(null);
+  const [lineScroll] = useState(createSourceLineScroll);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
   ) : undefined;
 
-  useEffect(() => {
+  // Layout effect so a pending jump is cancelled in the commit that swaps the file.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the FlatList to the target line and cancels a pending jump when the file changes
+  useLayoutEffect(() => {
     if (targetIndex === null) {
       return;
     }
-    const frame = requestAnimationFrame(() => {
-      listRef.current?.scrollToIndex({ index: targetIndex, animated: false, viewPosition: 0.3 });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [props.path, targetIndex]);
+    lineScroll.scrollToLine(listRef.current, targetIndex);
+    return lineScroll.cancel;
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index scrolls the new file to it.
+  }, [lineScroll, props.path, targetIndex]);
 
   const renderLine = ({ item, index }: { item: string; index: number }) => (
     <HighlightedSourceLine
@@ -280,34 +283,41 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       }}
     >
       {selectableTokens
-        ? lines.map((line, index) => {
-            const lineTokens = selectableTokens[index] ?? null;
-            const body =
-              lineTokens && lineTokens.length > 0
-                ? lineTokens.map((token, tokenIndex) => (
-                    <SourceText
-                      key={`${index}:${tokenIndex}`}
-                      style={{
-                        color: token.color ?? foreground,
-                        fontWeight:
-                          token.fontStyle !== null && (token.fontStyle & 2) === 2 ? "700" : "400",
-                        fontStyle:
-                          token.fontStyle !== null && (token.fontStyle & 1) === 1
-                            ? "italic"
-                            : "normal",
-                      }}
-                    >
-                      {token.content}
-                    </SourceText>
-                  ))
-                : line;
-            return (
-              <SourceText key={index}>
-                {body}
-                {index < lines.length - 1 ? "\n" : ""}
-              </SourceText>
-            );
-          })
+        ? lines.map(
+            (
+              line,
+              index,
+            ) => /* oxlint-disable react/no-array-index-key -- Source lines and highlight tokens are stateless positions within the loaded file. */ {
+                const lineTokens = selectableTokens[index] ?? null;
+                const body =
+                  lineTokens && lineTokens.length > 0
+                    ? lineTokens.map((token, tokenIndex) => (
+                        <SourceText
+                          key={`${index}:${tokenIndex}`}
+                          style={{
+                            color: token.color ?? foreground,
+                            fontWeight:
+                              token.fontStyle !== null && (token.fontStyle & 2) === 2
+                                ? "700"
+                                : "400",
+                            fontStyle:
+                              token.fontStyle !== null && (token.fontStyle & 1) === 1
+                                ? "italic"
+                                : "normal",
+                          }}
+                        >
+                          {token.content}
+                        </SourceText>
+                      ))
+                    : line;
+                return (
+                  <SourceText key={index}>
+                    {body}
+                    {index < lines.length - 1 ? "\n" : ""}
+                  </SourceText>
+                );
+              } /* oxlint-enable react/no-array-index-key */,
+          )
         : normalizedContents}
     </SourceText>
   ) : null;
@@ -338,6 +348,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         paddingTop: 8,
       }}
       renderItem={renderLine}
+      onScrollToIndexFailed={lineScroll.onScrollToIndexFailed}
+      onScrollBeginDrag={lineScroll.cancel}
     />
   );
 

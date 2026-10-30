@@ -4,6 +4,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import { Deadline } from "../vendor/vite-plus-remote-cache-cloudflare/src/streams.ts";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import { vi } from "vite-plus/test";
 import { Observations } from "../vendor/vite-plus-remote-cache-cloudflare/src/observations.ts";
 import * as Admission from "./Admission.ts";
@@ -59,6 +60,66 @@ it.effect("includes successful blob downloads in exported R2 usage", () =>
     expect(yield* Effect.promise(() => response.text())).toBe("data");
     expect(get).toHaveBeenCalledWith("artifact");
     expect(observations.mock.results.at(-1)?.value.r2_operations).toBe(1);
+  }),
+);
+
+it.effect("returns 503 immediately when authenticated requests fill all read permits", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const logs: unknown[] = [];
+    const get = vi.fn(() => {
+      if (get.mock.calls.length === 4) Deferred.doneUnsafe(entered, Effect.void);
+      return new Promise(() => {});
+    });
+    const bindings = {
+      developerKeys: JSON.stringify({
+        julius: "210eb3d2c67a7207923e1999751300a87a2dd22839b258b80c3d805a6fe64984",
+      }),
+      ARTIFACTS: { get },
+      readLimit: { limit: async () => ({ success: true }) },
+    } as unknown as Cache.Bindings["Service"];
+    yield* Effect.gen(function* () {
+      const cache = yield* Cache.Cache;
+      const request = () =>
+        cache.handle(
+          new Request(
+            "https://cache.example/projects/t3code/blob/12345678-1234-1234-1234-123456789abc",
+            {
+              headers: {
+                authorization: `Basic ${btoa("julius:fixture-token-012345678901234567890123456789")}`,
+              },
+            },
+          ),
+          { waitUntil: () => {} },
+        );
+      const pending = yield* Effect.all(
+        Array.from({ length: 4 }, () => request().pipe(Effect.forkChild)),
+      );
+      yield* Deferred.await(entered);
+      const response = yield* request();
+      expect(response.status).toBe(503);
+      expect(yield* Effect.promise(() => response.text())).toBe("Service unavailable");
+      expect(logs).toContainEqual(["Cache request failed", { reason: "concurrency_limit" }]);
+      expect(get).toHaveBeenCalledTimes(4);
+      yield* Effect.forEach(pending, Fiber.interrupt);
+    }).pipe(
+      Effect.provide([
+        Cache.layer.pipe(
+          Layer.provide([
+            Layer.succeed(Cache.Bindings, bindings),
+            Admission.layer,
+            Layer.succeed(Savings.Savings, {
+              record: () => Effect.void,
+              emitTotals: () => Effect.void,
+              cleanup: Effect.void,
+            }),
+          ]),
+        ),
+        Logger.layer([Logger.make(({ message }) => logs.push(message))], {
+          mergeWithExisting: false,
+        }),
+      ]),
+    );
   }),
 );
 

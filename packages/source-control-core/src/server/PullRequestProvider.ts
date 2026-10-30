@@ -53,6 +53,11 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
     ]),
     detail: Schema.String,
     retryAt: Schema.optional(Schema.Number),
+    /**
+     * Why the host would not return a repository and what to change, in the reader's terms.
+     * Shown beside that repository in the list; `detail` is about the failed call instead.
+     */
+    accessHint: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -69,6 +74,7 @@ export interface ProviderChangeRequestWatchFingerprint {
 export interface PullRequestProviderFailure {
   readonly reason: PullRequestProviderError["reason"];
   readonly retryAt?: number | undefined;
+  readonly accessHint?: string | undefined;
 }
 
 export interface ProviderChangeRequest {
@@ -182,6 +188,7 @@ export interface ProviderChangeRequestStat {
 }
 
 export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
+  readonly maintainerCanModify?: boolean;
   readonly headSha?: string | null;
   readonly body: string;
   readonly changedFiles: number;
@@ -268,7 +275,8 @@ export interface ProviderRepositoryRef {
 
 export interface PullRequestProviderApi {
   readonly withVerifiedCredential?: <A, E, R>(
-    input: { readonly cwd: string; readonly host: string },
+    /** `repository` lets a host pick the credential that can reach it. */
+    input: { readonly cwd: string; readonly host: string; readonly repository?: string },
     use: (identity: {
       readonly accountId: string;
       readonly viewer: string;
@@ -350,6 +358,16 @@ export interface PullRequestProviderApi {
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
+
+  /**
+   * For a provider that holds change request reads of its own: called when the service drops its
+   * reads, so a refresh or a finished turn reaches the host. No scope forgets everything; a scope
+   * without a number forgets the repository's change requests.
+   */
+  readonly forgetChangeRequestReads?: (scope?: {
+    readonly repository: string;
+    readonly number?: number;
+  }) => Effect.Effect<void>;
 
   readonly getChangeRequestPreview?: (
     input: ProviderRepositoryRef & { readonly number: number },
@@ -461,6 +479,7 @@ export interface PullRequestProviderApi {
   /** Requires edit capability and at least one field. */
   readonly updateChangeRequest?: (
     input: ProviderRepositoryRef & {
+      readonly maintainerCanModify?: boolean | undefined;
       readonly number: number;
       readonly title?: string | undefined;
       readonly body?: string | undefined;

@@ -281,13 +281,11 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
               actions.push(`stop:${providerSessionId}`);
               yield* input.beforeStop ?? Effect.void;
               if (input.stopError) {
-                return yield* Effect.fail(
-                  new ProviderSessionManager.ProviderSessionReleaseError({
-                    providerSessionId,
-                    reason,
-                    cause: new Error("private process diagnostics"),
-                  }),
-                );
+                return yield* new ProviderSessionManager.ProviderSessionReleaseError({
+                  providerSessionId,
+                  reason,
+                  cause: new Error("private process diagnostics"),
+                });
               }
               released.push(providerSessionId);
               for (const [threadId, list] of sessions) {

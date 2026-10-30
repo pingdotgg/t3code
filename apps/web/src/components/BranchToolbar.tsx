@@ -5,25 +5,17 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import {
-  ChevronDownIcon,
-  FolderGit2Icon,
-  FolderGitIcon,
-  FolderIcon,
-  PlusIcon,
-  ScaleIcon,
-} from "lucide-react";
+import { FolderGit2Icon, FolderGitIcon, FolderIcon, PlusIcon, ScaleIcon } from "lucide-react";
 import {
   type Ref,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
   memo,
   useImperativeHandle,
-  useEffect,
-  useEffectEvent,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -74,8 +66,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { useComposerMenuProps } from "./chat/composerEventScope";
-import { measureRestingComposerControls } from "./chat/restingComposerControlsMeasurement";
-import { resolveRestingComposerControlsNaturalWidth } from "./composerFooterLayout";
 import { cn } from "~/lib/utils";
 import { observeResize } from "~/lib/observeResize";
 
@@ -107,10 +97,10 @@ interface BranchToolbarProps {
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
+  /** Shown at the end of the composer strip, such as the new thread's permissions. */
+  trailing?: ReactNode;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
-  composerControlsHostRef?: (element: HTMLDivElement | null) => void;
-  contextStripVisible?: boolean;
 }
 
 function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string) {
@@ -225,11 +215,7 @@ const RunContextSelector = memo(function RunContextSelector({
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <WorkspaceIcon
-          className={
-            isPanel
-              ? THREAD_DETAILS_PANEL_ICON_CLASS
-              : cn("size-3 shrink-0", showEnvironmentIndicator && "mx-0!")
-          }
+          className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
         />
       </TooltipTrigger>
       <TooltipPopup>
@@ -241,30 +227,30 @@ const RunContextSelector = memo(function RunContextSelector({
       </TooltipPopup>
     </Tooltip>
   );
-  const icon = showEnvironmentIndicator ? (
-    // Button's SVG margins consume 4px of the gap; mx-0! restores the intended 2px.
-    <span className="inline-flex shrink-0 items-center gap-0.5">
-      <Tooltip>
-        <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-          {autoEnvironmentLabel ? (
-            <ScaleIcon
-              className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
-              aria-hidden="true"
-            />
-          ) : (
-            <EnvironmentMachineIcon
-              kind={activeEnvironment?.machine ?? "server"}
-              className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
-            />
-          )}
-        </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
-      </Tooltip>
-      {workspaceIcon}
-    </span>
-  ) : (
-    workspaceIcon
+  const environmentIcon = (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+        {autoEnvironmentLabel ? (
+          <ScaleIcon
+            className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
+            aria-hidden="true"
+          />
+        ) : (
+          <EnvironmentMachineIcon
+            kind={activeEnvironment?.machine ?? "server"}
+            // Wide machine glyphs need a little more box to match the square row icons.
+            className={
+              isPanel
+                ? cn(THREAD_DETAILS_PANEL_ICON_CLASS, "-mx-px size-4.5")
+                : "size-3 shrink-0 mx-0!"
+            }
+          />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+    </Tooltip>
   );
+  const icon = showEnvironmentIndicator ? environmentIcon : workspaceIcon;
   const triggerContent = (
     <>
       {icon}
@@ -272,6 +258,8 @@ const RunContextSelector = memo(function RunContextSelector({
         {autoEnvironmentLabel ??
           (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
       </ComposerContextLabel>
+      {/* Trailing in the panel, so every row label starts on the same edge. */}
+      {isPanel && showEnvironmentIndicator ? workspaceIcon : null}
     </>
   );
 
@@ -279,12 +267,16 @@ const RunContextSelector = memo(function RunContextSelector({
     return (
       <span
         className={cn(
-          "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6",
+          "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-foreground/70 text-xs sm:h-6 dark:text-muted-foreground",
           isPanel && "max-w-full",
           isPanel && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
         )}
         onContextMenu={handleContextMenu}
-        aria-label={isPanel ? "Run context" : undefined}
+        aria-label={
+          isPanel
+            ? `Run context: ${[autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel].filter(Boolean).join(", ")}`
+            : undefined
+        }
         data-composer-context-control
       >
         {triggerContent}
@@ -305,7 +297,11 @@ const RunContextSelector = memo(function RunContextSelector({
               }
             : undefined
         }
-        aria-label={isPanel ? "Run context" : undefined}
+        aria-label={
+          isPanel
+            ? `Run context: ${[autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel].filter(Boolean).join(", ")}`
+            : undefined
+        }
         data-composer-context-control
         data-composer-shortcut={[
           showEnvironmentPicker && !envLocked ? "composer.host" : "",
@@ -313,7 +309,6 @@ const RunContextSelector = memo(function RunContextSelector({
         ].join(" ")}
       >
         {triggerContent}
-        {!isPanel ? <ChevronDownIcon className="size-3 shrink-0 opacity-50" /> : null}
       </MenuTrigger>
       <MenuPopup
         align="start"
@@ -457,144 +452,148 @@ function labelTextWidth(label: HTMLElement, range: Range): number {
   return Number.isFinite(maxWidth) ? Math.min(width, maxWidth) : width;
 }
 
-function useLabelsOverflow(element: HTMLDivElement | null): boolean {
+function animateLabelWidths(
+  previousRects: ReadonlyMap<HTMLElement, DOMRect>,
+  animations: Map<HTMLElement, Animation>,
+) {
+  for (const animation of animations.values()) animation.cancel();
+  animations.clear();
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  for (const [label, previousRect] of previousRects) {
+    if (!label.isConnected) continue;
+    const nextWidth = label.getBoundingClientRect().width;
+    if (Math.abs(previousRect.width - nextWidth) < 0.5) continue;
+
+    const animation = label.animate(
+      [
+        { width: `${previousRect.width}px`, maxWidth: `${previousRect.width}px` },
+        { width: `${nextWidth}px`, maxWidth: `${nextWidth}px` },
+      ],
+      {
+        duration: COMPOSER_CONTEXT_MOTION_DURATION_MS,
+        easing: COMPOSER_CONTEXT_MOTION_EASING,
+        fill: "backwards",
+      },
+    );
+    animations.set(label, animation);
+    animation.addEventListener(
+      "finish",
+      () => {
+        if (animations.get(label) === animation) animations.delete(label);
+      },
+      { once: true },
+    );
+  }
+}
+
+/**
+ * Whether the strip's labels must collapse to icons. The strip is measured when
+ * it, a control group or a hosted control resizes, when its text or children
+ * change, and when fonts load, which covers everything the widths depend on.
+ */
+function useLabelsOverflow(): readonly [
+  attach: (element: HTMLDivElement | null) => (() => void) | undefined,
+  overflows: boolean,
+] {
   const [overflows, setOverflows] = useState(false);
-  const pendingLabelRectsRef = useRef<Map<HTMLElement, DOMRect> | null>(null);
-  const labelAnimationsRef = useRef(new Map<HTMLElement, Animation>());
-  const measure = useEffectEvent(() => {
-    const current = element;
-    const compact = overflows;
+
+  const attach = (current: HTMLDivElement | null) => {
     if (!current) return;
-    const stripWidth = current.clientWidth;
-    if (stripWidth === 0) return;
-    const stripStyle = getComputedStyle(current);
-    const available =
-      stripWidth -
-      (Number.parseFloat(stripStyle.paddingInlineStart) || 0) -
-      (Number.parseFloat(stripStyle.paddingInlineEnd) || 0);
-    const contentWidth = (parent: Element): number => {
-      const gap = Number.parseFloat(getComputedStyle(parent).columnGap) || 0;
-      let width = 0;
-      let counted = 0;
-      for (const child of parent.children) {
+    const labelAnimations = new Map<HTMLElement, Animation>();
+
+    const measure = () => {
+      // The committed attribute, not render state, so a stale closure cannot misread it.
+      const compact = current.hasAttribute("data-compact");
+      const stripWidth = current.clientWidth;
+      if (stripWidth === 0) return;
+      const stripStyle = getComputedStyle(current);
+      const available =
+        stripWidth -
+        (Number.parseFloat(stripStyle.paddingInlineStart) || 0) -
+        (Number.parseFloat(stripStyle.paddingInlineEnd) || 0);
+      const contentWidth = (parent: Element): number => {
+        const gap = Number.parseFloat(getComputedStyle(parent).columnGap) || 0;
+        let width = 0;
+        let counted = 0;
+        for (const child of parent.children) {
+          if (!(child instanceof HTMLElement)) continue;
+          if (child.offsetWidth === 0) continue;
+          const style = getComputedStyle(child);
+          const position = style.position;
+          if (position === "absolute" || position === "fixed") continue;
+          width +=
+            child.offsetWidth +
+            (Number.parseFloat(style.marginInlineStart) || 0) +
+            (Number.parseFloat(style.marginInlineEnd) || 0);
+          counted += 1;
+        }
+        return width + gap * Math.max(0, counted - 1);
+      };
+      const stripGap = Number.parseFloat(stripStyle.columnGap) || 0;
+      let needed = 0;
+      let groups = 0;
+      for (const child of current.children) {
         if (!(child instanceof HTMLElement)) continue;
-        if (child.offsetWidth === 0) continue;
-        const style = getComputedStyle(child);
-        const position = style.position;
-        if (position === "absolute" || position === "fixed") continue;
-        width +=
-          child.offsetWidth +
-          (Number.parseFloat(style.marginInlineStart) || 0) +
-          (Number.parseFloat(style.marginInlineEnd) || 0);
-        counted += 1;
+        const width = contentWidth(child);
+        if (width <= 1) continue;
+        groups += 1;
+        needed += width;
       }
-      return width + gap * Math.max(0, counted - 1);
-    };
-    const stripGap = Number.parseFloat(stripStyle.columnGap) || 0;
-    let needed = 0;
-    let groups = 0;
-    for (const child of current.children) {
-      if (!(child instanceof HTMLElement)) continue;
-      // Reserve overflowed controls' width to prevent repeated hiding and expansion.
-      const hostedControls = child.matches('[data-chat-resting-composer-controls-host="true"]')
-        ? child.querySelector<HTMLElement>('[data-chat-composer-resting-controls="true"]')
-        : null;
-      const hostedMeasurement = hostedControls
-        ? measureRestingComposerControls(hostedControls)
-        : null;
-      const width = hostedMeasurement
-        ? resolveRestingComposerControlsNaturalWidth(hostedMeasurement)
-        : contentWidth(hostedControls ?? child);
-      if (width <= 1) continue;
-      groups += 1;
-      needed += width;
-    }
-    needed += stripGap * Math.max(0, groups - 1);
-    const range = document.createRange();
-    for (const label of current.querySelectorAll<HTMLElement>("[data-composer-label]")) {
-      needed += Math.max(0, labelTextWidth(label, range) - label.getBoundingClientRect().width);
-    }
-    const nextOverflows = resolveContextStripLabelsCompact({
-      compact,
-      neededWidth: needed,
-      availableWidth: available,
-    });
-    if (nextOverflows !== compact) {
-      pendingLabelRectsRef.current = new Map(
+      needed += stripGap * Math.max(0, groups - 1);
+      const range = document.createRange();
+      for (const label of current.querySelectorAll<HTMLElement>("[data-composer-label]")) {
+        needed += Math.max(0, labelTextWidth(label, range) - label.getBoundingClientRect().width);
+      }
+      const nextOverflows = resolveContextStripLabelsCompact({
+        compact,
+        neededWidth: needed,
+        availableWidth: available,
+      });
+      if (nextOverflows === compact) return;
+      const previousRects = new Map(
         Array.from(current.querySelectorAll<HTMLElement>(COMPOSER_CONTEXT_LABEL_SELECTOR)).map(
-          (label) => [label, label.getBoundingClientRect()],
+          (label) => [label, label.getBoundingClientRect()] as const,
         ),
       );
-    }
-    setOverflows(nextOverflows);
-  });
+      flushSync(() => setOverflows(nextOverflows));
+      animateLabelWidths(previousRects, labelAnimations);
+    };
 
-  useLayoutEffect(() => {
-    const previousRects = pendingLabelRectsRef.current;
-    if (!previousRects) return;
-    pendingLabelRectsRef.current = null;
-
-    for (const animation of labelAnimationsRef.current.values()) {
-      animation.cancel();
-    }
-    labelAnimationsRef.current.clear();
-
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-    for (const [label, previousRect] of previousRects) {
-      if (!label.isConnected) continue;
-      const nextWidth = label.getBoundingClientRect().width;
-      if (Math.abs(previousRect.width - nextWidth) < 0.5) continue;
-
-      const animation = label.animate(
+    let stopResize = () => {};
+    const observeSizes = () => {
+      stopResize();
+      stopResize = observeResize(
         [
-          { width: `${previousRect.width}px`, maxWidth: `${previousRect.width}px` },
-          { width: `${nextWidth}px`, maxWidth: `${nextWidth}px` },
+          current,
+          ...Array.from(current.children),
+          ...Array.from(current.querySelectorAll(COMPOSER_CONTEXT_LABEL_SELECTOR)),
         ],
-        {
-          duration: COMPOSER_CONTEXT_MOTION_DURATION_MS,
-          easing: COMPOSER_CONTEXT_MOTION_EASING,
-          fill: "backwards",
-        },
+        measure,
       );
-      labelAnimationsRef.current.set(label, animation);
-      animation.addEventListener(
-        "finish",
-        () => {
-          if (labelAnimationsRef.current.get(label) === animation) {
-            labelAnimationsRef.current.delete(label);
-          }
-        },
-        { once: true },
+    };
+    observeSizes();
+    // Text and control changes alter natural widths without resizing a hidden
+    // or squeezed label, so they re-measure too. Only added or removed elements
+    // can change the observed set; re-subscribing delivers a measure itself.
+    const mutations = new MutationObserver((records) => {
+      const elementsChanged = records.some((record) =>
+        [...record.addedNodes, ...record.removedNodes].some((node) => node instanceof Element),
       );
-    }
-  });
-
-  useEffect(
-    () => () => {
-      for (const animation of labelAnimationsRef.current.values()) {
-        animation.cancel();
-      }
-    },
-    [],
-  );
-
-  useLayoutEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- The label mode comes from measuring the committed DOM, which render cannot read.
-    measure();
-  });
-
-  useEffect(() => {
-    if (!element) return;
-    const stopObserving = observeResize(element, measure);
+      if (elementsChanged) observeSizes();
+      else measure();
+    });
+    mutations.observe(current, { childList: true, characterData: true, subtree: true });
     document.fonts.addEventListener("loadingdone", measure);
     return () => {
-      stopObserving();
+      stopResize();
+      mutations.disconnect();
       document.fonts.removeEventListener("loadingdone", measure);
+      for (const animation of labelAnimations.values()) animation.cancel();
     };
-  }, [element]);
+  };
 
-  return overflows;
+  return [attach, overflows] as const;
 }
 
 export const BranchToolbar = memo(function BranchToolbar({
@@ -622,8 +621,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
-  composerControlsHostRef,
-  contextStripVisible = true,
+  trailing,
 }: BranchToolbarProps) {
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);
   const threadRef = scopeThreadRef(environmentId, threadId);
@@ -690,8 +688,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     activeEnvironment: activeEnvironmentOption,
     canPickEnvironment: hasMultipleEnvironments,
   });
-  const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
-  const labelsOverflow = useLabelsOverflow(stripElement);
+  const [attachStrip, labelsOverflow] = useLabelsOverflow();
 
   if (!activeProject) return null;
 
@@ -745,13 +742,9 @@ export const BranchToolbar = memo(function BranchToolbar({
 
   return (
     <ComposerSurface.ContextStrip
-      ref={setStripElement}
+      ref={attachStrip}
       data-compact={labelsOverflow ? "" : undefined}
-      className={cn(
-        "gap-1 text-xs font-normal text-muted-foreground/70",
-        // Hide empty non-Git strips while retaining host width so controls can reappear as the chat grows.
-        !contextStripVisible && "pointer-events-none invisible absolute inset-x-0 top-full",
-      )}
+      className={cn("gap-1 text-xs font-normal text-foreground/70 dark:text-muted-foreground")}
     >
       {showGitControls ? (
         <div className="contents @3xl/composer-surface:hidden">
@@ -782,7 +775,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           className={cn(
             "min-h-7 min-w-10 items-center gap-1 sm:min-h-6",
             showGitControls ? "hidden @3xl/composer-surface:flex" : "flex",
-            composerControlsHostRef ? "shrink" : "flex-1",
+            "flex-1",
           )}
         >
           {showEnvironmentIndicator && availableEnvironments && (
@@ -820,15 +813,6 @@ export const BranchToolbar = memo(function BranchToolbar({
         </div>
       ) : null}
 
-      {composerControlsHostRef ? (
-        <div
-          ref={composerControlsHostRef}
-          data-composer-context-control
-          data-chat-resting-composer-controls-host="true"
-          className="flex min-w-0 flex-1 items-center justify-start overflow-x-clip overflow-y-visible"
-        />
-      ) : null}
-
       {showGitControls ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
@@ -847,6 +831,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
         />
       ) : null}
+      {trailing}
     </ComposerSurface.ContextStrip>
   );
 });

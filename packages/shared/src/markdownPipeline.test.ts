@@ -1,5 +1,6 @@
 import { expect, it } from "vite-plus/test";
 import { unified } from "unified";
+import rehypeRaw from "rehype-raw";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { CHAT_MARKDOWN_REHYPE_PLUGINS, CHAT_MARKDOWN_REMARK_PLUGINS } from "./markdownPipeline.ts";
@@ -12,7 +13,7 @@ it("preserves in-app thread links through the shared Markdown sanitizer", () => 
     .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
   const tree = processor.runSync(
     processor.parse(
-      '[Open thread](t3-thread://v1/environment/thread)\n\n<a href="javascript:alert(1)">Unsafe</a>',
+      '[Open thread](t3-thread://v1/thread)\n\n<t3-thread://v2/environment/thread:a%3A1>\n\n<a href="javascript:alert(1)">Unsafe</a>',
     ),
   );
   expect(tree.children[0]).toMatchObject({
@@ -20,12 +21,74 @@ it("preserves in-app thread links through the shared Markdown sanitizer", () => 
     children: [
       {
         tagName: "a",
-        properties: { href: "t3-thread://v1/environment/thread" },
+        properties: { href: "t3-thread://v1/thread" },
         children: [{ type: "text", value: "Open thread" }],
       },
     ],
   });
+  expect(tree.children[2]).toMatchObject({
+    tagName: "p",
+    children: [
+      {
+        tagName: "a",
+        properties: { href: "t3-thread://v2/environment/thread:a%3A1" },
+        children: [{ type: "text", value: "t3-thread://v2/environment/thread:a%3A1" }],
+      },
+    ],
+  });
   expect(JSON.stringify(tree)).not.toContain("javascript:");
+});
+
+it("builds the tree rehype-raw builds for markdown without HTML", () => {
+  type Node = {
+    type: string;
+    tagName?: string;
+    value?: string;
+    position?: unknown;
+    data?: unknown;
+    children?: Node[];
+  };
+  // What the round trip changes that renders the same; see `needsHtmlParser`.
+  const comparable = (node: Node): Node => {
+    const { position, children, data, ...rest } = node;
+    const result: Node =
+      node.type === "text" || node.type === "root" ? rest : { ...rest, position, data };
+    if (!children) return result;
+    const merged: Node[] = [];
+    for (const child of children.map(comparable)) {
+      const last = merged.at(-1);
+      if (child.type === "text" && last?.type === "text") last.value += child.value ?? "";
+      else merged.push(child);
+    }
+    // Blank text inside a table moves in front of it; the JSX runtime drops it in tables.
+    const inTable = /^(?:table|thead|tbody|tfoot|tr)$/.test(node.tagName ?? "");
+    result.children = merged.filter(
+      (child, index) =>
+        child.type !== "text" ||
+        child.value?.trim() ||
+        !(inTable || merged[index + 1]?.tagName === "table"),
+    );
+    return result;
+  };
+  const tree = (rehypePlugins: typeof CHAT_MARKDOWN_REHYPE_PLUGINS, markdown: string) => {
+    const processor = unified()
+      .use(remarkParse)
+      .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+      .use(remarkRehype, { allowDangerousHtml: true })
+      .use(rehypePlugins);
+    return comparable(processor.runSync(processor.parse(markdown)) as Node);
+  };
+  const [first, , ...rest] = CHAT_MARKDOWN_REHYPE_PLUGINS;
+  const withRaw = [first!, rehypeRaw, ...rest];
+  for (const markdown of [
+    "- [ ] open\n- [x] done\n\nNote[^1]\n\n[^1]: The note.",
+    "| a | b |\n| :- | -: |\n| `c` | ![d](./d.png) |\n\n```ts title=x\nconst a = 1;\n```",
+    // The HTML parser moves the footnote's link out of the label's link.
+    "[note[^x]](https://example.com)\n\n[^x]: text",
+    "**a** **b**\r\n> - | a |\r\n>   | - |\r\n>   | b |\r\n\n-\tx\n\n  y",
+  ]) {
+    expect(tree(CHAT_MARKDOWN_REHYPE_PLUGINS, markdown)).toEqual(tree(withRaw, markdown));
+  }
 });
 
 it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {

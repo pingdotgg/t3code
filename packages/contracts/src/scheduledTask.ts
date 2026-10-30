@@ -66,7 +66,7 @@ export const MAX_WEBHOOK_DELIVERY_AGE_MINUTES = 24 * 60;
 const WebhookMaxDeliveryAgeMinutes = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: MAX_WEBHOOK_DELIVERY_AGE_MINUTES }),
 ).annotate({
-  description: "Skip requests held offline over this many minutes. Null: run all.",
+  description: "Skip requests held offline over this many minutes. Omit to run all.",
 });
 
 export function isWebhookDedupeTemplate(template: string): boolean {
@@ -152,7 +152,7 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
       }),
     ),
   ).annotate({
-    description: "Null or omitted: URL token only.",
+    description: "Omit for URL token only.",
   }),
   maxDeliveryAgeMinutes: Schema.optional(Schema.NullOr(WebhookMaxDeliveryAgeMinutes)),
   dedupe: Schema.optional(ScheduledTaskWebhookDedupe),

@@ -32,6 +32,7 @@ interface BufferedAnalyticsEvent {
 interface DeliveryState {
   readonly failedBatch: ReadonlyArray<BufferedAnalyticsEvent>;
   readonly batchAttempts: number;
+  readonly firstFailedAt: number;
   readonly failures: number;
   readonly retryAt: number;
 }
@@ -40,7 +41,10 @@ interface DeliveryState {
 const FLUSH_INTERVAL_MS = 10_000;
 // A hung send would hold the flush lock, and with it the shutdown flush.
 const SEND_TIMEOUT = "10 seconds";
-const MAX_BATCH_ATTEMPTS = 5;
+// A failed batch is tried again until it has failed for this long. Ingest answers 503 when it
+// cannot store a batch, and a broken Cloudflare location can take about 5 minutes to fail over.
+// The waiting batch holds newer events back; `maxBufferedEvents` bounds them meanwhile.
+const MAX_BATCH_RETRY_MS = 30 * 60_000;
 const RETRY_BASE_DELAY_MS = 2_000;
 // Clients can report any number of owner ids; past this many per observer, new ones
 // are not sent. Each observer has its own cap, so client reports never crowd out the
@@ -49,10 +53,6 @@ const MAX_RECORDED_OWNERS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
 // These statuses reject the batch itself; unlike 408/429, retrying cannot help.
 const REJECTED_BATCH_STATUSES = new Set([400, 401, 413]);
-
-// Official release workflows set this telemetry channel; other builds report dev.
-// Unlike __T3CODE_BUILD_CHANNEL__, this is not the sign-in page's latest/nightly channel.
-declare const __T3CODE_TELEMETRY_CHANNEL__: "stable" | "nightly" | "preview" | "dev" | undefined;
 
 /** `random` is in [0, 1). */
 function retryDelayMs(failures: number, random: number): number {
@@ -95,16 +95,7 @@ export class AnalyticsService extends Context.Service<
       observedBy: "server" | "client",
     ) => Effect.Effect<void>;
   }
->()("t3/telemetry/AnalyticsService") {
-  static readonly layerTest = Layer.succeed(
-    AnalyticsService,
-    AnalyticsService.of({
-      record: () => Effect.void,
-      flush: Effect.void,
-      recordOwners: () => Effect.void,
-    }),
-  );
-}
+>()("t3/telemetry/AnalyticsService") {}
 
 function serverOsFromNodePlatform(platform: string): ClientOs {
   switch (platform) {
@@ -133,6 +124,7 @@ export const make = Effect.gen(function* () {
   const deliveryRef = yield* Ref.make<DeliveryState>({
     failedBatch: [],
     batchAttempts: 0,
+    firstFailedAt: 0,
     failures: 0,
     retryAt: 0,
   });
@@ -142,8 +134,6 @@ export const make = Effect.gen(function* () {
   // The background flush and the shutdown flush must not send the same batch at once.
   const flushLock = yield* Semaphore.make(1);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
-  const telemetryChannel =
-    typeof __T3CODE_TELEMETRY_CHANNEL__ === "undefined" ? "dev" : __T3CODE_TELEMETRY_CHANNEL__;
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
 
@@ -198,7 +188,7 @@ export const make = Effect.gen(function* () {
           wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
           arch: hostArchitecture,
           t3CodeVersion: packageJson.version,
-          telemetryChannel,
+          telemetryChannel: ServerConfig.telemetryChannel,
           clientType,
           serverOs: serverOsFromNodePlatform(hostPlatform),
           serverArch: hostArchitecture,
@@ -234,27 +224,47 @@ export const make = Effect.gen(function* () {
 
       const sent = yield* Effect.result(sendBatch(batch));
       if (Result.isSuccess(sent)) {
-        yield* Ref.set(deliveryRef, { failedBatch: [], batchAttempts: 0, failures: 0, retryAt: 0 });
+        yield* Ref.set(deliveryRef, {
+          failedBatch: [],
+          batchAttempts: 0,
+          firstFailedAt: 0,
+          failures: 0,
+          retryAt: 0,
+        });
         continue;
       }
 
+      const now = yield* Clock.currentTimeMillis;
       const failures = delivery.failures + 1;
       const batchAttempts = delivery.batchAttempts + 1;
-      const retryAt = (yield* Clock.currentTimeMillis) + retryDelayMs(failures, yield* Random.next);
+      const firstFailedAt = delivery.batchAttempts === 0 ? now : delivery.firstFailedAt;
+      const retryAt = now + retryDelayMs(failures, yield* Random.next);
       const error = sent.failure;
       const rejected =
         error._tag === "HttpClientError" &&
         error.reason._tag === "StatusCodeError" &&
         REJECTED_BATCH_STATUSES.has(error.reason.response.status);
-      if (!rejected && batchAttempts < MAX_BATCH_ATTEMPTS) {
-        yield* Ref.set(deliveryRef, { failedBatch: batch, batchAttempts, failures, retryAt });
+      if (!rejected && now - firstFailedAt < MAX_BATCH_RETRY_MS) {
+        yield* Ref.set(deliveryRef, {
+          failedBatch: batch,
+          batchAttempts,
+          firstFailedAt,
+          failures,
+          retryAt,
+        });
         yield* Effect.logDebug("Failed to send telemetry batch; will retry", {
           attempt: batchAttempts,
           cause: error,
         });
         return;
       }
-      yield* Ref.set(deliveryRef, { failedBatch: [], batchAttempts: 0, failures, retryAt });
+      yield* Ref.set(deliveryRef, {
+        failedBatch: [],
+        batchAttempts: 0,
+        firstFailedAt: 0,
+        failures,
+        retryAt,
+      });
       yield* Effect.logWarning(
         rejected
           ? "Dropped telemetry batch the endpoint rejected"
@@ -313,7 +323,7 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
+  yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.andThen(flushWhenDue)), {
     disableYield: true,
   }).pipe(Effect.forkScoped);
 
@@ -323,5 +333,3 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(AnalyticsService, make);
-
-const layerTest = AnalyticsService.layerTest;

@@ -1,7 +1,6 @@
 import type {
   ApplicationStoredEvent,
   OrchestrationProjectShell,
-  OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2OlderSettledCount,
   OrchestrationV2OlderSettledThreads,
   OrchestrationV2ShellSnapshot,
@@ -32,6 +31,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import { bufferLatestLiveStream } from "./LiveStreamBudget.ts";
+import type { ActiveShellIndexEntry } from "./ProjectionStore.ts";
 
 type ShellDelta = Extract<OrchestrationV2ShellStreamItem, { readonly sequence: number }>;
 
@@ -57,7 +57,7 @@ export const bufferShellLiveStream = <E, R>(
     limits,
   );
 
-export function buildActiveShellSnapshot(input: {
+function buildActiveShellSnapshot(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly threads: OrchestrationV2ThreadShellSnapshot;
   readonly snapshotSequence: number;
@@ -71,6 +71,110 @@ export function buildActiveShellSnapshot(input: {
   };
 }
 
+type ShellTrimRow = Pick<
+  OrchestrationV2ThreadShell,
+  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt"
+>;
+
+/**
+ * What a subscriber's trims read across every active row. Computed from full shells or from the
+ * store's index, so a snapshot read only for the rows it sends trims the same way.
+ */
+interface ShellTrimFacts {
+  readonly subagentParentIds: ReadonlySet<string>;
+  readonly subagentThreadIds: Set<string>;
+  /** Undefined when no thread is settled, so none is older. */
+  readonly olderSettledBeforeMs: number | undefined;
+  readonly olderSettledCounts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
+}
+
+const NEWEST_SETTLED_KEPT = 25;
+
+function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
+  const subagentParentIds = new Set<string>();
+  const subagentThreadIds = new Set<string>();
+  const settledTimes: Array<number> = [];
+  for (const row of rows) {
+    if (row.lineage.relationshipToParent === "subagent") {
+      subagentThreadIds.add(row.id);
+      if (row.lineage.parentThreadId) subagentParentIds.add(row.lineage.parentThreadId);
+    } else if (row.settledOverride === "settled" && row.settledAt !== null) {
+      settledTimes.push(DateTime.toEpochMillis(row.settledAt));
+    }
+  }
+  settledTimes.sort((left, right) => right - left);
+  // With fewer than 25, the oldest one is the cut, so nothing is older.
+  const olderSettledBeforeMs = settledTimes[NEWEST_SETTLED_KEPT - 1] ?? settledTimes.at(-1);
+  const counts = new Map<ProjectId, number>();
+  if (olderSettledBeforeMs !== undefined) {
+    for (const row of rows) {
+      if (isOlderSettledThreadShell(row, olderSettledBeforeMs)) {
+        counts.set(row.projectId, (counts.get(row.projectId) ?? 0) + 1);
+      }
+    }
+  }
+  return {
+    subagentParentIds,
+    subagentThreadIds,
+    olderSettledBeforeMs,
+    olderSettledCounts: Array.from(counts, ([projectId, count]) => ({ projectId, count })),
+  };
+}
+
+function subagentAncestorIds(threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "lineage">>) {
+  const ancestorIds = new Set<string>();
+  for (const thread of threads) {
+    if (thread.lineage.relationshipToParent !== "subagent") continue;
+    if (thread.lineage.parentThreadId !== null) ancestorIds.add(thread.lineage.parentThreadId);
+    ancestorIds.add(thread.lineage.rootThreadId);
+  }
+  return ancestorIds;
+}
+
+function omitIdleSubagentShellsWith(
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+  facts: Pick<ShellTrimFacts, "subagentParentIds">,
+): ReadonlyArray<OrchestrationV2ThreadShell> {
+  return threads.filter(
+    (thread) =>
+      thread.lineage.relationshipToParent !== "subagent" ||
+      isLiveSubagentShell(thread) ||
+      facts.subagentParentIds.has(thread.id),
+  );
+}
+
+function omitOlderSettledShellsWith(
+  input: {
+    readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+    readonly snapshotSequence: number;
+    readonly now: DateTime.Utc;
+  },
+  facts: Pick<ShellTrimFacts, "olderSettledBeforeMs" | "olderSettledCounts">,
+): {
+  readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly olderSettled: OrchestrationV2OlderSettledThreads;
+} {
+  const nowMs = DateTime.toEpochMillis(input.now);
+  const beforeMs = facts.olderSettledBeforeMs ?? nowMs;
+  const ancestorIds = subagentAncestorIds(input.threads);
+  const threads = input.threads.filter(
+    (thread) =>
+      !isOlderSettledThreadShell(thread, beforeMs) ||
+      thread.pinnedAt != null ||
+      (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
+      isLiveSubagentShell(thread) ||
+      ancestorIds.has(thread.id),
+  );
+  return {
+    threads,
+    olderSettled: {
+      before: DateTime.formatIso(DateTime.makeUnsafe(beforeMs)),
+      asOfSequence: input.snapshotSequence,
+      counts: facts.olderSettledCounts,
+    },
+  };
+}
+
 /**
  * Idle subagent children have no sidebar row, so clients that opt in read them from their thread
  * family instead. A child stays while it is live or the parent of another child, so the request
@@ -79,18 +183,7 @@ export function buildActiveShellSnapshot(input: {
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
-  const parentIds = new Set<string>();
-  for (const thread of threads) {
-    if (thread.lineage.relationshipToParent === "subagent" && thread.lineage.parentThreadId) {
-      parentIds.add(thread.lineage.parentThreadId);
-    }
-  }
-  return threads.filter(
-    (thread) =>
-      thread.lineage.relationshipToParent !== "subagent" ||
-      isLiveSubagentShell(thread) ||
-      parentIds.has(thread.id),
-  );
+  return omitIdleSubagentShellsWith(threads, shellTrimFacts(threads));
 }
 
 /**
@@ -104,17 +197,12 @@ export function activeShellRowsForSubscriber(
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly subagentThreadIds: Set<string>;
 } {
+  const facts = shellTrimFacts(threads);
   return {
-    threads: omitIdleSubagents ? omitIdleSubagentShells(threads) : threads,
-    subagentThreadIds: new Set(
-      threads
-        .filter((thread) => thread.lineage.relationshipToParent === "subagent")
-        .map((thread) => thread.id),
-    ),
+    threads: omitIdleSubagents ? omitIdleSubagentShellsWith(threads, facts) : threads,
+    subagentThreadIds: facts.subagentThreadIds,
   };
 }
-
-const NEWEST_SETTLED_KEPT = 25;
 
 /**
  * Opted-in snapshots keep the 25 newest settled top-level threads (and ties) and count the rest per
@@ -129,77 +217,107 @@ export function omitOlderSettledShells(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly olderSettled: OrchestrationV2OlderSettledThreads;
 } {
-  const nowMs = DateTime.toEpochMillis(input.now);
-  const settledTimes = input.threads
-    .flatMap((thread) =>
-      thread.lineage.relationshipToParent !== "subagent" &&
-      thread.settledOverride === "settled" &&
-      thread.settledAt !== null
-        ? [DateTime.toEpochMillis(thread.settledAt)]
-        : [],
-    )
-    .sort((left, right) => right - left);
-  // With fewer than 25, the oldest one is the cut, so nothing is older.
-  const beforeMs = settledTimes[NEWEST_SETTLED_KEPT - 1] ?? settledTimes.at(-1) ?? nowMs;
-  const ancestorIds = new Set<string>();
-  for (const thread of input.threads) {
-    if (thread.lineage.relationshipToParent !== "subagent") continue;
-    if (thread.lineage.parentThreadId !== null) ancestorIds.add(thread.lineage.parentThreadId);
-    ancestorIds.add(thread.lineage.rootThreadId);
-  }
-  const counts = new Map<ProjectId, number>();
-  const threads = input.threads.filter((thread) => {
-    if (!isOlderSettledThreadShell(thread, beforeMs)) return true;
-    counts.set(thread.projectId, (counts.get(thread.projectId) ?? 0) + 1);
-    return (
-      thread.pinnedAt != null ||
-      (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
-      isLiveSubagentShell(thread) ||
-      ancestorIds.has(thread.id)
-    );
-  });
-  return {
-    threads,
-    olderSettled: {
-      before: DateTime.formatIso(DateTime.makeUnsafe(beforeMs)),
-      asOfSequence: input.snapshotSequence,
-      counts: Array.from(counts, ([projectId, count]) => ({ projectId, count })),
-    },
-  };
+  return omitOlderSettledShellsWith(input, shellTrimFacts(input.threads));
+}
+
+interface ShellSubscriberOptions {
+  readonly omitIdleSubagents: boolean;
+  readonly omitOlderSettled: boolean;
+}
+
+function trimShellSnapshot(
+  base: OrchestrationV2ShellSnapshot,
+  facts: ShellTrimFacts,
+  options: ShellSubscriberOptions & { readonly now: DateTime.Utc },
+): OrchestrationV2ShellSnapshot {
+  const threads = options.omitIdleSubagents
+    ? omitIdleSubagentShellsWith(base.threads, facts)
+    : base.threads;
+  if (!options.omitOlderSettled) return { ...base, threads };
+  const older = omitOlderSettledShellsWith(
+    { threads, snapshotSequence: base.snapshotSequence, now: options.now },
+    facts,
+  );
+  return { ...base, threads: older.threads, olderSettled: older.olderSettled };
 }
 
 /**
- * The snapshot a shell subscriber gets for its opt-ins, and the subagent ids whose transcript
- * events its stream drops (from every row, so an omitted child that wakes keeps that filter).
+ * The threads whose shells a trimmed snapshot can contain: a superset of what the trims keep, so
+ * trimming the shells read for these ids gives the snapshot trimming every shell would.
  */
-export function shellSnapshotForSubscriber(
-  base: OrchestrationV2ShellSnapshot,
-  options: {
-    readonly omitIdleSubagents: boolean;
-    readonly omitOlderSettled: boolean;
-    readonly now: DateTime.Utc;
-  },
-): {
-  readonly snapshot: OrchestrationV2ShellSnapshot;
-  readonly subagentThreadIds: Set<string>;
-} {
-  const rows = activeShellRowsForSubscriber(base.threads, options.omitIdleSubagents);
-  if (!options.omitOlderSettled) {
-    return {
-      snapshot: { ...base, threads: rows.threads },
-      subagentThreadIds: rows.subagentThreadIds,
-    };
-  }
-  const older = omitOlderSettledShells({
-    threads: rows.threads,
-    snapshotSequence: base.snapshotSequence,
-    now: options.now,
-  });
-  return {
-    snapshot: { ...base, threads: older.threads, olderSettled: older.olderSettled },
-    subagentThreadIds: rows.subagentThreadIds,
-  };
+function shellSubscriberThreadIds(
+  index: ReadonlyArray<ActiveShellIndexEntry>,
+  options: ShellSubscriberOptions,
+): ReadonlyArray<ThreadId> {
+  const facts = shellTrimFacts(index);
+  const subagents = index.filter(
+    (entry) =>
+      entry.lineage.relationshipToParent === "subagent" &&
+      (!options.omitIdleSubagents || entry.mayBeLive || facts.subagentParentIds.has(entry.id)),
+  );
+  const ancestorIds = subagentAncestorIds(subagents);
+  const keptSubagentIds = new Set(subagents.map((entry) => entry.id));
+  const beforeMs = facts.olderSettledBeforeMs;
+  return index.flatMap((entry) =>
+    entry.lineage.relationshipToParent === "subagent"
+      ? keptSubagentIds.has(entry.id)
+        ? [entry.id]
+        : []
+      : !options.omitOlderSettled ||
+          beforeMs === undefined ||
+          !isOlderSettledThreadShell(entry, beforeMs) ||
+          entry.pinnedAt != null ||
+          entry.snoozedUntil != null ||
+          entry.mayBeLive ||
+          ancestorIds.has(entry.id)
+        ? [entry.id]
+        : [],
+  );
 }
+
+/**
+ * A subscriber's active shell snapshot, read like `loadShellSnapshotParts`. With an opt-in, the
+ * store's index decides which shells to read, so threads the trims drop are never built.
+ */
+export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriberShellSnapshot")(
+  function* <E1, E2, E3, E4, E5>(input: {
+    readonly sql: SqlClient.SqlClient;
+    readonly listShellIndex: Effect.Effect<ReadonlyArray<ActiveShellIndexEntry>, E1>;
+    readonly readThreads: (
+      threadIds: ReadonlyArray<ThreadId> | undefined,
+    ) => Effect.Effect<Effect.Effect<OrchestrationV2ThreadShellSnapshot, E3>, E2>;
+    readonly listProjects: Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, E4>;
+    readonly latestSequence: Effect.Effect<number, E5>;
+    readonly options: ShellSubscriberOptions;
+  }) {
+    const trims = input.options.omitIdleSubagents || input.options.omitOlderSettled;
+    const read = yield* input.sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const index = trims ? yield* input.listShellIndex : null;
+          return {
+            index,
+            decodeThreads: yield* input.readThreads(
+              index === null ? undefined : shellSubscriberThreadIds(index, input.options),
+            ),
+            projects: yield* input.listProjects,
+            snapshotSequence: yield* input.latestSequence,
+          };
+        }),
+      )
+      .pipe(NodeSqliteClient.readOnly);
+    const base = buildActiveShellSnapshot({
+      projects: read.projects,
+      threads: yield* read.decodeThreads,
+      snapshotSequence: read.snapshotSequence,
+    });
+    const facts = shellTrimFacts(read.index ?? base.threads);
+    return {
+      snapshot: trimShellSnapshot(base, facts, { ...input.options, now: yield* DateTime.now }),
+      subagentThreadIds: facts.subagentThreadIds,
+    };
+  },
+);
 
 /**
  * One transaction covers the reads so they agree; the threads are decoded after it commits,
@@ -384,7 +502,6 @@ export function composeShellStreamWithEnrichment<A, E, R, A2, E2, R2, A3, E3, R3
       let previous: Deferred.Deferred<void> | undefined;
       // Stream.merge pulls ahead after handing off each batch. Wait for the next
       // downstream pull so shell delivery keeps that batch charged until its RPC ACK.
-      // @effect-diagnostics-next-line returnEffectInGen:off - Stream.fromPull needs the pull effect as its result.
       return Effect.gen(function* () {
         if (previous) yield* Deferred.succeed(previous, undefined);
         const next = yield* Queue.take(output);
@@ -537,18 +654,6 @@ export function skipUnchangedThreadShells<A extends OrchestrationV2ShellStreamIt
   });
 }
 
-export function coalesceStoredThreadEvents(
-  events: ReadonlyArray<OrchestrationV2StoredEvent>,
-): ReadonlyArray<OrchestrationV2StoredEvent> {
-  const latestByThreadId = new Map<string, OrchestrationV2StoredEvent>();
-  for (const stored of events) {
-    latestByThreadId.set(stored.event.threadId, stored);
-  }
-  return Array.from(latestByThreadId.values()).sort(
-    (left, right) => left.sequence - right.sequence,
-  );
-}
-
 export function shellStreamItemFromThreadShell(input: {
   readonly stored: Extract<ShellApplicationEvent, { readonly event: unknown }>;
   readonly shell: OrchestrationV2ThreadShell | null;
@@ -579,28 +684,4 @@ export function shellStreamItemFromThreadShell(input: {
     location: "active",
     threadId: input.stored.event.threadId,
   };
-}
-
-export function archivedShellStreamItemFromThreadShell(input: {
-  readonly stored: OrchestrationV2StoredEvent;
-  readonly shell: OrchestrationV2ThreadShell | null;
-}): Exclude<OrchestrationV2ArchivedShellStreamItem, { readonly kind: "snapshot" }> | null {
-  if (input.shell !== null && input.shell.archivedAt !== null) {
-    return {
-      kind: "thread.updated",
-      sequence: input.stored.sequence,
-      thread: input.shell,
-    };
-  }
-  if (
-    input.stored.event.type === "thread.unarchived" ||
-    (input.stored.event.type === "thread.deleted" && input.stored.event.payload.archivedAt !== null)
-  ) {
-    return {
-      kind: "thread.removed",
-      sequence: input.stored.sequence,
-      threadId: input.stored.event.threadId,
-    };
-  }
-  return null;
 }

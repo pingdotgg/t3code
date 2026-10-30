@@ -82,15 +82,22 @@ export function composerStripAttachments(
   attachments: ReadonlyArray<DraftComposerAttachment>,
 ): ReadonlyArray<DraftComposerAttachment> {
   return attachments.filter(
-    (attachment) => isComposerImageAttachment(attachment) || videoMimeType(attachment) !== null,
+    (attachment) =>
+      attachment.type === "image" ||
+      imageMimeType(attachment) !== null ||
+      videoMimeType(attachment) !== null,
   );
 }
 
-/** Detect from the attachment; the document picker labels images as plain files. */
+/** Promote legacy document-picked images only when their originals fit the image contract. */
 export function isComposerImageAttachment(
   attachment: DraftComposerAttachment,
 ): attachment is DraftComposerImageAttachment {
-  return attachment.type === "image" || imageMimeType(attachment) !== null;
+  return (
+    attachment.type === "image" ||
+    (attachment.sizeBytes <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES &&
+      imageMimeType(attachment) !== null)
+  );
 }
 
 export type FileBackedComposerAttachment = DraftComposerAttachment & { readonly fileUri: string };
@@ -213,7 +220,7 @@ export async function removePersistedComposerAttachmentFile(uri: string): Promis
   }
 }
 
-async function createComposerFileAttachment(input: {
+export async function createComposerFileAttachment(input: {
   readonly uri: string;
   readonly name: string;
   readonly mimeType: string;
@@ -251,7 +258,7 @@ export async function pickComposerFiles(input: {
   readonly existingCount: number;
   readonly maxBytes?: number;
 }): Promise<{
-  readonly files: ReadonlyArray<DraftComposerFileAttachment>;
+  readonly files: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
 }> {
   const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
@@ -283,7 +290,7 @@ export async function pickComposerFiles(input: {
   const maxBytes = clampFileAttachmentUploadBytes(
     input.maxBytes ?? PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   );
-  const attachments: DraftComposerFileAttachment[] = [];
+  const attachments: DraftComposerAttachment[] = [];
   let error: string | null = null;
   let exceededAttachmentLimit = false;
   for (const file of result.assets) {
@@ -294,15 +301,50 @@ export async function pickComposerFiles(input: {
     // SAF can return blank display names, but the wire contract rejects them; fill before persisting.
     const name = file.name.trim().length > 0 ? file.name : "file";
     try {
-      attachments.push(
-        await createComposerFileAttachment({
-          uri: file.uri,
+      const mimeType = imageMimeType({ name, mimeType: file.mimeType ?? "" });
+      const attachment = await createComposerFileAttachment({
+        uri: file.uri,
+        name,
+        mimeType: file.mimeType || "application/octet-stream",
+        sizeBytes: file.size ?? null,
+        maxBytes:
+          mimeType === null ? maxBytes : Math.max(maxBytes, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES),
+      });
+      if (mimeType === null || attachment.sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+        attachments.push(attachment);
+        continue;
+      }
+      try {
+        const { File } = await import("expo-file-system");
+        const original = await new File(attachment.fileUri).base64();
+        const candidate = await fitComposerImage({
+          uri: attachment.fileUri,
+          mimeType,
+          base64: original,
+        });
+        const fitted =
+          candidate !== null &&
+          estimateBase64ByteSize(candidate.base64) <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+            ? candidate
+            : null;
+        const base64 = fitted?.base64 ?? original;
+        const sizeBytes = estimateBase64ByteSize(base64);
+        if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+          throw new Error(`'${name}' exceeds the 10 MB attachment limit.`);
+        }
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+        attachments.push({
+          id: attachment.id,
+          type: "image",
           name,
-          mimeType: file.mimeType || "application/octet-stream",
-          sizeBytes: file.size ?? null,
-          maxBytes,
-        }),
-      );
+          mimeType,
+          sizeBytes,
+          dataUrl,
+          previewUri: fitted?.uri ?? dataUrl,
+        });
+      } finally {
+        await removePersistedComposerAttachmentFile(attachment.fileUri);
+      }
     } catch (cause) {
       error = cause instanceof Error ? cause.message : `Could not read '${name}'.`;
     }
@@ -318,14 +360,6 @@ async function loadImagePicker() {
     return await import("expo-image-picker");
   } catch (error) {
     throw new Error("The photo library is unavailable right now.", { cause: error });
-  }
-}
-
-async function loadClipboard() {
-  try {
-    return await import("expo-clipboard");
-  } catch (error) {
-    throw new Error("Clipboard paste is unavailable right now.", { cause: error });
   }
 }
 
@@ -503,97 +537,6 @@ export async function pickComposerMedia(input: {
   };
 }
 
-export async function pasteComposerClipboard(input: { readonly existingCount: number }): Promise<
-  | {
-      readonly images: ReadonlyArray<DraftComposerImageAttachment>;
-      readonly text: null;
-      readonly error: string | null;
-    }
-  | {
-      readonly images: readonly [];
-      readonly text: string;
-      readonly error: null;
-    }
-> {
-  let clipboard: Awaited<ReturnType<typeof loadClipboard>>;
-  try {
-    clipboard = await loadClipboard();
-  } catch (error) {
-    return {
-      images: [],
-      text: null,
-      error: error instanceof Error ? error.message : "Clipboard paste is unavailable right now.",
-    };
-  }
-
-  const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
-
-  if (await clipboard.hasImageAsync()) {
-    if (remainingSlots <= 0) {
-      return {
-        images: [],
-        text: null,
-        error: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`,
-      };
-    }
-    const image = await clipboard.getImageAsync({ format: "png" });
-    if (!image) {
-      return {
-        images: [],
-        text: null,
-        error: "Clipboard image is unavailable.",
-      };
-    }
-
-    const pastedBase64 = image.data.split(",")[1] ?? "";
-    const fitted = await fitComposerImage({
-      uri: image.data,
-      mimeType: "image/png",
-      base64: pastedBase64,
-    });
-    const base64 = fitted?.base64 ?? pastedBase64;
-    const dataUrl = fitted ? `data:image/png;base64,${base64}` : image.data;
-    const sizeBytes = estimateBase64ByteSize(base64);
-    if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-      return {
-        images: [],
-        text: null,
-        error: "Clipboard image exceeds the 10 MB attachment limit.",
-      };
-    }
-
-    return {
-      images: [
-        {
-          id: uuidv4(),
-          type: "image",
-          name: "pasted-image.png",
-          mimeType: "image/png",
-          sizeBytes,
-          dataUrl,
-          previewUri: dataUrl,
-        },
-      ],
-      text: null,
-      error: null,
-    };
-  }
-
-  if (await clipboard.hasStringAsync()) {
-    const text = await clipboard.getStringAsync();
-    return {
-      images: [],
-      ...(text.length > 0 ? { text, error: null } : { text: null, error: "Clipboard is empty." }),
-    };
-  }
-
-  return {
-    images: [],
-    text: null,
-    error: "Clipboard does not contain pasteable text or image content.",
-  };
-}
-
 function mimeTypeFromUri(uri: string): string {
   const ext = uri.split(".").pop()?.toLowerCase();
   switch (ext) {
@@ -613,7 +556,7 @@ function mimeTypeFromUri(uri: string): string {
   }
 }
 
-export function isOwnedPastedImageUri(uri: string): boolean {
+function isOwnedPastedImageUri(uri: string): boolean {
   try {
     const url = new URL(uri);
     if (url.protocol !== "file:") {

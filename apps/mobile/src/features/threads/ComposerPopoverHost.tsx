@@ -1,5 +1,5 @@
 import type { ReactNode, RefObject } from "react";
-import { createContext, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useRef, useState } from "react";
 import { View, type ViewInstance } from "react-native";
 import type { SharedValue } from "react-native-reanimated";
 
@@ -25,10 +25,7 @@ export function ComposerPopoverHost(props: {
   const hostRef = useRef<ViewInstance>(null);
   const [content, setContent] = useState<ReactNode>(null);
   const [layoutVersion, setLayoutVersion] = useState(0);
-  const value = useMemo(
-    () => ({ hostRef, setContent, layoutVersion, popoverHeight: props.popoverHeight }),
-    [layoutVersion, props.popoverHeight],
-  );
+  const value = { hostRef, setContent, layoutVersion, popoverHeight: props.popoverHeight };
 
   return (
     <ComposerPopoverHostContext.Provider value={value}>

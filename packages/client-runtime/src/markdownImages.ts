@@ -1,16 +1,14 @@
 import {
   isNetworkPath,
   isWindowsAbsolutePath,
-  stripSlashPrefixedWindowsDrive,
   workspaceRelativeFilePath,
 } from "@t3tools/shared/path";
 
 import {
+  markdownDestinationHostPath,
   normalizeMarkdownLinkDestination,
-  safeDecodeURIComponent,
   splitMarkdownLinkSearchAndHash,
 } from "@t3tools/shared/markdownLinks";
-import { parseFileUrlHref } from "@t3tools/shared/fileLinks";
 
 const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
@@ -59,19 +57,9 @@ export function classifyMarkdownImageSource(
     return { _tag: "Direct", uri: source };
   }
 
-  if (/^file:/i.test(source)) {
-    const target = parseFileUrlHref(source);
-    return target === null
-      ? { _tag: "Blocked" }
-      : hostFileSource(
-          stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(target.path)),
-          workspaceRoot,
-        );
-  }
-
-  const path = stripSlashPrefixedWindowsDrive(
-    safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path),
-  );
+  const path = markdownDestinationHostPath(source);
+  if (path === null) return { _tag: "Blocked" };
+  if (/^file:/i.test(source)) return hostFileSource(path, workspaceRoot);
   if (path.length === 0) return { _tag: "Blocked" };
   if (path.startsWith("/") || isWindowsAbsolutePath(path)) {
     return hostFileSource(path, workspaceRoot);

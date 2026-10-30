@@ -9,7 +9,7 @@ import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIcon } from "../lib/markdownLinkIcons";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
-import { resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
+import { resolveMarkdownFileIcon, resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
 import type {
   MarkdownLinkCustomization,
   SelectableMarkdownTextProps,
@@ -92,18 +92,26 @@ function presentation(
 export function useEnrichedLinkVariants(
   urls: ReadonlyArray<string>,
   props: SelectableMarkdownTextProps,
+  fileHrefs: ReadonlySet<string>,
 ) {
-  const { linkCustomization, skills, textStyle } = props;
+  const { linkCustomization, skills, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
     for (const url of urls) {
       if (byUrl.has(url)) continue;
-      const value = presentation(url, { linkCustomization, skills, textStyle });
+      const label = fileHrefs.has(url) ? fileEmbedLabel?.(url, false) : null;
+      const value = label
+        ? {
+            label,
+            color: textStyle.fileTextColor,
+            icon: markdownFileIconSource(resolveMarkdownFileIcon(label)),
+          }
+        : presentation(url, { linkCustomization, skills, textStyle });
       if (value) byUrl.set(url, value);
     }
     return byUrl;
-  }, [urls, linkCustomization, skills, textStyle]);
+  }, [urls, linkCustomization, skills, textStyle, fileHrefs, fileEmbedLabel]);
   const chipForegrounds = useMemo(
     () =>
       new Map(

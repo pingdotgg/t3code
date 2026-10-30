@@ -22,7 +22,17 @@ import {
   matchesKeybindingShortcut,
   normalizeEventKey,
 } from "@t3tools/shared/keybindings";
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { isElectron } from "~/env";
+import { FileSurfaceLoading } from "./fileSurfaceChrome";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
@@ -61,9 +71,34 @@ const HTML_RENDER_SHORTCUT_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
 export const isPdfPreviewFile = (path: string): boolean =>
   /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
+const PdfViewer = lazy(() => import("./PdfViewer"));
+
+function PdfDocument(props: { src: string; title: string }) {
+  const [src] = useState(props.src);
+  // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
+  // expose only the first page, even when pdfViewerEnabled reports support.
+  const native =
+    !isElectron &&
+    navigator.pdfViewerEnabled &&
+    !/iPad|iPhone|iPod/.test(navigator.userAgent) &&
+    !(navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  return native ? (
+    // oxlint-disable-next-line react/iframe-missing-sandbox -- Chromium's PDF plugin requires an unsandboxed frame; src is an exact-file asset grant.
+    <iframe
+      src={`${src.split("#", 1)[0]}#navpanes=0&view=FitH`}
+      title={props.title}
+      className="block h-full min-h-0 w-full flex-1 border-0 bg-white"
+    />
+  ) : (
+    <Suspense fallback={<FileSurfaceLoading />}>
+      <PdfViewer src={src} title={props.title} />
+    </Suspense>
+  );
+}
+
 /**
  * HTML runs in a sandboxed frame with an opaque origin, so a page cannot reach
- * the app's session or storage. PDFs use the browser's native viewer.
+ * the app's session or storage. PDFs use a native viewer or the lazy PDF.js fallback.
  */
 export function BrowserDocumentFrame(props: {
   readonly src: string;
@@ -76,13 +111,7 @@ export function BrowserDocumentFrame(props: {
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
-    <embed
-      key={props.src}
-      src={props.src}
-      type="application/pdf"
-      title={props.title}
-      className="min-h-0 w-full flex-1 border-0"
-    />
+    <PdfDocument key={key} src={props.src} title={props.title} />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
       key={key}
@@ -127,6 +156,7 @@ export function HtmlRenderDocument(props: {
   const postTheme = () => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts the current theme to the sandboxed iframe's window
   useEffect(postTheme, [theme]);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const environmentKeybindings = useAtomValue(
@@ -161,6 +191,7 @@ export function HtmlRenderDocument(props: {
       "*",
     );
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts allowed and blocked shortcuts to the sandboxed iframe's window
   useEffect(postShortcuts, [blocked, shortcuts]);
   // Pages can forge key/code pairs; reject pairs matching other bindings and require named keys to match the
   // shortcut.
@@ -200,85 +231,54 @@ export function HtmlRenderDocument(props: {
     }
     void openLink(url, { event: modifiers }).catch((cause: unknown) => console.error(cause));
   });
-  // Require frame focus and recent app use to block opens on load; scripts can still wait for the reader's
-  // next input.
-  useEffect(() => {
-    const openLink = (event: MessageEvent) => {
-      const frame = frameRef.current;
-      const request = readHtmlRenderLinkRequest(event.data);
-      if (
-        request === undefined ||
-        frame === null ||
-        event.source !== frame.contentWindow ||
-        document.activeElement !== frame ||
-        navigator.userActivation?.isActive === false
-      ) {
-        return;
-      }
-      open(request.url, request);
-      frame.contentWindow?.postMessage(htmlRenderResult(request.id), "*");
-    };
-    window.addEventListener("message", openLink);
-    return () => window.removeEventListener("message", openLink);
-  }, []);
-  useEffect(() => {
-    const replayKey = (event: MessageEvent) => {
-      const frame = frameRef.current;
-      const key = readHtmlRenderKeyDown(event.data);
-      if (
-        key === undefined ||
-        frame === null ||
-        event.source !== frame.contentWindow ||
-        document.activeElement !== frame ||
-        navigator.userActivation?.isActive === false
-      ) {
-        return;
-      }
-      if (!isShortcut(key)) return;
-      frame.dispatchEvent(
-        new KeyboardEvent("keydown", { ...key, bubbles: true, cancelable: true }),
-      );
-    };
-    window.addEventListener("message", replayKey);
-    return () => window.removeEventListener("message", replayKey);
-  }, []);
-  useEffect(() => {
-    const openImage = (event: MessageEvent) => {
-      const frame = frameRef.current;
-      const request = readHtmlRenderImageRequest(event.data);
-      if (
-        request === undefined ||
-        frame === null ||
-        event.source !== frame.contentWindow ||
-        document.activeElement !== frame ||
-        navigator.userActivation?.isActive === false
-      ) {
-        return;
-      }
-      setExpandedImage({ images: [{ src: request.src, name: request.name }], index: 0 });
-    };
-    window.addEventListener("message", openImage);
-    return () => window.removeEventListener("message", openImage);
-  }, []);
   const { onFullscreenChange } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports fullscreen to the parent while the image viewer is open, and clears it on unmount
   useEffect(() => {
     if (expandedImage === null) return;
     onFullscreenChange?.(true);
     return () => onFullscreenChange?.(false);
   }, [expandedImage, onFullscreenChange]);
-  const { onContentHeight } = props;
-  // Listen at commit because a fast page may post its initial height before passive effects run.
-  useLayoutEffect(() => {
-    if (onContentHeight === undefined) return;
-    const resize = (event: MessageEvent) => {
-      const height = readHtmlRenderContentHeight(event.data);
-      if (height !== undefined && event.source === frameRef.current?.contentWindow) {
-        onContentHeight(height);
+  // Links, keys and images require frame focus and recent reader activity: a page can take
+  // focus by script, so this blocks opens on load, though not a page that waits for the
+  // reader's next input.
+  const onFrameMessage = useEffectEvent((frame: HTMLIFrameElement, event: MessageEvent) => {
+    const height = readHtmlRenderContentHeight(event.data);
+    if (height !== undefined) {
+      props.onContentHeight?.(height);
+      return;
+    }
+    if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
+    const linkRequest = readHtmlRenderLinkRequest(event.data);
+    if (linkRequest !== undefined) {
+      open(linkRequest.url, linkRequest);
+      frame.contentWindow?.postMessage(htmlRenderResult(linkRequest.id), "*");
+      return;
+    }
+    const key = readHtmlRenderKeyDown(event.data);
+    if (key !== undefined) {
+      if (isShortcut(key)) {
+        frame.dispatchEvent(
+          new KeyboardEvent("keydown", { ...key, bubbles: true, cancelable: true }),
+        );
       }
+      return;
+    }
+    const imageRequest = readHtmlRenderImageRequest(event.data);
+    if (imageRequest !== undefined) {
+      setExpandedImage({ images: [{ src: imageRequest.src, name: imageRequest.name }], index: 0 });
+    }
+  });
+  // Attach at commit because a fast page may post its initial height before passive effects run.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches a window message listener for the iframe at commit, before its first height post
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    if (frame === null) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.source === frame.contentWindow) onFrameMessage(frame, event);
     };
-    window.addEventListener("message", resize);
-    return () => window.removeEventListener("message", resize);
-  }, [onContentHeight]);
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
   return (
     <>
       <iframe

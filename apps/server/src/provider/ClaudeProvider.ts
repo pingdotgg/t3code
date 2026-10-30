@@ -78,11 +78,10 @@ function claudeSubscriptionLabel(subscriptionType: string | undefined): string |
 
   switch (normalized) {
     case "claudemaxsubscription":
-      return "Max";
     case "claudemax5xsubscription":
-      return "Max 5x";
+      return "Max";
     case "claudemax20xsubscription":
-      return "Max 20x";
+      return "Ultra";
     case "claudeenterprisesubscription":
       return "Enterprise";
     case "claudeteamsubscription":
@@ -93,11 +92,10 @@ function claudeSubscriptionLabel(subscriptionType: string | undefined): string |
       return "Free";
     case "max":
     case "maxplan":
-      return "Max";
     case "max5":
-      return "Max 5x";
+      return "Max";
     case "max20":
-      return "Max 20x";
+      return "Ultra";
     case "enterprise":
       return "Enterprise";
     case "team":
@@ -431,10 +429,14 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
-  const probeResult = yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(
-    Effect.result,
-  );
-  const capabilities = Result.isSuccess(probeResult) ? probeResult.success : undefined;
+  const fileSystem = yield* FileSystem.FileSystem;
+  // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
+  const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
+  const probeResult = cwdExists
+    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(Effect.result)
+    : undefined;
+  const capabilities =
+    probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   return {
     ...machineSnapshot,
     skills,
@@ -442,7 +444,7 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
       COMPACT_SLASH_COMMAND,
       ...(capabilities?.slashCommands ?? []),
     ]),
-    slashCommandsPending: !capabilities,
+    slashCommandsPending: cwdExists && !capabilities,
   };
 });
 

@@ -9,6 +9,7 @@ import { KeyboardController, useKeyboardState } from "react-native-keyboard-cont
 import { isDuoDevice } from "../lib/device-type";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
+import { HeaderItemsWidthContext } from "./header-items-width";
 import {
   SearchBar,
   Stack,
@@ -21,6 +22,10 @@ import {
   type HeaderBarButtonItemWithMenu,
   type HeaderBarButtonSearchBarPlacementItem,
 } from "react-native-screens";
+
+// UIKit's bar margins, and the width of a glass bar button.
+const BAR_MARGINS = 32;
+const BAR_BUTTON_WIDTH = 44;
 
 type HeaderItem = NonNullable<NonNullable<StackHeaderConfigProps["ios"]>["leadingItems"]>[number];
 type ToolbarItem =
@@ -268,11 +273,32 @@ export function V5StackHeader(props: {
       : undefined;
   const searchOptions = options.headerSearchBarOptions;
   const autofocusRef = searchOptions?.ref ?? searchRef;
+  // iOS ignores the native autoFocus prop, and SearchBar's imperative handle changes every
+  // commit, so a ref callback would refocus on each render; focus once after the header mounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the native SearchBar once after the header mounts, since iOS ignores autoFocus
   useEffect(() => {
     if (!searchOptions?.autoFocus) return;
     const frame = requestAnimationFrame(() => autofocusRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [searchOptions?.autoFocus, autofocusRef]);
+  const searchButton = !bottomSearch && searchOptions?.placement === "integratedButton";
+  const itemsWidth =
+    BAR_MARGINS +
+    (props.canGoBack && options.headerBackVisible !== false ? BAR_BUTTON_WIDTH : 0) +
+    (searchButton ? BAR_BUTTON_WIDTH : 0) +
+    [...leading, ...trailing].reduce(
+      (width, item) =>
+        width +
+        (item.type === "spacer"
+          ? item.sizing === "fixed"
+            ? item.width
+            : 0
+          : // The keyboard dismiss rides the vertical bar, not beside the title.
+            item.id === "dismiss-keyboard"
+            ? 0
+            : BAR_BUTTON_WIDTH),
+      0,
+    );
   const titleStyle = StyleSheet.flatten(options.headerTitleStyle);
   const headerStyle = StyleSheet.flatten(options.headerStyle);
   const appearance = {
@@ -289,56 +315,58 @@ export function V5StackHeader(props: {
     subtitleFontColor: options.headerSubtitleStyle?.color,
   };
   return (
-    <Stack.HeaderConfig
-      hidden={options.headerShown === false}
-      transparent={options.headerTransparent}
-      title={title}
-      subtitle={options.unstable_headerSubtitle ?? options.headerSubtitle}
-      backButtonHidden={options.headerBackVisible === false}
-      ios={{
-        navigationItemStyle: options.unstable_navigationItemStyle,
-        // Opt-ins apply only where the Duo is short: folded, or held landscape. The Duo
-        // resolves `automatic` to minimize on scroll, so the tall unfolded display opts out.
-        minimizationBehavior: !isDuoDevice(deviceType)
-          ? undefined
-          : deviceType === "duo-unfolded" &&
-              nativeMetrics &&
-              nativeMetrics.height > nativeMetrics.width
-            ? "never"
-            : options.unstable_headerMinimizationBehavior,
-        tintColor: options.headerTintColor,
-        searchBar:
-          mailSearch || searchOptions ? (
-            <SearchBar
-              {...searchOptions}
-              ref={searchOptions?.ref ?? searchRef}
-              hideNavigationBar={false}
-              hideWhenScrolling={false}
-              allowToolbarIntegration={searchOptions?.allowToolbarIntegration ?? true}
-              placement={bottomSearch ? "integrated" : (searchOptions?.placement ?? "automatic")}
-              placeholder={mailSearch?.placeholder ?? searchOptions?.placeholder ?? "Search"}
-              onFocus={(event) => {
-                searchOptions?.onFocus?.(event);
-              }}
-              onChangeText={(event) => {
-                mailSearch?.onSearchTextChange?.(event.nativeEvent.text);
-                searchOptions?.onChangeText?.(event);
-              }}
-            />
-          ) : undefined,
-        toolbarItems: bottom,
-        leadingItems: leading,
-        trailingItems: trailing,
-        titleItem: isValidElement(titleElement)
-          ? { id: "title", render: () => titleElement }
-          : undefined,
-        largeTitleEnabled: options.headerLargeTitle,
-        backButtonDisplayMode: options.headerBackButtonDisplayMode ?? "minimal",
-        backButtonMenuEnabled: options.headerBackButtonMenuEnabled ?? true,
-        backButtonTitle: options.headerBackTitle,
-        standardAppearance: appearance,
-        scrollEdgeAppearance: appearance,
-      }}
-    />
+    <HeaderItemsWidthContext value={itemsWidth}>
+      <Stack.HeaderConfig
+        hidden={options.headerShown === false}
+        transparent={options.headerTransparent}
+        title={title}
+        subtitle={options.unstable_headerSubtitle ?? options.headerSubtitle}
+        backButtonHidden={options.headerBackVisible === false}
+        ios={{
+          navigationItemStyle: options.unstable_navigationItemStyle,
+          // Opt-ins apply only where the Duo is short: folded, or held landscape. The Duo
+          // resolves `automatic` to minimize on scroll, so the tall unfolded display opts out.
+          minimizationBehavior: !isDuoDevice(deviceType)
+            ? undefined
+            : deviceType === "duo-unfolded" &&
+                nativeMetrics &&
+                nativeMetrics.height > nativeMetrics.width
+              ? "never"
+              : options.unstable_headerMinimizationBehavior,
+          tintColor: options.headerTintColor,
+          searchBar:
+            mailSearch || searchOptions ? (
+              <SearchBar
+                {...searchOptions}
+                ref={searchOptions?.ref ?? searchRef}
+                hideNavigationBar={false}
+                hideWhenScrolling={false}
+                allowToolbarIntegration={searchOptions?.allowToolbarIntegration ?? true}
+                placement={bottomSearch ? "integrated" : (searchOptions?.placement ?? "automatic")}
+                placeholder={mailSearch?.placeholder ?? searchOptions?.placeholder ?? "Search"}
+                onFocus={(event) => {
+                  searchOptions?.onFocus?.(event);
+                }}
+                onChangeText={(event) => {
+                  mailSearch?.onSearchTextChange?.(event.nativeEvent.text);
+                  searchOptions?.onChangeText?.(event);
+                }}
+              />
+            ) : undefined,
+          toolbarItems: bottom,
+          leadingItems: leading,
+          trailingItems: trailing,
+          titleItem: isValidElement(titleElement)
+            ? { id: "title", render: () => titleElement }
+            : undefined,
+          largeTitleEnabled: options.headerLargeTitle,
+          backButtonDisplayMode: options.headerBackButtonDisplayMode ?? "minimal",
+          backButtonMenuEnabled: options.headerBackButtonMenuEnabled ?? true,
+          backButtonTitle: options.headerBackTitle,
+          standardAppearance: appearance,
+          scrollEdgeAppearance: appearance,
+        }}
+      />
+    </HeaderItemsWidthContext>
   );
 }

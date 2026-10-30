@@ -7,7 +7,8 @@ export function resolveFilePreviewPath(path: string | null, cwd: string): string
   return path === "." || workspaceRelativeFilePath(path, cwd) === "." ? null : path;
 }
 
-export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
+export const isMarkdownPreviewFile = (path: string): boolean =>
+  /\.(?:md|mdx|markdown|mdown|mkd)$/i.test(path);
 
 export function filePreviewReadErrorMessage(error: ProjectReadFileError): string {
   switch (error.failure) {

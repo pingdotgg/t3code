@@ -354,6 +354,7 @@ export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",
   "branch_already_exists",
   "branch_checked_out_in_worktree",
+  "config_locked",
   "host_key_unverified",
   "not_a_repository",
   "path_already_exists",
