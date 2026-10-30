@@ -7188,6 +7188,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           model: "claude-opus-4-6",
         },
       };
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({ ...wakeTurnInit, model: "claude-sonnet-4-6" }),
+      );
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
           ...turnInput,
@@ -7195,8 +7199,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           text: "Review this.",
         }),
       );
-      // An organization policy that disallows the requested model shows up only as init's model.
-      yield* harness.offerAndWait(claudeSdkFrame({ ...wakeTurnInit, model: "claude-sonnet-4-6" }));
       yield* Queue.offerAll(harness.sdkMessages, [
         makeAssistantErrorFrame({
           uuid: "00000000-0000-4000-8000-000000000661",
@@ -7204,10 +7206,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           parentToolUseId: "toolu_restricted_model_subagent",
           model: "claude-haiku-4-5-20251001",
         }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "model_refusal_fallback",
+          scope: "local",
+          trigger: "refusal",
+          direction: "retry",
+          original_model: "claude-opus-4-6",
+          fallback_model: "claude-haiku-4-5",
+          request_id: null,
+          content: "A side question used a fallback model.",
+          uuid: "00000000-0000-4000-8000-000000000665",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
         turnOneResult,
       ]);
       yield* Queue.take(harness.terminalReceipts);
       assert.equal(lastProviderTurn(harness.events).model, "claude-sonnet-4-6");
+      const localNotices = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "system_notice" &&
+        event.turnItem.message === "A side question used a fallback model."
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(localNotices, 1);
+      assert.isNull(localNotices[0]?.nodeId);
 
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({

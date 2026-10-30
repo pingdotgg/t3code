@@ -8686,7 +8686,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
                 threadId: context.input.threadId,
                 runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
+                nodeId:
+                  message.subtype === "model_refusal_fallback" && message.scope === "local"
+                    ? null
+                    : context.input.rootNodeId,
                 providerThreadId: context.input.providerThread.id,
                 providerTurnId: context.providerTurnId,
                 nativeItemRef: {
