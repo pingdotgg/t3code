@@ -143,7 +143,7 @@ const message = (
 });
 
 it.effect.each([true, false])(
-  "ThreadSearch excludes bootstrap text before the hit limit (indexed: %s)",
+  "ThreadSearch excludes bootstrap text before the hit and candidate limits (indexed: %s)",
   (indexed) =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -191,7 +191,7 @@ it.effect.each([true, false])(
         `uLtRaThInK:\r\n\t\u00a0${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
       ]) {
         yield* sql`
-          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${indexed ? 10_000 : 2000})
           INSERT INTO orchestration_v2_projection_messages
             (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
           SELECT 'attachment-limit:' || i, ${threadId}, 'user', 0,
@@ -221,6 +221,15 @@ it.layer(layerTest)("ThreadSearch", (it) => {
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
         );
+        if (match !== null) {
+          assert.lengthOf(
+            plan.filter((row) =>
+              row.detail.startsWith("SEARCH messages USING INTEGER PRIMARY KEY"),
+            ),
+            2,
+            plan.map((row) => row.detail).join("\n"),
+          );
+        }
       }
     }),
   );

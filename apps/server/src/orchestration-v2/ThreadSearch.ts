@@ -95,7 +95,7 @@ const SNIPPET_LENGTH = 240;
 // The newest hits read per query. A common word stops here instead of reading
 // every message, so time stays flat as history grows.
 const MESSAGE_HIT_LIMIT = 2000;
-// How many of the newest index hits the filters may pass over to fill that
+// How many of the newest non-placeholder index hits the filters may pass over to fill that
 // limit: a rare short word or hidden threads would otherwise read every hit.
 const MESSAGE_CANDIDATE_LIMIT = 10_000;
 // Without the index, how many of the newest messages a search scans.
@@ -104,6 +104,14 @@ const MESSAGE_SCAN_LIMIT = 20_000;
 // SQLite's ltrim needs the characters matched by isAttachmentOnlyBootstrapPrompt's \s explicitly.
 const BOOTSTRAP_PREFIX_WHITESPACE =
   "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+
+const nonPlaceholderMessageCondition = (sql: SqlClient.SqlClient) => sql`
+  CASE
+    WHEN substr(json_extract(messages.payload_json, '$.text'), 1, 11) = 'Ultrathink:' COLLATE NOCASE
+      THEN ltrim(substr(json_extract(messages.payload_json, '$.text'), 12), ${BOOTSTRAP_PREFIX_WHITESPACE})
+    ELSE json_extract(messages.payload_json, '$.text')
+  END <> ${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}
+`;
 
 /**
  * The SQL inputs for a message search, or null when the query has no token
@@ -214,9 +222,12 @@ export const messageHitsQuery = (
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
           WHERE orchestration_v2_message_search MATCH ${match}
             AND orchestration_v2_message_search.rowid >= coalesce((
-              SELECT rowid FROM orchestration_v2_message_search
+              SELECT orchestration_v2_message_search.rowid FROM orchestration_v2_message_search
+              INNER JOIN orchestration_v2_projection_messages AS messages
+                ON messages.rowid = orchestration_v2_message_search.rowid
               WHERE orchestration_v2_message_search MATCH ${match}
-              ORDER BY rowid DESC
+                AND ${nonPlaceholderMessageCondition(sql)}
+              ORDER BY orchestration_v2_message_search.rowid DESC
               LIMIT 1 OFFSET ${MESSAGE_CANDIDATE_LIMIT - 1}
             ), 0)
         `
@@ -224,11 +235,7 @@ export const messageHitsQuery = (
       -- Answers to an agent's question show inside its question card, where
       -- neither find nor a jump can reach them.
       AND messages.message_id NOT LIKE 'async-answer:%'
-      AND CASE
-        WHEN substr(json_extract(messages.payload_json, '$.text'), 1, 11) = 'Ultrathink:' COLLATE NOCASE
-          THEN ltrim(substr(json_extract(messages.payload_json, '$.text'), 12), ${BOOTSTRAP_PREFIX_WHITESPACE})
-        ELSE json_extract(messages.payload_json, '$.text')
-      END <> ${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}
+      AND ${nonPlaceholderMessageCondition(sql)}
       AND NOT EXISTS (
         SELECT 1 FROM json_each(${substrings}) AS token
         WHERE instr(lower(json_extract(messages.payload_json, '$.text')), token.value) = 0
