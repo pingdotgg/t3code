@@ -1,6 +1,6 @@
 import type { Paragraph, PhrasingContent, Root, RootContent } from "mdast";
 import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
-import { type PluggableList, type Processor, unified } from "unified";
+import { type PluggableList, type Processor, type Transformer, unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { find, html } from "property-information";
@@ -165,6 +165,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
+  remarkKeepAutolinkSuffixes,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
@@ -176,6 +177,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
+  remarkKeepAutolinkSuffixes,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
@@ -328,6 +330,52 @@ type MarkdownAstNode = {
   };
   children?: MarkdownAstNode[];
 };
+
+function remarkKeepAutolinkSuffixes(): Transformer<Root> {
+  return (tree, file) => {
+    const source = String(file);
+    const visit = (node: Root | RootContent) => {
+      if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
+      for (let index = 0; index < node.children.length; index++) {
+        const child = node.children[index];
+        const next = node.children[index + 1];
+        if (child?.type === "link" && /^https?:\/\//i.test(child.url) && next?.type === "text") {
+          const suffix = /^[_~]+/.exec(next.value)?.[0];
+          if (!suffix) continue;
+          const label = child.children.length === 1 ? child.children[0] : undefined;
+          if (label?.type !== "text") continue;
+          if (label.value !== child.url && `http://${label.value}` !== child.url) continue;
+          const start = child.position?.start.offset;
+          const end = child.position?.end.offset;
+          const bare =
+            !child.position ||
+            (start !== undefined &&
+              end !== undefined &&
+              source.slice(start, end) === label.value &&
+              source.slice(end, end + suffix.length) === suffix);
+          if (bare) {
+            child.url += suffix;
+            label.value += suffix;
+            next.value = next.value.slice(suffix.length);
+            if (child.position && end !== undefined) {
+              const boundary = {
+                ...child.position.end,
+                column: child.position.end.column + suffix.length,
+                offset: end + suffix.length,
+              };
+              child.position.end = boundary;
+              if (label.position) label.position.end = boundary;
+              if (next.position) next.position.start = boundary;
+            }
+            if (!next.value) node.children.splice(index + 1, 1);
+          }
+        }
+        if (child) visit(child);
+      }
+    };
+    visit(tree);
+  };
+}
 
 function remarkPreserveCodeMeta() {
   return (tree: MarkdownAstNode) => {
