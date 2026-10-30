@@ -63,6 +63,11 @@ If your **Send shortcut** requires `Cmd+Enter` or `Ctrl+Enter`, that shortcut us
 your default follow-up behavior; add **Shift** to use the opposite action. This
 applies only to multiline messages when you choose the multiline send option.
 
+When you steer Claude while it runs a command, the command keeps running in the
+background and Claude reads your message right away. If Claude can't move it,
+for example with background tasks turned off, the steer waits for the command to
+finish.
+
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
 the oldest queued message as a steer. This leaves the current draft intact and
 requires an active turn that supports steering. If that shortcut sends the opposite

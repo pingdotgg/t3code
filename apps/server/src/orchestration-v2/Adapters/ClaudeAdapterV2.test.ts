@@ -2796,6 +2796,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly backgroundTasks?: (
       toolUseId: string,
     ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+    readonly offer?: (
+      message: SDKUserMessage,
+    ) => Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
@@ -2929,7 +2932,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 offer: (message) =>
                   Effect.sync(() => {
                     offeredMessages.push(message);
-                  }).pipe(Effect.andThen(changes.notify)),
+                  }).pipe(
+                    Effect.andThen(changes.notify),
+                    Effect.andThen(options?.offer?.(message) ?? Effect.void),
+                  ),
                 setModel: (model) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push({ model });
@@ -4784,6 +4790,208 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
         }
         assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("steer backgrounds only eligible root commands across overlapping offers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const moved = yield* Queue.unbounded<string>();
+        const moves: Array<{ id: string; offered: number; registered: boolean }> = [];
+        const registered = new Set(["registered"]);
+        const answers = new Map<string, Deferred.Deferred<void>>();
+        const failOnce = new Set<string>();
+        let rejectOffer = false;
+        const harness = yield* makeWakeHarnessWithOptions({
+          backgroundTasks: (id) =>
+            Effect.gen(function* () {
+              const isRegistered = registered.has(id);
+              moves.push({
+                id,
+                offered: harness.offeredMessages.length,
+                registered: isRegistered,
+              });
+              yield* Queue.offer(moved, id);
+              if (failOnce.delete(id)) {
+                return yield* new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                  method: "backgroundTasks",
+                  cause: new Error("Background tasks are disabled."),
+                });
+              }
+              const answer = answers.get(id);
+              if (answer !== undefined) yield* Deferred.await(answer);
+              return isRegistered;
+            }),
+          offer: () =>
+            rejectOffer
+              ? Effect.fail(
+                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                    method: "offer",
+                    cause: new Error("Input rejected."),
+                  }),
+                )
+              : Effect.void,
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attemptId = RunAttemptId.make("steer-command-cohorts");
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "Run the slow suites.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        let sequence = 0;
+        const uuid = () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, "0")}`;
+        const command = (id: string) =>
+          harness.offerAndWait(
+            claudeSdkFrame({
+              type: "assistant",
+              uuid: uuid(),
+              session_id: WAKE_NATIVE_SESSION,
+              parent_tool_use_id: null,
+              message: {
+                id: `message-${id}`,
+                model: "claude-sonnet-5-5",
+                content: [{ type: "tool_use", id, name: "Bash", input: { command: "vp test" } }],
+              },
+            }),
+          );
+        const taskStarted = (id: string) =>
+          harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: `task-${id}`,
+              tool_use_id: id,
+              description: "Run the suite",
+              is_backgrounded: false,
+              task_type: "local_bash",
+              uuid: uuid(),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        const steer = (text: string) =>
+          harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make(`steer-${sequence++}`),
+              text,
+              attachments: [],
+            },
+          });
+        // Background requests are forked; a later control request drains earlier
+        // requests without sleeps or assertions against an unobserved empty queue.
+        const through = Effect.fnUntraced(function* (id: string) {
+          for (;;) {
+            if ((yield* Queue.take(moved)) === id) return;
+          }
+        });
+        yield* command("registered");
+        yield* taskStarted("registered");
+        yield* command("late");
+        yield* steer("Skip the e2e tests.");
+        yield* through("late");
+        assert.equal(harness.offeredMessages[1]?.priority, "now");
+        assert.deepEqual(moves, [
+          { id: "registered", offered: 2, registered: true },
+          { id: "late", offered: 2, registered: false },
+        ]);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "user",
+            uuid: uuid(),
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "registered",
+                  content: "Command was manually backgrounded by user with ID: task-registered.",
+                },
+              ],
+            },
+          }),
+        );
+        yield* steer("Also skip lint.");
+        yield* through("late");
+        yield* command("new");
+        rejectOffer = true;
+        assert.isTrue(Exit.isFailure(yield* steer("Undeliverable steer").pipe(Effect.exit)));
+        rejectOffer = false;
+        registered.add("new");
+        yield* taskStarted("new");
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: uuid(), result: "", terminalReason: "aborted_tools" }),
+        );
+        registered.add("late");
+        yield* taskStarted("late");
+        yield* command("control");
+        yield* steer("Now stop waiting for the new suite, too.");
+        yield* through("control");
+        assert.isTrue(
+          moves.some((move) => move.id === "late" && move.registered && move.offered === 4),
+          "late registration retains eligibility from successful steers, even after an older abort",
+        );
+        assert.deepEqual(
+          moves.filter((move) => move.id === "new"),
+          [{ id: "new", offered: 5, registered: true }],
+          "a later command waits for its own successful steer, even if another offer fails",
+        );
+        // A move that hasn't answered absorbs later requests for its command,
+        // then runs once more if it answered before the task registered.
+        const answer = yield* Deferred.make<void>();
+        answers.set("slow", answer);
+        yield* command("slow");
+        yield* steer("Stop waiting for the slow suite.");
+        yield* through("slow");
+        registered.add("slow");
+        yield* taskStarted("slow");
+        yield* steer("Still skip the slow suite.");
+        yield* through("control");
+        assert.lengthOf(
+          moves.filter((move) => move.id === "slow"),
+          1,
+        );
+        yield* Deferred.succeed(answer, undefined);
+        yield* through("slow");
+        yield* command("last");
+        yield* steer("Wrap up.");
+        yield* through("last");
+        assert.deepEqual(
+          moves.filter((move) => move.id === "slow").map((move) => move.registered),
+          [false, true],
+        );
+        // The SDK throws when background tasks are off; the next steer tries again.
+        failOnce.add("throws");
+        registered.add("throws");
+        yield* command("throws");
+        yield* taskStarted("throws");
+        yield* steer("Skip it.");
+        yield* through("throws");
+        yield* steer("Skip it now.");
+        yield* through("throws");
+        assert.lengthOf(
+          moves.filter((move) => move.id === "throws"),
+          2,
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

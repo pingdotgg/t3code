@@ -3907,6 +3907,8 @@ interface ActiveClaudeTurnContext {
     usage: ClaudeMessageUsage | null;
   } | null;
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
+  // Only root Bash calls can unblock a steer; subagent commands keep their owner.
+  readonly rootCommands: Map<string, "foreground" | "steered">;
   // A successful status can precede the boundary that supplies its token counts.
   compaction: Extract<OrchestrationV2TurnItem, { type: "compaction" }> | null;
   readonly ignoredTaskIds: Set<string>;
@@ -4622,6 +4624,48 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
+        // SDK moves cannot be cancelled, so overlapping requests share one move and rerun
+        // after it answers. The final rerun check and release must not yield between them.
+        const rootCommandMoves = new Map<string, { rerun: boolean }>();
+        const backgroundForSteer = Effect.fn("ClaudeAdapterV2.backgroundForSteer")(
+          function* (
+            context: ActiveClaudeTurnContext,
+            query: ClaudeAgentSdkQuerySession,
+            toolUseId: string,
+          ) {
+            const inFlight = rootCommandMoves.get(toolUseId);
+            if (inFlight !== undefined) {
+              inFlight.rerun = true;
+              return;
+            }
+            const move = { rerun: false };
+            rootCommandMoves.set(toolUseId, move);
+            for (;;) {
+              if (
+                context.rootCommands.get(toolUseId) === "steered" &&
+                (yield* Ref.get(activeTurn)) === context &&
+                (yield* Ref.get(queryContext))?.query === query &&
+                context.toolCalls.has(toolUseId) &&
+                (yield* query.backgroundTasks(toolUseId).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration-v2.claude-steer-background-command-failed", {
+                      toolUseId,
+                      cause,
+                    }).pipe(Effect.as(false)),
+                  ),
+                ))
+              ) {
+                context.rootCommands.delete(toolUseId);
+                break;
+              }
+              if (!move.rerun) break;
+              move.rerun = false;
+            }
+            rootCommandMoves.delete(toolUseId);
+          },
+          // Only the session scope interrupts the move, and the map ends with it.
+          (effect) => effect.pipe(Effect.forkIn(sessionScope)),
+        );
         // A worktree handoff changes the project settings even within one session.
         let bypassCache: { cwd: string | null; availability: ClaudeBypassAvailability } | null =
           null;
@@ -6873,6 +6917,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly completedAt: DateTime.Utc;
         }) {
           const { toolCall } = input;
+          input.context?.rootCommands.delete(toolCall.nativeItemId);
           const toolNonExecutionKind = claudeToolNonExecutionKind(
             input.message,
             input.toolResult.tool_use_id,
@@ -7228,6 +7273,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly result?: SDKResultMessage;
         }) {
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
+          input.context.rootCommands.clear();
           if (input.context.compaction?.status === "running") {
             const reason = input.result?.subtype === "success" ? input.result.result.trim() : "";
             yield* emitProviderEvent({
@@ -8701,6 +8747,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (message.type === "system" && message.subtype === "task_started") {
             if (isClaudeNonSubagentTask(message)) {
+              if (message.tool_use_id !== undefined) {
+                if (message.is_backgrounded === true) {
+                  context.rootCommands.delete(message.tool_use_id);
+                } else if (message.task_type === "local_bash") {
+                  // An early move can return false until Claude registers the task.
+                  yield* backgroundForSteer(context, input.query, message.tool_use_id);
+                }
+              }
               const tailedCall =
                 message.tool_use_id === undefined
                   ? undefined
@@ -8920,6 +8974,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           const toolPresentations = claudeToolPresentationsFromAssistantMessage(message);
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
+            if (
+              toolUse.name === "Bash" &&
+              parentToolUseIdFromSdkMessage(message) === null &&
+              !context.rootCommands.has(toolUse.id)
+            ) {
+              context.rootCommands.set(toolUse.id, "foreground");
+            }
             const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
             if (toolUse.name === "Agent") {
               rememberClaudeSubagentLaunch(
@@ -9493,6 +9554,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const nativeRequestId = callbackOptions.toolUseID;
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
           const heldForEcho = context.heldRootFrames.length > 0;
+          if (
+            toolName === "Bash" &&
+            callbackOptions.agentID === undefined &&
+            !heldForEcho &&
+            !context.rootCommands.has(nativeRequestId)
+          ) {
+            context.rootCommands.set(nativeRequestId, "foreground");
+          }
           if (toolName === "Agent") {
             rememberClaudeSubagentLaunch(
               subagentModelCatalog,
@@ -10198,6 +10267,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               },
               streamUsage: null,
               toolCalls: new Map(),
+              rootCommands: new Map(),
               compaction: null,
               ignoredTaskIds: new Set(),
               announcedUsageLimits: new Set(),
@@ -10615,36 +10685,58 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(Path.Path, path),
             );
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
-            // The turn can end while the moves are answered. A steer offered
-            // then would start a new turn the orchestrator never asked for, so
-            // the steer fails and the orchestrator starts the follow-up turn.
-            if (
-              (yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId ||
-              (yield* Ref.get(queryContext)) !== existing
-            ) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver: CLAUDE_PROVIDER,
-                detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
-              });
-            }
-            yield* Ref.update(steeredTurns, (current) => {
-              const next = new Set(current);
-              next.add(turnInput.providerTurnId);
-              return next;
-            });
-            yield* Effect.uninterruptibleMask((restore) =>
-              restore(
-                existing.query.offer(userMessage, () => {
-                  pdfReservation.commit();
-                }),
-              ).pipe(
-                Effect.tap(() =>
-                  Effect.sync(() => {
-                    pdfReservation.commit();
-                  }),
-                ),
-              ),
+            // Keep the successful offer and command eligibility ahead of SDK frames.
+            const running = yield* sdkMessageLock.withPermits(1)(
+              Effect.gen(function* () {
+                // The turn can end while the moves are answered or while this
+                // waits for the lock. A steer offered then would start a new
+                // turn the orchestrator never asked for, so the steer fails and
+                // the orchestrator starts the follow-up turn.
+                if (
+                  (yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId ||
+                  (yield* Ref.get(queryContext)) !== existing
+                ) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
+                  });
+                }
+                yield* Effect.uninterruptibleMask((restore) =>
+                  restore(
+                    existing.query.offer(userMessage, () => {
+                      pdfReservation.commit();
+                    }),
+                  ).pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        pdfReservation.commit();
+                      }),
+                    ),
+                    Effect.tap(() =>
+                      Ref.update(steeredTurns, (current) => {
+                        const next = new Set(current);
+                        next.add(turnInput.providerTurnId);
+                        return next;
+                      }),
+                    ),
+                    // Eligibility survives older abort results and overlapping steers.
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        for (const [toolUseId, state] of currentTurn.rootCommands) {
+                          if (state === "foreground") {
+                            currentTurn.rootCommands.set(toolUseId, "steered");
+                          }
+                        }
+                      }),
+                    ),
+                  ),
+                );
+                return [...currentTurn.rootCommands.keys()];
+              }),
             );
+            for (const toolUseId of running) {
+              yield* backgroundForSteer(currentTurn, existing.query, toolUseId);
+            }
           },
           (effect, turnInput) =>
             effect.pipe(
