@@ -307,8 +307,8 @@ interface ThreadState {
   >;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
-  /** Prompts other clients queued while no T3 turn ran, shown once delivered. */
-  readonly externalPrompts: Map<string, string>;
+  /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` if no report preceded it. */
+  readonly externalPrompts: Map<string, { readonly text: string; readonly leads: boolean }>;
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
@@ -2233,7 +2233,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         detail: delivered.length === 0 ? null : delivered.map((entry) => entry.text).join("\n\n"),
         dropped: false,
         after: delivered.at(-1)?.inboxId,
-        first: delivered[0]?.inboxId,
+        // History begins at whichever OpenCode queued first: a report or another client's prompt.
+        first:
+          [...state.externalPrompts].find(([, prompt]) => prompt.leads)?.[0] ??
+          delivered[0]?.inboxId,
         children: new Set(),
       };
       state.wakes.push(wake);
@@ -2466,7 +2469,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           external !== undefined &&
           turn !== undefined
         ) {
-          yield* emitExternalPrompt(state, turn, event.data.inboxID, external);
+          yield* emitExternalPrompt(state, turn, event.data.inboxID, external.text);
         }
         return;
       }
@@ -2477,8 +2480,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         (state.active === undefined || (held && state.subagent === undefined))
       ) {
         const text = event.data.item.payload.text;
-        if (state.subagent === undefined) state.externalPrompts.set(event.data.inboxID, text);
-        else state.subagent.prompt ??= text;
+        if (state.subagent === undefined) {
+          state.externalPrompts.set(event.data.inboxID, { text, leads: state.reports.size === 0 });
+        } else state.subagent.prompt ??= text;
         return;
       }
       const started =
@@ -3268,7 +3272,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const wake = state.wakes.shift()!;
           const turn = state.active;
           if (turn !== undefined && wake.after !== undefined) turn.before = wake.after;
-          // Its first report is where its history begins, so fork and rollback cut there.
+          // Fork and rollback cut where its history begins.
           if (turn !== undefined && wake.first !== undefined) {
             turn.providerTurn = { ...turn.providerTurn, nativeTurnRef: ref(wake.first, "weak") };
           }

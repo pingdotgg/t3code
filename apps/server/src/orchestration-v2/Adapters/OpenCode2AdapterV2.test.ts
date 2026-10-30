@@ -3937,7 +3937,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  const continued = (after: ReadonlyArray<ProviderReplayEntry>) =>
+  const continued = (after: ReadonlyArray<ProviderReplayEntry>, external?: string) =>
     Effect.gen(function* () {
       const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const offered = yield* Deferred.make<void>();
@@ -3945,6 +3945,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ...backgroundLaunch(CHILD),
         event("session.execution.succeeded", { sessionID: SESSION }),
         event("session.execution.succeeded", { sessionID: CHILD }),
+        ...(external === undefined
+          ? []
+          : [
+              event("session.inbox.enqueued", {
+                inboxID: external,
+                sessionID: SESSION,
+                item: { type: "user", payload: { text: "qwe!", files: [] }, delivery: "steer" },
+              }),
+            ]),
         event("session.inbox.enqueued", {
           inboxID: "msg_report",
           sessionID: SESSION,
@@ -3964,6 +3973,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           },
         }),
         event("session.execution.started", { sessionID: SESSION }),
+        ...(external === undefined
+          ? []
+          : [event("session.inbox.delivered", { sessionID: SESSION, inboxID: external })]),
         event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
         event("session.text.ended", {
           sessionID: SESSION,
@@ -4033,6 +4045,59 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       assert.equal(forked.nativeThreadRef?.nativeId, FORK);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "reverts OpenCode at another client's prompt queued before a continuation's report",
+    () =>
+      Effect.gen(function* () {
+        const { runtime, thread, first, second } = yield* continued(
+          [
+            out("message.list", "<any>"),
+            reply("message.list", {
+              data: [
+                {
+                  id: "msg_report",
+                  time: { created: 3 },
+                  text: CONTINUED_REPORT,
+                  type: "synthetic",
+                },
+                { id: "msg_external", time: { created: 2 }, text: "qwe!", type: "user" },
+                { id: CONTINUED_PROMPT, time: { created: 1 }, text: "hi", type: "user" },
+              ],
+              cursor: {},
+            }),
+            out("session.revert.stage", {
+              sessionID: SESSION,
+              messageID: "msg_external",
+              files: false,
+            }),
+            replyData("session.revert.stage", { messageID: "msg_external", files: [] }),
+            out("session.revert.commit", { sessionID: SESSION }),
+            reply("session.revert.commit", null),
+            out("message.list", "<any>"),
+            reply("message.list", {
+              data: [{ id: CONTINUED_PROMPT, time: { created: 1 }, text: "hi", type: "user" }],
+              cursor: {},
+            }),
+          ],
+          "msg_external",
+        );
+        const snapshot = yield* runtime.rollbackThread({
+          providerThread: thread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint:first"),
+            appRunOrdinal: 1,
+            providerTurn: first,
+          },
+          providerThreadTurns: [first, second],
+        });
+        assert.deepEqual(
+          snapshot.providerTurns.map((turn) => turn.id),
+          [first.id],
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.effect("keeps a subagent a stopped background reply started off the next turn", () =>
