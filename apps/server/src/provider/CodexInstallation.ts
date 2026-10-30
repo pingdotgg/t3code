@@ -1,5 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
-import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ProviderInstallState,
+  type ServerProviderCompatibilityAdvisory,
+} from "@t3tools/contracts";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -125,6 +129,9 @@ interface CodexInstallationService {
   readonly managedDirectory: string;
   readonly resolve: () => Effect.Effect<CodexExecutable, CodexInstallationError>;
   readonly acquire: () => Effect.Effect<CodexExecutable, CodexInstallationError, Scope.Scope>;
+  readonly compatibility: (
+    version: string,
+  ) => Effect.Effect<ServerProviderCompatibilityAdvisory | undefined>;
   readonly start: Effect.Effect<ProviderInstallState, CodexInstallationError>;
   readonly cancel: (
     operationId: string,
@@ -796,6 +803,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     managedDirectory,
     resolve,
     acquire,
+    compatibility,
     start,
     cancel,
     state: SubscriptionRef.get(state),

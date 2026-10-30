@@ -22,6 +22,7 @@ import {
   type ProviderApprovalDecision,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderSetupError,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
@@ -66,6 +67,8 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ModelManifest from "../../provider/ModelManifest.ts";
+import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
@@ -876,6 +879,7 @@ describe("CodexAdapterV2 session initialize", () => {
   const openReplaySession = (
     transcript: CodexReplay.CodexAppServerReplayTranscript,
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
+    compatibility?: CodexAdapterV2.CodexAdapterV2Options["compatibility"],
   ) =>
     Effect.gen(function* () {
       const driver = yield* CodexReplay.makeReplayDriver(
@@ -887,6 +891,7 @@ describe("CodexAdapterV2 session initialize", () => {
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
+        ...(compatibility === undefined ? {} : { compatibility }),
         clientFactory: {
           open: (openInput) =>
             Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
@@ -1010,6 +1015,54 @@ describe("CodexAdapterV2 session initialize", () => {
       const providerThread = yield* session.ensureThread("thread-initialize-retry");
       assert.equal(providerThread.nativeThreadRef?.nativeId, "initialize-retry");
       assert.equal(session.initializeRequests(), 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("refuses to open a session on a Codex version marked broken", () =>
+    Effect.gen(function* () {
+      const [initialize] = replayPreamble("broken-version");
+      const failure = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "broken-version",
+          entries: [
+            initialize!,
+            {
+              type: "emit_inbound",
+              label: "initialize",
+              frame: {
+                id: 1,
+                result: {
+                  userAgent: "T3 Code/0.144.3 (Mac OS 15.5.0; x86_64) unknown (T3 Code; 0.1.5)",
+                  codexHome: "/tmp/codex-home",
+                  platformFamily: "unix",
+                  platformOs: "macos",
+                },
+              },
+            },
+          ],
+        }),
+        undefined,
+        (version) =>
+          Effect.succeed(
+            resolveProviderCompatibility(
+              ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+              CodexAdapterV2.CODEX_DRIVER_KIND,
+              version,
+            ),
+          ),
+      ).pipe(Effect.flip);
+
+      assert.instanceOf(failure, ProviderAdapter.ProviderAdapterOpenSessionError);
+      assert.instanceOf(failure.cause, ProviderSetupError);
+      assert.equal(
+        failure.cause.message,
+        "Codex 0.144.3 does not work with this T3 Code release. Update Codex to >=0.159.0, then retry.",
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
