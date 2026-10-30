@@ -25,7 +25,7 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo, type ReactNode, useRef } from "react";
-import { GaugeIcon, ZapIcon } from "lucide-react";
+import { ChevronDownIcon, GaugeIcon, ZapIcon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
@@ -653,10 +653,6 @@ export const TraitsPicker = memo(function TraitsPicker({
                       ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
                       : "shrink-0 whitespace-nowrap",
                     triggerClassName,
-                    // Effort reads on from the model name, "Opus 5.5 High", at about the space
-                    // inside the name: this cancels the model chip's end padding and the row gap.
-                    isComposerOwned && (effortWord !== null ? "-ms-1 ps-0" : "-ms-1 ps-0.5"),
-                    // The word is muted next to the model name and brightens like it on hover.
                     effortWord !== null &&
                       "text-muted-foreground hover:text-foreground data-pressed:text-foreground data-popup-open:text-foreground",
                   )}
@@ -727,6 +723,9 @@ export const TraitsPicker = memo(function TraitsPicker({
               <span data-composer-control-label>{triggerLabel}</span>
             </>
           )}
+          {isComposerOwned && size !== "xs" ? (
+            <ChevronDownIcon aria-hidden="true" className="size-3 opacity-65" />
+          ) : null}
         </TooltipTrigger>
         <TooltipPopup side="top">{triggerDescription}</TooltipPopup>
       </Tooltip>

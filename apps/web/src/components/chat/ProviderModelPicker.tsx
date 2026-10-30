@@ -6,6 +6,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { memo, useRef, useState } from "react";
+import { ChevronDownIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -273,6 +274,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </Badge>
           ) : null}
         </span>
+        {props.isComposerOwned && size !== "xs" ? (
+          <ChevronDownIcon aria-hidden="true" className="size-3 opacity-65" />
+        ) : null}
       </PopoverTrigger>
       <PopoverPopup
         {...(props.isComposerOwned ? composerFloatingLayerProps : {})}

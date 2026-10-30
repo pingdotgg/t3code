@@ -109,7 +109,6 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
                   ref={permissionsChipRef}
                   data-composer-shortcut="composer.mode"
                   size={size}
-                  // Mirrors the effort chip's trailing pe-1 so both gaps around the bars match.
                   className="ps-1.5"
                   aria-label={`Permissions: ${runtimeModeOption.label}`}
                 />
