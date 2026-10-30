@@ -1572,7 +1572,8 @@ const make = Effect.gen(function* () {
       : null;
     const resultContextTransferId = resultTransfer?.id ?? null;
     const latestTerminalResultContextTransferId = resultTransferForRun(terminalRun)?.id ?? null;
-    const modelSelection = childRun?.modelSelection ??
+    const executionRun = taskResultRun ?? childRun;
+    const modelSelection = executionRun?.modelSelection ??
       childControls.thread.modelSelection ?? {
         instanceId: task.providerInstanceId,
         model: task.model,
@@ -1591,7 +1592,8 @@ const make = Effect.gen(function* () {
       hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
       providerInstanceId: modelSelection.instanceId,
       model: modelSelection.model,
-      executedModel: childRun === undefined ? null : runExecutedModel(childControls, childRun),
+      executedModel:
+        executionRun === undefined ? null : runExecutedModel(childControls, executionRun),
       options: modelSelection.options ?? [],
       summary: derivedResult,
       resultContextTransferId,
