@@ -290,10 +290,10 @@ export const make = Effect.gen(function* () {
       return;
     }
     yield* writeDesktopEntry;
-    // Linux distro packages run a shared (unpackaged) Electron but provide a
-    // stable executable for OAuth callbacks. Only leave registration to the
-    // developer when neither a packaged app nor a distro launcher is present.
-    if (!environment.isPackaged && Option.isNone(environment.desktopLauncherPath)) return;
+    // Distro packages use shared Electron, so isPackaged may be false even
+    // for production. Development uses its own scheme and should not claim
+    // the OS default handler on startup.
+    if (environment.isDevelopment) return;
 
     yield* Effect.gen(function* () {
       const { png } = yield* assets.iconPaths;
