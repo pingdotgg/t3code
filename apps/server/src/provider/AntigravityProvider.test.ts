@@ -384,7 +384,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           expect(yield* harness.provider.snapshot.getSnapshot).toMatchObject({
             installed: true,
             status: "warning",
-            auth: { status: "unauthenticated", type: auth.type },
+            auth: { status: "unauthenticated", type: auth.type, label: auth.label },
             message: "Connect with Gemini API key to use Antigravity and load models.",
             models: [],
             slashCommands: [],
@@ -398,7 +398,11 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual([]);
         }
         const refreshed = yield* harness.provider.snapshot.refresh;
-        expect(refreshed.auth).toEqual({ status: "unauthenticated", type: auth.type });
+        expect(refreshed.auth).toEqual({
+          status: "unauthenticated",
+          type: auth.type,
+          label: auth.label,
+        });
         expect(refreshed.message).toBe(
           "Connect with Gemini API key to use Antigravity and load models.",
         );
