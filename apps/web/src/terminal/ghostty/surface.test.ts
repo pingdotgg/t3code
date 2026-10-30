@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  applyTerminalAttachStreamEvent,
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  nextTerminalAttachSeedState,
+} from "@t3tools/client-runtime/state/terminal";
+import { synchronizeTerminalSession } from "../../components/ThreadTerminalDrawer";
 
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
@@ -435,6 +441,86 @@ describe("GhosttyTerminalSurface visibility", () => {
       expect(harness.onData.mock.calls).toEqual([["echo hi"], ["echo hi"]]);
     },
   );
+
+  it("keeps a selection through redraws until the selected text changes", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    const seed = nextTerminalAttachSeedState();
+    let state = applyTerminalAttachStreamEvent(seed, {
+      type: "snapshot",
+      snapshot: {
+        threadId: "thread",
+        terminalId: "term-1",
+        cwd: "/repo",
+        worktreePath: null,
+        status: "running",
+        pid: 123,
+        history: "* Working |",
+        exitCode: null,
+        exitSignal: null,
+        label: "Terminal",
+        updatedAt: "2026-10-20T00:00:00.000Z",
+      },
+    });
+    let cursor = synchronizeTerminalSession(surface, seed, state, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    harness.flushFrame();
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointermove", 85, 1);
+    harness.pointer("pointerup", 85, 0);
+    expect(surface.getSelection()).toBe("* Working |");
+
+    // A TUI repaints its spinner line in place, the way Claude Code redraws.
+    const redraw = (data: string) => {
+      const previous = state;
+      state = applyTerminalAttachStreamEvent(state, {
+        type: "output",
+        threadId: "thread",
+        terminalId: "term-1",
+        data,
+      });
+      cursor = synchronizeTerminalSession(surface, previous, state, cursor);
+    };
+    redraw("\r\x1b[2K* Working |");
+    expect(surface.getSelection()).toBe("* Working |");
+
+    redraw("\r\x1b[2K* Working /");
+    expect(surface.getSelection()).toBe("");
+    expect(surface.getSelectionPosition()).toBeNull();
+  });
+
+  it("reports where a selection sits after output scrolls it", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    const rows = Array.from({ length: 10 }, (_, index) => `row ${index}`);
+    surface.write(`\x1b[?1049h\x1b[H${rows.join("\r\n")}`);
+    harness.flushFrame();
+    harness.pointer("pointerdown", 5, 1, {}, 0, 50);
+    harness.pointer("pointermove", 45, 1, {}, 0, 50);
+    harness.pointer("pointerup", 45, 0, {}, 0, 50);
+    const text = surface.getSelection();
+    const before = surface.getSelectionPosition();
+    expect(text).toMatch(/^row \d$/);
+
+    surface.write("\r\nrow 10\r\nrow 11");
+    expect(surface.getSelection()).toBe(text);
+    expect(surface.getSelectionPosition()?.start.y).toBe(before!.start.y - 2);
+  });
+
+  it("keeps a drag anchored to its text when output scrolls it mid-drag", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    const rows = Array.from({ length: 10 }, (_, index) => `row ${index}`);
+    surface.write(`\x1b[?1049h\x1b[H${rows.join("\r\n")}`);
+    harness.flushFrame();
+    harness.pointer("pointerdown", 5, 1, {}, 0, 50);
+    harness.pointer("pointermove", 45, 1, {}, 0, 50);
+    expect(surface.getSelection()).toBe("row 6");
+
+    // The pointer stays over the row that output scrolls "row 8" into.
+    surface.write("\r\nrow 10\r\nrow 11");
+    harness.pointer("pointermove", 53, 1, {}, 0, 50);
+    expect(surface.getSelection()).toBe("row 6\nrow 7\nrow 8");
+  });
 
   it("does not activate a link replaced before pointer release", async () => {
     const harness = createHarness();
