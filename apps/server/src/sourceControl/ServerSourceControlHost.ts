@@ -21,19 +21,21 @@ export const layer = Layer.effect(
     const secrets = yield* SecretResolver.SecretResolver;
     return SourceControlHost.SourceControlHost.of({
       settings: {
-        get: serverSettings.getSettings.pipe(
-          Effect.flatMap((settings) =>
-            resolveSourceControlHostSecrets(settings.sourceControlHosts, (source) =>
-              resolveSettingsSecret(secrets, source),
-            ).pipe(
-              Effect.map((sourceControlHosts) =>
-                sourceControlHosts === settings.sourceControlHosts
-                  ? settings
-                  : { ...settings, sourceControlHosts },
+        get: serverSettings.getSettings,
+        getWithSecrets: (kind) =>
+          serverSettings.getSettings.pipe(
+            Effect.flatMap((settings) =>
+              resolveSourceControlHostSecrets(settings.sourceControlHosts, kind, (source) =>
+                resolveSettingsSecret(secrets, source),
+              ).pipe(
+                Effect.map((sourceControlHosts) =>
+                  sourceControlHosts === settings.sourceControlHosts
+                    ? settings
+                    : { ...settings, sourceControlHosts },
+                ),
               ),
             ),
           ),
-        ),
         update: serverSettings.updateSettings,
       },
       process: { run: process.run },

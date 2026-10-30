@@ -3,10 +3,11 @@ import type * as SecretResolver from "@t3tools/secret-provider-core/server/Secre
 import * as Effect from "effect/Effect";
 
 /** An unreadable secret comes back as `""`, so a credential that is missing behaves as unset. */
-export const resolveSettingsSecret = (
+export const resolveSettingsSecret = Effect.fn("SettingsSecrets.resolve")(function* (
   resolver: SecretResolver.SecretResolver["Service"],
   value: SettingsSecretValue,
-): Effect.Effect<string> =>
-  !isSecretReference(value)
-    ? Effect.succeed(value)
-    : resolver.read([value]).pipe(Effect.map(([secret]) => secret ?? ""));
+) {
+  if (!isSecretReference(value)) return value;
+  const [secret] = yield* resolver.read([value]);
+  return secret ?? "";
+});

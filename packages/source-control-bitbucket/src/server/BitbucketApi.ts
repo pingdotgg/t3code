@@ -653,7 +653,7 @@ export const make = Effect.gen(function* () {
 
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
 
-  const currentCredential = host.settings.get.pipe(
+  const currentCredential = host.settings.getWithSecrets(BitbucketClient.definition.kind).pipe(
     Effect.map((settings) =>
       resolveCredential(
         readSourceControlHostSettings(

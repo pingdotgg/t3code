@@ -129,7 +129,7 @@ export const make = Effect.gen(function* () {
   const fromSettings = (host: string) =>
     normalizeHost(host) !== DEFAULT_HOST
       ? Effect.succeed(null)
-      : sourceControlHost.settings.get.pipe(
+      : sourceControlHost.settings.getWithSecrets(GitCafeClient.definition.kind).pipe(
           Effect.map(
             (settings) =>
               settingsSecretLiteral(

@@ -49,25 +49,22 @@ export function writeSecretFieldValues(
 
 type SourceControlHostsSettings = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 
-/** Replaces each secret provider reference in a credential field with the secret it names. */
-export function resolveSourceControlHostSecrets<R>(
-  hosts: SourceControlHostsSettings,
-  resolve: (source: SecretReference) => Effect.Effect<string, never, R>,
-): Effect.Effect<SourceControlHostsSettings, never, R> {
-  const pending = Object.entries(hosts).flatMap(([kind, fields]) =>
-    (SOURCE_CONTROL_HOST_SECRET_FIELDS.get(kind) ?? []).flatMap((field) => {
+/** Replaces each secret provider reference in one host kind's credential fields with the secret it names. */
+export const resolveSourceControlHostSecrets = Effect.fn("SourceControlHost.resolveSecrets")(
+  function* <R>(
+    hosts: SourceControlHostsSettings,
+    kind: string,
+    resolve: (source: SecretReference) => Effect.Effect<string, never, R>,
+  ) {
+    const fields = hosts[kind] ?? {};
+    const pending = (SOURCE_CONTROL_HOST_SECRET_FIELDS.get(kind) ?? []).flatMap((field) => {
       const value = fields[field];
-      return isSecretReference(value) ? [{ kind, field, source: value }] : [];
-    }),
-  );
-  if (pending.length === 0) return Effect.succeed(hosts);
-  return Effect.forEach(pending, ({ kind, field, source }) =>
-    resolve(source).pipe(Effect.map((value) => ({ kind, field, value }))),
-  ).pipe(
-    Effect.map((fields) => {
-      const next: Record<string, Readonly<Record<string, unknown>>> = { ...hosts };
-      for (const { kind, field, value } of fields) next[kind] = { ...next[kind], [field]: value };
-      return next;
-    }),
-  );
-}
+      return isSecretReference(value) ? [{ field, source: value }] : [];
+    });
+    if (pending.length === 0) return hosts;
+    const resolved = yield* Effect.forEach(pending, ({ field, source }) =>
+      resolve(source).pipe(Effect.map((value) => [field, value] as const)),
+    );
+    return { ...hosts, [kind]: { ...fields, ...Object.fromEntries(resolved) } };
+  },
+);
