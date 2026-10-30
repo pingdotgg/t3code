@@ -15,6 +15,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -438,14 +439,16 @@ it("notes a substituted model with the root provider notice from the same run", 
   const notice = (
     id: string,
     message: string,
-    overrides: Partial<Pick<SystemNotice, "nodeId" | "runId" | "nativeItemRef">> = {},
+    overrides: Partial<
+      Pick<SystemNotice, "nodeId" | "runId" | "nativeItemRef" | "providerTurnId">
+    > = {},
   ): SystemNotice => ({
     id: TurnItemId.make(id),
     threadId: parentThreadId,
     runId: run.id,
     nodeId: NodeId.make("root"),
     providerThreadId: null,
-    providerTurnId: null,
+    providerTurnId: ProviderTurnId.make("active-notice"),
     nativeItemRef: {
       driver: ProviderDriverKind.make("claudeAgent"),
       nativeId: id,
@@ -473,6 +476,10 @@ it("notes a substituted model with the root provider notice from the same run", 
           nodeId: NodeId.make("native-subagent"),
         }),
         notice("other-run", "Another run's notice.", { runId: RunId.make("other") }),
+        notice("old-attempt", "An earlier attempt's notice.", {
+          providerTurnId: ProviderTurnId.make("old-attempt"),
+        }),
+        notice("unattributed", "A notice without attempt attribution.", { providerTurnId: null }),
         notice("usage-limit", "T3 usage limit notice.", {
           nativeItemRef: {
             driver: ProviderDriverKind.make("claudeAgent"),
@@ -482,8 +489,19 @@ it("notes a substituted model with the root provider notice from the same run", 
         }),
       ],
       providerTurns: [
-        { runAttemptId: run.activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" },
-        { runAttemptId: RunAttemptId.make("other"), ordinal: 2, model: "gpt-5.4-nano" },
+        { id: ProviderTurnId.make("active-notice"), runAttemptId: run.activeAttemptId, ordinal: 1 },
+        {
+          id: ProviderTurnId.make("active-result"),
+          runAttemptId: run.activeAttemptId,
+          ordinal: 2,
+          model: "gpt-5.4-mini",
+        },
+        {
+          id: ProviderTurnId.make("old-attempt"),
+          runAttemptId: RunAttemptId.make("other"),
+          ordinal: 3,
+          model: "gpt-5.4-nano",
+        },
       ] as never,
     },
     run,
