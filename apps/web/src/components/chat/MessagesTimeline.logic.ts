@@ -392,35 +392,6 @@ export function resolveTimelineMinimapVisibleRange(state: {
   return { start, end };
 }
 
-export function isTimelineMinimapRowVisible(
-  rowIndex: number,
-  visibleStart: number | null | undefined,
-  visibleEnd: number | null | undefined,
-): boolean {
-  return (
-    visibleStart != null && visibleEnd != null && rowIndex >= visibleStart && rowIndex <= visibleEnd
-  );
-}
-
-export function resolveTimelineMinimapCurrentIndex(input: {
-  readonly visibleStart: number | null | undefined;
-  readonly visibleEnd: number | null | undefined;
-  readonly rowIndices: ReadonlyArray<number>;
-}): number | null {
-  if (input.visibleStart == null || input.visibleEnd == null) {
-    return null;
-  }
-  let precedingIndex: number | null = null;
-  for (const [index, rowIndex] of input.rowIndices.entries()) {
-    if (rowIndex >= input.visibleStart) {
-      // Prefer the first visible user message, otherwise the turn being read.
-      return rowIndex <= input.visibleEnd ? index : precedingIndex;
-    }
-    precedingIndex = index;
-  }
-  return precedingIndex;
-}
-
 function resolveTimelineSideGutter(viewportWidth: number, contentWidth: number): number {
   if (!Number.isFinite(viewportWidth) || viewportWidth <= 0 || !Number.isFinite(contentWidth)) {
     return 0;
