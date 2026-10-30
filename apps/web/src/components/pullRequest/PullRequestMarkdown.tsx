@@ -19,10 +19,15 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
-import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import {
+  remarkPullRequestAutolinks,
+  remarkPullRequestRelativeUrls,
+  splitPullRequestBody,
+} from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
   autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
+  resolveUrl: ((url: string) => string) | null;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
@@ -70,10 +75,11 @@ export function PullRequestMarkdown({
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
   const autolinks = context?.autolinks;
+  const resolveUrl = context?.resolveUrl;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
-  const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = autolinks
-    ? [[remarkPullRequestAutolinks, { autolinks }]]
-    : [];
+  const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
+  if (autolinks) extraRemarkPlugins.push([remarkPullRequestAutolinks, { autolinks }]);
+  if (resolveUrl) extraRemarkPlugins.push([remarkPullRequestRelativeUrls, { resolveUrl }]);
   return (
     <div
       className={cn(

@@ -52,3 +52,27 @@ export function remarkPullRequestAutolinks(options: {
   };
   return (tree: MarkdownNode) => visit(tree);
 }
+
+const LINKED_TYPES = new Set(["image", "link", "definition"]);
+const HTML_SOURCE = /(<[a-z][^<>]*?\bsrc\s*=\s*["'])([^"'<>]*)/giu;
+
+/**
+ * Resolves the link destinations the host writes relative to its server. It runs on the parsed
+ * tree because code is never a link, so a destination written inside code keeps its text.
+ */
+export function remarkPullRequestRelativeUrls(options: {
+  readonly resolveUrl: (url: string) => string;
+}) {
+  const visit = (node: MarkdownNode): void => {
+    if (LINKED_TYPES.has(node.type) && node.url !== undefined) {
+      node.url = options.resolveUrl(node.url);
+    } else if (node.type === "html" && node.value !== undefined) {
+      node.value = node.value.replace(
+        HTML_SOURCE,
+        (_tag, prefix: string, url: string) => `${prefix}${options.resolveUrl(url)}`,
+      );
+    }
+    node.children?.forEach(visit);
+  };
+  return (tree: MarkdownNode) => visit(tree);
+}

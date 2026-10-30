@@ -1731,3 +1731,76 @@ it.effect(
       }
     }),
 );
+
+it.effect.each(["fj", "tea"] as const)(
+  "uses %s credentials only for configured media origins",
+  (command) => {
+    const commands: string[][] = [];
+    return Effect.gen(function* () {
+      const cli = yield* ForgejoCli.make;
+      assert.strictEqual(
+        yield* cli.mediaToken("https://forgejo.test/attachments/upload"),
+        "media-token",
+      );
+      const count = commands.length;
+      for (const url of [
+        "https://unknown.test/attachments/upload",
+        "https://forgejo.test:444/attachments/upload",
+        "http://forgejo.test/attachments/upload",
+        "https://user@forgejo.test/attachments/upload",
+      ]) {
+        assert.isNull(yield* cli.mediaToken(url));
+      }
+      assert.strictEqual(
+        commands.filter((args) => args.includes("whoami") || args.includes("helper")).length,
+        1,
+      );
+      assert.isAtLeast(count, 1);
+    }).pipe(
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          exists: () => Effect.succeed(command === "fj"),
+          readFileString: () =>
+            Effect.succeed(
+              encodeJson({ hosts: { "forgejo.test": { type: "OAuth", token: "media-token" } } }),
+            ),
+        }),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("No HTTP during credential lookup")),
+      ),
+      Effect.provide(
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) => {
+              commands.push([...input.args]);
+              if (input.command === "fj") {
+                assert.deepStrictEqual(input.args, ["--host", "https://forgejo.test", "whoami"]);
+                return Effect.succeed(processOutput(""));
+              }
+              if (input.args.includes("helper")) {
+                assert.deepStrictEqual(input.args, ["login", "helper", "get", "--login", "work"]);
+                assert.strictEqual(input.stdin, "protocol=https\nhost=forgejo.test\n\n");
+                return Effect.succeed(
+                  processOutput(
+                    "protocol=https\nhost=forgejo.test\nusername=maria\npassword=media-token\n",
+                  ),
+                );
+              }
+              assert.deepStrictEqual(input.args, ["login", "list", "--output", "json"]);
+              return Effect.succeed(
+                processOutput(
+                  encodeJson([
+                    { name: "work", url: "https://forgejo.test", user: "maria", default: "true" },
+                  ]),
+                ),
+              );
+            },
+          },
+        }),
+      ),
+    );
+  },
+);

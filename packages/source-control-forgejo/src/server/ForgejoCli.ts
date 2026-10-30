@@ -147,6 +147,8 @@ export class ForgejoCli extends Context.Service<
     readonly api: (
       input: ForgejoApiInput,
     ) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, ForgejoCliError>;
+    /** A refreshed credential for a media URL on a configured HTTPS server, or null. */
+    readonly mediaToken: (url: string) => Effect.Effect<string | null>;
   }
 >()("@t3tools/source-control-forgejo/server/ForgejoCli") {}
 
@@ -719,7 +721,36 @@ export const make = Effect.gen(function* () {
       });
     return result;
   });
-  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });
+  const mediaToken = Effect.fn("ForgejoCli.mediaToken")(
+    function* (value: string) {
+      const url = URL.parse(value);
+      if (!url || url.protocol !== "https:" || url.username || url.password) return null;
+      const cwd = yield* HostProcess.WorkingDirectory;
+      const server = yield* resolveTarget({ cwd, reference: value }, true);
+      if (new URL(server.baseUrl).origin !== url.origin) return null;
+      if (server.command === "fj") return (yield* readKeys(cwd)).hosts[server.login]?.token ?? null;
+      const output = yield* execute({
+        cwd,
+        args: ["login", "helper", "get", "--login", server.login],
+        stdin: `protocol=https\nhost=${url.host}\n\n`,
+      });
+      const fields = new Map(
+        output.stdout
+          .trim()
+          .split(/\r?\n/)
+          .map((line) => {
+            const index = line.indexOf("=");
+            return [line.slice(0, index), line.slice(index + 1)];
+          }),
+      );
+      const origin = URL.parse(`${fields.get("protocol")}://${fields.get("host")}`);
+      return !output.stdoutTruncated && origin?.origin === url.origin
+        ? fields.get("password") || null
+        : null;
+    },
+    Effect.orElseSucceed(() => null),
+  );
+  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api, mediaToken });
 });
 
 export const layer = Layer.effect(ForgejoCli, make);

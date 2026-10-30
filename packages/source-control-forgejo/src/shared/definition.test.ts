@@ -129,3 +129,50 @@ describe("Forgejo change request host", () => {
     ).toBe("forge.example");
   });
 });
+
+describe("Forgejo uploads", () => {
+  const uuid = "8e603325-bb2b-4e32-a9bc-f1fa20b6c40b";
+  const media = (url: string) => definition.mediaUrl(new URL(url));
+  const resolve = (url: string, changeRequestUrl: string) =>
+    definition.resolveRelativeUrl(url, changeRequestUrl);
+
+  it("fetches an upload from the server that serves it, under its mount or a repository", () => {
+    expect(media(`https://git.example.test:3000/attachments/${uuid}?download=1#top`)).toEqual({
+      fetchUrl: `https://git.example.test:3000/attachments/${uuid}`,
+      fileName: uuid,
+    });
+    for (const path of [`/git/attachments/${uuid}`, `/team/repo/attachments/${uuid}`]) {
+      expect(media(`https://git.example.test${path}`)?.fetchUrl).toBe(
+        `https://git.example.test${path}`,
+      );
+    }
+  });
+
+  it("claims no upload another host owns or a token could not reach", () => {
+    for (const url of [
+      `http://git.example.test/attachments/${uuid}`,
+      "https://git.example.test/attachments/not-an-upload",
+      `https://git.example.test/attachments/${uuid}/extra`,
+      `https://dev.azure.com/org/_apis/wit/attachments/${uuid}`,
+    ]) {
+      expect(media(url), url).toBeNull();
+    }
+  });
+
+  it("links a pasted upload on the server of its change request, below the server's mount", () => {
+    expect(resolve(`/attachments/${uuid}`, "https://git.example.test/git/team/repo/pulls/7")).toBe(
+      `https://git.example.test/git/attachments/${uuid}`,
+    );
+    expect(resolve(`attachments/${uuid}`, "https://codeberg.org/team/repo/issues/7")).toBe(
+      `https://codeberg.org/attachments/${uuid}`,
+    );
+    for (const url of [
+      `https://cdn.example.test/attachments/${uuid}`,
+      `/attachments/${uuid}/extra`,
+      "/team/repo/pulls/8",
+    ]) {
+      expect(resolve(url, "https://git.example.test/team/repo/pulls/7"), url).toBeNull();
+    }
+    expect(resolve(`/attachments/${uuid}`, "not a url")).toBeNull();
+  });
+});
