@@ -44,6 +44,7 @@ import {
 } from "../pullRequest/pullRequestList.logic";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import {
+  expandGoalSubcommands,
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
@@ -68,6 +69,7 @@ export function useComposerMenuItems({
   selectedProvider,
   selectedProviderSkills,
   selectedProviderSlashCommands,
+  goalObjective,
   showSkillsInSlashMenu,
   questionAttachmentTarget,
 }: {
@@ -84,6 +86,7 @@ export function useComposerMenuItems({
   readonly selectedProvider: ProviderDriverKind;
   readonly selectedProviderSkills: ServerProvider["skills"];
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
+  readonly goalObjective: string | null;
   readonly showSkillsInSlashMenu: boolean;
   readonly questionAttachmentTarget: DraftId | null;
 }) {
@@ -271,7 +274,10 @@ export function useComposerMenuItems({
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
         composerTrigger.rangeStart === 0,
       );
-      return searchSlashCommandItems(slashCommandItems, query);
+      return searchSlashCommandItems(
+        expandGoalSubcommands(slashCommandItems, query, goalObjective),
+        query,
+      );
     }
     if (composerTrigger.kind === "skill") {
       return searchProviderSkills(selectedProviderSkills, composerTrigger.query).map((skill) => ({

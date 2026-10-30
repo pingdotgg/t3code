@@ -234,6 +234,23 @@ describe("composerSubmissionIntentForKey", () => {
 });
 
 describe("detectComposerTrigger", () => {
+  it.each(["/goal ", "/goal r", "/goal resume", "/goal edit"])(
+    "keeps goal subcommand completion open for %j",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length)).toEqual({
+        kind: "slash-command",
+        query: text.slice(1),
+        rangeStart: 0,
+        rangeEnd: text.length,
+      });
+    },
+  );
+
+  it.each(["Mention /goal resume", "/goal fix the tests", "/goal\nresume"])(
+    "does not complete a goal subcommand in %j",
+    (text) => expect(detectComposerTrigger(text, text.length)).toBeNull(),
+  );
+
   it.each([
     ["Run /tmp/build.sh", "Run /tmp/build.sh".length],
     ["/etc/hosts", "/etc/hosts".length],

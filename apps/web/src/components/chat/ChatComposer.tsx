@@ -1112,6 +1112,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isLoading: isComposerMenuLoading,
     emptyState: composerMenuEmptyState,
   } = useComposerMenuItems({
+    goalObjective: props.activeThreadShell?.goal?.objective ?? null,
     composerTrigger,
     environmentId,
     linkedEnvironments,
@@ -1891,7 +1892,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
-      const replacement = `/${item.command.name} `;
+      const replacement = item.replacementText ?? `/${item.command.name} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,
         trigger.rangeEnd,

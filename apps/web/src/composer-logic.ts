@@ -250,6 +250,15 @@ export function collapseExpandedComposerCursor(
 
 export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
+  const prefix = text.slice(0, cursor);
+  if (/^\/goal[\t ]+[a-z]*$/i.test(prefix)) {
+    return {
+      kind: "slash-command",
+      query: prefix.slice(1),
+      rangeStart: 0,
+      rangeEnd: cursor,
+    };
+  }
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
   if (token.startsWith("/")) {
