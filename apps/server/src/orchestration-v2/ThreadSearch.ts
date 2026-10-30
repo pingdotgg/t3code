@@ -33,7 +33,7 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
-import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { indexedMessageCondition } from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
@@ -100,6 +100,10 @@ const MESSAGE_HIT_LIMIT = 2000;
 const MESSAGE_CANDIDATE_LIMIT = 10_000;
 // Without the index, how many of the newest messages a search scans.
 const MESSAGE_SCAN_LIMIT = 20_000;
+
+// SQLite's ltrim needs the characters matched by isAttachmentOnlyBootstrapPrompt's \s explicitly.
+const BOOTSTRAP_PREFIX_WHITESPACE =
+  "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
 
 /**
  * The SQL inputs for a message search, or null when the query has no token
@@ -220,6 +224,11 @@ export const messageHitsQuery = (
       -- Answers to an agent's question show inside its question card, where
       -- neither find nor a jump can reach them.
       AND messages.message_id NOT LIKE 'async-answer:%'
+      AND CASE
+        WHEN substr(json_extract(messages.payload_json, '$.text'), 1, 11) = 'Ultrathink:' COLLATE NOCASE
+          THEN ltrim(substr(json_extract(messages.payload_json, '$.text'), 12), ${BOOTSTRAP_PREFIX_WHITESPACE})
+        ELSE json_extract(messages.payload_json, '$.text')
+      END <> ${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}
       AND NOT EXISTS (
         SELECT 1 FROM json_each(${substrings}) AS token
         WHERE instr(lower(json_extract(messages.payload_json, '$.text')), token.value) = 0
@@ -454,9 +463,7 @@ export const make = Effect.gen(function* () {
     const hitCount = (threadId: ThreadId) => hitCounts.get(threadId) ?? 1;
     const matchMessage = messageMatcher(input.query);
     for (const row of rows) {
-      const text = isAttachmentOnlyBootstrapPrompt(row.text)
-        ? ""
-        : row.text.replace(MARKDOWN_LINK, "$1");
+      const text = row.text.replace(MARKDOWN_LINK, "$1");
       const match = matchMessage(text);
       if (match === null) continue;
       const hit = { row, text, ...match };
