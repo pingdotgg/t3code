@@ -10,6 +10,7 @@ import {
   buildSidebarProjectSnapshots,
   resolveSidebarProjectScopeKey,
   getSidebarProjectSettingsKey,
+  filterSidebarProjectScopeKeysByEnvironment,
 } from "./sidebarProjectGrouping";
 import type { Project } from "./types";
 
@@ -141,10 +142,32 @@ describe("environment grouping", () => {
     const key = groups[0]!.projectKey;
     const scope = { key, excludedEnvironmentIds: new Set([remoteEnvironmentId]) };
     expect(resolveSidebarProjectScopeKey({ ...scope, groups })).toBe(key);
+    const persistedKeys = [key, "unloaded-project"];
+    expect(
+      filterSidebarProjectScopeKeysByEnvironment({
+        ...scope,
+        groups,
+        keys: persistedKeys,
+      }),
+    ).toEqual(persistedKeys);
 
     const remainingGroups = buildSidebarProjectSnapshots({ ...input, projects: [remote] });
     expect(remainingGroups[0]!.projectKey).toBe(key);
     expect(resolveSidebarProjectScopeKey({ ...scope, groups: remainingGroups })).toBeNull();
+    expect(
+      filterSidebarProjectScopeKeysByEnvironment({
+        ...scope,
+        groups: remainingGroups,
+        keys: persistedKeys,
+      }),
+    ).toEqual(["unloaded-project"]);
+    expect(
+      filterSidebarProjectScopeKeysByEnvironment({
+        groups: remainingGroups,
+        keys: persistedKeys,
+        excludedEnvironmentIds: new Set(),
+      }),
+    ).toEqual(persistedKeys);
     expect(
       resolveSidebarProjectScopeKey({ groups: remainingGroups, key, canClearMissingScope: true }),
     ).toBe(key);

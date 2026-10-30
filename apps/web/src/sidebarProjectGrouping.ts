@@ -128,6 +128,15 @@ export function resolveSidebarProjectScopeKeys(input: {
   ];
 }
 
+export function filterSidebarProjectScopeKeysByEnvironment(input: {
+  readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly keys: readonly string[];
+  readonly settings?: ProjectGroupingSettings;
+  readonly excludedEnvironmentIds: ReadonlySet<EnvironmentId>;
+}): string[] {
+  return input.keys.filter((key) => resolveSidebarProjectScopeKey({ ...input, key }) !== null);
+}
+
 export function buildPhysicalToLogicalProjectKeyMap(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;
