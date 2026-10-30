@@ -527,7 +527,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     <div
       className="group flex flex-col items-end gap-1"
       data-user-message-attribution={folded ? "agent" : undefined}
-      data-user-message-grouped={stacked || row.groupedWithPrevious ? "" : undefined}
     >
       {userMessage.attribution === "t3code" ? (
         <p
@@ -784,13 +783,19 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
 }
 
+// Always rendered so the bubble keeps its place in the tree (and its expanded state) when a
+// message joins or leaves a burst.
 function StackedBubbleRow({ stacked, children }: { stacked: boolean; children: ReactNode }) {
-  return stacked ? (
-    <div className="flex w-full flex-row-reverse items-end gap-2 pointer-coarse:flex-col pointer-coarse:gap-1">
+  return (
+    <div
+      className={
+        stacked
+          ? "flex w-full flex-row-reverse items-end gap-2 pointer-coarse:flex-col pointer-coarse:gap-1"
+          : "contents"
+      }
+    >
       {children}
     </div>
-  ) : (
-    children
   );
 }
 
