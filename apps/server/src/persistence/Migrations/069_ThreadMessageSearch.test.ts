@@ -131,7 +131,7 @@ it.effect.each(["existing", "inserted", "updated", "backfilled", "rebuilt"])(
           SELECT rowid, json_extract(payload_json, '$.text')
           FROM orchestration_v2_projection_messages
           WHERE rowid NOT IN (SELECT rowid FROM orchestration_v2_message_search)
-        `;
+        `.pipe(Effect.provideService(SqlClient.SafeIntegers, true));
       }
       yield* runMigrations({ toMigrationInclusive: path === "backfilled" ? 69 : undefined });
       if (path === "rebuilt") yield* rebuildMessageSearch(sql);
