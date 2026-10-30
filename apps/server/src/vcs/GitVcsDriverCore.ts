@@ -4553,6 +4553,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ]);
     });
 
+  const fetchRemoteRef: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteRef"] = Effect.fn(
+    "fetchRemoteRef",
+  )(function* (input) {
+    yield* runGit("GitVcsDriver.fetchRemoteRef.fetch", input.cwd, [
+      "fetch",
+      "--quiet",
+      "--no-tags",
+      "--",
+      input.remoteName,
+      `+${input.remoteRef}:refs/heads/${input.localBranch}`,
+    ]);
+  });
+
   const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = (input) =>
     executeGitWithStableDiagnostics(
       "GitVcsDriver.setBranchUpstream",
@@ -4992,6 +5005,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }),
     switchRef: Effect.fnUntraced(function* (input) {
       return yield* withListRefsInvalidation(input.cwd, switchRef(input));
+    }),
+    fetchRemoteRef: Effect.fnUntraced(function* (input) {
+      return yield* withListRefsInvalidation(input.cwd, fetchRemoteRef(input));
     }),
     initRepo: initRepoWithListRefsInvalidation,
     listLocalBranchNames,

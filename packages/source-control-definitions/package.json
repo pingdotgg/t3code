@@ -14,6 +14,7 @@
   "dependencies": {
     "@t3tools/source-control-azure-devops": "workspace:*",
     "@t3tools/source-control-bitbucket": "workspace:*",
+    "@t3tools/source-control-bitbucket-server": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
     "@t3tools/source-control-forgejo": "workspace:*",
     "@t3tools/source-control-gitcafe": "workspace:*",

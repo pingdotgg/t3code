@@ -3307,6 +3307,43 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("materializes a remote ref outside refs/heads as a local branch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["checkout", "-b", "feature/pr"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+        const headSha = (yield* git(cwd, ["rev-parse", "HEAD"])).trim();
+        yield* git(cwd, ["push", "origin", "HEAD:refs/pull-requests/1/from"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+        yield* git(cwd, ["branch", "-D", "feature/pr"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.fetchRemoteRef({
+          cwd,
+          remoteName: "origin",
+          remoteRef: "refs/pull-requests/1/from",
+          localBranch: "feature/pr",
+        });
+        assert.equal((yield* git(cwd, ["rev-parse", "feature/pr"])).trim(), headSha);
+
+        yield* git(cwd, ["branch", "-f", "feature/pr", initialBranch]);
+        yield* driver.fetchRemoteRef({
+          cwd,
+          remoteName: "origin",
+          remoteRef: "refs/pull-requests/1/from",
+          localBranch: "feature/pr",
+        });
+        assert.equal((yield* git(cwd, ["rev-parse", "feature/pr"])).trim(), headSha);
+      }),
+    );
+
     it.effect("reports remote status on unborn HEAD without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

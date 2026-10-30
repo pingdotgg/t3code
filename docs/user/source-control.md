@@ -102,6 +102,30 @@ For a background service, put these `KEY=VALUE` entries in
 under T3 home, then run `t3 service restart`. Service installation and updates
 preserve that file.
 
+### Bitbucket Data Center
+
+For a self-hosted instance, expand **Bitbucket Data Center** in **Settings → Source control**.
+Enter its **Host URL**, including any port and context path (for example,
+`https://code.example.com:8443/bitbucket`), and a Data Center **HTTP access token**.
+Repository read permission enables PR browsing and reviews; merging requires repository write
+permission. Creating repositories requires permission to create them in the target project.
+Cloud API tokens are separate and cannot be used here.
+
+Configure one Data Center instance per environment, on the server that can reach it. Saved settings
+apply immediately. When no complete host/token pair is saved, the server falls back to
+`T3CODE_BITBUCKET_SERVER_URL` and `T3CODE_BITBUCKET_SERVER_TOKEN`; restart it after changing those.
+Remove the saved credentials to disconnect, and clear these variables too if they are set.
+Git clone, fetch, and push still use that server's Git credentials or SSH keys.
+
+Use `PROJECTKEY/repository` when cloning or publishing, or `~username/repository` for personal
+repositories. HTTPS remotes with `/scm/` and standard SSH remotes are supported, including custom
+hostnames. The host URL supplies the web port and context path for SSH checkouts.
+
+The integration targets the REST APIs shared by Data Center 9.4 (including 9.4.16) and 10.2 LTS.
+It supports PR creation, browsing, diffs, comments, reviews, reviewers, editing, merging, declining,
+and reopening. Repository merge checks and permissions remain authoritative. Draft state is shown
+when reported; draft toggling, reactions, and thread resolution are not offered.
+
 ### Azure DevOps
 
 Install [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/), add the DevOps extension, and sign in:
@@ -210,7 +234,7 @@ for ten minutes during a GitHub outage; new credentials must be verified first. 
 an uncertain result is never automatically retried elsewhere. Listings, diffs, and checkout or
 PR creation from Git actions continue to use the project's environment.
 
-For Azure DevOps, use the host website to change comments. Bitbucket does not support reopening a
+For Azure DevOps, use the host website to change comments. Bitbucket Cloud does not support reopening a
 declined pull request.
 
 ### Review guides
