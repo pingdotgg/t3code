@@ -503,11 +503,10 @@ describe("pull request list answers across a reload", () => {
     ]);
 
     expect(view.data?.entries.map((row) => [row.environmentId, row.number])).toEqual([[local, 1]]);
-    // Shape-agnostic: whatever the view reports must say which environment failed and why.
-    const reported = JSON.stringify(view.error);
-    expect(reported).toContain("endpoint_request_failed");
-    expect(reported).toContain(remote);
-    expect(reported).not.toContain(local);
+    expect(view.error).toEqual({
+      environmentId: remote,
+      message: "Relay could not reach the environment endpoint (endpoint_request_failed).",
+    });
   });
 
   it("removes the composite snapshots it replaced", () => {
