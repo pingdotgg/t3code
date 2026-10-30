@@ -41,6 +41,7 @@ import {
   compileResolvedKeybindingRule,
   compileResolvedKeybindingsConfig,
   parseKeybindingShortcut,
+  parseKeybindingWhenExpression,
 } from "@t3tools/shared/keybindings";
 
 export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
@@ -80,12 +81,18 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
   ),
 );
 
+// Settings sends replace/remove targets in its own normalized spelling, which can differ from a
+// hand-edited file ("cmd+k" vs "meta+k", "a&&b" vs "a && b"), so compare parsed forms.
+function keybindingRuleIdentity(rule: KeybindingRule): string {
+  const shortcut = parseKeybindingShortcut(rule.key);
+  const key = (shortcut && encodeShortcut(shortcut)) ?? rule.key;
+  if (rule.when === undefined) return JSON.stringify([rule.command, key, null]);
+  const whenAst = parseKeybindingWhenExpression(rule.when);
+  return JSON.stringify([rule.command, key, whenAst ? encodeWhenAst(whenAst) : rule.when]);
+}
+
 function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): boolean {
-  return (
-    left.command === right.command &&
-    left.key === right.key &&
-    (left.when ?? undefined) === (right.when ?? undefined)
-  );
+  return keybindingRuleIdentity(left) === keybindingRuleIdentity(right);
 }
 
 const LATE_DEFAULT_KEYBINDINGS: ReadonlyArray<{
