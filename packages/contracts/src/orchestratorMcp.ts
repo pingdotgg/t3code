@@ -120,7 +120,7 @@ export const OrchestratorMcpTarget = Schema.Struct({
   projectId: Schema.optional(
     ProjectId.annotate({
       description:
-        "With `environmentId`: its project to run in. Default: the one with this project's repository.",
+        "Project to run in, locally or on `environmentId`. Local default: parent's project; remote: matching repository. Another local project's worktree starts at its default branch; shared uses its root.",
     }),
   ),
 });

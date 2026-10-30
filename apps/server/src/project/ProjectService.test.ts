@@ -487,6 +487,7 @@ it.layer(layerTest)("ProjectService", (it) => {
         commandId: CommandId.make("command:deleted-target:delete"),
         projectId,
       });
+      assert.isTrue(Option.isNone(yield* service.getById(projectId)));
       const again = yield* service
         .delete({ commandId: CommandId.make("command:deleted-target:delete-again"), projectId })
         .pipe(Effect.flip);
