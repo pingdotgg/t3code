@@ -119,6 +119,7 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
+import { SharedTooltipProvider, useSharedTooltip } from "./ui/shared-tooltip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -997,6 +998,17 @@ function selectInlineCode(event: ReactMouseEvent<HTMLElement>) {
   window.getSelection()?.selectAllChildren(event.currentTarget);
 }
 
+function MarkdownLinkTooltip({ link, href }: { link: React.ReactElement; href: string }) {
+  const sharedTooltip = useSharedTooltip({ render: () => href });
+  if (sharedTooltip) return React.cloneElement(link, sharedTooltip);
+  return (
+    <Tooltip>
+      <TooltipTrigger render={link} />
+      <TooltipPopup side="top">{href}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 const CHAT_MARKDOWN_COMPONENTS = {
   h1: markdownHeadingRenderer(1),
   h2: markdownHeadingRenderer(2),
@@ -1339,12 +1351,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           />
         );
       }
-      return (
-        <Tooltip>
-          <TooltipTrigger render={link} />
-          <TooltipPopup side="top">{href}</TooltipPopup>
-        </Tooltip>
-      );
+      return <MarkdownLinkTooltip link={link} href={href} />;
     }
 
     const label = nodeToPlainText(children);
@@ -1680,6 +1687,17 @@ const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
   mathBreaks: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
 } satisfies Record<string, PluggableList>;
 
+const combinedPluginLists = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();
+
+/** One list per shared set and caller list, so callers with stable extras share a processor. */
+function combinedRemarkPlugins(shared: PluggableList, extra: PluggableList): PluggableList {
+  let byExtra = combinedPluginLists.get(shared);
+  if (!byExtra) combinedPluginLists.set(shared, (byExtra = new WeakMap()));
+  let combined = byExtra.get(extra);
+  if (!combined) byExtra.set(extra, (combined = [...shared, ...extra]));
+  return combined;
+}
+
 const directHastFor = (rehypePlugins: PluggableList) =>
   rehypePlugins === CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS ? chatRenderHast : undefined;
 
@@ -1705,8 +1723,8 @@ function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: Pluggable
   return renderer;
 }
 
-// Prototype switch while the static-HTML renderer is measured against the element renderer.
-const MARKDOWN_ISLANDS = import.meta.env.VITE_T3_MARKDOWN_ISLANDS === "1";
+// VITE_T3_MARKDOWN_ISLANDS=0 measures against rendering every element with React.
+const MARKDOWN_ISLANDS = import.meta.env.VITE_T3_MARKDOWN_ISLANDS !== "0";
 
 type ChatMarkdownComponentState = ReturnType<typeof useChatMarkdownState>["componentState"];
 
@@ -1898,15 +1916,15 @@ function ChatMarkdown({
           ? "breaks"
           : "plain"
     ];
-  // Extra and incremental plugins are per instance, so their output is not shared.
-  const uncachedPlugins = extraRemarkPlugins.length > 0 || incrementalParsing;
-  const remarkPlugins = uncachedPlugins
-    ? [
-        ...sharedRemarkPlugins,
-        ...extraRemarkPlugins,
-        ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
-      ]
-    : sharedRemarkPlugins;
+  const pluginSet =
+    extraRemarkPlugins.length > 0
+      ? combinedRemarkPlugins(sharedRemarkPlugins, extraRemarkPlugins)
+      : sharedRemarkPlugins;
+  // The incremental parser keeps per-instance state, so its output is not shared.
+  const uncachedPlugins = incrementalParsing;
+  const remarkPlugins = incrementalParsing
+    ? [...pluginSet, createIncrementalMarkdownPlugin()]
+    : pluginSet;
   const blocks = streamingBlocks ?? [text];
 
   return (
@@ -1923,21 +1941,23 @@ function ChatMarkdown({
       onDoubleClick={MARKDOWN_ISLANDS ? selectStaticInlineCode : undefined}
     >
       <ChatMarkdownRendererContext value={componentState}>
-        {blocks.map((source, index) => (
-          <MarkdownSource
-            // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
-            key={index}
-            text={source}
-            remarkPlugins={remarkPlugins}
-            rehypePlugins={
-              parseRawHtml
-                ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-                : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
-            }
-            shared={!uncachedPlugins}
-            cache={!props.isStreaming}
-          />
-        ))}
+        <SharedTooltipProvider>
+          {blocks.map((source, index) => (
+            <MarkdownSource
+              // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
+              key={index}
+              text={source}
+              remarkPlugins={remarkPlugins}
+              rehypePlugins={
+                parseRawHtml
+                  ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
+                  : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
+              }
+              shared={!uncachedPlugins}
+              cache={!props.isStreaming}
+            />
+          ))}
+        </SharedTooltipProvider>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
         <ExpandedImageDialog preview={localMediaPreview} onClose={closeLocalMediaPreview} />

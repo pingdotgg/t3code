@@ -74,6 +74,7 @@
     "morphicons": "^1.7.1",
     "pdfjs-dist": "6.4.299",
     "pele": "^1.8.0",
+    "property-information": "^7.2.0",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",

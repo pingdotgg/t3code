@@ -21,6 +21,22 @@ import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
+type RemarkPlugins = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+type Autolinker = (text: string) => ReadonlyArray<ReferenceAutolink>;
+
+const NO_PLUGINS: RemarkPlugins = [];
+// One plugin list per autolinker lets every comment share a processor and its cache.
+const autolinkPluginLists = new WeakMap<Autolinker, RemarkPlugins>();
+
+function autolinkPlugins(autolinks: Autolinker): RemarkPlugins {
+  let plugins = autolinkPluginLists.get(autolinks);
+  if (!plugins) {
+    plugins = [[remarkPullRequestAutolinks, { autolinks }]];
+    autolinkPluginLists.set(autolinks, plugins);
+  }
+  return plugins;
+}
+
 export const PullRequestMarkdownContext = createContext<{
   autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
   threadRef: ScopedThreadRef | null;
@@ -71,9 +87,7 @@ export function PullRequestMarkdown({
   const context = useContext(PullRequestMarkdownContext);
   const autolinks = context?.autolinks;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
-  const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = autolinks
-    ? [[remarkPullRequestAutolinks, { autolinks }]]
-    : [];
+  const extraRemarkPlugins = autolinks ? autolinkPlugins(autolinks) : NO_PLUGINS;
   return (
     <div
       className={cn(

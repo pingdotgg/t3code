@@ -1,3 +1,4 @@
+import type { PluggableList } from "unified";
 import type { Root, RootContent } from "mdast";
 import {
   resolveWorkEntryToolPresentation,
@@ -237,3 +238,9 @@ export function remarkThoughtPreview(fallback: string) {
       : [{ type: "text", value: fallback }];
   };
 }
+
+// Stable lists, so every preview shares one Markdown processor and its cache.
+export const THOUGHT_PREVIEW_PLUGINS = {
+  thinking: [[remarkThoughtPreview, "Thinking"]],
+  thought: [[remarkThoughtPreview, "Thought"]],
+} as const satisfies Record<string, PluggableList>;

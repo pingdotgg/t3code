@@ -1,5 +1,5 @@
 import type { Element, ElementContent, Properties, Root, RootContent } from "hast";
-import { toHtml } from "hast-util-to-html";
+import { find, html as htmlSchema } from "property-information";
 import { toJsxRuntime, type Components } from "hast-util-to-jsx-runtime";
 import { createElement, Fragment as ReactFragment, type ReactNode } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
@@ -53,12 +53,70 @@ function transformStatic(
 function innerHtml(node: Element, options: MarkdownIslandOptions): string {
   const cached = innerHtmlCache.get(node);
   if (cached?.variant === options.variant) return cached.html;
-  const html = toHtml(
-    node.children.map((child) => transformStatic(child, options.staticElement)),
-    { allowDangerousHtml: false },
-  );
+  let html = "";
+  for (const child of node.children) {
+    html += serialize(transformStatic(child, options.staticElement));
+  }
   innerHtmlCache.set(node, { variant: options.variant, html });
   return html;
+}
+
+interface AttributeInfo {
+  readonly name: string;
+  readonly boolean: boolean;
+  readonly separator: string;
+}
+
+const attributeInfo = new Map<string, AttributeInfo>();
+
+function infoFor(property: string): AttributeInfo {
+  let info = attributeInfo.get(property);
+  if (!info) {
+    const found = find(htmlSchema, property);
+    info = {
+      name: found.attribute,
+      boolean: found.boolean || found.overloadedBoolean,
+      separator: found.commaSeparated ? ", " : " ",
+    };
+    attributeInfo.set(property, info);
+  }
+  return info;
+}
+
+const escapeText = (value: string) =>
+  value.includes("&") || value.includes("<") || value.includes(">")
+    ? value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    : value;
+const escapeAttribute = (value: string) =>
+  value.includes("&") || value.includes('"')
+    ? value.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+    : value;
+
+/** HTML for the elements and text this pipeline builds; the DOM matches hast-util-to-html's. */
+function serialize(node: ElementContent): string {
+  if (node.type === "text") return escapeText(node.value);
+  if (node.type !== "element") return "";
+  let html = `<${node.tagName}`;
+  const { properties } = node;
+  for (const key in properties) {
+    const value = properties[key];
+    if (value === null || value === undefined || value === false || Number.isNaN(value)) continue;
+    const info = infoFor(key);
+    if (info.boolean && value) {
+      html += ` ${info.name}`;
+      continue;
+    }
+    const text = Array.isArray(value)
+      ? value.join(info.separator)
+      : value === true
+        ? ""
+        : String(value);
+    html += ` ${info.name}="${escapeAttribute(text)}"`;
+  }
+  html += ">";
+  if (VOID_ELEMENTS.has(node.tagName)) return html;
+  for (const child of node.children) html += serialize(child);
+  return `${html}</${node.tagName}>`;
 }
 
 /** React props for an element, converted as hast-util-to-jsx-runtime converts them. */
@@ -71,19 +129,21 @@ function shallowProps(node: Element, components: Partial<Components>): Record<st
   return props;
 }
 
-function containsIsland(node: Element, isIsland: MarkdownIslandOptions["isIsland"]): boolean {
-  for (const child of node.children) {
-    if (child.type === "element" && (isIsland(child) || containsIsland(child, isIsland))) {
-      return true;
-    }
-  }
-  return false;
+interface Plan {
+  readonly islands: Set<Element>;
+  /** Elements with an island somewhere below them. */
+  readonly ancestors: Set<Element>;
 }
 
-function renderContent(node: RootContent, key: number, options: MarkdownIslandOptions): ReactNode {
+function renderContent(
+  node: RootContent,
+  key: number,
+  options: MarkdownIslandOptions,
+  plan: Plan,
+): ReactNode {
   if (node.type === "text") return node.value;
   if (node.type !== "element") return null;
-  if (options.isIsland(node)) {
+  if (plan.islands.has(node)) {
     return createElement(
       ReactFragment,
       { key },
@@ -92,11 +152,11 @@ function renderContent(node: RootContent, key: number, options: MarkdownIslandOp
   }
   const element = options.staticElement(node);
   const props: Record<string, unknown> = { ...shallowProps(element, options.components), key };
-  if (containsIsland(element, options.isIsland)) {
+  if (plan.ancestors.has(node)) {
     return createElement(
       element.tagName,
       props,
-      ...element.children.map((child, index) => renderContent(child, index, options)),
+      ...element.children.map((child, index) => renderContent(child, index, options, plan)),
     );
   }
   if (element.children.length > 0 && !VOID_ELEMENTS.has(element.tagName)) {
@@ -112,19 +172,31 @@ function renderContent(node: RootContent, key: number, options: MarkdownIslandOp
 export function renderHastWithIslands(tree: Root, options: MarkdownIslandOptions): ReactNode {
   // The same elements again let React skip the block; islands still follow their context.
   let signature = options.variant;
-  const visit = (node: Root | Element) => {
+  const plan: Plan = { islands: new Set(), ancestors: new Set() };
+  const visit = (node: Root | Element): boolean => {
+    let below = false;
     for (const child of node.children) {
       if (child.type !== "element") continue;
-      signature += options.isIsland(child) ? "1" : "0";
-      visit(child);
+      const island = options.isIsland(child);
+      signature += island ? "1" : "0";
+      if (island) {
+        plan.islands.add(child);
+        below = true;
+        continue;
+      }
+      if (visit(child)) {
+        plan.ancestors.add(child);
+        below = true;
+      }
     }
+    return below;
   };
   visit(tree);
   const cached = renderedTrees.get(tree);
   if (cached?.signature === signature && cached.components === options.components) {
     return cached.node;
   }
-  const node = tree.children.map((child, index) => renderContent(child, index, options));
+  const node = tree.children.map((child, index) => renderContent(child, index, options, plan));
   renderedTrees.set(tree, { signature, components: options.components, node });
   return node;
 }

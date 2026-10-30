@@ -160,6 +160,23 @@ describe("ChatMarkdown favicon privacy", () => {
   });
 });
 
+describe("ChatMarkdown link tooltips", () => {
+  it("shows each link's address on one shared tooltip as the pointer moves between links", async () => {
+    setup();
+    await using screen = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text="[First](https://example.com/a) and [Second](https://example.org/b)"
+      />,
+    );
+    await userEvent.hover(screen.getByRole("link", { name: /First/ }));
+    await expect.element(page.getByText("https://example.com/a")).toBeVisible();
+    await userEvent.hover(screen.getByRole("link", { name: /Second/ }));
+    await expect.element(page.getByText("https://example.org/b")).toBeVisible();
+    expect(document.querySelectorAll('[data-slot="tooltip-popup"]')).toHaveLength(1);
+  });
+});
+
 describe("ChatMarkdown streaming", () => {
   it("runs only a complete single-line shell block after a click", async () => {
     setup();

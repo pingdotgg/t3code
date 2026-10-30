@@ -1193,6 +1193,9 @@ importers:
       pele:
         specifier: ^1.8.0
         version: 1.8.0
+      property-information:
+        specifier: ^7.2.0
+        version: 7.2.0
       react:
         specifier: 'catalog:'
         version: 19.3.0
