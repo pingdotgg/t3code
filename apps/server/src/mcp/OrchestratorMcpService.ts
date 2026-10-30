@@ -118,6 +118,7 @@ import {
 import * as Metrics from "../observability/Metrics.ts";
 import {
   interactionModeRank,
+  resolveCyberAccessProgram,
   resolveInteractionMode,
   resolveRuntimeMode,
   runtimeModeRank,
@@ -1443,6 +1444,7 @@ const make = Effect.gen(function* () {
           `Model ${model} on provider ${instanceId} rejected options: ${invalid.join(" ")}`,
         );
       }
+      yield* resolveCyberAccessProgram(inheritedSelection, requestedOptions);
     }
 
     const inheritsOptions =

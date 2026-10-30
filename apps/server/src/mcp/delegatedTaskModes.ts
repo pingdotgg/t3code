@@ -5,8 +5,10 @@ import {
   type OrchestratorMcpInteractionMode,
   type OrchestratorMcpRuntimeMode,
   type ProviderInteractionMode,
+  type ProviderOptionSelection,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 
 /** How much a runtime mode allows, narrowest first. */
@@ -85,6 +87,24 @@ export function resolveInteractionMode(
         }),
       )
     : Effect.succeed(resolved);
+}
+
+/** A child may keep its parent's cyber access program but not choose another; only the user can. */
+export function resolveCyberAccessProgram(
+  parentSelection: ModelSelection,
+  requested: ReadonlyArray<ProviderOptionSelection>,
+): Effect.Effect<void, OrchestratorMcpFailure> {
+  const value = requested.find((selection) => selection.id === "cyberAccessProgram")?.value;
+  const parentValue =
+    getModelSelectionStringOptionValue(parentSelection, "cyberAccessProgram") ?? "default";
+  return value === undefined || value === "default" || value === parentValue
+    ? Effect.void
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `Cyber access program ${String(value)} differs from this thread's ${parentValue}. Omit it; only the user can choose one.`,
+        }),
+      );
 }
 
 /** The task as its child receives it, with the role the caller asked for. */
