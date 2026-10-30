@@ -316,6 +316,58 @@ describe("CodexAdapterV2 native protocol logging", () => {
           },
         },
       });
+
+      const databaseUrl = "postgres://user:password@host/db";
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          id: 42,
+          result: {
+            config: { mcp_servers: { database: { env: { DB_URL: databaseUrl } } } },
+            origins: {},
+            layers: [
+              {
+                name: { type: "project", dotCodexFolder: "/repo/.codex" },
+                version: "project-version",
+                config: { mcp_servers: { database: { env: { DB_URL: databaseUrl } } } },
+                disabledReason: "Project is not trusted",
+              },
+            ],
+          },
+        },
+      });
+
+      assert.equal(writes.length, 2);
+      assert.notInclude(JSON.stringify(writes), databaseUrl);
+      assert.deepEqual(writes[1], {
+        threadId,
+        event: {
+          provider: "codex",
+          protocol: "codex.app-server",
+          kind: "protocol",
+          providerSessionId,
+          event: {
+            direction: "incoming",
+            stage: "decoded",
+            payload: {
+              id: 42,
+              result: {
+                config: "[REDACTED]",
+                origins: {},
+                layers: [
+                  {
+                    name: { type: "project", dotCodexFolder: "/repo/.codex" },
+                    version: "project-version",
+                    config: "[REDACTED]",
+                    disabledReason: "Project is not trusted",
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
     }),
   );
 });
@@ -1086,6 +1138,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    // Answers requests the transcript does not script; undefined forwards to the replay.
+    answerRequest: (method: string, params: unknown) => unknown = () => undefined,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1118,8 +1172,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       ...client,
                       request: (method, params) =>
                         onRequest(method, params).pipe(
-                          Effect.andThen(client.request(method, params)),
+                          Effect.andThen(() => {
+                            const answer = answerRequest(method, params);
+                            return answer === undefined
+                              ? client.request(method, params)
+                              : Effect.succeed(answer as never);
+                          }),
                         ),
+                      raw: {
+                        ...client.raw,
+                        request: (method, params) => {
+                          const answer = answerRequest(method, params);
+                          return answer === undefined
+                            ? client.raw.request(method, params)
+                            : Effect.succeed(answer);
+                        },
+                      },
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
                 ),
                 Effect.provide(context),
@@ -3261,6 +3329,194 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.deepEqual(
           assistantMessages(harness.events).map((event) => event.message.text),
           ["CODEX_RECOVERY_OK"],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // regression: #15140 Codex skips an untrusted project's config without telling the user
+  it.effect("tells the user why Codex skipped the project's MCP config", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = finalAnswerTranscript("codex-untrusted-project-config", [
+          { id: "answer", text: "No issue15140_probe tool is available." },
+        ]);
+        // Codex 0.163.0 config/read for a project missing from the user config's trusted projects.
+        const disabledReason =
+          "To load project-local config, hooks, and exec policies, add /workspace as a trusted project in /tmp/codex-home/config.toml.";
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          (method, params) =>
+            method !== "config/read"
+              ? undefined
+              : {
+                  config: { mcp_servers: {} },
+                  origins: {},
+                  layers:
+                    Predicate.isObject(params) &&
+                    params.cwd === "/workspace" &&
+                    params.includeLayers === true
+                      ? [
+                          {
+                            name: { type: "project", dotCodexFolder: "/workspace/.codex" },
+                            version: "sha256:project",
+                            config: {
+                              mcp_servers: {
+                                issue15140: { command: "python3", args: ["mcp.py"], enabled: true },
+                              },
+                            },
+                            disabledReason,
+                          },
+                          {
+                            name: {
+                              type: "user",
+                              file: "/tmp/codex-home/config.toml",
+                              profile: null,
+                            },
+                            version: "sha256:user",
+                            config: {},
+                          },
+                        ]
+                      : null,
+                },
+        );
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-codex-untrusted-project-config"),
+            text: "Reply with the requested recovery marker.",
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+
+        const turnItems = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" ? [event.turnItem] : [],
+        );
+        const notices = turnItems.flatMap((item) =>
+          item.type === "system_notice"
+            ? [item.message]
+            : item.type === "notification"
+              ? [`${item.summary}\n${item.detail ?? ""}`]
+              : [],
+        );
+        assert.isTrue(
+          notices.some((notice) => notice.includes(disabledReason)),
+          `expected a chat notice containing ${JSON.stringify(disabledReason)}; turn items: ${JSON.stringify(turnItems, null, 2)}`,
+        );
+        assert.equal(turnItems.filter((item) => item.type === "system_notice").length, 1);
+        assert.deepEqual(
+          assistantMessages(harness.events).map((event) => event.message.text),
+          ["No issue15140_probe tool is available."],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("does not warn for enabled project layers or disabled user layers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = finalAnswerTranscript("codex-enabled-project-config", [
+          { id: "answer", text: "The tool is available." },
+        ]);
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          (method) =>
+            method !== "config/read"
+              ? undefined
+              : {
+                  config: {},
+                  origins: {},
+                  layers: [
+                    {
+                      name: { type: "project", dotCodexFolder: "/workspace/.codex" },
+                      version: "sha256:project",
+                      config: { mcp_servers: { probe: { command: "probe" } } },
+                    },
+                    {
+                      name: { type: "user", file: "/tmp/codex-home/config.toml", profile: null },
+                      version: "sha256:user",
+                      config: {},
+                      disabledReason: "User layer disabled.",
+                    },
+                  ],
+                },
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-enabled-project-config"),
+            text: "Reply with the requested recovery marker.",
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+          ),
+        );
+        assert.deepEqual(
+          assistantMessages(harness.events).map((event) => event.message.text),
+          ["The tool is available."],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("starts the turn when the optional project config read never responds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = finalAnswerTranscript("codex-project-config-timeout", [
+          { id: "answer", text: "The turn still completed." },
+        ]);
+        const readStarted = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(transcript, undefined, (method) =>
+          method === "config/read"
+            ? Deferred.succeed(readStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+        );
+        const start = yield* harness.runtime
+          .startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-codex-project-config-timeout"),
+              text: "Reply with the requested recovery marker.",
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(readStarted);
+        yield* TestClock.adjust("3 seconds");
+        yield* Fiber.join(start);
+        yield* harness.awaitTerminal(1);
+        assert.deepEqual(
+          assistantMessages(harness.events).map((event) => event.message.text),
+          ["The turn still completed."],
         );
       }).pipe(
         Effect.provide(

@@ -1462,7 +1462,10 @@ function redactCodexProtocolValue(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, nested]) => [
       key,
-      isSensitiveCodexProtocolKey(key) ? "[REDACTED]" : redactCodexProtocolValue(nested),
+      // Config bodies can contain credentials under arbitrary user-defined keys.
+      key === "config" || isSensitiveCodexProtocolKey(key)
+        ? "[REDACTED]"
+        : redactCodexProtocolValue(nested),
     ]),
   );
 }
@@ -1929,6 +1932,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
         });
 
+        const projectConfigNotices = new WeakMap<
+          ProviderAdapter.ProviderAdapterV2TurnInput,
+          ReadonlyArray<string>
+        >();
+
         const registerRootTurn = Effect.fn("CodexAdapterV2.registerRootTurn")(function* (input: {
           readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
           readonly nativeTurnId: string;
@@ -2016,6 +2024,40 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               completedAt: null,
             },
           });
+          const notices = projectConfigNotices.get(input.turnInput) ?? [];
+          projectConfigNotices.delete(input.turnInput);
+          for (const [index, notice] of notices.entries()) {
+            const nativeItemId = `project-config:${input.nativeTurnId}:${index}`;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CODEX_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: context.projectionThreadId,
+                runId: context.projectionRunId,
+                nodeId: context.providerNodeId,
+                providerThreadId: context.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CODEX_PROVIDER,
+                  nativeId: nativeItemId,
+                  strength: "weak",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                type: "system_notice",
+                status: "completed",
+                title: notice,
+                message: notice,
+                startedAt: input.startedAt,
+                completedAt: input.startedAt,
+                updatedAt: input.startedAt,
+              },
+            });
+          }
           yield* rememberRootProviderThread(input.turnInput.providerThread);
           return context;
         });
@@ -6501,6 +6543,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
             });
+            // Trust is cwd-specific, including when resuming an existing native thread.
+            // Older or unresponsive app servers must not block a turn on this diagnostic.
+            const config = yield* client
+              .request("config/read", { cwd: turnInput.runtimePolicy.cwd, includeLayers: true })
+              .pipe(Effect.timeout("3 seconds"), Effect.option);
+            projectConfigNotices.set(
+              turnInput,
+              Option.isSome(config)
+                ? (config.value.layers ?? []).flatMap((layer) =>
+                    layer.name.type === "project" && layer.disabledReason
+                      ? [layer.disabledReason]
+                      : [],
+                  )
+                : [],
+            );
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
               updated.set(threadId, turnInput);
