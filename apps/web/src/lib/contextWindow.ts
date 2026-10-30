@@ -63,7 +63,8 @@ export function deriveLatestContextWindowSnapshot(
 ): ContextWindowSnapshot | null {
   if (liveUsage != null) {
     const usedTokens = Math.max(0, liveUsage.usedTokens);
-    const maxTokens = liveUsage.maxTokens ?? null;
+    // Like Claude's /context, measure against the auto-compact window when it is smaller.
+    const maxTokens = liveUsage.autoCompactThreshold ?? liveUsage.maxTokens ?? null;
     const usedPercentage =
       maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
     const remainingTokens =
@@ -100,7 +101,8 @@ export function deriveLatestContextWindowSnapshot(
     providerUsage !== undefined &&
     providerUsageUpdatedAt !== undefined
   ) {
-    const maxTokens = asFiniteNumber(providerUsage.maxTokens);
+    const maxTokens =
+      asFiniteNumber(providerUsage.autoCompactThreshold) ?? asFiniteNumber(providerUsage.maxTokens);
     const usedTokens = providerUsage.usedTokens;
     const usedPercentage =
       maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;

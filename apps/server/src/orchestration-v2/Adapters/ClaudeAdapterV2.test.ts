@@ -738,7 +738,7 @@ describe("ClaudeAdapterV2 context usage", () => {
       },
       CLAUDE_TEST_MODEL_SELECTION,
       "2026-08-29T00:03:00.000Z",
-      "",
+      undefined,
       DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
     );
     assert.strictEqual(usage.promptCacheExpiresAt, "2026-08-29T00:05:00.000Z");
@@ -770,7 +770,7 @@ describe("ClaudeAdapterV2 approval presentation", () => {
       permissionMode: "bypassPermissions",
       prompt: "Claude wants to run git push",
       callbackOptions: {
-        matchedAskRule: { source: "userSettings", toolName: "Bash", ruleContent: "git push:*" },
+        matchedAskRule: { source: "user", toolName: "Bash", ruleContent: "git push:*" },
       },
     });
     assert.deepEqual(presentation, { fullAccessOverride: "ask_rule" });
@@ -6086,18 +6086,79 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each([
+  it.effect.each<{
+    autoCompactWindow: string;
+    model: string;
+    threshold: number | undefined;
+    userSettings?: string;
+    projectSettings?: string;
+    launchArgs?: string;
+  }>([
     { autoCompactWindow: "", model: "claude-sonnet-4-6", threshold: undefined },
     { autoCompactWindow: "150000", model: "claude-sonnet-4-6", threshold: 150_000 },
     { autoCompactWindow: "200000", model: "claude-sonnet-4-6", threshold: undefined },
     { autoCompactWindow: "650000", model: "claude-sonnet-4-6", threshold: undefined },
     { autoCompactWindow: "650000", model: "uncatalogued-model", threshold: 650_000 },
+    // /autocompact writes the per-model value, which beats the file's top-level one.
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings:
+        '{"autoCompactWindow":300000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
+      threshold: 400_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
+      projectSettings: '{"autoCompactWindow":300000}',
+      threshold: 300_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":300000}',
+      projectSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":"auto"}}}',
+      threshold: undefined,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
+      launchArgs: `--settings '{"autoCompactWindow":250000}'`,
+      threshold: 250_000,
+    },
+    {
+      autoCompactWindow: "250000",
+      model: "claude-opus-5-5",
+      userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
+      threshold: 250_000,
+    },
   ])(
-    "ignores stale snapshots after compaction and reports threshold $autoCompactWindow for $model",
-    ({ autoCompactWindow, model, threshold }) =>
+    "ignores stale snapshots after compaction and reports threshold $threshold for $model",
+    ({
+      autoCompactWindow,
+      model,
+      threshold,
+      userSettings = "{}",
+      projectSettings,
+      launchArgs = "",
+    }) =>
       Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-compact-" });
+        const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-compact-" });
+        yield* fileSystem.writeFileString(path.join(home, "settings.json"), userSettings);
+        if (projectSettings !== undefined) {
+          yield* fileSystem.makeDirectory(path.join(project, ".claude"));
+          yield* fileSystem.writeFileString(
+            path.join(project, ".claude", "settings.json"),
+            projectSettings,
+          );
+        }
         const harness = yield* makeWakeHarnessWithOptions({
-          settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow },
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow, homePath: home, launchArgs },
         });
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -6108,6 +6169,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             text: "Continue.",
             attachments: [],
             modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              ...CLAUDE_TEST_RUNTIME_POLICY,
+              cwd: project,
+            }),
           }),
         );
         const usage = { ...zeroUsage, input_tokens: 1_000, output_tokens: 75 };

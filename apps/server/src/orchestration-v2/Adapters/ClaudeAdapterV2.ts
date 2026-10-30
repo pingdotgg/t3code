@@ -231,10 +231,14 @@ function claudePromptCacheTtlMs(
 }
 
 // Claude caps the window at the model's context, so a setting at or above it never applies.
-function claudeAutoCompactThreshold(autoCompactWindow: string, maxTokens: number | null) {
-  const threshold = Number(autoCompactWindow);
-  return threshold > 0 && (maxTokens === null || threshold < maxTokens)
-    ? { autoCompactThreshold: threshold }
+function claudeAutoCompactThreshold(
+  autoCompactWindow: number | undefined,
+  maxTokens: number | null,
+) {
+  return autoCompactWindow !== undefined &&
+    autoCompactWindow > 0 &&
+    (maxTokens === null || autoCompactWindow < maxTokens)
+    ? { autoCompactThreshold: autoCompactWindow }
     : {};
 }
 
@@ -260,7 +264,7 @@ export function claudeProviderTurnTokenUsage(
   },
   modelSelection: ModelSelection,
   updatedAt: string,
-  autoCompactWindow = "",
+  autoCompactWindow?: number,
   requestedAt?: DateTime.Utc,
 ) {
   const inputTokens = claudeMessageInputTokens(usage);
@@ -2619,6 +2623,20 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
     ),
   ),
 );
+const ClaudeAutoCompactWindowSetting = Schema.Union([Schema.Finite, Schema.Literal("auto")]);
+const ClaudeAutoCompactSettings = Schema.Struct({
+  autoCompactWindow: Schema.optionalKey(ClaudeAutoCompactWindowSetting),
+  modelSettings: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ autoCompactWindow: Schema.optionalKey(ClaudeAutoCompactWindowSetting) }),
+    ),
+  ),
+});
+const decodeClaudeAutoCompactSettings = Schema.decodeUnknownOption(ClaudeAutoCompactSettings);
+const decodeClaudeAutoCompactSettingsFile = Schema.decodeUnknownEffect(
+  fromLenientJson(ClaudeAutoCompactSettings),
+);
 const decodeClaudeEnvSettings = Schema.decodeUnknownEffect(
   fromLenientJson(
     Schema.StructWithRest(
@@ -3898,6 +3916,7 @@ interface ActiveClaudeTurnContext {
       { readonly startedAt: DateTime.Utc; readonly ordinal: number; text: string }
     >;
   };
+  readonly autoCompactWindow: number | undefined;
   // Snapshots repeat message_start input, sometimes as zeros, so only fill gaps in streamed usage.
   // Compaction clears usage without forgetting the root request.
   // `requestedAt` starts the request's prompt cache lifetime.
@@ -4509,31 +4528,65 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       if (path.dirname(directory) === directory) return cwd;
     }
   });
-  // Settings env beats the process env, --settings over local over project over user, and a local
-  // file an older Claude Code left in cwd applies under the root one. resolveSettings reads local
-  // from cwd only.
+  // Local over project over user, and a local file an older Claude Code left in cwd applies under
+  // the root one. resolveSettings reads local from cwd only.
+  const settingsFilesByPrecedence = Effect.fn("ClaudeAdapterV2.settingsFilesByPrecedence")(
+    function* (cwd: string | null) {
+      if (cwd === null) return [path.join(homePath, "settings.json")];
+      const localDirectory = yield* localSettingsDirectory(cwd);
+      return [
+        path.join(localDirectory, ".claude", "settings.local.json"),
+        ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
+        path.join(cwd, ".claude", "settings.json"),
+        path.join(homePath, "settings.json"),
+      ];
+    },
+  );
+  // Settings env beats the process env, and --settings beats every settings file.
   const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
     function* (cwd: string | null, launchArgSettings: ClaudeSdkSettings | undefined) {
       const launchValue = launchArgSettings?.env?.ENABLE_TOOL_SEARCH;
       if (typeof launchValue === "string") return claudeToolSearchOverride(launchValue);
-      const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
-      const settingsFiles = [
-        ...(cwd === null || localDirectory === null
-          ? []
-          : [
-              path.join(localDirectory, ".claude", "settings.local.json"),
-              ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
-              path.join(cwd, ".claude", "settings.json"),
-            ]),
-        path.join(homePath, "settings.json"),
-      ];
-      for (const settingsFile of settingsFiles) {
+      for (const settingsFile of yield* settingsFilesByPrecedence(cwd)) {
         const value = yield* readToolSearchSetting(settingsFile);
         if (value !== undefined) return claudeToolSearchOverride(value);
       }
       return claudeToolSearchOverride(adapterOptions.environment.ENABLE_TOOL_SEARCH);
     },
   );
+
+  // Claude Code's auto-compact window: its env var, then T3's setting (sent as flag settings), then
+  // --settings, then settings files. In one source, modelSettings.<model>.autoCompactWindow (what
+  // /autocompact writes) replaces the top-level value; "auto" keeps Claude's tuned window.
+  const resolveAutoCompactWindow = Effect.fn("ClaudeAdapterV2.resolveAutoCompactWindow")(function* (
+    cwd: string | null,
+    modelSelection: ModelSelection,
+  ) {
+    const fromEnvironment = Number(adapterOptions.environment.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
+    if (fromEnvironment > 0) return fromEnvironment;
+    const fromT3 = Number(adapterOptions.settings.autoCompactWindow);
+    if (fromT3 > 0) return fromT3;
+    const model = compileClaudeModelSelection(modelSelection).apiModelId.replace(/\[1m\]$/i, "");
+    const windowIn = (settings: typeof ClaudeAutoCompactSettings.Type | undefined) =>
+      settings?.modelSettings?.[model]?.autoCompactWindow ?? settings?.autoCompactWindow;
+    const launchArgSettings = yield* readClaudeLaunchArgSettings({
+      settings: adapterOptions.settings,
+      cwd,
+      fileSystem,
+      path,
+    }).pipe(Effect.orElseSucceed(() => undefined));
+    let value = windowIn(Option.getOrUndefined(decodeClaudeAutoCompactSettings(launchArgSettings)));
+    for (const settingsFile of yield* settingsFilesByPrecedence(cwd)) {
+      if (value !== undefined) break;
+      value = windowIn(
+        yield* fileSystem.readFileString(settingsFile).pipe(
+          Effect.flatMap(decodeClaudeAutoCompactSettingsFile),
+          Effect.orElseSucceed(() => undefined),
+        ),
+      );
+    }
+    return value === "auto" ? undefined : value;
+  });
 
   const userInvocableSkills = (cwd: string | null) =>
     discoverClaudeSkills(
@@ -4916,7 +4969,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             usage,
             context.input.modelSelection,
             DateTime.formatIso(now),
-            adapterOptions.settings.autoCompactWindow,
+            context.autoCompactWindow,
             context.streamUsage?.requestedAt,
           );
           if (tokenUsage.inputTokens <= 0) return;
@@ -8495,10 +8548,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   tokenUsage: {
                     usedTokens: afterTokenCount,
                     maxTokens,
-                    ...claudeAutoCompactThreshold(
-                      adapterOptions.settings.autoCompactWindow,
-                      maxTokens,
-                    ),
+                    ...claudeAutoCompactThreshold(context.autoCompactWindow, maxTokens),
                     updatedAt: DateTime.formatIso(now),
                   },
                 },
@@ -10172,8 +10222,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(Path.Path, path),
                   );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
+            const autoCompactWindow = yield* resolveAutoCompactWindow(
+              turnInput.runtimePolicy.cwd,
+              turnInput.modelSelection,
+            );
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
+              autoCompactWindow,
               queryPolicy: querySession.queryPolicy,
               nativeThreadId,
               nativeTurnId,
