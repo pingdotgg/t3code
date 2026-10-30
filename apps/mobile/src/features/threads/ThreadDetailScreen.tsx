@@ -1093,6 +1093,9 @@ function ThreadDetailBody(
   // the repin checks follow state so a user who scrolled up stays put.
   const floatingCoverageTarget = showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0;
   const settledFloatingCoverageRef = useRef(floatingCoverageTarget);
+  const markCoverageSettled = (coverage: number) => {
+    settledFloatingCoverageRef.current = coverage;
+  };
   const repinAfterCoverageSettles = (coverage: number) => {
     if (coverage === settledFloatingCoverageRef.current) return;
     settledFloatingCoverageRef.current = coverage;
@@ -1106,6 +1109,7 @@ function ThreadDetailBody(
       // The target can change after the first render but before this first run.
       if (previous === null) {
         floatingControlCoverage.set(target);
+        runOnJS(markCoverageSettled)(target);
         return;
       }
       floatingControlCoverage.set(
