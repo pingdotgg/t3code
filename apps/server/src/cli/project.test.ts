@@ -137,6 +137,8 @@ it.effect.each(["snapshot", "mutation"] as const)(
       const baseDir = NodePath.join(root, "state");
       const workspaceRoot = NodePath.join(root, "workspace");
       yield* fs.makeDirectory(workspaceRoot);
+      // A running server owns a database; the CLI refuses to work without one.
+      yield* readProjects(baseDir);
       yield* persistServerRuntimeState({
         path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
         state: yield* makePersistedServerRuntimeState({
@@ -185,6 +187,52 @@ it.effect.each(["snapshot", "mutation"] as const)(
       assert.equal(snapshotRequests, 2);
       assert.equal(mutations, 1);
       assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "does not create a database behind a registered server when statev2.sqlite is missing",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-live-project-missing-db-" });
+      const baseDir = NodePath.join(root, "state");
+      const workspaceRoot = NodePath.join(root, "workspace");
+      yield* fs.makeDirectory(workspaceRoot);
+      yield* persistServerRuntimeState({
+        path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: 3_773,
+        }),
+      });
+      const now = "2026-01-01T00:00:00.000Z";
+      const fetch: typeof globalThis.fetch = async (_input, init) =>
+        Response.json(
+          init?.method === "POST"
+            ? {
+                id: "live-project",
+                title: NodePath.basename(workspaceRoot),
+                workspaceRoot,
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: now,
+                updatedAt: now,
+                deletedAt: null,
+              }
+            : { projects: [], updatedAt: now },
+        );
+
+      const result = yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
+        Effect.result,
+      );
+
+      assert.isFalse(
+        yield* fs.exists(NodePath.join(baseDir, "userdata", "statev2.sqlite")),
+        "t3 project must not create statev2.sqlite while a server is registered",
+      );
+      assert.equal(result._tag, "Failure");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 

@@ -8,6 +8,7 @@ import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
+import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,6 +16,7 @@ import * as LogLevel from "effect/LogLevel";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -531,6 +533,31 @@ export const resolveCliAuthConfig = (
     },
     cliLogLevel,
   );
+
+export class ServerDatabaseMissingError extends Schema.TaggedError<ServerDatabaseMissingError>()(
+  "ServerDatabaseMissingError",
+  { dbPath: Schema.String },
+) {
+  override readonly [Runtime.errorReported] = false;
+  override get message(): string {
+    return `T3 Code's database is not at ${this.dbPath}. The server may be restarting.`;
+  }
+}
+
+/**
+ * A CLI that talks to a registered server must not open the database itself
+ * when it is missing: opening creates and migrates an empty one behind it.
+ */
+export const requireServerDatabase = Effect.fn("cli.requireServerDatabase")(function* (
+  dbPath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(dbPath))) {
+    const error = new ServerDatabaseMissingError({ dbPath });
+    yield* Console.error(error.message);
+    return yield* error;
+  }
+});
 
 const DurationShorthandPattern = /^(?<value>\d+)(?<unit>ms|s|m|h|d|w)$/i;
 

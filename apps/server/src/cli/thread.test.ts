@@ -1,7 +1,20 @@
+// @effect-diagnostics nodeBuiltinImport:off - CLI integration uses temporary Node paths.
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { RunId, ThreadId } from "@t3tools/contracts";
+import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import { Command } from "effect/cli";
 
+import { cli } from "../binCli.ts";
+import {
+  makePersistedServerRuntimeState,
+  persistServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import { type ThreadTools, waitForRun } from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -73,3 +86,40 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
     });
   }),
 );
+
+it.layer(NodeServices.layer)("thread CLI state", (it) => {
+  it.effect.each(["registered", "not registered"] as const)(
+    "does not create a database when a server is %s and statev2.sqlite is missing",
+    (server) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-cli-missing-db-" });
+        const baseDir = NodePath.join(root, "state");
+        if (server === "registered") {
+          yield* persistServerRuntimeState({
+            path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: 1,
+            }),
+          });
+        }
+
+        const result = yield* Command.runWith(cli, { version: "0.0.0" })([
+          "thread",
+          "list",
+          "--base-dir",
+          baseDir,
+        ]).pipe(
+          Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer)),
+          Effect.result,
+        );
+
+        assert.isFalse(
+          yield* fs.exists(NodePath.join(baseDir, "userdata", "statev2.sqlite")),
+          "t3 thread must not create statev2.sqlite",
+        );
+        assert.equal(result._tag, "Failure");
+      }),
+  );
+});
