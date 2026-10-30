@@ -61,7 +61,15 @@ export function mergeOlderHistoryIntoProjection(
   const start =
     work === undefined
       ? -1
-      : projection.visibleTurnItems.findIndex((row) => row.sourceItemId === work.anchorId);
+      : (() => {
+          const local = projection.visibleTurnItems.findIndex(
+            (row) =>
+              row.sourceItemId === work.anchorId &&
+              (row.visibility === "local" || row.sourceThreadId === projection.thread.id),
+          );
+          if (local !== -1) return local;
+          return projection.visibleTurnItems.findIndex((row) => row.sourceItemId === work.anchorId);
+        })();
   const anchor = projection.visibleTurnItems[start];
   const deferred = anchor?.item.deferredWork;
   if (work !== undefined && deferred === undefined) return projection;
@@ -139,8 +147,12 @@ export function mergeOlderHistoryIntoProjection(
         .filter((row) => !pageKeys.has(projectedItemKey(row))),
     ];
     const ordered = section
-      .map((row) => (row.sourceItemId === anchor.sourceItemId ? updated : row))
-      .sort((left, right) => left.item.ordinal - right.item.ordinal);
+      .map((row) => (projectedItemKey(row) === projectedItemKey(updated) ? updated : row))
+      .sort(
+        (left, right) =>
+          left.item.ordinal - right.item.ordinal ||
+          String(left.item.id).localeCompare(String(right.item.id)),
+      );
     visible = [
       ...projection.visibleTurnItems.slice(0, start),
       ...ordered,
