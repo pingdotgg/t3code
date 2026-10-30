@@ -19,7 +19,11 @@ import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
-import { classifyReachability, type ReachabilityFacts } from "./ConnectReachability.ts";
+import {
+  classifyReachability,
+  formatReachabilityFailure,
+  type ReachabilityFacts,
+} from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
 vi.mock("node:net", { spy: true });
@@ -73,21 +77,25 @@ describe("classifyReachability", () => {
       ),
     ).toMatchObject({ cause: "origin_unreachable" });
     // Failed DNS also fails the edge lookups.
-    expect(
-      classifyReachability(
-        facts({
-          connector: {
-            pid: 1,
-            readyConnections: null,
-            hostname: "env.example.test",
-            protocol: null,
-          },
-          endpoint: { kind: "dns_failed" },
-          edgeReachable: false,
-        }),
-        checkedAt,
-      ),
-    ).toMatchObject({ cause: "dns_failed" });
+    const dnsFailure = classifyReachability(
+      facts({
+        connector: {
+          pid: 1,
+          readyConnections: null,
+          hostname: "env.example.test",
+          protocol: null,
+        },
+        endpoint: { kind: "dns_failed" },
+        edgeReachable: false,
+      }),
+      checkedAt,
+    );
+    expect(dnsFailure).toMatchObject({ cause: "dns_failed" });
+    if (dnsFailure.status !== "unreachable") throw new Error("Expected a DNS failure");
+    expect(formatReachabilityFailure(dnsFailure)).not.toContain("NOT reachable from other devices");
+    expect(formatReachabilityFailure({ ...dnsFailure, cause: "origin_unreachable" })).toContain(
+      "NOT reachable from other devices",
+    );
   });
 
   it("waits on a connector that has not connected while the edge answers", () => {
