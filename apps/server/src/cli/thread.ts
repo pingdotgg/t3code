@@ -1,4 +1,6 @@
 import {
+  ModelSelection,
+  OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -13,6 +15,7 @@ import {
   type OrchestratorMcpThreadTimelineItem,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/shared/model";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -162,6 +165,8 @@ const ThreadLaunchResult = Schema.Struct({
   projectId: ProjectId,
   runId: Schema.NullOr(RunId),
 });
+
+const ThreadConfiguration = Schema.Struct({ modelSelection: ModelSelection });
 
 const toolFailureDetail = (result: typeof ToolResult.Type) => {
   const text = result.content?.find((part) => part.text !== undefined)?.text ?? "";
@@ -451,6 +456,49 @@ const finishRun = Effect.fn("cli.thread.finishRun")(function* (
   }
 });
 
+/**
+ * Each provider names its effort option differently (Codex `reasoningEffort`,
+ * Claude `effort`), so the server's model list says which one to set.
+ */
+export const withEffort = Effect.fn("cli.thread.withEffort")(function* (
+  tools: ThreadTools,
+  selection: Omit<ModelSelection, "instanceId"> & { readonly instanceId: string },
+  effort: string,
+) {
+  const capabilities = yield* tools.call(
+    "orchestrator_capabilities",
+    { search: selection.model },
+    OrchestratorMcpCapabilitiesResult,
+  );
+  const model = capabilities.providers
+    .find((provider) => provider.providerInstanceId === selection.instanceId)
+    ?.models.find((candidate) => candidate.id === selection.model);
+  const name = `${selection.instanceId}/${selection.model}`;
+  if (model === undefined) {
+    return yield* new ThreadUsageError({
+      detail: `${name} is not in the server's model list, so its effort levels are unknown.`,
+    });
+  }
+  const option = REASONING_EFFORT_OPTION_IDS.map((id) =>
+    model.options?.find((candidate) => candidate.id === id),
+  ).find((candidate) => candidate !== undefined);
+  if (option === undefined) {
+    return yield* new ThreadUsageError({ detail: `${name} has no effort setting.` });
+  }
+  if (!option.values.includes(effort)) {
+    return yield* new ThreadUsageError({
+      detail: `--effort for ${name} must be one of: ${option.values.join(", ")}.`,
+    });
+  }
+  return {
+    ...selection,
+    options: [
+      ...(selection.options ?? []).filter((candidate) => candidate.id !== option.id),
+      { id: option.id, value: effort },
+    ],
+  };
+});
+
 const titleFromMessage = (message: string) => {
   const firstLine = message.trim().split("\n")[0]?.trim() ?? "";
   return firstLine.length > TITLE_MAX_CHARS
@@ -484,6 +532,12 @@ const waitFlag = Flag.Boolean("wait").pipe(
     "Wait for the agent to finish and print its reply. Exits 1 if the run fails and 2 if it waits for an answer.",
   ),
   Flag.withDefault(false),
+);
+const effortFlag = Flag.String("effort").pipe(
+  Flag.withDescription(
+    "Reasoning effort, such as low, medium, or high. Pass with --provider and --model.",
+  ),
+  Flag.optional,
 );
 const messageArgument = Argument.String("message").pipe(
   Argument.withDescription("Message for the agent, or - to read it from stdin."),
@@ -561,6 +615,7 @@ const threadStartCommand = Command.make("start", {
     Flag.withDescription("Branch name for the new worktree."),
     Flag.optional,
   ),
+  effort: effortFlag,
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -572,6 +627,9 @@ const threadStartCommand = Command.make("start", {
       if (Option.isSome(flags.provider) !== Option.isSome(flags.model)) {
         return yield* new ThreadUsageError({ detail: "--provider and --model go together." });
       }
+      if (Option.isSome(flags.effort) && Option.isNone(flags.model)) {
+        return yield* new ThreadUsageError({ detail: "--effort needs --provider and --model." });
+      }
       const title = yield* decodeTitle(
         Option.getOrElse(flags.title, () => titleFromMessage(message)),
       ).pipe(Effect.mapError(() => new ThreadUsageError({ detail: "The title is empty." })));
@@ -579,6 +637,14 @@ const threadStartCommand = Command.make("start", {
         flags,
         Effect.fn("cli.thread.start")(function* (tools) {
           const project = yield* resolveProject(tools, flags.project);
+          const requested =
+            Option.isSome(flags.provider) && Option.isSome(flags.model)
+              ? { instanceId: flags.provider.value, model: flags.model.value }
+              : undefined;
+          const modelSelection =
+            requested !== undefined && Option.isSome(flags.effort)
+              ? yield* withEffort(tools, requested, flags.effort.value)
+              : requested;
           const launched = yield* tools.call(
             "t3_thread_launch",
             {
@@ -586,14 +652,7 @@ const threadStartCommand = Command.make("start", {
               title,
               message,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
-              ...(Option.isSome(flags.provider) && Option.isSome(flags.model)
-                ? {
-                    modelSelection: {
-                      instanceId: flags.provider.value,
-                      model: flags.model.value,
-                    },
-                  }
-                : {}),
+              ...(modelSelection === undefined ? {} : { modelSelection }),
             },
             ThreadLaunchResult,
           );
@@ -616,6 +675,11 @@ const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
   thread: threadArgument,
   message: messageArgument,
+  effort: effortFlag.pipe(
+    Flag.withDescription(
+      "Reasoning effort for this message and the thread's later turns. Levels depend on the model.",
+    ),
+  ),
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -629,6 +693,21 @@ const threadSendCommand = Command.make("send", {
       yield* withThreadTools(
         flags,
         Effect.fn("cli.thread.send")(function* (tools) {
+          if (Option.isSome(flags.effort)) {
+            const { modelSelection } = yield* tools.call(
+              "t3_thread_configure",
+              { threadId },
+              ThreadConfiguration,
+            );
+            yield* tools.call(
+              "t3_thread_configure",
+              {
+                threadId,
+                modelSelection: yield* withEffort(tools, modelSelection, flags.effort.value),
+              },
+              Schema.Unknown,
+            );
+          }
           const sent = yield* tools.call(
             "t3_thread_send",
             { threadId, message, mode: "queue" },

@@ -22,7 +22,11 @@ import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { getProviderOptionCurrentLabel, getProviderOptionStatedValue } from "@t3tools/shared/model";
+import {
+  getProviderOptionCurrentLabel,
+  getProviderOptionStatedValue,
+  REASONING_EFFORT_OPTION_IDS,
+} from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -144,15 +148,6 @@ export function deriveReportedModelSelection(projection: ThreadStructure): Model
   );
   return providerThread?.nativeMetadata?.modelSelection ?? null;
 }
-
-export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
-  "reasoningEffort",
-  "effort",
-  "reasoning",
-  "variant",
-  "reasoning_effort",
-  "thinking_level",
-];
 
 export function formatModelSelectionEffort(
   selection: ModelSelection,
