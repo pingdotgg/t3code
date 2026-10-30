@@ -1,31 +1,20 @@
-import {
-  isSecretReference,
-  type ServerSettings,
-  type SettingsSecretValue,
-} from "@t3tools/contracts";
+import { secretReferencesInSettings } from "@t3tools/contracts";
 import type * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
+import type * as Schema from "effect/Schema";
 
-import { collectSourceControlHostSecretReferences } from "../sourceControl/sourceControlHostSecrets.ts";
-
-/** An unreadable secret comes back as `""`, so a credential that is missing behaves as unset. */
-export const resolveSettingsSecret = Effect.fn("SettingsSecrets.resolve")(function* (
-  resolver: SecretResolver.SecretResolver["Service"],
-  value: SettingsSecretValue,
-) {
-  if (!isSecretReference(value)) return value;
-  const [secret] = yield* resolver.read([value]);
-  return secret ?? "";
-});
-
-/** Settings that cannot be read clear every cached secret, so a refresh never keeps a stale one. */
-export const invalidateSettingsSecrets = Effect.fn("SettingsSecrets.invalidate")(function* <E>(
-  resolver: SecretResolver.SecretResolver["Service"],
-  settings: Effect.Effect<Pick<ServerSettings, "sourceControlHosts">, E>,
-) {
-  const references = yield* settings.pipe(
-    Effect.map((current) => collectSourceControlHostSecretReferences(current.sourceControlHosts)),
-    Effect.orElseSucceed(() => undefined),
+/**
+ * Replaces each reference in the fields `schema` declares as `SettingsSecretValue` with the secret
+ * it names, read in one batch. An unreadable secret comes back as `""`, so it behaves as unset.
+ */
+export const resolveSettingsSecrets = Effect.fn("SettingsSecrets.resolve")(function* <
+  Settings extends Readonly<Record<string, unknown>>,
+>(resolver: SecretResolver.SecretResolver["Service"], schema: Schema.Top, settings: Settings) {
+  const pending = secretReferencesInSettings(schema, settings);
+  if (pending.length === 0) return settings;
+  const values = yield* resolver.read(pending.map(({ reference }) => reference));
+  const resolved = Object.fromEntries(
+    pending.map(({ field }, index) => [field, values[index] ?? ""] as const),
   );
-  yield* resolver.invalidate(references);
+  return { ...settings, ...resolved };
 });

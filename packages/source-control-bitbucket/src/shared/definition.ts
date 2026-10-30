@@ -44,11 +44,7 @@ const text = (annotations: Schema.Annotations.Key<string>) =>
 const secret = (annotations: Schema.Annotations.Key<SettingsSecretValue>) =>
   SettingsSecretValue.pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
-    Schema.annotateKey({
-      ...annotations,
-      settingsSecret: true,
-      providerSettingsForm: { control: "password" },
-    }),
+    Schema.annotateKey({ ...annotations, providerSettingsForm: { control: "password" } }),
   );
 
 export const settings = makeProviderSettingsSchema(
