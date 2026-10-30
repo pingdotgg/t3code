@@ -174,6 +174,22 @@ const handlers = {
       }),
     { refusedWhenLinked: "cancel this environment's pipelines" },
   ),
+  rerun_pipeline_step: McpToolAccess.writes(
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.rerunPipelineStep(scope, input);
+      }),
+    { refusedWhenLinked: "rerun this environment's pipelines" },
+  ),
+  handoff_pipeline_step: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.handoffPipelineStep(scope, input);
+    }),
+  ),
   request_secret: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

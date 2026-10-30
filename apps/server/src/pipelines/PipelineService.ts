@@ -12,6 +12,8 @@ import {
   type PipelineRunCancelInput,
   type PipelineRunId,
   type PipelineRunResult,
+  type PipelineRunRerunInput,
+  type ThreadId,
   type PipelineRunRetryInput,
   type PipelineRunSetPauseBeforeInput,
   type PipelineRunStartInput,
@@ -34,6 +36,7 @@ import * as Stream from "effect/Stream";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   PIPELINE_STARTERS,
+  pipelineStarterFingerprint,
   withStarterRuntimeMode,
   type PipelineStarter,
 } from "@t3tools/shared/pipelineStarters";
@@ -79,6 +82,15 @@ export class PipelineService extends Context.Service<
     ) => Effect.Effect<PipelineRunResult, PipelineError>;
     readonly skipStep: (
       input: PipelineRunStepActionInput,
+    ) => Effect.Effect<PipelineRunResult, PipelineError>;
+    /** A step agent's explicit result; only the thread of the step's latest attempt may call it. */
+    readonly handoffStep: (input: {
+      readonly runId: PipelineRunId;
+      readonly threadId: ThreadId;
+      readonly output: string;
+    }) => Effect.Effect<PipelineRunResult, PipelineError>;
+    readonly rerunFromStep: (
+      input: PipelineRunRerunInput,
     ) => Effect.Effect<PipelineRunResult, PipelineError>;
     readonly cancel: (
       input: PipelineRunCancelInput,
@@ -283,6 +295,35 @@ export const layerWithStarters = (
           }),
         );
 
+      const upgradeStarter = Effect.fn("PipelineService.upgradeStarter")(function* (
+        starter: PipelineStarter,
+      ) {
+        const previous = starter.previousFingerprints ?? [];
+        if (previous.length === 0) return false;
+        const existing = yield* store.getDefinition(
+          PipelineId.make(`pipeline:starter:${starter.key}`),
+        );
+        if (existing === null || !previous.includes(pipelineStarterFingerprint(existing.steps))) {
+          return false;
+        }
+        const { defaultRuntimeMode } = yield* serverSettings.getSettings;
+        // Keep the runtime mode each step was saved with; it is this server's, not the starter's.
+        const modes = new Map(existing.steps.map((step) => [step.id, step.runtimeMode] as const));
+        const steps = withStarterRuntimeMode(starter.steps, defaultRuntimeMode).map((step) => ({
+          ...step,
+          runtimeMode: modes.get(step.id) ?? step.runtimeMode,
+        }));
+        const updated = yield* store.updateDefinition({
+          ...existing,
+          steps,
+          updatedAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        if (updated) {
+          yield* Effect.logInfo("Upgraded unedited starter pipeline", { starterKey: starter.key });
+        }
+        return updated;
+      });
+
       // Seeding is best effort: a failure must never keep the server from starting.
       const seeded = yield* Effect.forEach(starters, (starter) =>
         Effect.gen(function* () {
@@ -307,7 +348,18 @@ export const layerWithStarters = (
           ),
         ),
       );
-      if (seeded.includes(true)) yield* notifyDefsChanged;
+      // An unedited copy of an older starter version follows the starter. Best effort as well.
+      const upgraded = yield* Effect.forEach(starters, (starter) =>
+        upgradeStarter(starter).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not upgrade starter pipeline", {
+              starterKey: starter.key,
+              cause,
+            }).pipe(Effect.as(false)),
+          ),
+        ),
+      );
+      if (seeded.includes(true) || upgraded.includes(true)) yield* notifyDefsChanged;
 
       yield* runner.startRecovery();
 
@@ -323,6 +375,8 @@ export const layerWithStarters = (
         continueRun: runner.continueRun,
         retryStep: runner.retryStep,
         skipStep: runner.skipStep,
+        handoffStep: runner.handoffStep,
+        rerunFromStep: runner.rerunFromStep,
         cancel: runner.cancel,
         setStepPauseBefore: runner.setStepPauseBefore,
       });

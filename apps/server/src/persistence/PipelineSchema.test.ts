@@ -30,4 +30,39 @@ describe("Pipeline schema", () => {
       assert.strictEqual(latest?.migration_id, migrationManifest.at(-1)?.[0]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
+
+  it.effect("adds handed_off to a step table created before it existed", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        CREATE TABLE pipeline_run_steps (
+          run_id TEXT NOT NULL,
+          step_index INTEGER NOT NULL,
+          step_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          attempt INTEGER NOT NULL,
+          child_thread_id TEXT,
+          pause_before INTEGER NOT NULL,
+          prompt TEXT,
+          workspace_strategy_json TEXT,
+          start_checkpoint_json TEXT,
+          output TEXT,
+          error TEXT,
+          started_at TEXT,
+          completed_at TEXT,
+          PRIMARY KEY (run_id, step_index)
+        )
+      `;
+      yield* sql`
+        INSERT INTO pipeline_run_steps (run_id, step_index, step_id, status, attempt, pause_before)
+        VALUES ('run-1', 0, 'plan', 'running', 1, 0)
+      `;
+      yield* runMigrations();
+      yield* runMigrations();
+      const rows = yield* sql<{ readonly handed_off: number }>`
+        SELECT handed_off FROM pipeline_run_steps
+      `;
+      assert.deepStrictEqual(rows, [{ handed_off: 0 }]);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
 });

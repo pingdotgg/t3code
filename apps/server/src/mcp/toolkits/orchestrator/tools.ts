@@ -14,6 +14,9 @@ import {
   OrchestratorMcpDeleteScheduledTaskInput,
   OrchestratorMcpDeleteScheduledTaskResult,
   OrchestratorMcpContinuePipelineInput,
+  OrchestratorMcpHandoffPipelineStepInput,
+  OrchestratorMcpHandoffPipelineStepResult,
+  OrchestratorMcpRerunPipelineInput,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
@@ -228,7 +231,7 @@ const StartPipelineTool = Tool.make("start_pipeline", {
 
 const PipelineStatusTool = Tool.make("pipeline_status", {
   description:
-    "Status of a pipeline run: each step's status, thread `link`, and output preview. `paused` with `awaiting_continue`: `continue_pipeline` if you started the run, else wait for the user. No tool retries or skips a failed or stopped step: tell the user.",
+    "Status of a pipeline run: each step's status, thread `link`, and output preview. `paused` with `awaiting_continue`: `continue_pipeline` if you started the run, else wait for the user. `awaiting_handoff`: the step's agent ended its turn without handing off, usually with a question; tell the user. No tool retries or skips a failed or stopped step: tell the user.",
   parameters: OrchestratorMcpPipelineRunInput,
   success: OrchestratorMcpPipelineRun,
   failure: OrchestratorMcpFailure,
@@ -242,7 +245,7 @@ const PipelineStatusTool = Tool.make("pipeline_status", {
 
 const ContinuePipelineTool = Tool.make("continue_pipeline", {
   description:
-    "Resume a paused pipeline run at `stepIndex`, its `currentStepIndex`. Starts the next step. Refused for a user-started run's `awaiting_continue` pause. For a failed or stopped step, takes its thread's latest result: only if the user asks.",
+    "Resume a paused pipeline run at `stepIndex`, its `currentStepIndex`. Starts the next step. Refused for a user-started run's `awaiting_continue` pause. For a failed, stopped or `awaiting_handoff` step, takes its thread's latest message as its result: only if the user asks.",
   parameters: OrchestratorMcpContinuePipelineInput,
   success: OrchestratorMcpPipelineRun,
   failure: OrchestratorMcpFailure,
@@ -264,6 +267,31 @@ const CancelPipelineTool = Tool.make("cancel_pipeline", {
 })
   .annotate(Tool.Title, "Cancel a pipeline")
   .annotate(Tool.Destructive, true);
+
+const RerunPipelineTool = Tool.make("rerun_pipeline_step", {
+  description:
+    "Run a paused, cancelled or completed pipeline run again from `stepIndex`: that step and every later one start over, earlier steps keep their results. Only if the user asks.",
+  parameters: OrchestratorMcpRerunPipelineInput,
+  success: OrchestratorMcpPipelineRun,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Rerun a pipeline step")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
+const HandoffPipelineStepTool = Tool.make("handoff_pipeline_step", {
+  description:
+    "Only in a pipeline step's thread: hand this step's finished result to the next step. The run moves on when your turn ends. Call it only when the step's work is done; if you are blocked or need a decision, ask the user and wait instead.",
+  parameters: OrchestratorMcpHandoffPipelineStepInput,
+  success: OrchestratorMcpHandoffPipelineStepResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Hand off a pipeline step")
+  .annotate(Tool.Destructive, false);
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
@@ -434,6 +462,8 @@ export const OrchestratorToolkit = Toolkit.make(
   PipelineStatusTool,
   ContinuePipelineTool,
   CancelPipelineTool,
+  RerunPipelineTool,
+  HandoffPipelineStepTool,
   RequestSecretTool,
   CreateThreadsTool,
   ThreadListTool,

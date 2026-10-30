@@ -814,6 +814,32 @@ export const OrchestratorMcpContinuePipelineInput = Schema.Struct({
 });
 export type OrchestratorMcpContinuePipelineInput = typeof OrchestratorMcpContinuePipelineInput.Type;
 
+export const OrchestratorMcpRerunPipelineInput = Schema.Struct({
+  runId: PipelineRunId,
+  stepIndex: NonNegativeInt.annotate({
+    description:
+      "The step to run again, at or before `currentStepIndex`. Later steps run again too.",
+  }),
+});
+export type OrchestratorMcpRerunPipelineInput = typeof OrchestratorMcpRerunPipelineInput.Type;
+
+export const OrchestratorMcpHandoffPipelineStepInput = Schema.Struct({
+  output: OrchestratorMcpPrompt.annotate({
+    description:
+      "This step's complete result, as its prompt asks you to finish. The next step receives only this text.",
+  }),
+});
+export type OrchestratorMcpHandoffPipelineStepInput =
+  typeof OrchestratorMcpHandoffPipelineStepInput.Type;
+
+export const OrchestratorMcpHandoffPipelineStepResult = Schema.Struct({
+  runId: PipelineRunId,
+  stepIndex: NonNegativeInt,
+  next: Schema.String,
+});
+export type OrchestratorMcpHandoffPipelineStepResult =
+  typeof OrchestratorMcpHandoffPipelineStepResult.Type;
+
 export const OrchestratorMcpPipelineStep = Schema.Struct({
   index: NonNegativeInt,
   stepId: PipelineStepId,
@@ -823,6 +849,7 @@ export const OrchestratorMcpPipelineStep = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   link: Schema.optional(Schema.String),
   outputPreview: Schema.NullOr(Schema.String),
+  handedOff: Schema.optional(Schema.Boolean),
   error: Schema.NullOr(Schema.String),
 });
 export type OrchestratorMcpPipelineStep = typeof OrchestratorMcpPipelineStep.Type;

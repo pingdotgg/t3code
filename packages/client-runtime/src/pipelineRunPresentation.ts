@@ -7,11 +7,16 @@ export interface PipelineRunActions {
   readonly cancel: boolean;
   /** Whether the "pause before" flag of the step at `stepIndex` can still be changed. */
   readonly canTogglePauseBefore: (stepIndex: number) => boolean;
+  /**
+   * Whether the run can start over from the step at `stepIndex`. The current step of a paused
+   * or cancelled run is offered as Retry instead.
+   */
+  readonly rerunFrom: (stepIndex: number) => boolean;
 }
 
 /**
  * Mirrors the server guards: continue needs paused; retry/skip need paused or
- * cancelled; cancel needs running or paused; completed runs offer nothing.
+ * cancelled; cancel needs running or paused; rerun needs paused, cancelled or completed.
  */
 export function availablePipelineActions(run: PipelineRun): PipelineRunActions {
   const paused = run.status === "paused";
@@ -28,11 +33,28 @@ export function availablePipelineActions(run: PipelineRun): PipelineRunActions {
       if (stepIndex < run.currentStepIndex) return false;
       return run.steps[stepIndex]?.status === "pending";
     },
+    rerunFrom: (stepIndex) => {
+      if (stepIndex < 0 || stepIndex >= run.steps.length) return false;
+      if (run.status === "completed") return stepIndex <= run.currentStepIndex;
+      return resumable && stepIndex < run.currentStepIndex;
+    },
   };
 }
 
 export function stepName(run: Pick<PipelineRun, "definition">, index: number): string {
   return run.definition.steps[index]?.name ?? `Step ${index + 1}`;
+}
+
+/** Whether the run is paused because the step at `stepIndex` ended its turn without a handoff. */
+export function pipelineStepAwaitsHandoff(
+  run: Pick<PipelineRun, "status" | "pauseReason" | "currentStepIndex">,
+  stepIndex: number,
+): boolean {
+  return (
+    run.status === "paused" &&
+    run.pauseReason === "awaiting_handoff" &&
+    run.currentStepIndex === stepIndex
+  );
 }
 
 /** `feedingActive`: the step before a still-pending current step is still working. */
@@ -48,6 +70,8 @@ export function pipelineRunStatusLabel(run: PipelineRun, feedingActive = false):
       switch (run.pauseReason) {
         case "awaiting_continue":
           return `Paused before ${name}`;
+        case "awaiting_handoff":
+          return `${name} ended without handing off`;
         case "step_failed":
           return `Step ${name} failed`;
         case "step_stopped":

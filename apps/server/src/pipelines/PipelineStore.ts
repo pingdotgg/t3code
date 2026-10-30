@@ -53,6 +53,8 @@ export interface PipelineStepPatch {
   /** Kept across attempts: a restore-retry starts from the same snapshot. */
   readonly startCheckpoint?: StartCheckpoint | null;
   readonly output?: string | null;
+  /** Whether `output` came from the agent's handoff rather than its thread's last message. */
+  readonly handedOff?: boolean;
   readonly error?: string | null;
   readonly startedAt?: string | null;
   readonly completedAt?: string | null;
@@ -175,6 +177,7 @@ interface PipelineRunStepRow {
   readonly child_thread_id: string | null;
   readonly pause_before: number;
   readonly has_start_checkpoint: number;
+  readonly handed_off: number;
   readonly output: string | null;
   readonly error: string | null;
   readonly started_at: string | null;
@@ -253,6 +256,7 @@ const decodeRunRow = Effect.fnUntraced(function* (
       pauseBefore: step.pause_before === 1,
       canRestoreWorkspace: step.has_start_checkpoint === 1,
       outputPreview: pipelineOutputPreview(step.output),
+      handedOff: step.handed_off === 1,
       error: step.error,
       startedAt: step.started_at,
       completedAt: step.completed_at,
@@ -296,6 +300,7 @@ const stepColumns = (patch: PipelineStepPatch) =>
         ? patch.startCheckpoint
         : encodeStartCheckpointJson(patch.startCheckpoint),
     output: patch.output,
+    handed_off: patch.handedOff === undefined ? undefined : patch.handedOff ? 1 : 0,
     error: patch.error,
     started_at: patch.startedAt,
     completed_at: patch.completedAt,
@@ -454,6 +459,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
                   workspace_strategy_json: null,
                   start_checkpoint_json: null,
                   output: null,
+                  handed_off: 0,
                   error: null,
                   started_at: null,
                   completed_at: null,
@@ -480,7 +486,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
             const stepRows = yield* sql<PipelineRunStepRow>`
                 SELECT step_index, step_id, status, attempt, child_thread_id, pause_before,
                        start_checkpoint_json IS NOT NULL AS has_start_checkpoint,
-                       output, error, started_at, completed_at
+                       handed_off, output, error, started_at, completed_at
                 FROM pipeline_run_steps
                 WHERE run_id = ${row.run_id}
                 ORDER BY step_index ASC

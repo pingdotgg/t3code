@@ -3860,6 +3860,7 @@ describe("OrchestratorMcpService pipelines", () => {
         childThreadId: ThreadId.make("thread:pipeline-step-0"),
         pauseBefore: false,
         canRestoreWorkspace: false,
+        handedOff: false,
         outputPreview: "Plan: add a theme toggle.",
         error: null,
         startedAt: at,
@@ -3873,6 +3874,7 @@ describe("OrchestratorMcpService pipelines", () => {
         childThreadId: null,
         pauseBefore: true,
         canRestoreWorkspace: false,
+        handedOff: false,
         outputPreview: null,
         error: null,
         startedAt: null,
@@ -3898,13 +3900,17 @@ describe("OrchestratorMcpService pipelines", () => {
       readonly checkout?: { readonly worktreePath: string; readonly branch: string };
       /** The commit sha a checkout resolves to, or undefined when git cannot resolve it. */
       readonly resolveCommit?: (cwd: string, revision: string) => string | undefined;
+      /** Makes the caller a pipeline thread: a step when `stepId` is set, else the run's parent. */
+      readonly pipelineThread?: { readonly runId: PipelineRunId; readonly stepId: string | null };
     } = {},
   ) => {
     const started: Array<{ input: unknown; options: unknown }> = [];
     const continued: Array<unknown> = [];
+    const handedOff: Array<unknown> = [];
     const shell = {
       ...liveThreadShell(callerThreadId, modes),
       ...extra.checkout,
+      ...(extra.pipelineThread === undefined ? {} : { pipeline: extra.pipelineThread }),
     };
     const pipelines = Layer.mock(PipelineService.PipelineService)({
       list: () => Effect.succeed({ pipelines: [definition] }),
@@ -3920,6 +3926,11 @@ describe("OrchestratorMcpService pipelines", () => {
       continueRun: (input) =>
         Effect.sync(() => {
           continued.push(input);
+          return { run: run({ status: "running", pauseReason: null }) };
+        }),
+      handoffStep: (input) =>
+        Effect.sync(() => {
+          handedOff.push(input);
           return { run: run({ status: "running", pauseReason: null }) };
         }),
     });
@@ -3962,6 +3973,7 @@ describe("OrchestratorMcpService pipelines", () => {
     return {
       started,
       continued,
+      handedOff,
       scope,
       layer: OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -4283,6 +4295,44 @@ describe("OrchestratorMcpService pipelines", () => {
       );
       assert.equal(internal.code, "orchestration_error");
       assert.notInclude(internal.message, "SQLITE");
+    }),
+  );
+
+  it.effect("hands off a pipeline step's output from its own thread", () =>
+    Effect.gen(function* () {
+      const h = harness(
+        { runtimeMode: "full-access", interactionMode: "default" },
+        {
+          pipelineThread: { runId: PipelineRunId.make("pipeline-run:one"), stepId: "plan" },
+        },
+      );
+      const result = yield* withService(h, (service) =>
+        service.handoffPipelineStep(h.scope, { output: "The plan" }),
+      );
+      assert.deepEqual(h.handedOff, [
+        { runId: "pipeline-run:one", threadId: callerThreadId, output: "The plan" },
+      ]);
+      assert.equal(result.runId, "pipeline-run:one");
+      assert.include(result.next, "End your turn now");
+    }),
+  );
+
+  it.effect("refuses a handoff from a thread that is not a pipeline step", () =>
+    Effect.gen(function* () {
+      for (const pipelineThread of [
+        undefined,
+        { runId: PipelineRunId.make("pipeline-run:one"), stepId: null },
+      ]) {
+        const h = harness(
+          { runtimeMode: "full-access", interactionMode: "default" },
+          pipelineThread === undefined ? {} : { pipelineThread },
+        );
+        const refused = yield* Effect.flip(
+          withService(h, (service) => service.handoffPipelineStep(h.scope, { output: "x" })),
+        );
+        assert.include(refused.message, "not a pipeline step");
+        assert.deepEqual(h.handedOff, []);
+      }
     }),
   );
 });

@@ -154,7 +154,7 @@ export class PullRequestWatchFromPipelineStepError extends Schema.TaggedError<Pu
   {},
 ) {
   override get message(): string {
-    return "This thread is a pipeline step, so it cannot watch pull requests. The pipeline moves on when you end your turn: finish your step and report the pull request's state instead.";
+    return "This thread is a pipeline step, so it cannot watch pull requests. Finish your step, then hand off with `handoff_pipeline_step`, including the pull request's state in its output.";
   }
 }
 

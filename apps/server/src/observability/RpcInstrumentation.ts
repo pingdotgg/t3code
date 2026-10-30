@@ -111,6 +111,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pipelineRunsContinue]: "pipelines",
   [WS_METHODS.pipelineRunsRetryStep]: "pipelines",
   [WS_METHODS.pipelineRunsSkipStep]: "pipelines",
+  [WS_METHODS.pipelineRunsRerunFromStep]: "pipelines",
   [WS_METHODS.pipelineRunsCancel]: "pipelines",
   [WS_METHODS.pipelineRunsSetPauseBefore]: "pipelines",
   [WS_METHODS.secretsAnswerRequest]: "secrets",

@@ -1652,6 +1652,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:pipeline-run:skip-step",
       tag: WS_METHODS.pipelineRunsSkipStep,
     }),
+    rerunPipelineFromStep: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pipeline-run:rerun-from-step",
+      tag: WS_METHODS.pipelineRunsRerunFromStep,
+    }),
     cancelPipelineRun: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:pipeline-run:cancel",
       tag: WS_METHODS.pipelineRunsCancel,

@@ -12,6 +12,7 @@ import {
   type PipelinePauseReason,
   type PipelineRun,
   type PipelineRunCancelInput,
+  type PipelineRunRerunInput,
   type PipelineRunResult,
   type PipelineRunRetryInput,
   type PipelineRunSetPauseBeforeInput,
@@ -48,7 +49,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PipelineStore from "./PipelineStore.ts";
-import { renderPipelinePrompt } from "./pipelineTemplate.ts";
+import { pipelineHandoffInstructions, renderPipelinePrompt } from "./pipelineTemplate.ts";
 import { makePipelineWorkspace } from "./pipelineWorkspace.ts";
 
 const WAIT_TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -240,7 +241,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     run: PipelineRun,
     step: PipelineRunStep,
     threadId: ThreadId,
-    action: "cancel" | "retry" | "skip",
+    action: "cancel" | "retry" | "skip" | "rerun",
   ) =>
     bestEffort(
       "Could not stop pipeline step thread",
@@ -251,7 +252,9 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
         reason:
           action === "cancel"
             ? "The pipeline run was stopped."
-            : `The pipeline step was ${action === "retry" ? "retried" : "skipped"}.`,
+            : action === "rerun"
+              ? "The pipeline was rerun from an earlier step."
+              : `The pipeline step was ${action === "retry" ? "retried" : "skipped"}.`,
       }),
     );
 
@@ -264,7 +267,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
   };
 
   /** A failed, stopped or paused step's thread can still be worked on by hand, so always stop it. */
-  const stopCurrentChild = (run: PipelineRun, action: "retry" | "skip") => {
+  const stopCurrentChild = (run: PipelineRun, action: "retry" | "skip" | "rerun") => {
     const step = run.steps[run.currentStepIndex];
     if (step === undefined || step.childThreadId === null) return Effect.void;
     return stopThread(run, step, step.childThreadId, action);
@@ -388,7 +391,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     cursor: number,
   ): Effect.fn.Return<BuiltLaunch, PipelineError | OrchestratorV2Error> {
     const outputs = yield* store.getStepOutputs(run.id);
-    const { prompt } = renderPipelinePrompt({
+    const rendered = renderPipelinePrompt({
       snapshot: run.definition,
       stepIndex: cursor,
       input: run.input,
@@ -397,6 +400,11 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
         output: outputs.get(step.index) ?? null,
       })),
     });
+    const prompt = `${rendered.prompt}\n\n${pipelineHandoffInstructions({
+      stepNumber: cursor + 1,
+      stepCount: run.definition.steps.length,
+      stepName: run.definition.steps[cursor]?.name ?? `Step ${cursor + 1}`,
+    })}`;
     // Earlier steps' threads share one workspace. Retrying the first step reuses its previous
     // attempt's: re-running the original strategy would try to create the same worktree again.
     const earlier = run.steps.slice(0, cursor).filter((step) => step.childThreadId !== null);
@@ -501,14 +509,20 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     const step = run.steps[cursor];
     if (step === undefined) return;
     // Refresh the feeding step's output: a Continue may follow manual refinement in its thread.
+    // A handed-off output is the agent's chosen result, so it is never replaced by a later message.
     const feeding = run.steps
       .slice(0, cursor)
       .findLast((candidate) => candidate.status === "completed");
     if (feeding?.childThreadId !== undefined && feeding.childThreadId !== null) {
       const settled = yield* waitSettled(run.projectId, feeding.childThreadId);
       if (settled._tag === "completed") {
-        yield* withGuard(run.id, { cursor, attempt: step.attempt, stepStatus: "pending" }, () =>
-          store.updateStep(run.id, feeding.index, { output: settled.output }),
+        yield* withGuard(
+          run.id,
+          { cursor, attempt: step.attempt, stepStatus: "pending" },
+          (current) =>
+            current.steps[feeding.index]?.handedOff === true
+              ? Effect.void
+              : store.updateStep(run.id, feeding.index, { output: settled.output }),
         );
       }
     }
@@ -552,6 +566,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
             prompt: built.prompt,
             workspaceStrategy: built.workspaceStrategy,
             output: null,
+            handedOff: false,
             error: null,
             startedAt: now,
             completedAt: null,
@@ -577,15 +592,23 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     }
     switch (settled._tag) {
       case "completed": {
-        const applied = yield* withGuard(run.id, expect, (current, now) =>
-          store.updateRunWithSteps(run.id, advancePatch(current, now), [
-            {
-              index: cursor,
-              patch: { status: "completed", output: settled.output, error: null, completedAt: now },
-            },
-          ]),
-        );
-        if (applied) yield* syncParentWorkspace(run, cursor, childThreadId, attempt, "done");
+        let advanced = false;
+        const applied = yield* withGuard(run.id, expect, (current, now) => {
+          if (current.steps[cursor]?.handedOff === true) {
+            advanced = true;
+            return store.updateRunWithSteps(run.id, advancePatch(current, now), [
+              { index: cursor, patch: { status: "completed", error: null, completedAt: now } },
+            ]);
+          }
+          // No handoff: the agent stopped short (a question, a blocker, unfinished work). The step
+          // stays open so its agent can still hand off; the last message is what Continue takes.
+          return store.updateRunWithSteps(run.id, pausePatch(now, "awaiting_handoff", null), [
+            { index: cursor, patch: { output: settled.output } },
+          ]);
+        });
+        if (applied && advanced) {
+          yield* syncParentWorkspace(run, cursor, childThreadId, attempt, "done");
+        }
         return;
       }
       case "failed":
@@ -958,7 +981,13 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
           pauseReason: null,
           error: null,
         } as const;
-        if (
+        if (run.pauseReason === "awaiting_handoff" && step?.status === "running") {
+          // Accept the step without a handoff: its last message becomes the output, and the next
+          // launch refreshes it from the thread in case the conversation went on.
+          yield* store.updateRunWithSteps(run.id, advancePatch(run, now), [
+            { index: step.index, patch: { status: "completed", error: null, completedAt: now } },
+          ]);
+        } else if (
           step?.status === "failed" ||
           step?.status === "stopped" ||
           step?.status === "cancelled"
@@ -1043,6 +1072,124 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
                   patch: { status: "pending", error: null, output: null, completedAt: null },
                 },
               ],
+            );
+            yield* notifyRunChanged(current.id);
+            yield* wake(current.id);
+          }),
+        );
+      }),
+    );
+    return yield* result(input.runId);
+  });
+
+  /**
+   * Records a step agent's result. The run advances when the agent's turn ends; a run that paused
+   * because an earlier turn ended without a handoff resumes. While the run waits before the next
+   * step, the feeding step's agent can still replace its output.
+   */
+  const handoffStep = Effect.fn("PipelineRunner.handoffStep")(function* (input: {
+    readonly runId: PipelineRunId;
+    readonly threadId: ThreadId;
+    readonly output: string;
+  }) {
+    yield* section(
+      Effect.gen(function* () {
+        const run = yield* readRun(input.runId);
+        const step = run.steps.find((candidate) => candidate.childThreadId === input.threadId);
+        if (step === undefined) {
+          return yield* pipelineError(
+            "This thread is not the latest attempt of a step in its pipeline run, so it cannot hand off.",
+            { runId: run.id },
+          );
+        }
+        const now = yield* nowIso;
+        const handedOff = { output: input.output, handedOff: true } as const;
+        const current = step.index === run.currentStepIndex && step.status === "running";
+        if (current && run.status === "running") {
+          yield* store.updateStep(run.id, step.index, handedOff);
+        } else if (current && run.status === "paused" && run.pauseReason === "awaiting_handoff") {
+          yield* store.updateRunWithSteps(
+            run.id,
+            { updatedAt: now, status: "running", pauseReason: null, error: null },
+            [{ index: step.index, patch: handedOff }],
+          );
+          yield* wake(run.id);
+        } else if (
+          step.status === "completed" &&
+          run.status === "paused" &&
+          run.pauseReason === "awaiting_continue" &&
+          run.currentStepIndex === step.index + 1
+        ) {
+          yield* store.updateStep(run.id, step.index, handedOff);
+        } else {
+          return yield* pipelineError(
+            `Step ${step.index + 1} cannot hand off now: the run is ${run.status} at step ${run.currentStepIndex + 1}.`,
+            { runId: run.id },
+          );
+        }
+        yield* store.updateRun(run.id, { updatedAt: now });
+        yield* notifyRunChanged(run.id);
+      }),
+    );
+    return yield* result(input.runId);
+  });
+
+  const requireRerunnable = Effect.fn("PipelineRunner.requireRerunnable")(function* (
+    run: PipelineRun,
+    stepIndex: number,
+  ): Effect.fn.Return<void, PipelineError> {
+    yield* requireStatus(
+      run,
+      ["paused", "cancelled", "completed"],
+      "Only a paused, cancelled or completed run can rerun a step.",
+    );
+    if (stepIndex > run.currentStepIndex || stepIndex >= run.steps.length) {
+      return yield* pipelineError(`Step ${stepIndex + 1} has not run yet.`, { runId: run.id });
+    }
+    yield* requireParent(run);
+  });
+
+  /** Runs `stepIndex` and every later step again; earlier steps keep their outputs. */
+  const rerunFromStep = Effect.fn("PipelineRunner.rerunFromStep")(function* (
+    input: PipelineRunRerunInput,
+  ) {
+    yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const run = yield* readRun(input.runId);
+        yield* requireRerunnable(run, input.stepIndex);
+        // A paused or cancelled step's thread can still be worked on by hand.
+        if (run.status !== "completed") yield* stopCurrentChild(run, "rerun");
+        yield* section(
+          Effect.gen(function* () {
+            const current = yield* readRun(input.runId);
+            yield* requireRerunnable(current, input.stepIndex);
+            const now = yield* nowIso;
+            yield* store.updateRunWithSteps(
+              current.id,
+              {
+                updatedAt: now,
+                status: "running",
+                pauseReason: null,
+                error: null,
+                currentStepIndex: input.stepIndex,
+                completedAt: null,
+              },
+              current.steps
+                .filter((step) => step.index >= input.stepIndex)
+                .map((step) => ({
+                  index: step.index,
+                  patch: {
+                    status: "pending",
+                    output: null,
+                    handedOff: false,
+                    error: null,
+                    startedAt: null,
+                    completedAt: null,
+                    // Attempts keep counting so each relaunch gets fresh command ids. The rerun
+                    // step keeps its thread: a first step relaunches in that thread's workspace.
+                    ...(step.index > input.stepIndex ? { childThreadId: null } : {}),
+                  },
+                })),
             );
             yield* notifyRunChanged(current.id);
             yield* wake(current.id);
@@ -1244,6 +1391,8 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     continueRun,
     retryStep,
     skipStep,
+    handoffStep,
+    rerunFromStep,
     cancel,
     setStepPauseBefore,
     startRecovery,

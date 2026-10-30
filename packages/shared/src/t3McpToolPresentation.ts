@@ -177,6 +177,14 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Cancel", "Canceling", "Requested cancellation of", "a pipeline run"],
     "pipeline-cancel",
   ),
+  rerun_pipeline_step: tool(
+    ["Rerun", "Rerunning", "Reran", "a pipeline step"],
+    "pipeline-continue",
+  ),
+  handoff_pipeline_step: tool(
+    ["Hand off", "Handing off", "Handed off", "a pipeline step"],
+    "pipeline-continue",
+  ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
   create_threads: tool(["Create", "Creating", "Created", "T3 threads"], "thread-create"),
   t3_thread_start: tool(["Start", "Starting", "Started", "a T3 thread"], "thread-create"),

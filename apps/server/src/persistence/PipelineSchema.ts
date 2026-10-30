@@ -66,6 +66,12 @@ export const ensurePipelineSchema = Effect.gen(function* () {
     )
   `;
 
+  // Added after the table shipped: SQLite has no ADD COLUMN IF NOT EXISTS.
+  const stepColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(pipeline_run_steps)`;
+  if (!stepColumns.some((column) => column.name === "handed_off")) {
+    yield* sql`ALTER TABLE pipeline_run_steps ADD COLUMN handed_off INTEGER NOT NULL DEFAULT 0`;
+  }
+
   yield* sql`
     CREATE TABLE IF NOT EXISTS pipeline_starter_seeds (
       starter_key TEXT PRIMARY KEY,

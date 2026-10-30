@@ -10,6 +10,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   availablePipelineActions,
   pipelineFeedingStep,
+  pipelineRunStatusLabel,
+  pipelineStepAwaitsHandoff,
   pipelineStepBreadcrumbTitle,
   pipelineStepPosition,
 } from "./pipelineRunPresentation.ts";
@@ -126,6 +128,66 @@ describe("availablePipelineActions", () => {
       stepStatuses: ["running", "pending", "pending"],
     });
     expect(availablePipelineActions(run).canTogglePauseBefore(3)).toBe(false);
+  });
+});
+
+describe("rerunFrom", () => {
+  it("offers earlier steps of a paused or cancelled run and every run step of a completed one", () => {
+    const paused = makeRun({
+      status: "paused",
+      pauseReason: "awaiting_handoff",
+      currentStepIndex: 1,
+      stepStatuses: ["completed", "running", "pending"],
+    });
+    expect([0, 1, 2].map(availablePipelineActions(paused).rerunFrom)).toEqual([true, false, false]);
+    const cancelled = makeRun({
+      status: "cancelled",
+      currentStepIndex: 2,
+      stepStatuses: ["completed", "completed", "cancelled"],
+    });
+    expect([0, 1, 2].map(availablePipelineActions(cancelled).rerunFrom)).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    const completed = makeRun({
+      status: "completed",
+      currentStepIndex: 2,
+      stepStatuses: ["completed", "completed", "completed"],
+    });
+    expect([0, 1, 2, 3].map(availablePipelineActions(completed).rerunFrom)).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+    const running = makeRun({
+      status: "running",
+      currentStepIndex: 1,
+      stepStatuses: ["completed", "running", "pending"],
+    });
+    expect([0, 1, 2].map(availablePipelineActions(running).rerunFrom)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+});
+
+describe("missing handoff", () => {
+  it("labels the run and marks only the current step", () => {
+    const run = makeRun({
+      status: "paused",
+      pauseReason: "awaiting_handoff",
+      currentStepIndex: 1,
+      stepStatuses: ["completed", "running", "pending"],
+    });
+    expect(pipelineRunStatusLabel(run)).toBe("Implement ended without handing off");
+    expect([0, 1, 2].map((index) => pipelineStepAwaitsHandoff(run, index))).toEqual([
+      false,
+      true,
+      false,
+    ]);
   });
 });
 

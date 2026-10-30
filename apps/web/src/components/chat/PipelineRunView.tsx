@@ -4,6 +4,7 @@ import {
   availablePipelineActions,
   pipelineFeedingStep,
   pipelineRunStatusLabel,
+  pipelineStepAwaitsHandoff,
   stepName,
 } from "@t3tools/client-runtime/pipeline-run-presentation";
 import {
@@ -27,6 +28,7 @@ import {
   CircleDashedIcon,
   CircleDotIcon,
   ExternalLinkIcon,
+  RotateCcwIcon,
   SkipForwardIcon,
   SquareIcon,
   XCircleIcon,
@@ -143,6 +145,9 @@ function PipelineRunBody(props: {
   );
   const canRetry = useAtomValue(serverEnvironment.retryPipelineStep.permissionAtom(environmentId));
   const canSkip = useAtomValue(serverEnvironment.skipPipelineStep.permissionAtom(environmentId));
+  const canRerun = useAtomValue(
+    serverEnvironment.rerunPipelineFromStep.permissionAtom(environmentId),
+  );
   const canCancel = useAtomValue(serverEnvironment.cancelPipelineRun.permissionAtom(environmentId));
   const canSetPause = useAtomValue(
     serverEnvironment.setPipelineStepPauseBefore.permissionAtom(environmentId),
@@ -157,6 +162,10 @@ function PipelineRunBody(props: {
   });
   const skipStep = useAtomCommand(serverEnvironment.skipPipelineStep, {
     label: "pipeline skip step",
+    reportFailure: false,
+  });
+  const rerunFromStep = useAtomCommand(serverEnvironment.rerunPipelineFromStep, {
+    label: "pipeline rerun from step",
     reportFailure: false,
   });
   const cancelRun = useAtomCommand(serverEnvironment.cancelPipelineRun, {
@@ -198,6 +207,16 @@ function PipelineRunBody(props: {
       }),
     );
 
+  const confirmRerun = async (stepIndex: number) => {
+    if (busy) return;
+    const message = `Rerun from "${stepName(run, stepIndex)}"?\nThis step and every step after it run again. Earlier steps keep their results.`;
+    const confirmed = (await requestConfirmDialog(message)) ?? window.confirm(message);
+    if (!confirmed) return;
+    await perform(`rerun:${stepIndex}`, "Could not rerun step", () =>
+      rerunFromStep({ environmentId, input: { runId: run.id, stepIndex } }),
+    );
+  };
+
   const confirmCancel = async () => {
     if (busy) return;
     const message = `Cancel "${run.definition.name}"?\nThe running step is stopped. You can retry or skip it afterwards.`;
@@ -233,7 +252,7 @@ function PipelineRunBody(props: {
                   )
                 }
               >
-                Continue
+                {run.pauseReason === "awaiting_handoff" ? "Continue with last message" : "Continue"}
               </Button>
             ) : null}
             {actions.retry && canRestoreFiles ? (
@@ -324,6 +343,8 @@ function PipelineRunBody(props: {
               step.status === "pending" &&
               actions.canTogglePauseBefore(step.index)
             }
+            canRerun={canRerun && !busy && actions.rerunFrom(step.index)}
+            onRerun={() => void confirmRerun(step.index)}
             onPauseBeforeChange={(pauseBefore) =>
               void perform(`pause:${step.index}`, "Could not update pause", () =>
                 setPauseBefore({
@@ -366,6 +387,8 @@ function PipelineStepRow(props: {
   readonly cwd: string | undefined;
   readonly canTogglePauseBefore: boolean;
   readonly onPauseBeforeChange: (pauseBefore: boolean) => void;
+  readonly canRerun: boolean;
+  readonly onRerun: () => void;
 }) {
   const { environmentId, run, step } = props;
   const [outputOpen, setOutputOpen] = useState(false);
@@ -381,7 +404,11 @@ function PipelineStepRow(props: {
       ? null
       : pipelineStepModelLabel(definitionStep.modelSelection, props.providerEntries);
   const isCurrent = step.index === run.currentStepIndex && run.status !== "completed";
-  const status = pipelineStepStatusDisplay(step, liveState);
+  const status = pipelineStepStatusDisplay(
+    step,
+    liveState,
+    pipelineStepAwaitsHandoff(run, step.index),
+  );
   const childThreadId = step.childThreadId;
 
   return (
@@ -471,7 +498,7 @@ function PipelineStepRow(props: {
         </div>
       ) : null}
 
-      {childThreadId !== null || step.status === "pending" ? (
+      {childThreadId !== null || step.status === "pending" || props.canRerun ? (
         <div className="flex items-center justify-between gap-2 ps-6">
           {childThreadId === null ? (
             <span />
@@ -486,6 +513,17 @@ function PipelineStepRow(props: {
               Open thread
             </Button>
           )}
+          {props.canRerun ? (
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              aria-label={`Rerun from ${stepName(run, step.index)}`}
+              onClick={props.onRerun}
+            >
+              <RotateCcwIcon className="size-3" />
+              Rerun from here
+            </Button>
+          ) : null}
           {step.status === "pending" ? (
             <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
               Pause before

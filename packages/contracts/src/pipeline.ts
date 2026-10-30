@@ -205,6 +205,8 @@ export type PipelineRunStatus = typeof PipelineRunStatus.Type;
 
 export const PipelinePauseReason = Schema.Literals([
   "awaiting_continue",
+  /** The step's turn ended without `handoff_pipeline_step`; its thread is still open to finish. */
+  "awaiting_handoff",
   "step_failed",
   "step_stopped",
 ]);
@@ -234,6 +236,10 @@ export const PipelineRunStep = Schema.Struct({
     description: `At most ${PIPELINE_OUTPUT_PREVIEW_CHARS} characters; the full output stays on the server.`,
   }),
   error: Schema.NullOr(Schema.String),
+  handedOff: Schema.Boolean.annotate({
+    description:
+      "True when the latest attempt's agent handed off its output; otherwise the output is its thread's last message.",
+  }),
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
   canRestoreWorkspace: Schema.Boolean.annotate({
@@ -277,7 +283,7 @@ export type PipelineRunStartInput = typeof PipelineRunStartInput.Type;
 export const PipelineRunSubscribeInput = Schema.Struct({ runId: PipelineRunId });
 export type PipelineRunSubscribeInput = typeof PipelineRunSubscribeInput.Type;
 
-/** Shared by continue and skipStep; the server rejects a stale `stepIndex`. */
+/** Shared by continue, skipStep and rerunFromStep; the server rejects a stale `stepIndex`. */
 export const PipelineRunStepActionInput = Schema.Struct({
   runId: PipelineRunId,
   stepIndex: NonNegativeInt,
@@ -292,6 +298,15 @@ export const PipelineRunRetryInput = Schema.Struct({
   }),
 });
 export type PipelineRunRetryInput = typeof PipelineRunRetryInput.Type;
+
+/** Runs `stepIndex` and every later step again; earlier steps and their outputs stay. */
+export const PipelineRunRerunInput = Schema.Struct({
+  runId: PipelineRunId,
+  stepIndex: NonNegativeInt.annotate({
+    description: "A step at or before the run's current step.",
+  }),
+});
+export type PipelineRunRerunInput = typeof PipelineRunRerunInput.Type;
 
 export const PipelineRunCancelInput = Schema.Struct({ runId: PipelineRunId });
 export type PipelineRunCancelInput = typeof PipelineRunCancelInput.Type;

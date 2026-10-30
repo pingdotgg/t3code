@@ -68,12 +68,17 @@ export interface PipelineStepStatusDisplay {
 export function pipelineStepStatusDisplay(
   step: Pick<PipelineRunStep, "status">,
   liveState: PipelineChildLiveState | null,
+  /** The run paused because this step ended its turn without handing off. */
+  awaitingHandoff = false,
 ): PipelineStepStatusDisplay {
   if (step.status === "running" && liveState !== null) {
     return {
       label: PIPELINE_CHILD_LIVE_STATE_LABEL[liveState],
       tone: liveState === "working" ? "working" : "attention",
     };
+  }
+  if (step.status === "running" && awaitingHandoff) {
+    return { label: "No handoff", tone: "attention" };
   }
   return { label: pipelineStepStatusLabel(step), tone: "default" };
 }

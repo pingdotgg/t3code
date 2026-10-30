@@ -17,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   FEATURE_DELIVERY_PIPELINE,
+  pipelineStarterFingerprint,
   withStarterRuntimeMode,
   type PipelineStarter,
 } from "@t3tools/shared/pipelineStarters";
@@ -234,3 +235,65 @@ it.effect("seeds each starter once and never brings a deleted one back", () =>
     );
   }).pipe(Effect.provide(storeLayer)),
 );
+
+it.effect("an unedited copy of an older starter version is upgraded; an edited one is kept", () =>
+  Effect.gen(function* () {
+    const store = yield* PipelineStore.PipelineStore;
+    const older = FEATURE_DELIVERY_PIPELINE.steps.map((starterStep) => ({
+      ...starterStep,
+      promptTemplate: `${starterStep.promptTemplate}\n(old wording)`,
+    }));
+    const starter: PipelineStarter = {
+      ...FEATURE_DELIVERY_PIPELINE,
+      previousFingerprints: [pipelineStarterFingerprint(older)],
+    };
+    const id = decodePipelineId("pipeline:starter:feature-delivery");
+    const now = "2026-10-29T10:00:00.000Z";
+    const start = <A, E>(
+      body: (service: PipelineService.PipelineService["Service"]) => Effect.Effect<A, E>,
+    ) =>
+      PipelineService.PipelineService.pipe(
+        Effect.flatMap(body),
+        Effect.provide(serviceLayer([starter]).pipe(Layer.provide(storeLayer))),
+      );
+
+    // Seeded earlier with "approval-required" steps and never edited since.
+    yield* start(() => Effect.void);
+    yield* store.updateDefinition({
+      id,
+      name: "Feature delivery",
+      steps: withStarterRuntimeMode(older, "approval-required"),
+      createdAt: now,
+      updatedAt: now,
+    });
+    const upgraded = yield* start((service) => service.list());
+    assert.deepStrictEqual(
+      upgraded.pipelines[0]?.steps,
+      withStarterRuntimeMode(FEATURE_DELIVERY_PIPELINE.steps, "approval-required"),
+    );
+
+    // An edit makes the copy the user's own: it no longer follows the starter.
+    const edited = withStarterRuntimeMode(older, "full-access").map((editedStep, index) =>
+      index === 0 ? { ...editedStep, name: "My refine" } : editedStep,
+    );
+    yield* store.updateDefinition({
+      id,
+      name: "Feature delivery",
+      steps: edited,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const kept = yield* start((service) => service.list());
+    assert.deepStrictEqual(kept.pipelines[0]?.steps, edited);
+  }).pipe(Effect.provide(storeLayer)),
+);
+
+it("the shipped starter's previous step lists are recorded before its steps change", () => {
+  // Changing the starter's steps changes this fingerprint. Add the old value to the starter's
+  // previousFingerprints, so unedited copies upgrade, then update it here.
+  assert.strictEqual(pipelineStarterFingerprint(FEATURE_DELIVERY_PIPELINE.steps), "113oj2n9s8j");
+  assert.notInclude(
+    FEATURE_DELIVERY_PIPELINE.previousFingerprints ?? [],
+    pipelineStarterFingerprint(FEATURE_DELIVERY_PIPELINE.steps),
+  );
+});

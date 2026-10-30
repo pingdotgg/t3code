@@ -126,6 +126,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pipelineRunsContinue]: AuthOrchestrationOperateScope,
   [WS_METHODS.pipelineRunsRetryStep]: AuthOrchestrationOperateScope,
   [WS_METHODS.pipelineRunsSkipStep]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pipelineRunsRerunFromStep]: AuthOrchestrationOperateScope,
   [WS_METHODS.pipelineRunsCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.pipelineRunsSetPauseBefore]: AuthOrchestrationOperateScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.

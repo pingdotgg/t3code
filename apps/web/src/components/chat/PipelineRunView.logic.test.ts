@@ -60,6 +60,18 @@ describe("pipelineStepStatusDisplay", () => {
       tone: "default",
     });
   });
+
+  it("flags an idle step whose turn ended without a handoff", () => {
+    expect(pipelineStepStatusDisplay({ status: "running" }, null, true)).toEqual({
+      label: "No handoff",
+      tone: "attention",
+    });
+    // The thread working again (the user replied) outranks the pause.
+    expect(pipelineStepStatusDisplay({ status: "running" }, "working", true)).toEqual({
+      label: "Working",
+      tone: "working",
+    });
+  });
 });
 
 describe("pipelineStepModelLabel", () => {

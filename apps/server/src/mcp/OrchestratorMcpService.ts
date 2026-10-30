@@ -30,6 +30,9 @@ import {
   type OrchestratorMcpRequestSecretResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpContinuePipelineInput,
+  type OrchestratorMcpHandoffPipelineStepInput,
+  type OrchestratorMcpHandoffPipelineStepResult,
+  type OrchestratorMcpRerunPipelineInput,
   type OrchestratorMcpListPipelinesResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpPipelineRun,
@@ -221,6 +224,15 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpPipelineRunInput,
   ) => Effect.Effect<OrchestratorMcpPipelineRun, OrchestratorMcpFailure>;
+  readonly rerunPipelineStep: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpRerunPipelineInput,
+  ) => Effect.Effect<OrchestratorMcpPipelineRun, OrchestratorMcpFailure>;
+  /** Only from a pipeline step's own thread. */
+  readonly handoffPipelineStep: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpHandoffPipelineStepInput,
+  ) => Effect.Effect<OrchestratorMcpHandoffPipelineStepResult, OrchestratorMcpFailure>;
   /** Only status reaches the agent, never this value. */
   readonly requestSecret: (
     scope: McpInvocationScope,
@@ -323,6 +335,7 @@ function pipelineRunSummary(
         ? {}
         : { link: formatThreadLink({ environmentId, threadId: step.childThreadId }) }),
       outputPreview: step.outputPreview,
+      handedOff: step.handedOff,
       error: step.error,
     })),
     createdAt: run.createdAt,
@@ -2377,6 +2390,51 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(pipelineFailure));
       return pipelineRunSummary(scope.environmentId, run);
     }),
+    rerunPipelineStep: Effect.fn("OrchestratorMcpService.rerunPipelineStep")(
+      function* (scope, input) {
+        const { parent, limits } = yield* loadCaller(scope);
+        const existing = yield* pipelines
+          .getRun(input.runId)
+          .pipe(Effect.mapError(pipelineFailure));
+        yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
+        // The run's steps were clamped to whoever started it. Rerunning launches them for this caller.
+        yield* assertPipelineWithinLimits(limits, existing.definition.steps.slice(input.stepIndex));
+        const { run } = yield* pipelines
+          .rerunFromStep({ runId: input.runId, stepIndex: input.stepIndex })
+          .pipe(Effect.mapError(pipelineFailure));
+        return pipelineRunSummary(scope.environmentId, run);
+      },
+    ),
+    handoffPipelineStep: Effect.fn("OrchestratorMcpService.handoffPipelineStep")(
+      function* (scope, input) {
+        yield* requireCapability(scope);
+        const threadScope = yield* requireThreadScope(scope, "handoff_pipeline_step");
+        const threadId = threadScope.thread.threadId;
+        const shell = yield* threadManagement
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(threadManagementFailure));
+        const pipeline = shell?.pipeline;
+        if (pipeline === undefined || pipeline.stepId === null) {
+          return yield* failure(
+            "invalid_request",
+            "This thread is not a pipeline step, so there is nothing to hand off. Report your result in your reply instead.",
+          );
+        }
+        const { run } = yield* pipelines
+          .handoffStep({ runId: pipeline.runId, threadId, output: input.output })
+          .pipe(Effect.mapError(pipelineFailure));
+        const step = run.steps.find((candidate) => candidate.childThreadId === threadId);
+        const stepIndex = step?.index ?? run.currentStepIndex;
+        const last = stepIndex + 1 >= run.steps.length;
+        return {
+          runId: run.id,
+          stepIndex,
+          next: last
+            ? "Handed off. End your turn now with a short summary; the run finishes when your turn ends."
+            : "Handed off. End your turn now with a short summary; the next step starts when your turn ends. Calling this again replaces the output.",
+        };
+      },
+    ),
     requestSecret: Effect.fn("OrchestratorMcpService.requestSecret")(function* (scope, input) {
       const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_secret");
       const threadId = threadScope.thread.threadId;

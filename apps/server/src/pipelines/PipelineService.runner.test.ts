@@ -110,6 +110,8 @@ const makeHarness = Effect.gen(function* () {
     subscriptionCount: 0,
     worktreeRoot: "/wt",
     restoreFails: false,
+    /** A completed settle first hands off the thread's reply, as a step agent would. */
+    autoHandoff: true,
   };
   /** Threads whose agent is still stopping: their shell reports an active run. */
   const activeRuns = new Set<ThreadId>();
@@ -318,6 +320,12 @@ const withService = <A, E>(
     if (seed !== undefined) yield* seed(store, harness);
     return yield* Effect.gen(function* () {
       const service = yield* PipelineService.PipelineService;
+      const settle = harness.settle;
+      harness.settle = (threadId, status) =>
+        (status === "completed" && harness.behavior.autoHandoff
+          ? handoffOnceRecorded(service, threadId, harness.outputs.get(threadId)?.reply ?? "")
+          : Effect.void
+        ).pipe(Effect.andThen(settle(threadId, status)));
       return yield* body(harness, service, store);
     }).pipe(
       Effect.provide(
@@ -325,6 +333,44 @@ const withService = <A, E>(
       ),
     );
   }).pipe(Effect.provide(baseLayer));
+
+/** A launched prompt without the handoff instructions every step gets appended. */
+const promptBody = (text: string | undefined) => text?.split("\n\nPipeline handoff:\n")[0];
+
+/** Run id, step id and attempt inside `thread-of:pipeline-run:<runId>:<stepId>:<attempt>`. */
+const parseStepThread = (threadId: ThreadId) => {
+  const parts = threadId.slice("thread-of:pipeline-run:".length).split(":");
+  return {
+    runId: parts.slice(0, -2).join(":") as PipelineRunId,
+    stepId: parts.at(-2),
+    attempt: Number(parts.at(-1)),
+  };
+};
+
+/**
+ * Hands off like a step agent mid-turn. The launch is visible before the run records its thread,
+ * so this first waits for that write; a stale attempt's thread is ignored.
+ */
+const handoffOnceRecorded = (
+  service: PipelineService.PipelineService["Service"],
+  threadId: ThreadId,
+  output: string,
+) =>
+  Effect.gen(function* () {
+    if (!threadId.startsWith("thread-of:pipeline-run:")) return;
+    const { runId, stepId, attempt } = parseStepThread(threadId);
+    yield* awaitRun(service, runId, (run) => {
+      const current = run.steps.find((candidate) => candidate.stepId === stepId);
+      return (
+        current === undefined ||
+        current.childThreadId === threadId ||
+        current.attempt > attempt ||
+        run.status === "cancelled" ||
+        run.status === "completed"
+      );
+    });
+    yield* Effect.ignore(service.handoffStep({ runId, threadId, output }));
+  }).pipe(Effect.orDie);
 
 const awaitRun = (
   service: PipelineService.PipelineService["Service"],
@@ -357,7 +403,7 @@ it.effect("start creates the parent thread and launches step 0 with the skill pr
       assert.strictEqual(launched.input.commandId, `pipeline-run:${run.id}:plan:1`);
       assert.strictEqual(launched.input.title, "Review · Step plan");
       assert.strictEqual(
-        launched.input.initialMessage?.text,
+        promptBody(launched.input.initialMessage?.text),
         "$plan-skill\n\nFix the bug\nwith details",
       );
       assert.strictEqual(launched.input.pipeline?.stepId, "plan");
@@ -390,7 +436,7 @@ it.effect("a finished step feeds the next one in its workspace, and the last ste
 
       const second = yield* Queue.take(harness.launches);
       assert.strictEqual(second.input.commandId, `pipeline-run:${run.id}:build:1`);
-      assert.strictEqual(second.input.initialMessage?.text, "Build from: first reply");
+      assert.strictEqual(promptBody(second.input.initialMessage?.text), "Build from: first reply");
       assert.deepStrictEqual(second.input.workspaceStrategy, {
         type: "existing_worktree",
         worktreePath: `/wt/${first.threadId}`,
@@ -438,7 +484,10 @@ it.effect("pauseBefore pauses the run and Continue re-captures the feeding outpu
       yield* harness.settle(first.threadId, "completed");
       yield* service.continueRun({ runId: run.id, stepIndex: 1 });
       const second = yield* Queue.take(harness.launches);
-      assert.strictEqual(second.input.initialMessage?.text, "Build from: refined draft");
+      assert.strictEqual(
+        promptBody(second.input.initialMessage?.text),
+        "Build from: refined draft",
+      );
     }),
   ),
 );
@@ -479,7 +528,7 @@ it.effect("a failed step pauses; retry relaunches, skip advances, stale indexes 
 
       const next = yield* Queue.take(harness.launches);
       assert.strictEqual(next.input.commandId, `pipeline-run:${run.id}:build:1`);
-      assert.strictEqual(next.input.initialMessage?.text, "Build from: ");
+      assert.strictEqual(promptBody(next.input.initialMessage?.text), "Build from: ");
       const outdated = yield* Effect.flip(service.skipStep({ runId: run.id, stepIndex: 0 }));
       assert.instanceOf(outdated, PipelineError);
     }),
@@ -684,7 +733,7 @@ it.effect("a completed step without an answer feeds an empty string to the next 
       const first = yield* Queue.take(harness.launches);
       yield* harness.settle(first.threadId, "completed");
       const second = yield* Queue.take(harness.launches);
-      assert.strictEqual(second.input.initialMessage?.text, "Build from: ");
+      assert.strictEqual(promptBody(second.input.initialMessage?.text), "Build from: ");
     }),
   ),
 );
@@ -982,6 +1031,176 @@ it.effect("a failed restore or an agent that is still stopping leaves the run pa
       assert.include(stopping.message, "still stopping");
       assert.strictEqual(harness.checkpointOps.length, operations);
       yield* assertUnchanged;
+    }),
+  ),
+);
+
+it.effect("every step's prompt ends with the handoff instructions for its position", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      yield* service.start(startInput("cmd-handoff-prompt"));
+      const first = yield* Queue.take(harness.launches);
+      const text = first.input.initialMessage?.text ?? "";
+      assert.include(text, "\n\nPipeline handoff:\n");
+      assert.include(text, 'You are step 1 of 2 ("Step plan")');
+      assert.include(text, "`handoff_pipeline_step`");
+      assert.include(text, "ask me with your question tool and wait");
+    }),
+  ),
+);
+
+it.effect("the next step gets the handed-off output, not the step's last message", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      harness.behavior.autoHandoff = false;
+      const { run } = yield* service.start(startInput("cmd-handoff-output"));
+      const first = yield* Queue.take(harness.launches);
+      yield* handoffOnceRecorded(service, first.threadId, "the plan");
+      harness.outputs.set(first.threadId, { reply: "Handed off, see the plan." });
+      yield* harness.settle(first.threadId, "completed");
+
+      const second = yield* Queue.take(harness.launches);
+      assert.strictEqual(promptBody(second.input.initialMessage?.text), "Build from: the plan");
+      const current = yield* service.getRun(run.id);
+      assert.deepStrictEqual(
+        [current.steps[0]?.handedOff, current.steps[0]?.outputPreview],
+        [true, "the plan"],
+      );
+      assert.strictEqual(current.steps[1]?.handedOff, false);
+    }),
+  ),
+);
+
+it.effect("a turn that ends without a handoff pauses; Continue takes the last message", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      harness.behavior.autoHandoff = false;
+      const { run } = yield* service.start(startInput("cmd-no-handoff"));
+      const first = yield* Queue.take(harness.launches);
+      harness.outputs.set(first.threadId, { reply: "Part 1 is not pushed yet. Wait?" });
+      yield* harness.settle(first.threadId, "completed");
+
+      const paused = yield* awaitRun(service, run.id, (current) => current.status === "paused");
+      assert.strictEqual(paused.pauseReason, "awaiting_handoff");
+      assert.strictEqual(paused.currentStepIndex, 0);
+      assert.deepStrictEqual(
+        [paused.steps[0]?.status, paused.steps[0]?.handedOff, paused.steps[0]?.outputPreview],
+        ["running", false, "Part 1 is not pushed yet. Wait?"],
+      );
+      assert.strictEqual(yield* Queue.size(harness.launches), 0);
+
+      // The conversation went on in the thread before the user continued.
+      harness.outputs.set(first.threadId, { reply: "Building on main as agreed." });
+      yield* harness.settle(first.threadId, "completed");
+      yield* service.continueRun({ runId: run.id, stepIndex: 0 });
+      const second = yield* Queue.take(harness.launches);
+      assert.strictEqual(
+        promptBody(second.input.initialMessage?.text),
+        "Build from: Building on main as agreed.",
+      );
+      const advanced = yield* service.getRun(run.id);
+      assert.strictEqual(advanced.steps[0]?.status, "completed");
+    }),
+  ),
+);
+
+it.effect("a handoff after the pause resumes the run once the agent's turn ends", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      harness.behavior.autoHandoff = false;
+      const { run } = yield* service.start(startInput("cmd-late-handoff"));
+      const first = yield* Queue.take(harness.launches);
+      harness.outputs.set(first.threadId, { reply: "Which base should I use?" });
+      yield* harness.settle(first.threadId, "completed");
+      yield* awaitRun(service, run.id, (current) => current.pauseReason === "awaiting_handoff");
+
+      // The user answered in the thread; the agent finishes and hands off in its next turn.
+      const resumed = yield* service.handoffStep({
+        runId: run.id,
+        threadId: first.threadId,
+        output: "plan on main",
+      });
+      assert.strictEqual(resumed.run.status, "running");
+      harness.outputs.set(first.threadId, { reply: "Done." });
+      yield* harness.settle(first.threadId, "completed");
+
+      const second = yield* Queue.take(harness.launches);
+      assert.strictEqual(promptBody(second.input.initialMessage?.text), "Build from: plan on main");
+    }),
+  ),
+);
+
+it.effect("only the current attempt's thread can hand off, and only while it may", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      const { run } = yield* service.start(startInput("cmd-handoff-guard"));
+      const first = yield* Queue.take(harness.launches);
+      const stranger = yield* Effect.flip(
+        service.handoffStep({
+          runId: run.id,
+          threadId: decodeThreadId("thread-elsewhere"),
+          output: "x",
+        }),
+      );
+      assert.include(stranger.message, "not the latest attempt");
+
+      yield* harness.settle(first.threadId, "completed");
+      const second = yield* Queue.take(harness.launches);
+      // Step 1 finished and the run moved on without a pause: its agent can no longer hand off.
+      yield* awaitRun(service, run.id, (current) => current.steps[1]?.childThreadId !== null);
+      const late = yield* Effect.flip(
+        service.handoffStep({ runId: run.id, threadId: first.threadId, output: "late" }),
+      );
+      assert.include(late.message, "cannot hand off now");
+      yield* harness.settle(second.threadId, "completed");
+      yield* awaitRun(service, run.id, (current) => current.status === "completed");
+    }),
+  ),
+);
+
+it.effect("rerun from an earlier step keeps its predecessors and runs the rest again", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      const { run } = yield* service.start(startInput("cmd-rerun"));
+      const first = yield* Queue.take(harness.launches);
+      harness.outputs.set(first.threadId, { reply: "approved plan" });
+      yield* harness.settle(first.threadId, "completed");
+      const second = yield* Queue.take(harness.launches);
+      harness.outputs.set(second.threadId, { reply: "nothing to build yet" });
+      yield* harness.settle(second.threadId, "completed");
+      yield* awaitRun(service, run.id, (current) => current.status === "completed");
+
+      const notYet = yield* Effect.flip(service.rerunFromStep({ runId: run.id, stepIndex: 2 }));
+      assert.include(notYet.message, "has not run yet");
+
+      const { run: rerun } = yield* service.rerunFromStep({ runId: run.id, stepIndex: 1 });
+      assert.strictEqual(rerun.status, "running");
+      assert.strictEqual(rerun.currentStepIndex, 1);
+      assert.isNull(rerun.completedAt);
+      assert.deepStrictEqual(
+        rerun.steps.map((current) => [current.status, current.outputPreview]),
+        [
+          ["completed", "approved plan"],
+          ["pending", null],
+        ],
+      );
+
+      const again = yield* Queue.take(harness.launches);
+      assert.strictEqual(again.input.commandId, `pipeline-run:${run.id}:build:2`);
+      assert.strictEqual(promptBody(again.input.initialMessage?.text), "Build from: approved plan");
+      // A completed run's last thread is idle, so nothing is stopped.
+      assert.strictEqual(commandOfType(harness.commands, "thread.stop").length, 0);
+    }),
+  ),
+);
+
+it.effect("rerun is refused while the run is still running", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      const { run } = yield* service.start(startInput("cmd-rerun-running"));
+      yield* Queue.take(harness.launches);
+      const refused = yield* Effect.flip(service.rerunFromStep({ runId: run.id, stepIndex: 0 }));
+      assert.include(refused.message, "Only a paused, cancelled or completed run");
     }),
   ),
 );
