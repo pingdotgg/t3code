@@ -15,10 +15,14 @@ For a command-line host, run:
 t3 connect
 ```
 
-Follow the sign-in instructions. Setup offers a
+Follow the sign-in instructions. On Linux and macOS, setup offers a
 [background service](./background-service.md); if you decline it, start the
-server with `t3 serve`. Saving your sign-in alone does not make the machine
-reachable.
+server with `t3 serve`.
+
+The background service is not available on Windows. Keep the desktop app running
+with its local environment enabled, or keep `t3 serve` running in a terminal.
+Closing the desktop app's last window stops its local server. Saving your
+sign-in alone does not start a server or make the machine reachable.
 
 On your other device, sign in to the same T3 Connect account and choose the
 environment. On the app.t3.codes home page with no computer added yet, signing
