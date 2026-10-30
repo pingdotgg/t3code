@@ -811,6 +811,7 @@ const make = Effect.gen(function* () {
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
       ServerBrowserPage.invalidateRefs(page),
     );
+    let pendingFileChooserOffer = Promise.resolve();
     const tab: ServerTab = {
       threadId: ThreadId.make(snapshot.threadId),
       tabId: snapshot.tabId,
@@ -826,7 +827,11 @@ const make = Effect.gen(function* () {
       control,
       agentOperating: false,
       fileChooserIntercepted: false,
-      onFileChooser: (chooser) => void offerFileChooser(tab, chooser),
+      onFileChooser: (chooser) => {
+        pendingFileChooserOffer = pendingFileChooserOffer
+          .then(() => offerFileChooser(tab, chooser))
+          .catch(constVoid);
+      },
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
@@ -888,6 +893,12 @@ const make = Effect.gen(function* () {
       void reportLoaded(tab);
     });
     page.on("framenavigated", (frame) => {
+      const open = tab.fileChooser;
+      if (open) {
+        void isFileChooserCurrent(open.chooser).then((current) => {
+          if (!current && tab.fileChooser?.chooser === open.chooser) closeFileChooser(tab);
+        });
+      }
       // Same-document navigations (SPA routes) fire no load event.
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
       if (!desktop) void recordFrameCopies(tab, frame);
@@ -992,6 +1003,12 @@ const make = Effect.gen(function* () {
   };
 
   const downloadsRoot = NodePath.join(config.stateDir, "server-browser", "downloads");
+  // Saved downloads are indexed in memory, so an earlier run's files can never be opened again.
+  yield* Effect.tryPromise(() => NodeFSP.rm(downloadsRoot, { recursive: true, force: true })).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("server preview could not clear earlier downloads", { cause }),
+    ),
+  );
   // Tab ids are opaque server strings; hashing keeps them out of the path.
   const downloadDir = (tab: ServerTab) =>
     NodePath.join(
@@ -1091,6 +1108,17 @@ const make = Effect.gen(function* () {
         }
       : null;
 
+  // Not isConnected: upload helpers often click an input never added to the page. The handle's
+  // context is destroyed with its document, so a replaced document rejects.
+  const isFileChooserCurrent = (chooser: FileChooser) =>
+    chooser
+      .element()
+      .evaluate(
+        (element) =>
+          element.ownerDocument === (globalThis as unknown as { document: unknown }).document,
+      )
+      .catch(() => false);
+
   const offerFileChooser = async (tab: ServerTab, chooser: FileChooser) => {
     const previous = tab.fileChooser;
     const accept =
@@ -1098,6 +1126,7 @@ const make = Effect.gen(function* () {
         .element()
         .getAttribute("accept")
         .catch(() => null)) ?? "";
+    if (!(await isFileChooserCurrent(chooser))) return;
     if (previous) closeFileChooser(tab);
     tab.fileChooser = {
       id: NodeCrypto.randomUUID(),
