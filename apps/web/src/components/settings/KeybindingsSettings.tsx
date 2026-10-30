@@ -852,8 +852,13 @@ function WhenClauseControl({
   onChange: (value: KeybindingWhenNode | undefined) => void;
   onValidityChange: (valid: boolean) => void;
 }) {
+  // Closing unmounts the builder, which drops an unparsed draft and keeps the last valid value.
+  const handleOpenChange = (open: boolean) => {
+    if (!open) onValidityChange(true);
+  };
+
   return (
-    <Popover>
+    <Popover onOpenChange={handleOpenChange}>
       <PopoverTrigger
         render={
           <Button
