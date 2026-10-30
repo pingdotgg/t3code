@@ -66,10 +66,9 @@ export interface SkippedMachine {
 /** Boot services before this build installed the server from npm, not from release archives. */
 const RELEASE_ARCHIVE_SELF_UPDATE_SINCE = "0.0.41-nightly.20260914.1700";
 
-/** Skip current and app-hosted servers; the latter update with the app and would relaunch mid-run.
- * Desktop-managed servers use their own feed. `waitForNpm` lists targets that need
- * `t3@<targetVersion>` on npm first. `releaseArchivesPublished` means the version came from the
- * desktop feed: its GitHub Release goes public with the CLI archives that boot services download. */
+/** App-hosted servers update with the app; desktop-managed servers use their own feed.
+ * `waitForNpm` contains only hosts supporting the precheck; older hosts validate during update.
+ * `releaseArchivesPublished` means the desktop feed already offers this release and its archives. */
 export function collectServerUpdateTargets(
   machines: ReadonlyArray<UpdateEverythingMachine>,
   targetVersion: string,
@@ -127,6 +126,7 @@ export function collectServerUpdateTargets(
     targets.push(target);
     if (
       selfUpdate !== "desktop-managed" &&
+      config.environment.capabilities.npmReleaseLookup === true &&
       (!releaseArchivesPublished ||
         selfUpdate === "respawn" ||
         compareSemverVersions(serverVersion, RELEASE_ARCHIVE_SELF_UPDATE_SINCE) < 0)

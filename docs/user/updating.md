@@ -143,6 +143,15 @@ choose **Update** to install it. If not, the window links to the last version
 that started on your computer. Download and install it to go back. Use **Copy
 details** to include the error in a bug report.
 
+## Registries and proxies
+
+Each server checks npm-published releases of T3 Code and providers with its own
+npm, so the checks use npm's configured registry, authentication, and proxy
+settings.
+Configure npm on the server's machine. If that registry cannot be reached, the
+release shows as unavailable; T3 Code does not try the public registry instead.
+Machines without npm check the public npm registry directly.
+
 ## Update providers
 
 **Settings → Providers** shows provider updates for the selected environment.
