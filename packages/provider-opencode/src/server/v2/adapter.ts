@@ -2713,7 +2713,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
-      for (const state of threads.values()) state.mcp = undefined;
+      // The gap may have started a pending prompt unseen, so none may set a later wake's boundary.
+      for (const state of threads.values()) {
+        state.mcp = undefined;
+        for (const prompt of state.externalPrompts.values()) prompt.leads = false;
+      }
       yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
