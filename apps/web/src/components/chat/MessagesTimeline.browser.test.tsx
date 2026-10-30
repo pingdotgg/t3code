@@ -3,6 +3,7 @@ import { onTestFinished } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import { stubGlobal } from "../../../test/render";
 import {
+  ComposerContextId,
   EnvironmentId,
   MessageId,
   RunAttemptId,
@@ -32,6 +33,11 @@ import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
 import type { TimelineNavigation } from "./timelineViewport";
 import { rememberTimelinePosition } from "./timelineScrollAnchoring";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  decodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
+import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 
 const environmentQuery = vi.hoisted(() => ({
   error: "Pull request not found",
@@ -642,6 +648,75 @@ describe("MessagesTimeline agent messages", () => {
 });
 
 describe("MessagesTimeline attachments", () => {
+  it.each(["image", "file"] as const)(
+    "copies only matching context records for a wordless %s attachment",
+    async (kind) => {
+      const attachment = {
+        type: kind,
+        id: "media",
+        name: kind === "image" ? "photo.png" : "clip.mp4",
+        mimeType: kind === "image" ? "image/png" : "video/mp4",
+        sizeBytes: 100,
+        downloadable: false,
+      };
+      const record = {
+        version: 1 as const,
+        ...(kind === "image" ? { kind: "image" as const } : { kind: "file" as const }),
+        contextId: ComposerContextId.make("media-context"),
+        label: attachment.name,
+        attachmentId: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+      };
+      await using screen = await renderTimeline([message("", { attachments: [attachment] })]);
+      expect(screen.buttons("Copy message")).toHaveLength(0);
+      await screen.rerender(
+        <MessagesTimeline
+          {...baseProps()}
+          timelineEntries={[
+            message("", {
+              attachments: [attachment],
+              context: { version: 1, records: [{ ...record, attachmentId: "other" }] },
+            }),
+          ]}
+        />,
+      );
+      expect(screen.buttons("Copy message")).toHaveLength(0);
+      await screen.rerender(
+        <MessagesTimeline
+          {...baseProps()}
+          timelineEntries={[
+            message("", {
+              attachments: [attachment],
+              context: {
+                version: 1,
+                records: [
+                  record,
+                  {
+                    ...record,
+                    contextId: ComposerContextId.make("other-context"),
+                    attachmentId: "other",
+                  },
+                ],
+              },
+            }),
+          ]}
+        />,
+      );
+      using write = vi.spyOn(navigator.clipboard, "write").mockResolvedValue();
+      await click(screen.button("Copy message"));
+      await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
+      const [item] = write.mock.calls[0]![0];
+      const text = await (await item!.getType("text/plain")).text();
+      const fragment = await (await item!.getType(COMPOSER_CONTEXT_CLIPBOARD_MIME)).text();
+      expect(
+        collectComposerContextReferences(text).map((reference) => reference.contextId),
+      ).toEqual([record.contextId]);
+      expect(decodeComposerContextFragment(fragment)?.records).toEqual([record]);
+    },
+  );
+
   it.each(["loadedmetadata", "loadeddata", "canplay"])(
     "plays audio with unknown duration after %s and updates the total later",
     async (readyEvent) => {
