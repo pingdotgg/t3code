@@ -90,7 +90,7 @@ export function getProjectOrderKey(
   return derivePhysicalProjectKey(project);
 }
 
-function resolveProjectGroupingMode(
+export function resolveProjectGroupingMode(
   project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
   settings: ProjectGroupingSettings,
 ): SidebarProjectGroupingMode {

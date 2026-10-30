@@ -1,3 +1,4 @@
+import { PROJECT_COLLECTIONS_STORAGE_KEY } from "./projectCollections";
 import { ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -9,6 +10,7 @@ import {
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
+  useUiStateStore,
   reorderProjects,
   resolveProjectExpanded,
   setProjectExpanded,
@@ -20,6 +22,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKeys: [],
+    activeProjectCollectionId: null,
+    sidebarScopeRouteKey: null,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -126,6 +130,8 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
+      activeProjectCollectionId: null,
+      sidebarScopeRouteKey: null,
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -231,6 +237,8 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
+      activeProjectCollectionId: null,
+      sidebarScopeRouteKey: null,
       sidebarProjectScopeKey: null,
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
@@ -244,6 +252,82 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
     });
+  });
+
+  it("persists collection edits synchronously and keeps stale navigation writes separate", async () => {
+    const group = { id: "work", name: " Work ", members: [] };
+    expect(useUiStateStore.getState().saveProjectCollection(group)).toBeNull();
+    useUiStateStore.getState().selectProjectCollection("work", "env:open-thread");
+    expect(JSON.parse(localStorageStub.getItem(PROJECT_COLLECTIONS_STORAGE_KEY) ?? "null")).toEqual(
+      [{ ...group, name: "Work" }],
+    );
+    persistState(makeUiState());
+    expect(
+      JSON.parse(localStorageStub.getItem(PROJECT_COLLECTIONS_STORAGE_KEY) ?? "null"),
+    ).toHaveLength(1);
+    expect(
+      useUiStateStore.getState().saveProjectCollection({ ...group, name: "Renamed" }),
+    ).toBeNull();
+    useUiStateStore.getState().selectProjectCollection("work", "env:child");
+    vi.resetModules();
+    const { useUiStateStore: reloaded } = await import("./uiStateStore");
+    expect(reloaded.getState()).toMatchObject({
+      activeProjectCollectionId: "work",
+      sidebarScopeRouteKey: "env:child",
+      projectCollections: [{ id: "work", name: "Renamed", members: [] }],
+    });
+    reloaded.getState().deleteProjectCollection("work", "env:child");
+    expect(reloaded.getState()).toMatchObject({
+      activeProjectCollectionId: null,
+      projectCollections: [],
+      sidebarProjectScopeKeys: [],
+    });
+    localStorageStub.setItem(
+      PERSISTED_STATE_KEY,
+      JSON.stringify({ activeProjectCollectionId: "deleted" }),
+    );
+    vi.resetModules();
+    const { useUiStateStore: dangling } = await import("./uiStateStore");
+    expect(dangling.getState().activeProjectCollectionId).toBeNull();
+  });
+
+  it("observes cross-window edits and learns against the latest definitions", async () => {
+    const listeners = new Map<string, (event: { key: string | null }) => void>();
+    vi.stubGlobal("window", {
+      localStorage: localStorageStub,
+      addEventListener: (key: string, callback: (event: { key: string | null }) => void) =>
+        listeners.set(key, callback),
+    });
+    vi.resetModules();
+    const { useUiStateStore: store } = await import("./uiStateStore");
+    const groups = [{ id: "other-window", name: "Other", members: [] }];
+    localStorageStub.setItem(PROJECT_COLLECTIONS_STORAGE_KEY, JSON.stringify(groups));
+    store.getState().learnProjectCollectionAliases([]);
+    expect(store.getState().projectCollections).toEqual(groups);
+    expect(JSON.parse(localStorageStub.getItem(PROJECT_COLLECTIONS_STORAGE_KEY) ?? "null")).toEqual(
+      groups,
+    );
+    const projectMember = {
+      kind: "project" as const,
+      physicalKey: "env:/repo",
+      label: "Repo",
+      repositoryKey: "github.com/example/repo",
+      repositoryPathKey: "github.com/example/repo",
+    };
+    const learned = { id: "learned", name: "Learned", members: [projectMember] };
+    localStorageStub.setItem(PROJECT_COLLECTIONS_STORAGE_KEY, JSON.stringify([...groups, learned]));
+    store.getState().saveProjectCollection({
+      ...learned,
+      members: [{ ...projectMember, repositoryKey: null, repositoryPathKey: null }],
+    });
+    expect(store.getState().projectCollections).toEqual([...groups, learned]);
+    store.getState().selectProjectCollection("learned", "env:thread");
+    store.getState().setSidebarProjectScopeKeys(["repo"]);
+    localStorageStub.setItem(PROJECT_COLLECTIONS_STORAGE_KEY, "malformed");
+    listeners.get("storage")?.({ key: PROJECT_COLLECTIONS_STORAGE_KEY });
+    expect(store.getState().projectCollections).toEqual([]);
+    expect(store.getState().activeProjectCollectionId).toBeNull();
+    expect(store.getState().sidebarProjectScopeKeys).toEqual([]);
   });
 
   it("restores the sidebar project scope across reloads", () => {

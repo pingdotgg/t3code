@@ -3,6 +3,16 @@ import type { PullRequestMergeMethod } from "@t3tools/contracts";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
 
+import {
+  PROJECT_COLLECTIONS_STORAGE_KEY,
+  learnProjectCollectionAliases,
+  mergeCollectionMemberAliases,
+  parseProjectCollections,
+  projectCollectionNameError,
+  type ProjectCollection,
+} from "./projectCollections";
+import type { SidebarProjectSnapshot } from "./sidebarProjectGrouping";
+
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -26,6 +36,8 @@ export interface PersistedUiState {
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
+  activeProjectCollectionId?: string | null;
+  sidebarScopeRouteKey?: string | null;
   sidebarProjectScopeKey?: string | null;
   sidebarProjectScopeKeys?: string[];
   threadChangedFilesExpansionVersion?: number;
@@ -37,6 +49,8 @@ export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
   sidebarProjectScopeKeys: string[];
+  activeProjectCollectionId: string | null;
+  sidebarScopeRouteKey: string | null;
 }
 
 export interface UiThreadState {
@@ -59,6 +73,8 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   sidebarProjectScopeKeys: [],
+  activeProjectCollectionId: null,
+  sidebarScopeRouteKey: null,
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -145,6 +161,8 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    activeProjectCollectionId: sanitizeOptionalKey(parsed.activeProjectCollectionId),
+    sidebarScopeRouteKey: sanitizeOptionalKey(parsed.sidebarScopeRouteKey),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -228,6 +246,8 @@ export function persistState(state: UiState): void {
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKeys: state.sidebarProjectScopeKeys,
+        activeProjectCollectionId: state.activeProjectCollectionId,
+        sidebarScopeRouteKey: state.sidebarScopeRouteKey,
         // Older clients read only this field.
         sidebarProjectScopeKey:
           state.sidebarProjectScopeKeys.length === 1
@@ -428,7 +448,34 @@ export function reorderProjects(
   };
 }
 
+function readProjectCollections(): readonly ProjectCollection[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return parseProjectCollections(
+      JSON.parse(window.localStorage.getItem(PROJECT_COLLECTIONS_STORAGE_KEY) ?? "[]"),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistProjectCollections(collections: readonly ProjectCollection[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PROJECT_COLLECTIONS_STORAGE_KEY, JSON.stringify(collections));
+  } catch {}
+}
+
+const hydratedCollections = readProjectCollections();
+const hydratedUiState = readPersistedState();
+
 interface UiStateStore extends UiState {
+  projectCollections: readonly ProjectCollection[];
+  selectProjectCollection: (id: string | null, routeKey: string | null) => void;
+  holdSidebarScopeRoute: (routeKey: string | null) => void;
+  saveProjectCollection: (collection: ProjectCollection) => string | null;
+  deleteProjectCollection: (id: string, routeKey: string | null) => void;
+  learnProjectCollectionAliases: (catalog: readonly SidebarProjectSnapshot[]) => void;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
@@ -444,7 +491,69 @@ interface UiStateStore extends UiState {
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
-  ...readPersistedState(),
+  ...hydratedUiState,
+  projectCollections: hydratedCollections,
+  activeProjectCollectionId: hydratedCollections.some(
+    (group) => group.id === hydratedUiState.activeProjectCollectionId,
+  )
+    ? hydratedUiState.activeProjectCollectionId
+    : null,
+  selectProjectCollection: (id, routeKey) => {
+    set((state) => ({
+      activeProjectCollectionId: state.projectCollections.some((group) => group.id === id)
+        ? id
+        : null,
+      sidebarProjectScopeKeys: [],
+      sidebarScopeRouteKey: routeKey,
+    }));
+    persistState(useUiStateStore.getState());
+  },
+  holdSidebarScopeRoute: (routeKey) => {
+    set({ sidebarScopeRouteKey: routeKey });
+    persistState(useUiStateStore.getState());
+  },
+  saveProjectCollection: (collection) => {
+    const collections = readProjectCollections();
+    const error = projectCollectionNameError(collection.name, collections, collection.id);
+    if (error) return error;
+    const current = collections.find((group) => group.id === collection.id);
+    const saved = {
+      ...collection,
+      name: collection.name.trim(),
+      members: mergeCollectionMemberAliases(collection.members, current?.members ?? []),
+    };
+    const next = collections.some((group) => group.id === saved.id)
+      ? collections.map((group) => (group.id === saved.id ? saved : group))
+      : [...collections, saved];
+    persistProjectCollections(next);
+    set({ projectCollections: next });
+    return null;
+  },
+  deleteProjectCollection: (id, routeKey) => {
+    const next = readProjectCollections().filter((group) => group.id !== id);
+    persistProjectCollections(next);
+    set((state) => ({
+      projectCollections: next,
+      ...(state.activeProjectCollectionId === id
+        ? {
+            activeProjectCollectionId: null,
+            sidebarProjectScopeKeys: [],
+            sidebarScopeRouteKey: routeKey,
+          }
+        : {}),
+    }));
+    persistState(useUiStateStore.getState());
+  },
+  learnProjectCollectionAliases: (catalog) => {
+    const current = readProjectCollections();
+    const next = learnProjectCollectionAliases(current, catalog);
+    if (next !== current) persistProjectCollections(next);
+    set((state) =>
+      JSON.stringify(state.projectCollections) === JSON.stringify(next)
+        ? state
+        : { projectCollections: next },
+    );
+  },
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
@@ -467,6 +576,17 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("storage", (event) => {
+    if (event.key !== PROJECT_COLLECTIONS_STORAGE_KEY && event.key !== null) return;
+    const collections = readProjectCollections();
+    useUiStateStore.setState((state) => ({
+      projectCollections: collections,
+      ...(state.activeProjectCollectionId !== null &&
+      !collections.some((group) => group.id === state.activeProjectCollectionId)
+        ? { activeProjectCollectionId: null, sidebarProjectScopeKeys: [] }
+        : {}),
+    }));
+  });
   window.addEventListener("beforeunload", () => {
     debouncedPersistState.flush();
   });
