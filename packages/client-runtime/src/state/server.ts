@@ -134,6 +134,8 @@ export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTe
 // Covers the service launcher's 30-minute trial deadline (PREPARED_TIMEOUT_MS)
 // and a final restart of the previous version when the trial rolls back.
 const SERVER_UPDATE_RESUME_TIMEOUT = Duration.minutes(32);
+// A live host replays its ready on subscribe within a round trip; past this, update without a baseline.
+const SERVER_UPDATE_ACCEPTING_READY_TIMEOUT = Duration.seconds(5);
 
 export function matchesServerUpdateReadyEvent(
   result: ServerSelfUpdateResult,
@@ -144,13 +146,20 @@ export function matchesServerUpdateReadyEvent(
     : event.payload.updateOutcome?.id === result.updateId;
 }
 
+/**
+ * `acceptedAt` is the `ready.at` of the process that accepted the update. A launcher host
+ * that comes back as any other process ends the wait, so validation can reject a missing
+ * or foreign outcome instead of timing out.
+ */
 export function matchesServerUpdateResumeEvent(
   result: ServerSelfUpdateResult,
   event: ServerLifecycleStreamReadyEvent,
+  acceptedAt?: string,
 ): boolean {
   return (
     (result.method === "desktop-app" && result.desktopUpdateToken !== undefined) ||
-    matchesServerUpdateReadyEvent(result, event)
+    matchesServerUpdateReadyEvent(result, event) ||
+    (result.updateId !== undefined && acceptedAt !== undefined && event.payload.at !== acceptedAt)
   );
 }
 
@@ -159,10 +168,10 @@ export function validateServerUpdateReadyEvent(
   event: ServerLifecycleStreamReadyEvent,
 ): Effect.Effect<void, ServerUpdateTerminalError> {
   if (result.updateId === undefined) return Effect.void;
-  const outcome = event.payload.updateOutcome;
+  const reported = event.payload.updateOutcome;
+  const outcome = reported?.id === result.updateId ? reported : undefined;
   if (
-    outcome?.id === result.updateId &&
-    outcome.status === "committed" &&
+    outcome?.status === "committed" &&
     outcome.targetVersion === result.targetVersion &&
     event.payload.environment.serverVersion === result.targetVersion
   ) {
@@ -851,6 +860,15 @@ export function createServerEnvironmentAtoms<R, E>(
         const desktopCommitStarting = yield* Deferred.make<void>();
         const desktopReconnectObserverArmed = yield* Deferred.make<void>();
         const desktopReconnected = yield* Deferred.make<void>();
+        let accepting: { readonly session: RpcSession; readonly at: string } | undefined;
+        let acceptedAt: string | undefined;
+        // The baseline only describes the accepting process if the request rides its session.
+        const bindAcceptedAt = Effect.gen(function* () {
+          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+          const session = Option.getOrUndefined(yield* SubscriptionRef.get(supervisor.session));
+          acceptedAt =
+            accepting !== undefined && accepting.session === session ? accepting.at : undefined;
+        });
         yield* Deferred.await(desktopCommitStarting).pipe(
           Effect.andThen(
             environmentRegistry.stateChanges(target.environmentId).pipe(
@@ -877,6 +895,28 @@ export function createServerEnvironmentAtoms<R, E>(
               fromVersion,
               targetVersion,
             });
+            // Only launcher updates carry an updateId. Read before the request so a ready from
+            // after it can never pose as the accepting process.
+            if (currentConfig?.environment.capabilities.serverSelfUpdate === "boot-service") {
+              accepting = yield* environmentRegistry
+                .followStream(
+                  target.environmentId,
+                  subscribeDynamicWithSession(WS_METHODS.subscribeServerLifecycle, () =>
+                    Effect.succeed({}),
+                  ),
+                )
+                .pipe(
+                  Stream.filter(
+                    (entry): entry is readonly [RpcSession, ServerLifecycleStreamReadyEvent] =>
+                      entry[1].type === "ready",
+                  ),
+                  Stream.map(([session, ready]) => ({ session, at: ready.payload.at })),
+                  Stream.runHead,
+                  Effect.timeoutOption(SERVER_UPDATE_ACCEPTING_READY_TIMEOUT),
+                  Effect.map((head) => Option.getOrUndefined(Option.flatten(head))),
+                  Effect.orElseSucceed(() => undefined),
+                );
+            }
 
             const supportsProgress =
               currentConfig?.environment.capabilities.serverSelfUpdateProgress === true;
@@ -888,7 +928,13 @@ export function createServerEnvironmentAtoms<R, E>(
                   const streamExit = yield* environmentRegistry
                     .runStream(
                       target.environmentId,
-                      runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
+                      Stream.unwrap(
+                        bindAcceptedAt.pipe(
+                          Effect.as(
+                            runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
+                          ),
+                        ),
+                      ),
                     )
                     .pipe(
                       Stream.runForEach((event) =>
@@ -919,7 +965,12 @@ export function createServerEnvironmentAtoms<R, E>(
               : yield* Effect.gen(function* () {
                   const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
                   const exit = yield* environmentRegistry
-                    .run(target.environmentId, request(WS_METHODS.serverUpdateServer, target.input))
+                    .run(
+                      target.environmentId,
+                      bindAcceptedAt.pipe(
+                        Effect.andThen(request(WS_METHODS.serverUpdateServer, target.input)),
+                      ),
+                    )
                     .pipe(Effect.exit);
                   if (Exit.isSuccess(exit)) {
                     return exit.value;
@@ -996,7 +1047,7 @@ export function createServerEnvironmentAtoms<R, E>(
           .pipe(
             Stream.filter(
               (event): event is ServerLifecycleStreamReadyEvent =>
-                event.type === "ready" && matchesServerUpdateResumeEvent(result, event),
+                event.type === "ready" && matchesServerUpdateResumeEvent(result, event, acceptedAt),
             ),
             Stream.runHead,
             Effect.timeoutOption(SERVER_UPDATE_RESUME_TIMEOUT),
