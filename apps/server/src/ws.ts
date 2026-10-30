@@ -1787,6 +1787,7 @@ export const layerWsRpc = (
             otlpLogsEnabled: config.otlpLogsUrl !== undefined,
           },
           settings,
+          taskThreadLaunch: true,
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           shellOlderSettled: true,
@@ -2043,6 +2044,10 @@ export const layerWsRpc = (
                       : { reuseExistingThread: input.reuseExistingThread }),
                     projectId: input.projectId,
                     title: input.title,
+                    ...(input.task === undefined ? {} : { task: input.task }),
+                    ...(input.retryTaskInitialization === undefined
+                      ? {}
+                      : { retryTaskInitialization: input.retryTaskInitialization }),
                     ...(input.generateTitle === undefined
                       ? {}
                       : { generateTitle: input.generateTitle }),

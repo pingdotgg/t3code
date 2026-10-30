@@ -1,4 +1,5 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { TaskDocumentId } from "./taskDocuments.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -433,10 +434,85 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("root"),
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("existing_worktree"),
+    worktreePath: TrimmedNonEmptyString,
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("worktree"),
+    baseRef: TrimmedNonEmptyString,
+    branch: Schema.optional(TrimmedNonEmptyString),
+    startFromOrigin: Schema.optional(Schema.Boolean),
+  }),
+]);
+export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
+  typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
+
+export const TaskThreadInitializationSummary = Schema.Struct({
+  attemptId: CommandId,
+  messageId: MessageId,
+  runId: Schema.NullOr(RunId),
+  canonicalPath: TrimmedNonEmptyString,
+  revision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+  templateVersion: PositiveInt,
+  status: Schema.Literals(["pending", "running", "ready", "failed"]),
+  outcome: Schema.NullOr(Schema.Literals(["ready", "failed"])),
+});
+export type TaskThreadInitializationSummary = typeof TaskThreadInitializationSummary.Type;
+
+export const TaskThreadLaunchOptions = Schema.Struct({
+  taskDocumentId: TaskDocumentId,
+  updateInstructionsPath: TrimmedNonEmptyString,
+});
+export type TaskThreadLaunchOptions = typeof TaskThreadLaunchOptions.Type;
+export const TaskThreadInitializationEnvelope = Schema.Struct({
+  attemptId: CommandId,
+  messageId: MessageId,
+  canonicalPath: TaskThreadInitializationSummary.fields.canonicalPath,
+  revision: TaskThreadInitializationSummary.fields.revision,
+  templateVersion: PositiveInt,
+  text: Schema.String.check(Schema.isMaxLength(16000)),
+  workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  title: TrimmedNonEmptyString,
+});
+export type TaskThreadInitializationEnvelope = typeof TaskThreadInitializationEnvelope.Type;
+export const TaskThreadInitialization = Schema.Struct({
+  ...TaskThreadInitializationEnvelope.fields,
+  ...TaskThreadInitializationSummary.fields,
+});
+export type TaskThreadInitialization = typeof TaskThreadInitialization.Type;
+
+export function taskThreadInitializationSummary(
+  value: TaskThreadInitialization | null | undefined,
+): TaskThreadInitializationSummary | null {
+  if (value == null) return null;
+  return {
+    attemptId: value.attemptId,
+    messageId: value.messageId,
+    runId: value.runId,
+    canonicalPath: value.canonicalPath,
+    revision: value.revision,
+    templateVersion: value.templateVersion,
+    status: value.status,
+    outcome: value.outcome,
+  };
+}
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
+  taskDocumentId: Schema.optional(Schema.NullOr(TaskDocumentId)),
+  taskInitialization: Schema.optional(Schema.NullOr(TaskThreadInitialization)),
   title: TrimmedNonEmptyString,
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
@@ -640,26 +716,6 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 });
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
-
-export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("root"),
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("existing_worktree"),
-    worktreePath: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("worktree"),
-    baseRef: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-    startFromOrigin: Schema.optional(Schema.Boolean),
-  }),
-]);
-export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
-  typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
@@ -2034,6 +2090,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
+  taskDocumentId: Schema.optional(Schema.NullOr(TaskDocumentId)),
+  taskInitialization: Schema.optional(Schema.NullOr(TaskThreadInitializationSummary)),
   title: Schema.String,
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
@@ -2862,6 +2920,8 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),
+    taskDocumentId: Schema.optional(TaskDocumentId),
+    taskInitialization: Schema.optional(TaskThreadInitializationEnvelope),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     threadId: ThreadId,
@@ -2991,6 +3051,8 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.metadata.update"),
+    taskDocumentId: Schema.optional(Schema.NullOr(TaskDocumentId)),
+    taskInitialization: Schema.optional(TaskThreadInitializationEnvelope),
     commandId: CommandId,
     threadId: ThreadId,
     title: Schema.optional(TrimmedNonEmptyString),
@@ -3320,6 +3382,25 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("task-initialization.reconcile"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("task-initialization.report"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    outcome: Schema.Literals(["ready", "failed"]),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("task-initialization.retry"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    expectedAttemptId: CommandId,
+    initialization: TaskThreadInitializationEnvelope,
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),
@@ -3564,6 +3645,8 @@ export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
 export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
 
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
+  task: Schema.optional(TaskThreadLaunchOptions),
+  retryTaskInitialization: Schema.optional(Schema.Boolean),
   commandId: CommandId,
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   threadId: Schema.optional(ThreadId),

@@ -8,6 +8,7 @@ import {
   OrchestrationV2DelegatedFrom,
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  TaskThreadLaunchOptions,
   RuntimeMode,
   ProviderInteractionMode,
   Project,
@@ -123,6 +124,12 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   description:
     "Create one new top-level thread, bound to its workspace before the agent starts. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. After an error or lost reply, retry with the same `clientRequestId`. Follow it with `t3_thread_read` or `t3_thread_wait`. Mention it with its `link`.",
   parameters: Schema.Struct({
+    task: Schema.optional(
+      TaskThreadLaunchOptions.annotate({
+        description:
+          "Optional registered task document and update-discipline path on the destination environment. Runs visible context initialization first. Omit message/attachments; send work after launch. No filesystem permission is added.",
+      }),
+    ),
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: Schema.optional(ProjectId),
     scratch: Schema.optional(
@@ -174,7 +181,17 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const TaskInitializationResultTool = Tool.make("task_thread_initialization_result", {
+  ...shared,
+  description:
+    "Report this task thread's initialization outcome after reading its required context. Use ready only when the task, relevant parents, update discipline and workspace instructions are readable and the selected workspace matches. Otherwise report failed and explain why. This reports context readiness; it does not start user work or change permissions.",
+  parameters: Schema.Struct({ outcome: Schema.Literals(["ready", "failed"]) }),
+  success: Schema.Struct({ recorded: Schema.Boolean }),
+  dependencies: [...shared.dependencies, ThreadLaunchService.ThreadLaunchService],
+}).annotate(Tool.Destructive, true);
+
 export const ProjectToolkit = Toolkit.make(
+  TaskInitializationResultTool,
   ThreadLaunchTool,
   ProjectListTool,
   ProjectReadTool,

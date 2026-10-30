@@ -84,11 +84,27 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
+const hasTaskLaunch = Schema.is(Schema.Struct({ task: Schema.Unknown }));
+const hasTaskAssociation = Schema.is(Schema.Struct({ taskDocumentId: Schema.Unknown }));
 
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (
+    method === ORCHESTRATION_V2_WS_METHODS.launchThread &&
+    hasTaskLaunch(input) &&
+    input.task !== undefined
+  ) {
+    return [AuthOrchestrationOperateScope, AuthFilesystemReadScope];
+  }
+  if (
+    method === ORCHESTRATION_V2_WS_METHODS.dispatchCommand &&
+    hasTaskAssociation(input) &&
+    input.taskDocumentId != null
+  ) {
+    return [AuthOrchestrationOperateScope, AuthFilesystemReadScope];
+  }
   if (
     [
       WS_METHODS.taskDocumentsRegister,

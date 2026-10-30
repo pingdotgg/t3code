@@ -11,6 +11,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  TaskDocumentId,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -134,7 +135,16 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
   Effect.gen(function* () {
     const sourceThread = makeSourceThread();
     const sourceRun = makeSourceRun("completed");
-    const result = yield* planFork(sourceRun);
+    const sourceProjection = {
+      ...makeSourceProjection(sourceRun),
+      thread: {
+        ...makeSourceThread(),
+        taskDocumentId: TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+      },
+    };
+    const result = yield* planFork(sourceRun, sourceProjection);
+    assert.equal(result.targetThread.taskDocumentId, sourceProjection.thread.taskDocumentId);
+    assert.isNull(result.targetThread.taskInitialization);
 
     assert.isNull(result.targetThread.snoozedUntil);
     assert.isNull(result.targetThread.snoozedAt);

@@ -412,7 +412,7 @@ describe("AgentAwarenessRelay", () => {
           type: "thread.settled",
           threadId: THREAD_ID,
           occurredAt: now,
-          payload: settled,
+          payload: { ...settled, taskInitialization: null },
         });
         yield* Queue.take(pulls);
         yield* relay.drain;

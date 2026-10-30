@@ -480,6 +480,9 @@ export function threadHasUnfinishedWork(records: {
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
+    case "task-initialization.reconcile":
+    case "task-initialization.report":
+    case "task-initialization.retry":
     case "thread.create":
     case "thread.archive":
     case "thread.unarchive":
@@ -1483,11 +1486,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly failedRunId?: RunId;
         readonly endedRunId?: RunId;
         readonly queuedRunId?: RunId;
+        readonly membershipChanged?: boolean;
       },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
       const projection = yield* readCommandProjection(threadId);
       if (
+        (projection.thread.taskInitialization != null &&
+          projection.thread.taskInitialization.status !== "ready") ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.runs.some(isBlockingRun)
@@ -1523,8 +1529,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         failedRun?.id === options?.failedRunId
           ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
           : undefined;
+      // Clearing a task gate reaches this with work the gate kept from being held at run end.
       const worktreeMissing =
-        failedRun?.id === options?.endedRunId &&
+        (failedRun?.id === options?.endedRunId || options?.membershipChanged === true) &&
         failedRun?.workspacePreparation?.type === "worktree" &&
         projection.thread.worktreePath === null;
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
@@ -2532,6 +2539,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
+    if (
+      (command.taskInitialization !== undefined && command.taskDocumentId === undefined) ||
+      (command.taskDocumentId !== undefined &&
+        command.taskInitialization === undefined &&
+        command.importedNativeThread === undefined)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "New task threads require membership and a frozen initialization envelope.",
+      });
+    }
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
@@ -2539,6 +2558,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       creationSource: command.creationSource,
       id: command.threadId,
       projectId: command.projectId,
+      ...(command.taskDocumentId === undefined ? {} : { taskDocumentId: command.taskDocumentId }),
+      ...(command.taskInitialization === undefined
+        ? {}
+        : {
+            taskInitialization: {
+              ...command.taskInitialization,
+              status: "pending",
+              outcome: null,
+              runId: null,
+            },
+          }),
       title: command.title,
       providerInstanceId: command.modelSelection.instanceId,
       modelSelection: command.modelSelection,
@@ -2939,6 +2969,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} branch changed before the metadata update could be applied.`,
+      });
+    }
+    if (
+      command.type === "thread.metadata.update" &&
+      command.taskInitialization !== undefined &&
+      (command.expectedEmpty !== true ||
+        command.taskDocumentId == null ||
+        thread.taskInitialization != null)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Initialization can only claim an empty thread once.",
       });
     }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
@@ -3399,6 +3442,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   };
           return {
             ...thread,
+            ...(command.taskDocumentId === undefined
+              ? {}
+              : {
+                  taskDocumentId: command.taskDocumentId,
+                  ...(command.taskDocumentId === thread.taskDocumentId
+                    ? {}
+                    : { taskInitialization: null }),
+                }),
+            ...(command.taskInitialization === undefined
+              ? {}
+              : {
+                  taskInitialization: {
+                    ...command.taskInitialization,
+                    status: "pending" as const,
+                    outcome: null,
+                    runId: null,
+                  },
+                }),
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
@@ -5266,6 +5327,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
+    const initialization = projection.thread.taskInitialization;
+    const bootstrap =
+      initialization != null &&
+      command.commandId === CommandId.make(`${initialization.attemptId}:initial-message`) &&
+      command.messageId === initialization.messageId &&
+      command.text === initialization.text;
+    if (
+      bootstrap &&
+      (initialization.status !== "pending" || command.dispatchMode.type !== "defer_start")
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Initialization requires its frozen deferred starter.",
+      });
+    }
+    const taskBlocked = !bootstrap && initialization != null && initialization.status !== "ready";
     const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
@@ -5303,7 +5381,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode = { type: "queue_after_active" };
     }
     // Codex and Claude own /goal; elsewhere it is ordinary text that cannot steer.
-    const parsedGoalCommand = parseGoalCommand(command);
+    const parsedGoalCommand = taskBlocked ? null : parseGoalCommand(command);
     const goalCommand =
       parsedGoalCommand === null ||
       (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
@@ -5432,6 +5510,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
     }
+    if (taskBlocked) dispatchMode = { type: "queue_after_active" };
     const dispatchText =
       delegatedCompletion === undefined
         ? command.text
@@ -5537,7 +5616,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode.type === "defer_start" ||
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
-    const shouldQueue = queueBehindRun !== undefined && startsOrQueuesRun;
+    const shouldQueue = (taskBlocked || queueBehindRun !== undefined) && startsOrQueuesRun;
     // Client messages resume held queues; server continuations and scheduled tasks do not.
     // Provider failure or usage limits re-hold the queue. Failed worktree setup keeps it held
     // until a worktree exists, so queued messages cannot start in the project checkout.
@@ -5553,7 +5632,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (command.creationSource === "web" || command.creationSource === "mobile") &&
       command.scheduledTaskId === undefined;
     const heldRunsToRelease =
-      sentByUserFromClient && startsOrQueuesRun && !worktreeSetupUnresolved
+      sentByUserFromClient && startsOrQueuesRun && !worktreeSetupUnresolved && !taskBlocked
         ? projection.runs.filter((run) => run.status === "queued" && run.queueHeld === true)
         : [];
     const releasedAt = yield* DateTime.now;
@@ -5581,20 +5660,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queueProviderThread =
         activeProviderThread ??
         projection.providerThreads.find(
-          (candidate) => candidate.id === queueBehindRun.providerThreadId,
+          (candidate) => candidate.id === queueBehindRun?.providerThreadId,
         );
-      if (queueProviderThread === undefined) {
+      if (queueProviderThread === undefined && !taskBlocked) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Active run ${queueBehindRun.id} has no provider thread for queued dispatch.`,
+          cause: `Active run ${queueBehindRun?.id} has no provider thread for queued dispatch.`,
         });
       }
       const now = yield* DateTime.now;
       const ordinal = nextRunOrdinal(projection);
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
       const targetProviderThread =
-        modelSelection.instanceId === queueProviderThread.providerInstanceId
+        modelSelection.instanceId === queueProviderThread?.providerInstanceId
           ? queueProviderThread
           : rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0];
       const queuedAdapter = yield* providerAdapters
@@ -5641,7 +5720,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
       const rootNodeId = idAllocator.derive.rootNode({ runId });
       const checkpointScope =
-        queueBehindRun.status === "preparing" || worktreeMissingRun !== undefined
+        taskBlocked || queueBehindRun?.status === "preparing" || worktreeMissingRun !== undefined
           ? null
           : yield* runtimePolicy.resolve({ thread: projection.thread, modelSelection }).pipe(
               Effect.flatMap((resolvedRuntimePolicy) =>
@@ -12446,6 +12525,143 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
     );
 
+  const dispatchTaskInitialization = Effect.fn("Orchestrator.dispatchTaskInitialization")(
+    function* (
+      command: Extract<
+        OrchestrationV2InternalCommand,
+        { type: "task-initialization.report" | "task-initialization.retry" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      const initialization = projection.thread.taskInitialization;
+      const run = projection.runs.find((candidate) => candidate.id === initialization?.runId);
+      const valid =
+        initialization != null &&
+        projection.thread.deletedAt === null &&
+        projection.thread.archivedAt === null &&
+        (command.type === "task-initialization.report"
+          ? run?.id === command.runId &&
+            isBlockingRun(run) &&
+            initialization.status === "running" &&
+            initialization.outcome === null
+          : initialization.attemptId === command.expectedAttemptId &&
+            (initialization.status === "failed" ||
+              (initialization.status === "pending" && initialization.runId === null)) &&
+            command.initialization.attemptId !== initialization.attemptId &&
+            !projection.runs.some(isBlockingRun));
+      if (!valid || initialization == null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Task initialization no longer accepts this outcome or retry.",
+        });
+      }
+      const now = yield* DateTime.now;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: {
+          ...projection.thread,
+          updatedAt: now,
+          taskInitialization:
+            command.type === "task-initialization.report"
+              ? { ...initialization, outcome: command.outcome }
+              : { ...command.initialization, status: "pending", outcome: null, runId: null },
+        },
+      });
+    },
+  );
+
+  const updateTaskInitialization = Effect.fn("Orchestrator.updateTaskInitialization")(function* (
+    command: OrchestrationV2ServerCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const pending = yield* Ref.get(events);
+    if (
+      command.type !== "task-initialization.reconcile" &&
+      !pending.some((event) => event.type === "run.created" || event.type === "run.updated")
+    )
+      return;
+    const threadId = commandThreadId(command);
+    const latestThreadEvent = pending.findLast(
+      (
+        event,
+      ): event is Extract<
+        OrchestrationV2DomainEvent,
+        { type: "thread.created" | "thread.metadata-updated" }
+      > =>
+        event.threadId === threadId &&
+        (event.type === "thread.created" || event.type === "thread.metadata-updated"),
+    );
+    const thread =
+      latestThreadEvent?.payload ??
+      (yield* projectionStore.getThread(threadId).pipe(mapDispatchError(command)));
+    const initialization = thread.taskInitialization;
+    if (initialization == null) return;
+    const pendingRun = pending.findLast(
+      (
+        event,
+      ): event is Extract<OrchestrationV2DomainEvent, { type: "run.created" | "run.updated" }> =>
+        (event.type === "run.created" || event.type === "run.updated") &&
+        event.threadId === threadId &&
+        event.payload.userMessageId === initialization.messageId,
+    );
+    const run =
+      pendingRun?.payload ??
+      (command.type !== "task-initialization.reconcile" || initialization.runId === null
+        ? undefined
+        : (yield* projectionStore
+            .getThreadRecords(threadId, ["runs"], { runIds: [initialization.runId] })
+            .pipe(mapDispatchError(command))).runs[0]);
+    if (run === undefined) return;
+    const status =
+      run.status === "completed"
+        ? initialization.outcome === "ready"
+          ? "ready"
+          : "failed"
+        : ["failed", "interrupted", "cancelled", "rolled_back"].includes(run.status)
+          ? "failed"
+          : "running";
+    if (status === initialization.status && initialization.runId === run.id) return;
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.metadata-updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...(yield* getProjectionWithPendingEvents(threadId, events)).thread,
+        updatedAt: now,
+        taskInitialization: { ...initialization, runId: run.id, status },
+      },
+    });
+    if (status === "ready" && !(yield* stopReachedRun(command, threadId, run.id))) {
+      for (const queued of (yield* projectionStore
+        .getThreadRecords(threadId, ["runs"])
+        .pipe(mapDispatchError(command))).runs.filter(
+        (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
+      )) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId,
+          runId: queued.id,
+          occurredAt: now,
+          payload: { ...queued, queueHeld: false },
+        });
+      }
+    }
+  });
+
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2ServerCommand,
   ): Effect.fn.Return<
@@ -12476,6 +12692,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       | undefined;
     let updateDelegatedCompletionOnlyRunId: RunId | undefined;
     switch (command.type) {
+      case "task-initialization.reconcile":
+        break;
+      case "task-initialization.report":
+      case "task-initialization.retry":
+        yield* dispatchTaskInitialization(command, events);
+        break;
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;
@@ -12666,14 +12888,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.stop":
         cancelUnsettledEffects = yield* dispatchThreadStop(command, events, effects);
+        {
+          const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+          const initialization = projection.thread.taskInitialization;
+          if (initialization?.status === "pending" && initialization.runId === null) {
+            yield* emit(
+              events,
+              command,
+            )({
+              type: "thread.metadata-updated",
+              threadId: command.threadId,
+              occurredAt: yield* DateTime.now,
+              payload: {
+                ...projection.thread,
+                taskInitialization: { ...initialization, status: "failed", outcome: "failed" },
+              },
+            });
+          }
+        }
         break;
-      case "queued-message.promote-to-steer":
+      case "queued-message.promote-to-steer": {
+        const thread = yield* projectionStore
+          .getThread(command.threadId)
+          .pipe(mapDispatchError(command));
+        if (thread.taskInitialization != null && thread.taskInitialization.status !== "ready") {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Task initialization must finish before steering user work.",
+          });
+        }
         cancelUnsettledEffects = yield* dispatchQueuedMessagePromoteToSteer(
           command,
           events,
           effects,
         );
         break;
+      }
       case "queued-run.start":
       case "queue.resume": {
         const projection = yield* loadProjectionForCommand(
@@ -12681,6 +12932,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ["runs", "turnItems", "providerSessions", "messages"],
           { turnItemTypes: ["error"], messageRoles: ["user"] },
         );
+        if (
+          projection.thread.taskInitialization != null &&
+          projection.thread.taskInitialization.status !== "ready"
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Retry task initialization before resuming queued work.",
+          });
+        }
         if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -12813,6 +13074,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       default:
         return yield* dispatchUnsupported(command);
     }
+    yield* updateTaskInitialization(command, events);
     return {
       events: yield* Ref.get(events),
       effects: yield* Ref.get(effects),
@@ -13027,6 +13289,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
+    if (command.type === "thread.metadata.update" && command.taskDocumentId !== undefined) {
+      yield* mapDispatchError(command)(
+        startNextQueuedRun(command.threadId, { membershipChanged: true }),
+      );
+    }
     if (command.type === "notification.delivery.accept") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
     }
@@ -13067,6 +13334,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : threadDispatch.withLock(parentThreadId, dispatch);
   });
 
+  const reconcileTaskInitialization = Effect.fn("Orchestrator.reconcileTaskInitialization")(
+    function* (threadId: ThreadId, endedRun?: OrchestrationV2Run) {
+      const thread = yield* projectionStore
+        .getThread(threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      const initialization = thread.taskInitialization;
+      if (initialization == null) return;
+      const run =
+        endedRun ??
+        (initialization.runId === null
+          ? undefined
+          : (yield* projectionStore
+              .getThreadRecords(threadId, ["runs"], { runIds: [initialization.runId] })
+              .pipe(
+                Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+              )).runs[0]);
+      if (run?.userMessageId !== initialization.messageId) return;
+      if (
+        run === undefined ||
+        !["completed", "failed", "interrupted", "cancelled", "rolled_back"].includes(run.status)
+      )
+        return;
+      const status =
+        run.status === "completed" && initialization.outcome === "ready" ? "ready" : "failed";
+      if (initialization.status === status && initialization.runId === run.id) return;
+      yield* dispatchWithReceiptEffect({
+        type: "task-initialization.reconcile",
+        threadId,
+        commandId: CommandId.make(`${initialization.attemptId}:reconcile:${run.id}:${run.status}`),
+      });
+    },
+  );
+
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
     function* (stored: OrchestrationV2StoredEvent) {
       if (stored.event.type !== "run.updated") return;
@@ -13076,6 +13376,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // while writing child events, so nesting parent inside child would invert the order.
       // The keyed semaphores are neither reentrant nor deadlock-aware.
       if (delegatedTaskTerminalStatus(run.status) !== null) {
+        yield* threadDispatch
+          .withLock(threadId, reconcileTaskInitialization(threadId, run))
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to reconcile task initialization", { threadId, cause }),
+            ),
+          );
         yield* threadDispatch.withLock(
           threadId,
           finalizeDelegatedCompletionDelivery(threadId, run.id),
@@ -13180,6 +13487,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   const recoverDelegatedTasks = Effect.gen(function* () {
+    yield* projectionStore.getRecoveryThreadIds("task-initialization").pipe(
+      Effect.flatMap((threadIds) =>
+        Effect.forEach(
+          threadIds,
+          (threadId) =>
+            threadDispatch
+              .withLock(
+                threadId,
+                reconcileTaskInitialization(threadId).pipe(
+                  Effect.andThen(startNextQueuedRun(threadId)),
+                ),
+              )
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Task initialization recovery failed", { threadId, cause }),
+                ),
+              ),
+          { concurrency: 8, discard: true },
+        ),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Task initialization recovery failed", { cause }),
+      ),
+    );
     yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(
       Effect.tap((threadIds) =>
         Effect.annotateCurrentSpan("recovery.subagentResultThreads", threadIds.length),

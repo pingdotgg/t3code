@@ -33,6 +33,8 @@ import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+import { taskThreadStarter } from "../../apps/server/src/tasks/taskThreadStarter.ts";
+import { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "@t3tools/contracts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import { EnvironmentId, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT, ThreadId } from "@t3tools/contracts";
@@ -222,6 +224,14 @@ export const McpToolUseCase = Schema.Struct({
   rule: Schema.optional(Schema.String),
   privacy: Schema.optional(Schema.Literals(["commit-safe", "private"])),
   setup: Schema.Struct({
+    taskInitialization: Schema.optional(
+      Schema.Struct({
+        taskDocumentId: Schema.String,
+        canonicalPath: Schema.String,
+        updateInstructionsPath: Schema.String,
+        workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+      }),
+    ),
     role: Schema.Literals(["top", "delegated-child", "native-subagent"]),
     /** Runs only on this harness, for cases whose right answer depends on it. */
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
@@ -870,10 +880,14 @@ export const buildMessages = (sample: Sample) => {
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
-  const prompt =
+  const userPrompt =
     testCase.promptContext === undefined
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+  const prompt =
+    testCase.setup.taskInitialization === undefined
+      ? userPrompt
+      : `${taskThreadStarter(testCase.setup.taskInitialization)}\n${userPrompt}`;
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.

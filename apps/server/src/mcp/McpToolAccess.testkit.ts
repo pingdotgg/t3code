@@ -80,7 +80,7 @@ export const idleThreadProjection = (
     ...thread
   } = shell;
   return {
-    thread: { ...thread, lastVisitedAt: lastVisitedAt ?? null },
+    thread: { ...thread, taskInitialization: null, lastVisitedAt: lastVisitedAt ?? null },
     runs: [],
     attempts: [],
     nodes: [],

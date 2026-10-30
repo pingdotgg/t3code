@@ -69,6 +69,46 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect.each([
+    {
+      method: ORCHESTRATION_V2_WS_METHODS.launchThread,
+      input: { task: { taskDocumentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" } },
+    },
+    {
+      method: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+      input: {
+        type: "thread.metadata.update",
+        taskDocumentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      },
+    },
+  ])(
+    "requires destination read and operate grants for task input to $method",
+    ({ method, input }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          const command = createCommandPermissions(runtime, method);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(command.permissionAtom(env))).toBe(true);
+          expect(registry.get(command.permissionAtom(env, input))).toBe(false);
+          expect((yield* command.authorize(registry, env, input).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(true),
+              scopes: [AuthOrchestrationOperateScope, AuthFilesystemReadScope],
+              permissions: [AuthOrchestrationOperateScope, AuthFilesystemReadScope],
+            }),
+          );
+          yield* command.authorize(registry, env, input);
+          expect(registry.get(command.permissionAtom(env, input))).toBe(true);
+          registry.set(sessions(other), AsyncResult.success(grant(true)));
+          expect(registry.get(command.permissionAtom(other, input))).toBe(false);
+        }),
+      ),
+  );
   it.effect("requires the destination preview grant to close a browser tab", () =>
     Effect.scoped(
       Effect.gen(function* () {

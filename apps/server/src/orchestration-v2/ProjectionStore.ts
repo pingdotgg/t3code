@@ -1,3 +1,4 @@
+import { taskThreadInitializationSummary } from "@t3tools/contracts";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
@@ -163,6 +164,7 @@ export const ProjectionStoreV2Error = Schema.Union([
 export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
 
 export type ProjectionRecoveryKind =
+  | "task-initialization"
   | "queued-runs"
   | "runtime"
   | "subagent-results"
@@ -1482,6 +1484,8 @@ export function threadShellFromProjection(
     ...(projection.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: projection.thread.activeOrderKey }),
+    taskDocumentId: projection.thread.taskDocumentId ?? null,
+    taskInitialization: taskThreadInitializationSummary(projection.thread.taskInitialization),
     lineage: projection.thread.lineage,
     forkedFrom: projection.thread.forkedFrom,
     activeProviderThreadId: projection.thread.activeProviderThreadId,
@@ -1764,6 +1768,8 @@ function shellFromState(input: {
     ...(input.state.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: input.state.thread.activeOrderKey }),
+    taskDocumentId: input.state.thread.taskDocumentId ?? null,
+    taskInitialization: taskThreadInitializationSummary(input.state.thread.taskInitialization),
     lineage: input.state.thread.lineage,
     forkedFrom: input.state.thread.forkedFrom,
     activeProviderThreadId: input.state.thread.activeProviderThreadId,
@@ -3864,6 +3870,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       function* (kind: ProjectionRecoveryKind) {
         const candidates = (() => {
           switch (kind) {
+            case "task-initialization":
+              return sql`
+                SELECT thread.thread_id FROM orchestration_v2_projection_threads AS thread
+                JOIN orchestration_v2_projection_runs AS run
+                  ON run.thread_id = thread.thread_id
+                  AND run.run_id = json_extract(thread.payload_json, '$.taskInitialization.runId')
+                WHERE json_extract(thread.payload_json, '$.taskInitialization.status') IN ('pending', 'running')
+                  AND run.status IN ('completed', 'failed', 'interrupted', 'cancelled', 'rolled_back')
+              `;
             case "queued-runs":
               return sql`
                 SELECT thread_id FROM orchestration_v2_projection_runs

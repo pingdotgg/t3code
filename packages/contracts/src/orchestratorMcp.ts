@@ -34,11 +34,13 @@ import {
 } from "./threadPullRequest.ts";
 import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
+import { TaskDocumentId } from "./taskDocuments.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
+  TaskThreadInitializationSummary,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -423,6 +425,8 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
 export type OrchestratorMcpThreadReadInput = typeof OrchestratorMcpThreadReadInput.Type;
 
 export const OrchestratorMcpThreadDetail = Schema.Struct({
+  taskDocumentId: Schema.optional(Schema.NullOr(TaskDocumentId)),
+  taskInitialization: Schema.optional(Schema.NullOr(TaskThreadInitializationSummary)),
   threadId: ThreadId,
   projectId: ProjectId,
   title: Schema.String,

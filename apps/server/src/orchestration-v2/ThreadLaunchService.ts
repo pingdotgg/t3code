@@ -1,4 +1,7 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
+import * as TaskDocuments from "../tasks/TaskDocuments.ts";
+import { taskThreadStarter, TASK_THREAD_TEMPLATE_VERSION } from "../tasks/taskThreadStarter.ts";
+import * as FileSystem from "effect/FileSystem";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -16,8 +19,12 @@ import {
   type ProviderDriverKind,
   type ProviderInteractionMode,
   ProjectId,
+  type ProviderInstanceId,
   type RunId,
   type RuntimeMode,
+  type TaskThreadLaunchOptions,
+  type TaskThreadInitializationEnvelope,
+  MessageId as MessageIdSchema,
   type ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -78,6 +85,8 @@ export interface ThreadLaunchInitialMessage {
 }
 
 export interface ThreadLaunchInput {
+  readonly task?: TaskThreadLaunchOptions;
+  readonly retryTaskInitialization?: boolean;
   readonly commandId: CommandId;
   readonly threadId?: ThreadId;
   readonly reuseExistingThread?: boolean;
@@ -131,6 +140,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   {
     operation: Schema.Literals([
       "resolve-project",
+      "resolve-task",
       "read-receipt",
       "generate-metadata",
       "provision-worktree",
@@ -187,6 +197,12 @@ export class ThreadLaunchService extends Context.Service<
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
     readonly prepareRun: (input: ThreadLaunchPreparationInput) => Effect.Effect<void>;
+    readonly reportTaskInitialization: (input: {
+      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
+      readonly providerInstanceId: ProviderInstanceId;
+      readonly outcome: "ready" | "failed";
+    }) => Effect.Effect<void, ThreadLaunchError>;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
@@ -203,6 +219,8 @@ function failureDetail(error: unknown): string {
 
 const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
+  const taskDocuments = yield* TaskDocuments.TaskDocuments;
+  const fs = yield* FileSystem.FileSystem;
   const setupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
@@ -220,7 +238,11 @@ const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
 
   const mapError =
-    (input: PreparationInput, operation: ThreadLaunchError["operation"], threadId?: ThreadId) =>
+    (
+      input: Pick<PreparationInput, "commandId" | "projectId">,
+      operation: ThreadLaunchError["operation"],
+      threadId?: ThreadId,
+    ) =>
     (cause: unknown) =>
       new ThreadLaunchError({
         operation,
@@ -808,7 +830,7 @@ const make = Effect.gen(function* () {
     function* (request) {
       // Scratch has no Git repository. Normalize before folder allocation so
       // durable preparation and retries use the thread's own Scratch folder.
-      const input: ThreadLaunchInput =
+      let input: ThreadLaunchInput =
         request.workspaceStrategy.type === "worktree" &&
         (yield* managedFolders.isScratchProject(request.projectId))
           ? { ...request, workspaceStrategy: { type: "root" } }
@@ -834,6 +856,119 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      const priorThreadId = input.threadId ?? Option.getOrUndefined(launchReceipt)?.threadId;
+      const priorThread =
+        priorThreadId === undefined
+          ? null
+          : yield* threads
+              .getThreadShell(priorThreadId)
+              .pipe(Effect.mapError(mapError(input, "read-receipt", priorThreadId)));
+      let initialization: TaskThreadInitializationEnvelope | undefined;
+      if (
+        Option.isSome(launchReceipt) &&
+        priorThread?.taskInitialization?.attemptId === input.commandId
+      ) {
+        const { thread } = yield* threads
+          .getThreadRecords(priorThread.id, [])
+          .pipe(Effect.mapError(mapError(input, "read-receipt", priorThread.id)));
+        initialization = thread.taskInitialization ?? undefined;
+      } else if (input.task !== undefined && Option.isNone(launchReceipt)) {
+        const task = input.task;
+        const provider = (yield* providerRegistry.getProviders).find(
+          (candidate) => candidate.instanceId === input.modelSelection.instanceId,
+        );
+        if (provider?.driver === "antigravity") {
+          return yield* mapError(
+            input,
+            "resolve-task",
+          )(
+            "Antigravity task initialization is unsupported: its client-file route is limited to the workspace and attachments.",
+          );
+        }
+        if (input.retryTaskInitialization === true && priorThread?.worktreePath != null) {
+          input = {
+            ...input,
+            workspaceStrategy: {
+              type: "existing_worktree",
+              worktreePath: priorThread.worktreePath,
+              ...(priorThread.branch === null ? {} : { branch: priorThread.branch }),
+            },
+          };
+        }
+        if (input.initialMessage !== undefined || input.importedNativeThread !== undefined) {
+          return yield* mapError(
+            input,
+            "resolve-task",
+          )("Task launch accepts its starter only; send user work after launch.");
+        }
+        const document = yield* taskDocuments
+          .open({ taskDocumentId: task.taskDocumentId })
+          .pipe(Effect.mapError(mapError(input, "resolve-task")));
+        const updateInstructionsPath = yield* fs
+          .realPath(task.updateInstructionsPath)
+          .pipe(Effect.mapError(mapError(input, "resolve-task")));
+        yield* fs
+          .access(updateInstructionsPath, { readable: true })
+          .pipe(Effect.mapError(mapError(input, "resolve-task")));
+        initialization = {
+          attemptId: input.commandId,
+          messageId: MessageIdSchema.make(`${input.commandId}:task-initialization`),
+          canonicalPath: document.summary.canonicalPath,
+          revision: document.revision,
+          templateVersion: TASK_THREAD_TEMPLATE_VERSION,
+          text: taskThreadStarter({
+            ...task,
+            canonicalPath: document.summary.canonicalPath,
+            updateInstructionsPath,
+            workspaceStrategy: input.workspaceStrategy,
+          }),
+          workspaceStrategy: input.workspaceStrategy,
+          modelSelection: input.modelSelection,
+          // Neither retry nor draft reuse applies these to an existing thread.
+          runtimeMode: priorThread?.runtimeMode ?? input.runtimeMode,
+          interactionMode: priorThread?.interactionMode ?? input.interactionMode,
+          title: priorThread?.title ?? input.title,
+        };
+      }
+      if (
+        input.retryTaskInitialization === true &&
+        (input.threadId === undefined ||
+          initialization === undefined ||
+          priorThread?.taskDocumentId == null ||
+          (input.task !== undefined && input.task.taskDocumentId !== priorThread.taskDocumentId))
+      ) {
+        return yield* mapError(
+          input,
+          "resolve-task",
+        )("An explicit initialization retry requires its associated thread and task.");
+      }
+      if (
+        initialization !== undefined &&
+        priorThread !== null &&
+        priorThread.projectId !== input.projectId
+      ) {
+        return yield* mapError(
+          input,
+          "resolve-project",
+          priorThread.id,
+        )("Project identity changed.");
+      }
+      if (initialization !== undefined) {
+        input = {
+          ...input,
+          title: initialization.title,
+          modelSelection: initialization.modelSelection,
+          runtimeMode: initialization.runtimeMode,
+          interactionMode: initialization.interactionMode,
+          workspaceStrategy: initialization.workspaceStrategy,
+          initialMessage: {
+            messageId: initialization.messageId,
+            text: initialization.text,
+            attachments: [],
+          },
+          generateTitle: false,
+        };
+      }
       yield* threads.assertProviderInstanceEnabled({
         projectId: input.projectId,
         commandId: input.commandId,
@@ -871,18 +1006,25 @@ const make = Effect.gen(function* () {
           }
         }
 
-        if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
+        if (
+          input.reuseExistingThread === true &&
+          input.retryTaskInitialization !== true &&
+          Option.isNone(launchReceipt)
+        ) {
           yield* validateReusableThread(input, candidateThreadId);
         }
 
-        const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
+        let workspaceStrategy: ThreadLaunchWorkspaceStrategy =
           input.workspaceStrategy.type === "root" && Option.isNone(launchReceipt)
             ? Option.match(
                 yield* managedFolders
                   .folderForThread({
                     projectId: input.projectId,
                     threadId: candidateThreadId,
-                    text: input.initialMessage?.text ?? input.title,
+                    text:
+                      initialization === undefined
+                        ? (input.initialMessage?.text ?? input.title)
+                        : input.title,
                   })
                   .pipe(Effect.mapError(mapError(input, "provision-worktree", candidateThreadId))),
                 {
@@ -894,35 +1036,56 @@ const make = Effect.gen(function* () {
         const initialBranch = workspaceStrategy.branch ?? null;
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
+        if (initialization !== undefined && Option.isNone(launchReceipt)) {
+          initialization = { ...initialization, workspaceStrategy };
+        }
         const claimDispatch =
-          input.reuseExistingThread === true
+          input.retryTaskInitialization === true &&
+          initialization !== undefined &&
+          priorThread?.taskInitialization != null
             ? threads.dispatch({
-                type: "thread.metadata.update",
+                type: "task-initialization.retry",
                 commandId: input.commandId,
                 threadId: candidateThreadId,
-                expectedEmpty: true,
+                expectedAttemptId: priorThread.taskInitialization.attemptId,
+                initialization,
               })
-            : threads.dispatch({
-                type: "thread.create",
-                commandId: input.commandId,
-                threadId: candidateThreadId,
-                projectId: input.projectId,
-                title: input.title,
-                modelSelection: input.modelSelection,
-                runtimeMode: input.runtimeMode,
-                interactionMode: input.interactionMode,
-                branch: initialBranch,
-                worktreePath: initialWorktreePath,
-                ...(input.importedNativeThread === undefined
-                  ? {}
-                  : { importedNativeThread: input.importedNativeThread }),
-                ...(input.linkOrigin === undefined ? {} : { linkOrigin: input.linkOrigin }),
-                ...(input.delegatedFrom === undefined
-                  ? {}
-                  : { delegatedFrom: input.delegatedFrom }),
-                createdBy: input.createdBy,
-                creationSource: input.creationSource,
-              });
+            : input.reuseExistingThread === true
+              ? threads.dispatch({
+                  type: "thread.metadata.update",
+                  commandId: input.commandId,
+                  threadId: candidateThreadId,
+                  expectedEmpty: true,
+                  ...(input.task === undefined
+                    ? {}
+                    : { taskDocumentId: input.task.taskDocumentId }),
+                  ...(initialization === undefined ? {} : { taskInitialization: initialization }),
+                })
+              : threads.dispatch({
+                  type: "thread.create",
+                  commandId: input.commandId,
+                  threadId: candidateThreadId,
+                  projectId: input.projectId,
+                  ...(input.task === undefined
+                    ? {}
+                    : { taskDocumentId: input.task.taskDocumentId }),
+                  ...(initialization === undefined ? {} : { taskInitialization: initialization }),
+                  title: input.title,
+                  modelSelection: input.modelSelection,
+                  runtimeMode: input.runtimeMode,
+                  interactionMode: input.interactionMode,
+                  branch: initialBranch,
+                  worktreePath: initialWorktreePath,
+                  ...(input.importedNativeThread === undefined
+                    ? {}
+                    : { importedNativeThread: input.importedNativeThread }),
+                  ...(input.linkOrigin === undefined ? {} : { linkOrigin: input.linkOrigin }),
+                  ...(input.delegatedFrom === undefined
+                    ? {}
+                    : { delegatedFrom: input.delegatedFrom }),
+                  createdBy: input.createdBy,
+                  creationSource: input.creationSource,
+                });
         const claimed = yield* claimDispatch.pipe(
           Effect.mapError(
             mapError(
@@ -937,6 +1100,32 @@ const make = Effect.gen(function* () {
             .threadId ?? candidateThreadId;
         if (project.id !== input.projectId) {
           return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
+        }
+        if (initialization !== undefined) {
+          const { thread } = yield* threads
+            .getThreadRecords(threadId, [])
+            .pipe(Effect.mapError(mapError(input, "read-receipt", threadId)));
+          if (thread.taskInitialization?.attemptId !== input.commandId) {
+            return yield* mapError(
+              input,
+              "resolve-task",
+              threadId,
+            )("A newer initialization attempt replaced this launch.");
+          }
+          initialization = thread.taskInitialization;
+          workspaceStrategy = initialization.workspaceStrategy;
+          input = {
+            ...input,
+            title: initialization.title,
+            modelSelection: initialization.modelSelection,
+            runtimeMode: initialization.runtimeMode,
+            interactionMode: initialization.interactionMode,
+            initialMessage: {
+              messageId: initialization.messageId,
+              text: initialization.text,
+              attachments: [],
+            },
+          };
         }
         let runId: RunId | null = null;
         let messageSequence: number | undefined;
@@ -978,8 +1167,8 @@ const make = Effect.gen(function* () {
               // launch into their own drafts, whatever modes those hold.
               input.createdBy === "agent"
                 ? Effect.provideService(DispatchModeLimit, {
-                    runtimeMode: input.runtimeMode,
-                    interactionMode: input.interactionMode,
+                    runtimeMode: request.runtimeMode,
+                    interactionMode: request.interactionMode,
                   })
                 : (effect) => effect,
               Effect.mapError(mapError(input, "dispatch-message", threadId)),
@@ -1033,7 +1222,13 @@ const make = Effect.gen(function* () {
                     );
               if (preparationStillRequired) {
                 yield* schedulePreparation(
-                  { ...input, workspaceStrategy: preparationStrategy },
+                  {
+                    ...input,
+                    workspaceStrategy: preparationStrategy,
+                    ...(initialization === undefined
+                      ? {}
+                      : { initialMessage: { text: input.title, attachments: [] } }),
+                  },
                   threadId,
                   runId,
                 );
@@ -1125,7 +1320,8 @@ const make = Effect.gen(function* () {
           ? {}
           : {
               initialMessage: {
-                text: message.text,
+                text:
+                  thread.taskInitialization?.messageId === message.id ? thread.title : message.text,
                 attachments: message.attachments,
                 ...(message.context ? { context: message.context } : {}),
               },
@@ -1136,7 +1332,55 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
+  const reportTaskInitialization: ThreadLaunchService["Service"]["reportTaskInitialization"] =
+    Effect.fn("ThreadLaunchService.reportTaskInitialization")(function* (input) {
+      const commandId = CommandId.make(`task-initialization:report:${input.threadId}`);
+      const errorInput = { ...input, commandId };
+      const projection = yield* threads
+        .getThreadRecords(input.threadId, ["runs", "providerThreads"])
+        .pipe(Effect.mapError(mapError(errorInput, "resolve-task", input.threadId)));
+      const initialization = projection.thread.taskInitialization;
+      const run = projection.runs.find((candidate) => candidate.id === initialization?.runId);
+      const providerThread = projection.providerThreads.find(
+        (candidate) => candidate.id === run?.providerThreadId,
+      );
+      if (
+        initialization == null ||
+        run === undefined ||
+        providerThread?.providerInstanceId !== input.providerInstanceId
+      ) {
+        return yield* mapError(
+          errorInput,
+          "resolve-task",
+          input.threadId,
+        )("Only the initializing thread's provider can report its result.");
+      }
+      yield* threads
+        .dispatch({
+          type: "task-initialization.report",
+          threadId: input.threadId,
+          commandId: CommandId.make(`${initialization.attemptId}:outcome:${input.outcome}`),
+          runId: run.id,
+          outcome: input.outcome,
+        })
+        .pipe(
+          Effect.mapError(() =>
+            mapError(
+              errorInput,
+              "resolve-task",
+              input.threadId,
+            )("Task initialization no longer accepts this outcome."),
+          ),
+        );
+    });
+
+  return ThreadLaunchService.of({
+    launch,
+    checkWorktreeBase,
+    retryPreparation,
+    prepareRun,
+    reportTaskInitialization,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

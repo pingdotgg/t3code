@@ -75,7 +75,42 @@ const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;
 });
+// File-system causes stay out of the message; authored reasons are safe to show.
+const taskLaunchFailure = (error: ThreadLaunch.ThreadLaunchError) =>
+  error.operation === "resolve-task"
+    ? new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message:
+          typeof error.cause === "string"
+            ? error.cause
+            : "The task document or update instructions could not be read.",
+      })
+    : unavailable();
+
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
+  task_thread_initialization_result: McpToolAccess.writesThreads(
+    () => [],
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const { caller } = yield* readCaller();
+        if (scope.thread === undefined || scope.thread.subagent === true || caller === undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "Only the initializing thread can report its context outcome.",
+          });
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        yield* launches
+          .reportTaskInitialization({
+            threadId: caller.id,
+            projectId: caller.projectId,
+            providerInstanceId: scope.thread.providerInstanceId,
+            outcome: input.outcome,
+          })
+          .pipe(Effect.mapError(taskLaunchFailure));
+        return { recorded: true };
+      }),
+  ),
   t3_thread_launch: McpToolAccess.startsThreads(
     (input) => input,
     (input, { runtimeMode, interactionMode, linkOrigin }) =>
@@ -209,6 +244,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               )
             : runtimeMode;
         const result = yield* ThreadMessageIntake.launchThread({
+          ...(input.task === undefined ? {} : { task: input.task }),
           commandId,
           threadId,
           projectId,
@@ -246,11 +282,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 message: error.message,
               });
             }
-            return unavailable();
+            return error._tag === "ThreadLaunchError" ? taskLaunchFailure(error) : unavailable();
           }),
         );
         const thread = result.projection.thread;
-        const run = result.projection.runs.find((run) => run.userMessageId === messageId);
+        const run = result.projection.runs.find(
+          (run) => run.userMessageId === (thread.taskInitialization?.messageId ?? messageId),
+        );
         return {
           threadId: thread.id,
           link: McpInvocationContext.threadLinkFor(scope, thread.id),

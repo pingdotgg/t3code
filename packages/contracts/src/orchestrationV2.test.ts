@@ -481,6 +481,8 @@ describe("thread open stats", () => {
       deletedAt: null,
     };
     const decode = Schema.decodeUnknownSync(OrchestrationV2ThreadShellJson);
+    expect(decode(shell).taskDocumentId).toBeUndefined();
+    expect(decode(shell).taskInitialization).toBeUndefined();
     const opens = { openedAt: 1, score: 1, picks: [{ query: "upl", at: 1 }] };
     expect(decode({ ...shell, opens }).opens).toEqual(opens);
     expect(decode({ ...shell, opens: { openedAt: "2026-10-01", score: 1 } }).opens).toBeNull();
