@@ -142,6 +142,7 @@ function NewTaskWorkspaceIcon(props: {
 }
 
 export function NewTaskDraftScreen(props: {
+  readonly title: string;
   readonly initialProjectRef?: {
     readonly environmentId?: string;
     readonly projectId?: string;
@@ -848,7 +849,7 @@ export function NewTaskDraftScreen(props: {
       <ThreadScreenFallback
         header={
           <AppBar
-            title="New thread"
+            title={props.title}
             sidebar={false}
             onBack={goBack}
             options={{
@@ -893,7 +894,12 @@ export function NewTaskDraftScreen(props: {
       <ThreadScreenBinding
         environmentId={selectedProject.environmentId}
         header={
-          <DraftThreadHeader thread={thread} project={selectedProject} cwd={composerWorkspaceCwd} />
+          <DraftThreadHeader
+            title={props.title}
+            thread={thread}
+            project={selectedProject}
+            cwd={composerWorkspaceCwd}
+          />
         }
         draftMode={{
           content: heroViewport,

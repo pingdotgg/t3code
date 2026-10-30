@@ -259,7 +259,6 @@ export function HomeRouteScreen() {
                 requestId: uuidv4(),
                 environmentId: String(project.environmentId),
                 projectId: String(project.id),
-                title: project.title,
               },
             });
           }}
