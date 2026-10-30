@@ -102,7 +102,7 @@ export function resolveCyberAccessProgram(
     : Effect.fail(
         new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: `Cyber access program ${String(value)} differs from this thread's ${parentValue}. Omit it; only the user can choose one.`,
+          message: `Cyber access program ${String(value)} differs from this thread's ${parentValue}. Omit it; the user chooses one in the composer's model options.`,
         }),
       );
 }

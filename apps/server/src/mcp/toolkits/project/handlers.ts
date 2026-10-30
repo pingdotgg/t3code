@@ -352,6 +352,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
           };
         }
+        yield* resolveCyberAccessProgram(undefined, input.defaultModelSelection?.options ?? []);
         const commandId = yield* newCommandId();
         return yield* projects
           .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
@@ -364,6 +365,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
+      const requested = input.defaultModelSelection?.options;
+      if (requested !== undefined) {
+        const current = yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable));
+        yield* resolveCyberAccessProgram(
+          Option.getOrUndefined(current)?.defaultModelSelection ?? undefined,
+          requested,
+        );
+      }
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));

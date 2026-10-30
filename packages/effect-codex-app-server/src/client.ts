@@ -86,7 +86,10 @@ type ServerNotificationHandler = (
   payload: unknown,
 ) => Effect.Effect<void, CodexError.CodexAppServerError>;
 
-/** `turn/start` params as sent, with experimental fields the generated struct lacks. */
+/**
+ * `turn/start` params as sent, with experimental fields the generated struct lacks.
+ * Encoding drops unknown keys, so callers build params with this schema too.
+ */
 export const V2TurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
