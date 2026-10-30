@@ -1184,4 +1184,92 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
     }),
   );
+
+  it.effect(
+    "reads line counts a hundred at a time per project, keeping the reads that answered",
+    () =>
+      Effect.gen(function* () {
+        const variablesOf = (stdin: string | undefined) =>
+          (
+            JSON.parse(stdin ?? "{}") as {
+              readonly variables: {
+                readonly fullPath: string;
+                readonly iids: ReadonlyArray<string>;
+              };
+            }
+          ).variables;
+        mockedExecute.mockImplementation((request) => {
+          const { fullPath, iids } = variablesOf(request.stdin);
+          // GitLab answers only what it has (iid 3 is missing), and one project's read fails.
+          const nodes = iids
+            .filter((iid) => iid !== "3")
+            .map((iid) => ({ iid, diffStatsSummary: { additions: Number(iid), deletions: 1 } }));
+          return Effect.succeed(
+            output(
+              JSON.stringify(
+                fullPath === "acme/api"
+                  ? { errors: [{ message: "Query timed out" }] }
+                  : { data: { project: { mergeRequests: { nodes } } } },
+              ),
+            ),
+          );
+        });
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const stats = yield* cli.listMergeRequestStats({
+          cwd: "/w",
+          changeRequests: [
+            ...Array.from({ length: 150 }, (_, index) => ({
+              repository: "acme/web",
+              number: index + 1,
+            })),
+            { repository: "acme/api", number: 9 },
+          ],
+        });
+
+        expect(stats).toHaveLength(149);
+        expect(stats).toContainEqual({
+          repository: "acme/web",
+          number: 150,
+          additions: 150,
+          deletions: 1,
+        });
+        expect(stats.some((stat) => stat.number === 3 || stat.repository === "acme/api")).toBe(
+          false,
+        );
+        expect(
+          mockedExecute.mock.calls.map(([request]) => {
+            const { fullPath, iids } = variablesOf(request.stdin);
+            return [fullPath, iids.length];
+          }),
+        ).toEqual([
+          ["acme/web", 100],
+          ["acme/web", 50],
+          ["acme/api", 1],
+        ]);
+      }),
+  );
+  it.effect.each([
+    GitLabCli.GitLabCliUnavailableError,
+    GitLabCli.GitLabCliAuthenticationError,
+    GitLabCli.GitLabCliRateLimitError,
+  ])("propagates unusable CLI and account failures from stats (%s)", (ErrorType) =>
+    Effect.gen(function* () {
+      const error = new ErrorType({
+        operation: "execute",
+        command: "glab",
+        cwd: "/w",
+        cause: null,
+      });
+      mockedExecute.mockReturnValueOnce(Effect.fail(error));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const result = yield* Effect.result(
+        cli.listMergeRequestStats({
+          cwd: "/w",
+          changeRequests: [{ repository: "acme/web", number: 7 }],
+        }),
+      );
+      expect(result).toMatchObject({ _tag: "Failure", failure: error });
+    }),
+  );
 });
