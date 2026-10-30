@@ -811,10 +811,14 @@ export const make = Effect.gen(function* () {
   return DesktopBackendConfiguration.of({
     currentBootstrapToken,
     resolvePrimary: Effect.gen(function* () {
-      const { useWsl, wslRequested } = yield* describePrimary;
+      const { useWsl, wslRequested, distro } = yield* describePrimary;
       if (useWsl) {
-        return yield* buildWslPrimaryConfig;
+        const config = yield* buildWslPrimaryConfig;
+        // Default-tracking mode pins the launch to the distro preflight found.
+        yield* serverExposure.setWslPrimary({ distro: config.runningDistro ?? distro });
+        return config;
       }
+      yield* serverExposure.setWslPrimary(null);
       if (wslRequested) {
         yield* Effect.logWarning(
           "WSL-only backend requested but WSL is unavailable; starting the Windows primary instead.",

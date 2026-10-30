@@ -959,16 +959,17 @@ const windowsToWslPathImpl = (
 
 const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
-const getDistroIpImpl = (
+/** Runs `sh -c script` in the distro; `None` on non-zero exit, timeout or spawn failure. */
+const runDistroShell = (
   distro: string | null,
+  script: string,
 ): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      // WSL2's first hostname -I address is reachable directly from Windows without wslhost forwarding.
       const command = ChildProcess.make(
         "wsl.exe",
-        [...buildDistroArgs(distro), "--", "sh", "-c", "hostname -I"],
+        [...buildDistroArgs(distro), "--", "sh", "-c", script],
         {
           stdin: "ignore",
           stdout: "pipe",
@@ -981,14 +982,46 @@ const getDistroIpImpl = (
       const stdoutBytes = yield* Stream.runCollect(handle.stdout);
       const exitCode = yield* handle.exitCode;
       if ((exitCode as unknown as number) !== 0) return Option.none<string>();
-      const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
-      const candidate = raw.split(/\s+/).find((part) => IPV4_PATTERN.test(part));
-      return candidate ? Option.some(candidate) : Option.none<string>();
+      return Option.some(decodeUtf8(concatChunks(stdoutBytes)).trim());
     }),
   ).pipe(
     Effect.timeoutOption(USER_HOME_TIMEOUT),
     Effect.map(Option.flatten),
     Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
+const parseIpv4Addresses = (raw: string): ReadonlyArray<string> =>
+  raw.split(/\s+/).filter((part) => IPV4_PATTERN.test(part));
+
+export const probeDistroIpv4Addresses = Effect.fn("DesktopWslEnvironment.probeDistroIpv4Addresses")(
+  function* (distro: string | null) {
+    return Option.filter(
+      Option.map(yield* runDistroShell(distro, "hostname -I"), parseIpv4Addresses),
+      (addresses) => addresses.length > 0,
+    );
+  },
+);
+
+// Other VPNs share 100.64.0.0/10, so ask the distro's Tailscale rather than infer ownership.
+// The probe shell skips the login profile, which is what puts /snap/bin, where Ubuntu's
+// snap installs Tailscale, on PATH.
+export const probeDistroTailscaleIpv4Addresses = Effect.fn(
+  "DesktopWslEnvironment.probeDistroTailscaleIpv4Addresses",
+)(function* (distro: string | null) {
+  const raw = yield* runDistroShell(
+    distro,
+    "tailscale ip -4 2>/dev/null || /snap/bin/tailscale ip -4",
+  );
+  return Option.match(raw, { onNone: (): ReadonlyArray<string> => [], onSome: parseIpv4Addresses });
+});
+
+// The first entry on the WSL2 default network is always the eth0 vEthernet
+// address Windows can reach directly (no wslhost forwarding required).
+const getDistroIpImpl = (
+  distro: string | null,
+): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  probeDistroIpv4Addresses(distro).pipe(
+    Effect.map((addresses) => Option.flatMapNullishOr(addresses, (all) => all[0])),
   );
 
 const getUserHomeImpl = (

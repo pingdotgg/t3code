@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -40,22 +41,24 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
-function layerMockSpawner(statusJson: string | (() => string) = "{}", onSpawn?: () => void) {
+function layerMockSpawner(
+  statusJson: string | ((command: ChildProcess.Command) => string | null) = "{}",
+  onSpawn?: () => void,
+) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() =>
+    ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
         onSpawn?.();
+        const output = typeof statusJson === "string" ? statusJson : statusJson(command);
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(output === null ? 1 : 0)),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
-          stdout: Stream.make(
-            encoder.encode(typeof statusJson === "string" ? statusJson : statusJson()),
-          ),
+          stdout: Stream.make(encoder.encode(output ?? "")),
           stderr: Stream.empty,
           all: Stream.empty,
           getInputFd: () => Sink.drain,
@@ -333,6 +336,190 @@ describe("DesktopServerExposure", () => {
       }),
     ),
   );
+
+  describe("WSL primary", () => {
+    const hostInterfaces = {
+      ...lanNetworkInterfaces,
+      tailscale0: [{ address: "100.90.1.2", family: "IPv4" as const, internal: false }],
+    };
+    const tailscaleStatus = `{"Self":{"DNSName":"win-host.tail1234.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+
+    interface DistroProbe {
+      /** `hostname -I` output; null makes the probe fail. */
+      readonly hostnameOutput: string | null;
+      readonly windowsStatus?: string;
+      /** `tailscale ip -4` output; null makes it fail (not installed). */
+      readonly tailscaleOutput: string | null;
+      /** When set, only `wsl.exe -d <distro>` answers; other distros fail. */
+      readonly distro?: string;
+    }
+
+    const wslSpawner = (probe: DistroProbe) =>
+      layerMockSpawner((command) => {
+        if (command._tag !== "StandardCommand" || command.command !== "wsl.exe") {
+          return probe.windowsStatus ?? tailscaleStatus;
+        }
+        if (probe.distro !== undefined && command.args[1] !== probe.distro) return null;
+        return command.args.at(-1) === "hostname -I" ? probe.hostnameOutput : probe.tailscaleOutput;
+      });
+
+    const advertisedUrls = (
+      probe: DistroProbe,
+      wslPrimary: { readonly distro: string | null } | null = { distro: null },
+      env: Record<string, string | undefined> = {},
+    ) =>
+      withHarness(
+        hostInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setServerExposureMode("network-accessible");
+          yield* serverExposure.setWslPrimary(wslPrimary);
+          yield* serverExposure.configureFromSettings({ port: 4173 });
+          return (yield* serverExposure.getAdvertisedEndpoints).map(
+            (endpoint) => endpoint.httpBaseUrl,
+          );
+        }),
+        env,
+        wslSpawner(probe),
+      );
+
+    const windowsUrls = [
+      "http://127.0.0.1:4173/",
+      "http://192.168.1.20:4173/",
+      "http://100.90.1.2:4173/",
+      "https://win-host.tail1234.ts.net/",
+    ];
+
+    it.effect("NAT: drops Windows addresses and adds the distro's Tailscale IP", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* advertisedUrls({
+            hostnameOutput: "172.20.1.5 100.64.0.9\n",
+            tailscaleOutput: "100.64.0.9\n",
+          }),
+          [
+            "http://127.0.0.1:4173/",
+            "https://win-host.tail1234.ts.net/",
+            "http://100.64.0.9:4173/",
+          ],
+        );
+      }),
+    );
+
+    it.effect(
+      "NAT: a 100.64/10 address the distro's Tailscale doesn't report is not advertised",
+      () =>
+        Effect.gen(function* () {
+          for (const tailscaleOutput of ["", null]) {
+            assert.deepEqual(
+              yield* advertisedUrls({ hostnameOutput: "172.20.1.5 100.64.0.9\n", tailscaleOutput }),
+              ["http://127.0.0.1:4173/", "https://win-host.tail1234.ts.net/"],
+            );
+          }
+        }),
+    );
+
+    it.effect("mirrored: keeps the Windows addresses the distro shares", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* advertisedUrls({
+            hostnameOutput: "192.168.1.20 100.90.1.2\n",
+            tailscaleOutput: null,
+          }),
+          windowsUrls,
+        );
+      }),
+    );
+
+    it.effect("preserves an explicit LAN hostname in mirrored mode", () =>
+      Effect.gen(function* () {
+        const urls = yield* advertisedUrls(
+          { hostnameOutput: "192.168.1.20 100.90.1.2", tailscaleOutput: null },
+          { distro: "Ubuntu" },
+          { T3CODE_DESKTOP_LAN_HOST: "desktop.lan" },
+        );
+        assert.include(urls, "http://desktop.lan:4173/");
+      }),
+    );
+
+    it.effect("keeps a direct Tailscale endpoint alongside a custom URL on another port", () =>
+      Effect.gen(function* () {
+        const urls = yield* advertisedUrls(
+          { hostnameOutput: "172.20.1.5 100.64.0.9", tailscaleOutput: "100.64.0.9" },
+          { distro: "Ubuntu" },
+          { T3CODE_DESKTOP_HTTPS_ENDPOINTS: "https://100.64.0.9:8443" },
+        );
+        assert.include(urls, "https://100.64.0.9:8443/");
+        assert.include(urls, "http://100.64.0.9:4173/");
+      }),
+    );
+
+    it.effect("NAT: clears the Windows pairing fallback when only loopback remains", () =>
+      withHarness(
+        hostInterfaces,
+        Effect.gen(function* () {
+          const exposure = yield* DesktopServerExposure.DesktopServerExposure;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setServerExposureMode("network-accessible");
+          yield* exposure.configureFromSettings({ port: 4173 });
+          yield* exposure.setWslPrimary({ distro: "Ubuntu" });
+          assert.deepEqual(
+            (yield* exposure.getAdvertisedEndpoints).map((endpoint) => endpoint.httpBaseUrl),
+            ["http://127.0.0.1:4173/"],
+          );
+          const state = yield* exposure.getState;
+          assert.isNull(state.endpointUrl);
+          assert.isNull(state.advertisedHost);
+        }),
+        {},
+        wslSpawner({ hostnameOutput: "172.20.1.5", tailscaleOutput: null, windowsStatus: "{}" }),
+      ),
+    );
+
+    it.effect("keeps the Windows addresses when the distro can't be probed", () =>
+      Effect.gen(function* () {
+        for (const hostnameOutput of [null, ""]) {
+          assert.deepEqual(
+            yield* advertisedUrls({ hostnameOutput, tailscaleOutput: null }),
+            windowsUrls,
+          );
+        }
+      }),
+    );
+
+    it.effect("keeps the Windows addresses when the Windows primary is running", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* advertisedUrls(
+            { hostnameOutput: "172.20.1.5 100.64.0.9\n", tailscaleOutput: "100.64.0.9\n" },
+            null,
+          ),
+          windowsUrls,
+        );
+      }),
+    );
+
+    it.effect("probes the distro the backend runs in, not the current default", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* advertisedUrls(
+            {
+              hostnameOutput: "172.20.1.5 100.64.0.9\n",
+              tailscaleOutput: "100.64.0.9\n",
+              distro: "Pinned",
+            },
+            { distro: "Pinned" },
+          ),
+          [
+            "http://127.0.0.1:4173/",
+            "https://win-host.tail1234.ts.net/",
+            "http://100.64.0.9:4173/",
+          ],
+        );
+      }),
+    );
+  });
 
   it.effect("keeps Tailscale-only hosts network-accessible", () =>
     withHarness(
