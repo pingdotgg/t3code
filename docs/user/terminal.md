@@ -17,6 +17,11 @@ then copy. Cmd+A on macOS and Ctrl+Shift+A elsewhere select the same output.
 Ctrl+A still moves to the beginning of shell input on Windows and Linux.
 Jump to latest in the context menu returns to the current output.
 
+While a terminal is focused, use `Cmd+]` for the next terminal and `Cmd+[` for
+the previous one. On Windows and Linux, use `Ctrl+]` and `Ctrl+[`. Cycling wraps
+through tabs and split panes in the focused drawer or right panel. Rebind these
+shortcuts in Settings > Keybindings.
+
 ## fish
 
 T3 Code starts fish with `no-query-term`, avoiding startup waits for terminal
