@@ -52,7 +52,9 @@ it.effect.each([
   "disabled-default",
   "launch-failure",
   "project-failure",
-] as const)("keeps bootstrap launch failures separate from project failures: %s", (scenario) =>
+  "slow-recovery",
+  "settings-failure",
+] as const)("keeps connection and command readiness ordered through startup: %s", (scenario) =>
   Effect.scoped(
     Effect.gen(function* () {
       const projectId = ProjectId.make("bootstrap-project");
@@ -60,6 +62,8 @@ it.effect.each([
         scenario === "disabled-default" ? "custom" : "codex",
       );
       const events: ServerLifecycleStreamEvent[] = [];
+      const recoveryStarted = yield* Deferred.make<void>();
+      const allowRecovery = yield* Deferred.make<void>();
       const recovery = {
         terminalizedRuns: 0,
         stoppedSessions: 0,
@@ -111,7 +115,13 @@ it.effect.each([
           importPendingTranscripts: Effect.succeed(imports),
         }),
         Layer.mock(ProviderRuntimeRecovery.ProviderRuntimeRecoveryService)({
-          recover: Effect.succeed(recovery),
+          recover:
+            scenario === "slow-recovery"
+              ? Deferred.succeed(recoveryStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(allowRecovery)),
+                  Effect.as(recovery),
+                )
+              : Effect.succeed(recovery),
           prepareForShutdown: Effect.void,
           reconcile: () => Effect.succeed(recovery),
         }),
@@ -128,7 +138,7 @@ it.effect.each([
             }),
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
-          start: Effect.void,
+          start: scenario === "settings-failure" ? Effect.die("settings failed") : Effect.void,
           getSettings: Effect.succeed({
             ...DEFAULT_SERVER_SETTINGS,
             defaultModelSelection:
@@ -218,10 +228,26 @@ it.effect.each([
       yield* Effect.gen(function* () {
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
         yield* startup.markHttpListening;
+        if (scenario === "slow-recovery") {
+          yield* Deferred.await(recoveryStarted);
+          yield* startup.awaitConnectionReady;
+          const acceptingCommands = yield* Effect.forkChild(startup.awaitCommandReady, {
+            startImmediately: true,
+          });
+          assert.isUndefined(acceptingCommands.pollUnsafe());
+          assert.isFalse(events.some((event) => event.type === "ready"));
+          yield* Deferred.succeed(allowRecovery, undefined);
+        }
         const ready = yield* Effect.exit(startup.awaitCommandReady);
-        assert.equal(Exit.isSuccess(ready), scenario !== "project-failure");
+        assert.equal(
+          Exit.isSuccess(ready),
+          scenario !== "project-failure" && scenario !== "settings-failure",
+        );
+        if (scenario === "settings-failure") {
+          assert.isTrue(Exit.isFailure(yield* Effect.exit(startup.awaitConnectionReady)));
+        }
         const welcome = events.find((event) => event.type === "welcome");
-        if (scenario === "project-failure") {
+        if (scenario === "project-failure" || scenario === "settings-failure") {
           assert.isUndefined(welcome);
         } else {
           assert.isDefined(welcome);
