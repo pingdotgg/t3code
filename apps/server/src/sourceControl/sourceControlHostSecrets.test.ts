@@ -55,6 +55,15 @@ it.effect(
     }).pipe(Effect.provide(layerResolver)),
 );
 
+it.effect("treats a reference the provider cannot read as an unset credential", () =>
+  Effect.gen(function* () {
+    const { reads, resolve } = yield* countingResolver;
+    const resolved = yield* resolveSourceControlHostSecrets(hosts, "gitcafe", resolve);
+    assert.deepEqual(resolved.gitcafe, { token: "" });
+    assert.deepEqual(reads, ["missing#token"]);
+  }).pipe(Effect.provide(layerResolver)),
+);
+
 it.effect("leaves the resolver unused for a kind that holds no reference", () =>
   Effect.gen(function* () {
     const { reads, resolve } = yield* countingResolver;
