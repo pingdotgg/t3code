@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderDriverKind,
   type ServerProvider,
@@ -10,6 +11,7 @@ import {
   type ModelSelection,
   type RuntimeMode,
   type OrchestrationV2ThreadShell,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -23,6 +25,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as DocumentText from "../../../provider/DocumentText.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -36,6 +39,30 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
+
+const advertisedProvider = (
+  instanceId: string,
+  models: ReadonlyArray<string>,
+  aliases: Readonly<Record<string, ReadonlyArray<string>>> = {},
+): ServerProvider => ({
+  instanceId: ProviderInstanceId.make(instanceId),
+  driver: ProviderDriverKind.make(instanceId),
+  enabled: true,
+  installed: true,
+  version: "test",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-10-28T00:00:00.000Z",
+  models: models.map((slug) => ({
+    slug,
+    name: slug,
+    ...(aliases[slug] === undefined ? {} : { aliases: aliases[slug] }),
+    isCustom: false,
+    capabilities: null,
+  })),
+  slashCommands: [],
+  skills: [],
+});
 
 const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
@@ -136,6 +163,14 @@ const clientLaunchHarness = (input: {
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
+    }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.succeed([
+        advertisedProvider("claudeAgent", ["claude-opus", "claude-sonnet"], {
+          "claude-opus": ["opus"],
+        }),
+        advertisedProvider("codex", ["gpt-settings"]),
+      ]),
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
@@ -241,6 +276,58 @@ it.effect(
       });
       expect(fromSettings.launched[0]?.modelSelection).toEqual(overrideModel);
     }),
+);
+
+it.effect("a launch with a model its provider does not advertise creates no thread", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launchWith = (instanceId: string, model: string) =>
+      toolkit
+        .handle("t3_thread_launch", {
+          title: "Fix",
+          projectId,
+          message: "Fix the bug",
+          modelSelection: { instanceId: ProviderInstanceId.make(instanceId), model },
+        })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((result) => result.at(-1)?.result),
+          Effect.provide(dependencies),
+        );
+
+    for (const [instanceId, model] of [
+      ["claudeAgent", "claude-issue-26619-unadvertised"],
+      ["claudeAgent", "gpt-settings"],
+      ["codex", "claude-opus"],
+      ["codex", "opus"],
+    ] as const) {
+      expect(yield* launchWith(instanceId, model)).toMatchObject({
+        code: "model_unavailable",
+        message: `Model ${model} is not advertised by provider ${instanceId}.`,
+      });
+    }
+    expect(launched).toHaveLength(0);
+
+    expect(yield* launchWith("claudeAgent", "claude-sonnet")).toMatchObject({
+      projectId,
+      modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet" },
+    });
+    expect(yield* launchWith("claudeAgent", "Opus")).toMatchObject({
+      projectId,
+      modelSelection: { instanceId: "claudeAgent", model: "Opus" },
+    });
+    expect(launched).toHaveLength(2);
+  }),
 );
 
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>

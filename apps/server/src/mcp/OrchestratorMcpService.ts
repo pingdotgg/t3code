@@ -336,6 +336,23 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
   };
 }
 
+/** Yields the model a slug or alias names; a provider that lists no models accepts any slug. */
+export const requireAdvertisedModel = (provider: ServerProvider, model: string) => {
+  const advertised = provider.models.find(
+    (candidate) =>
+      candidate.slug === model ||
+      candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
+  );
+  return provider.models.length > 0 && advertised === undefined
+    ? Effect.fail(
+        failure(
+          "model_unavailable",
+          `Model ${model} is not advertised by provider ${provider.instanceId}.`,
+        ),
+      )
+    : Effect.succeed(advertised);
+};
+
 function providerConstraints(
   provider: ServerProvider | undefined,
   supportsOrchestrationV2: boolean,
@@ -1343,21 +1360,15 @@ const make = Effect.gen(function* () {
         `Provider ${instanceId} has no model available for inheritance.`,
       );
     }
-    if (
-      requestedModel !== undefined &&
-      provider.models.length > 0 &&
-      !provider.models.some((candidate) => candidate.slug === requestedModel)
-    ) {
-      return yield* failure(
-        "model_unavailable",
-        `Model ${requestedModel} is not advertised by provider ${instanceId}.`,
-      );
-    }
+    const slug =
+      requestedModel === undefined
+        ? model
+        : ((yield* requireAdvertisedModel(provider, requestedModel))?.slug ?? model);
 
     const requestedOptions = input.target?.options;
     if (requestedOptions !== undefined) {
-      const descriptors = provider.models.find((candidate) => candidate.slug === model)
-        ?.capabilities?.optionDescriptors;
+      const descriptors = provider.models.find((candidate) => candidate.slug === slug)?.capabilities
+        ?.optionDescriptors;
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
       if (invalid.length > 0) {
         return yield* failure(
@@ -1368,7 +1379,8 @@ const make = Effect.gen(function* () {
     }
 
     const inheritsOptions =
-      instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
+      instanceId === inheritedSelection.instanceId &&
+      (model === inheritedSelection.model || slug === inheritedSelection.model);
     let options = inheritsOptions ? inheritedSelection.options : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
