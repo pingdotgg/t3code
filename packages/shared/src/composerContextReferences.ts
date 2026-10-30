@@ -143,7 +143,11 @@ export function stripAttachmentOnlyBootstrapPrompt(text: string): string {
     : text;
 }
 
-export function restoreAttachmentOnlyBootstrapPrompt(text: string): string {
+export function restoreAttachmentOnlyBootstrapPrompt(
+  text: string,
+  hasAttachments: boolean,
+): string {
+  if (!hasAttachments) return text;
   const trimmed = text.trim();
   if (trimmed.length === 0) return ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
   return /^Ultrathink:\s*$/i.test(trimmed)

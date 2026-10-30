@@ -462,7 +462,7 @@ export function useThreadComposerState() {
       input: {
         threadId: thread.id,
         runId: edit.runId,
-        text: restoreAttachmentOnlyBootstrapPrompt(text),
+        text: restoreAttachmentOnlyBootstrapPrompt(text, payload.attachments.length > 0),
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,

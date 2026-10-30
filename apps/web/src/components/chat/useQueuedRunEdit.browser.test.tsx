@@ -13,7 +13,9 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContex
 import { toastManager } from "../ui/toast";
 
 import { act, render } from "../../../test/render";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
+import { deriveComposerSendState } from "../ChatView.logic";
+import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQueuedRunEdit } from "./useQueuedRunEdit";
 
@@ -35,6 +37,10 @@ const mocks = await vi.hoisted(async () => {
 
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.editQueuedRun,
+}));
+
+vi.mock("../../hooks/useSettings", () => ({
+  useEnvironmentIdentificationMode: () => "none",
 }));
 
 const runsKey = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;
@@ -91,7 +97,34 @@ function Harness(props: {
     composerRef: { current: null },
   });
   useImperativeHandle(props.hookRef, () => result);
-  return null;
+  const draft = useComposerThreadDraft(result.draftTarget);
+  const sendState = deriveComposerSendState({
+    prompt: draft.prompt,
+    imageCount: draft.images.length + draft.files.length,
+    existingAttachmentCount: result.editingAttachments?.length ?? 0,
+    terminalContexts: draft.terminalContexts,
+  });
+  return result.isEditing ? (
+    <ComposerPrimaryActions
+      compact={false}
+      canOperateThread
+      pendingAction={null}
+      isRunning={false}
+      canInterrupt={false}
+      showPlanFollowUpPrompt={false}
+      promptHasText={draft.prompt.trim().length > 0}
+      isSendBusy={result.isSaving}
+      sendDisabledReason={null}
+      isEnvironmentUnavailable={false}
+      isPreparingWorktree={false}
+      hasSendableContent={sendState.hasSendableContent}
+      isEditingQueuedMessage
+      onSubmitMessage={() => void result.saveEdit(savedContent(draft.prompt), () => {})}
+      onPreviousPendingQuestion={() => {}}
+      onInterrupt={() => {}}
+      onImplementPlanInNewThread={() => {}}
+    />
+  ) : null;
 }
 
 function view(threadRef: ScopedThreadRef, runStatus: string, hook: { current: HookResult | null }) {
@@ -149,7 +182,7 @@ describe("useQueuedRunEdit", () => {
     async (prefix) => {
       const { hook } = setup();
       mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
-      await using _screen = await render(view(THREAD_A, "queued", hook));
+      await using screen = await render(view(THREAD_A, "queued", hook));
       using toast = vi.spyOn(toastManager, "add");
       const attachments = [
         {
@@ -184,7 +217,10 @@ describe("useQueuedRunEdit", () => {
       expect(requireHook(hook).isEditing).toBe(false);
       await act(() => setRuns(THREAD_A, "queued"));
       await act(() => requireHook(hook).beginEdit(request));
-      await act(() => requireHook(hook).saveEdit(savedContent(prefix.trimEnd()), () => {}));
+      const update = screen.getByRole("button", { name: "Update queued message" });
+      await expect.element(update).toBeEnabled();
+      await update.click();
+      await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
       expect(mocks.editQueuedRun).toHaveBeenCalledWith(
         expect.objectContaining({
           input: expect.objectContaining({
@@ -195,6 +231,39 @@ describe("useQueuedRunEdit", () => {
       );
     },
   );
+
+  it("saves an effort-only prompt without claiming removed attachments remain", async () => {
+    const { hook } = setup();
+    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+    await using screen = await render(view(THREAD_A, "queued", hook));
+    await act(() =>
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId: MessageId.make("message-1"),
+        text: `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+        attachments: [
+          {
+            type: "image",
+            id: ChatAttachmentId.make("removed"),
+            name: "removed.png",
+            mimeType: "image/png",
+            sizeBytes: 10,
+          },
+        ],
+      }),
+    );
+    await act(() => requireHook(hook).removeEditingAttachment("removed"));
+    await screen.getByRole("button", { name: "Update queued message" }).click();
+    await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
+    expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          text: "Ultrathink:",
+          edit: expect.objectContaining({ attachments: [] }),
+        }),
+      }),
+    );
+  });
 
   it("keeps an open edit when the user leaves the thread and comes back", async () => {
     const { hook } = setup();

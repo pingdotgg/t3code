@@ -130,7 +130,9 @@ describe("beginQueuedRunEdit", () => {
       beginQueuedRunEdit(threadKey, original, runs);
       const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, original.runId));
       expect(draft.text).toBe(prefix.trimEnd());
-      expect(restoreAttachmentOnlyBootstrapPrompt(draft.text)).toBe(original.originalText);
+      expect(
+        restoreAttachmentOnlyBootstrapPrompt(draft.text, original.existingAttachments.length > 0),
+      ).toBe(original.originalText);
       expect(getQueuedRunEdit(threadKey)).toEqual({ ...original, originalText: prefix.trimEnd() });
       appAtomRegistry.set(runs, [{ id: original.runId, status: "running" }]);
       expect(getQueuedRunEdit(threadKey)).toBeNull();

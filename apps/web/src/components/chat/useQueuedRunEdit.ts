@@ -149,7 +149,7 @@ async function submitQueuedRunEdit(input: {
       input: {
         threadId: editing.threadId,
         runId: editing.runId,
-        text: restoreAttachmentOnlyBootstrapPrompt(editText),
+        text: restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0),
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
