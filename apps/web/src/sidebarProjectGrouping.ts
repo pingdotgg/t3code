@@ -132,9 +132,30 @@ export function filterSidebarProjectScopeKeysByEnvironment(input: {
   readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
   readonly keys: readonly string[];
   readonly settings?: ProjectGroupingSettings;
+  readonly previousExcludedEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly excludedEnvironmentIds: ReadonlySet<EnvironmentId>;
 }): string[] {
-  return input.keys.filter((key) => resolveSidebarProjectScopeKey({ ...input, key }) !== null);
+  return input.keys.filter(
+    (key) =>
+      resolveSidebarProjectScopeKey({
+        ...input,
+        key,
+        excludedEnvironmentIds: input.previousExcludedEnvironmentIds,
+      }) === null || resolveSidebarProjectScopeKey({ ...input, key }) !== null,
+  );
+}
+
+export function toggleSidebarProjectScopeKey(input: {
+  readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly keys: readonly string[];
+  readonly activeKeys: readonly string[];
+  readonly key: string;
+  readonly settings?: ProjectGroupingSettings;
+  readonly excludedEnvironmentIds: ReadonlySet<EnvironmentId>;
+}): string[] {
+  return input.activeKeys.includes(input.key)
+    ? input.keys.filter((key) => resolveSidebarProjectScopeKey({ ...input, key }) !== input.key)
+    : [...new Set([...input.keys, input.key])];
 }
 
 export function buildPhysicalToLogicalProjectKeyMap(input: {

@@ -110,6 +110,7 @@ import {
   projectGroupsSpanEnvironments,
   resolveSidebarProjectScopeKeys,
   filterSidebarProjectScopeKeysByEnvironment,
+  toggleSidebarProjectScopeKey,
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
@@ -1186,9 +1187,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
   const toggleProjectScopeKey = (key: string) =>
     setProjectScopeKeys(
-      projectScopeKeys.includes(key)
-        ? projectScopeKeys.filter((candidate) => candidate !== key)
-        : [...projectScopeKeys, key],
+      toggleSidebarProjectScopeKey({
+        groups: projectGroups,
+        keys: persistedProjectScopeKeys,
+        activeKeys: projectScopeKeys,
+        key,
+        settings: projectGroupingSettings,
+        excludedEnvironmentIds,
+      }),
     );
   // The widened scope outlives the reveal, so it is written back to the persisted
   // scope. Route changes arrive from history, links and the palette, and only this
@@ -1243,6 +1249,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       groups: projectGroups,
       keys: persistedProjectScopeKeys,
       settings: projectGroupingSettings,
+      previousExcludedEnvironmentIds: excludedEnvironmentIds,
       excludedEnvironmentIds: excludedIds,
     });
     if (visibleScopeKeys.length !== persistedProjectScopeKeys.length) {

@@ -11,6 +11,7 @@ import {
   resolveSidebarProjectScopeKey,
   getSidebarProjectSettingsKey,
   filterSidebarProjectScopeKeysByEnvironment,
+  toggleSidebarProjectScopeKey,
 } from "./sidebarProjectGrouping";
 import type { Project } from "./types";
 
@@ -105,6 +106,17 @@ describe("environment grouping", () => {
       expect(
         resolveSidebarProjectScopeKey({ groups, key, settings, canClearMissingScope: true }),
       ).toBe(groups[0]?.projectKey);
+      const mergedKey = groups[0]!.projectKey;
+      expect(
+        toggleSidebarProjectScopeKey({
+          groups,
+          keys: [key, mergedKey, "unloaded-project"],
+          activeKeys: [mergedKey],
+          key: mergedKey,
+          settings,
+          excludedEnvironmentIds: new Set(),
+        }),
+      ).toEqual(["unloaded-project"]);
     },
   );
 
@@ -140,7 +152,11 @@ describe("environment grouping", () => {
     };
     const groups = buildSidebarProjectSnapshots({ ...input, projects: [local, remote] });
     const key = groups[0]!.projectKey;
-    const scope = { key, excludedEnvironmentIds: new Set([remoteEnvironmentId]) };
+    const scope = {
+      key,
+      previousExcludedEnvironmentIds: new Set<EnvironmentId>(),
+      excludedEnvironmentIds: new Set([remoteEnvironmentId]),
+    };
     expect(resolveSidebarProjectScopeKey({ ...scope, groups })).toBe(key);
     const persistedKeys = [key, "unloaded-project"];
     expect(
@@ -165,6 +181,18 @@ describe("environment grouping", () => {
       filterSidebarProjectScopeKeysByEnvironment({
         groups: remainingGroups,
         keys: persistedKeys,
+        previousExcludedEnvironmentIds: scope.excludedEnvironmentIds,
+        excludedEnvironmentIds: new Set([
+          remoteEnvironmentId,
+          EnvironmentId.make("unrelated-environment"),
+        ]),
+      }),
+    ).toEqual(persistedKeys);
+    expect(
+      filterSidebarProjectScopeKeysByEnvironment({
+        groups: remainingGroups,
+        keys: persistedKeys,
+        previousExcludedEnvironmentIds: scope.excludedEnvironmentIds,
         excludedEnvironmentIds: new Set(),
       }),
     ).toEqual(persistedKeys);
@@ -178,6 +206,37 @@ describe("environment grouping", () => {
         excludedEnvironmentIds: new Set(),
       }),
     ).toBe(key);
+  });
+
+  it("preserves suspended and unloaded scopes when toggling another project", () => {
+    const remote = makeProject({ environmentId: remoteEnvironmentId, repositoryIdentity });
+    const local = makeProject({ id: ProjectId.make("other-project"), workspaceRoot: "/other" });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [remote, local],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    const suspendedKey = groups.find(
+      (group) => group.environmentId === remoteEnvironmentId,
+    )!.projectKey;
+    const key = groups.find((group) => group.environmentId === primaryEnvironmentId)!.projectKey;
+    const savedKeys = [suspendedKey, "unloaded-project"];
+    const input = {
+      groups,
+      key,
+      settings: defaultGroupingSettings,
+      excludedEnvironmentIds: new Set([remoteEnvironmentId]),
+    };
+    const selectedKeys = toggleSidebarProjectScopeKey({
+      ...input,
+      keys: savedKeys,
+      activeKeys: [],
+    });
+    expect(selectedKeys).toEqual([...savedKeys, key]);
+    expect(
+      toggleSidebarProjectScopeKey({ ...input, keys: selectedKeys, activeKeys: [key] }),
+    ).toEqual(savedKeys);
   });
 
   it("dedupes stale project rows with the same environment and workspace path", () => {
