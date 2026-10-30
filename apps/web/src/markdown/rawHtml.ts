@@ -160,20 +160,36 @@ interface RawNode {
   position?: Position;
 }
 
-/** parse5 counts lines and columns through the raw value from the node's start. */
-function pointIn(value: string, base: Point | undefined, index: number): Point | undefined {
-  if (!base || base.offset === undefined) return undefined;
-  let line = base.line;
-  let lineStart = -1;
-  for (let k = 0; k < index; k++) {
+// Line starts of each raw value, for positions.
+const lineStartsCache = new WeakMap<object, number[]>();
+
+function lineStartsOf(value: string, key: object): number[] {
+  let starts = lineStartsCache.get(key);
+  if (starts) return starts;
+  starts = [];
+  for (let k = 0; k < value.length; k++) {
     const c = value.charCodeAt(k);
-    if (c === 10 || (c === 13 && value.charCodeAt(k + 1) !== 10)) {
-      line++;
-      lineStart = k;
-    }
+    if (c === 10 || (c === 13 && value.charCodeAt(k + 1) !== 10)) starts.push(k);
   }
-  const column = lineStart < 0 ? base.column + index : index - lineStart;
-  return { line, column, offset: base.offset + index };
+  lineStartsCache.set(key, starts);
+  return starts;
+}
+
+/** parse5 counts lines and columns through the raw value from the node's start. */
+function pointIn(raw: RawNode, index: number): Point | undefined {
+  const base = raw.position?.start;
+  if (!base || base.offset === undefined) return undefined;
+  const breaks = lineStartsOf(raw.value, raw);
+  let lo = 0;
+  let hi = breaks.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (breaks[mid]! < index) lo = mid + 1;
+    else hi = mid;
+  }
+  // `lo` line breaks come before `index`.
+  const column = lo === 0 ? base.column + index : index - breaks[lo - 1]!;
+  return { line: base.line + lo, column, offset: base.offset + index };
 }
 
 const fromRaw = new WeakSet<Element>();
@@ -291,8 +307,7 @@ function endOpen(scope: Scope, end: Point | undefined) {
 }
 
 function applyToken(token: Token, raw: RawNode, scope: Scope) {
-  const base = raw.position?.start;
-  const tokenEnd = pointIn(raw.value, base, token.end);
+  const tokenEnd = pointIn(raw, token.end);
   if (tokenEnd) scope.lastEnd = tokenEnd;
   switch (token.kind) {
     case "comment":
@@ -312,8 +327,8 @@ function applyToken(token: Token, raw: RawNode, scope: Scope) {
       if (HEADINGS.has(name) && HEADINGS.has((current(scope) as Element).tagName ?? "")) scope.open.pop();
       if (name === "a" && (scope.inLink || scope.open.some((element) => element.tagName === "a"))) throw new Bail();
       const element = h(name, token.attributes) as Element;
-      const start = pointIn(raw.value, base, token.start);
-      const end = pointIn(raw.value, base, token.end);
+      const start = pointIn(raw, token.start);
+      const end = pointIn(raw, token.end);
       if (start && end) element.position = { start, end };
       fromRaw.add(element);
       (current(scope).children as Child[]).push(element);
@@ -336,7 +351,7 @@ function applyToken(token: Token, raw: RawNode, scope: Scope) {
       }
       if (FORMATTING.has(name) && index !== scope.open.length - 1) throw new Bail();
       const element = scope.open[index]!;
-      const end = pointIn(raw.value, base, token.end);
+      const end = pointIn(raw, token.end);
       if (element.position && end) element.position = { start: element.position.start, end };
       scope.open.length = index;
       return;

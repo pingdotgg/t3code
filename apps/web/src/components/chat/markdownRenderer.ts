@@ -12,8 +12,8 @@ import { VFile } from "vfile";
 import { remarkFastParse } from "../../markdown/remarkFastParse";
 import { remarkParseWithoutUnusedSyntax } from "./markdownSyntaxGates";
 
-// Prototype switch while the fast parser is measured against micromark.
-const FAST_PARSE = import.meta.env?.VITE_T3_MARKDOWN_PARSER === "fast";
+// VITE_T3_MARKDOWN_PARSER=remark measures against micromark and the rehype plugins.
+const FAST_PARSE = import.meta.env?.VITE_T3_MARKDOWN_PARSER !== "remark";
 
 export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string;
 

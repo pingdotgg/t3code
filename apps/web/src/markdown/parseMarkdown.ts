@@ -752,7 +752,9 @@ function parseDelimiterRow(
     sawPipe = true;
     i++;
   }
-  if (align.length === 0 || (!sawPipe && align.length < 2)) return sawPipe ? align : null;
+  if (align.length === 0) return null;
+  // Without pipes, only one aligned column reads as a delimiter row: `---` underlines a heading.
+  if (!sawPipe && (align.length !== 1 || align[0] === null)) return null;
   return align;
 }
 
