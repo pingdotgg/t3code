@@ -41,6 +41,8 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { t3AcpPromptWithInstructions } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   decodeAcpReplayTranscript,
@@ -1041,6 +1043,98 @@ describe("AcpRegistryAdapterV2", () => {
         supportsSteeringByInterruptRestart: true,
       });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each(["before", "after"] as const)(
+    "reconciles a full prompt echo %s acknowledgment",
+    (ordering) =>
+      Effect.gen(function* () {
+        const runtimeInstructions = {
+          type: "text",
+          text: buildRuntimeInstructions({ harness: "acpRegistry", model: "default" }),
+        };
+        const promptBlocks = (ordinal: number) => [
+          {
+            type: "text",
+            text:
+              ordinal === 1
+                ? t3AcpPromptWithInstructions({
+                    prompt: "test prompt",
+                    state: { interactionMode: "default", hasT3Mcp: false, hasDeviceTools: false },
+                  })
+                : "test prompt",
+          },
+          runtimeInstructions,
+        ];
+        const echo = (messageId: string, content: ReadonlyArray<unknown>) =>
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "user_message",
+            messageId,
+            content,
+          });
+        const promptText = (ordinal: number) =>
+          promptBlocks(ordinal)
+            .map((block) => block.text)
+            .join("\n");
+        const frames = (ordinal: number) => {
+          const [request, , acknowledgment] = claudeFrames.prompt(ordinal);
+          const matching = echo(`echo-${ordinal}`, promptBlocks(ordinal));
+          return [
+            request,
+            echo("different-blocks", [
+              {
+                type: "text",
+                text: promptText(ordinal),
+              },
+            ]),
+            ...(ordering === "before" ? [matching, acknowledgment] : [acknowledgment, matching]),
+            claudeFrames.update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "user_message_chunk",
+              messageId: `echo-${ordinal}`,
+              content: { type: "text", text: "updated echo" },
+            }),
+            echo(`echo-${ordinal}`, [{ type: "text", text: "updated echo" }]),
+            echo("second-id", promptBlocks(ordinal)),
+            echo("unmatched", [{ type: "text", text: "Continue the review." }]),
+            claudeFrames.idle("end_turn"),
+          ];
+        };
+        const session = yield* openClaudeReplaySession(
+          [
+            ...claudeFrames.open,
+            ...frames(1),
+            ...frames(2),
+            claudeFrames.closeRequest,
+            claudeFrames.closed,
+          ],
+          undefined,
+          false,
+        );
+        for (const ordinal of [1, 2]) {
+          yield* session.runtime.startTurn(session.turnInput(ordinal));
+          const events = yield* session.until((event) => event.type === "turn.terminal");
+          const messages = events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "user"
+              ? [event.message]
+              : [],
+          );
+          const items = events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_message"
+              ? [event.turnItem]
+              : [],
+          );
+          const expected = new Set([promptText(ordinal), "Continue the review."]);
+          assert.deepEqual(new Set(messages.map((message) => message.text)), expected);
+          assert.equal(new Set(messages.map((message) => message.id)).size, 3);
+          assert.equal(new Set(items.map((item) => item.id)).size, 3);
+          for (const id of ["different-blocks", "second-id", "unmatched"]) {
+            assert.isTrue(
+              items.some((item) => item.nativeItemRef?.nativeId?.endsWith(`:user:message:${id}`)),
+              `${id} remains visible`,
+            );
+          }
+        }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("settles Claude's accepted foreground reply while retaining child output", () =>
