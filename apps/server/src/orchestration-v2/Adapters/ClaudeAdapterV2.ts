@@ -2629,18 +2629,19 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
   ),
 );
 const ClaudeAutoCompactWindowSetting = Schema.Union([Schema.Int, Schema.Literal("auto")]);
-const ClaudeAutoCompactSettings = Schema.Struct({
-  autoCompactWindow: Schema.optionalKey(ClaudeAutoCompactWindowSetting),
-  modelSettings: Schema.optionalKey(
-    Schema.Record(
-      Schema.String,
-      Schema.Struct({ autoCompactWindow: Schema.optionalKey(ClaudeAutoCompactWindowSetting) }),
-    ),
-  ),
-});
+// Values are checked one at a time, so a bad entry for another model can't hide this one.
 const decodeClaudeAutoCompactSettings = Schema.decodeUnknownEffect(
-  fromLenientJson(ClaudeAutoCompactSettings),
+  fromLenientJson(
+    Schema.Struct({
+      autoCompactWindow: Schema.optionalKey(Schema.Unknown),
+      modelSettings: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+    }),
+  ),
 );
+const decodeClaudeModelAutoCompactSettings = Schema.decodeUnknownOption(
+  Schema.Struct({ autoCompactWindow: ClaudeAutoCompactWindowSetting }),
+);
+const decodeClaudeAutoCompactWindow = Schema.decodeUnknownOption(ClaudeAutoCompactWindowSetting);
 const decodeClaudeEnvSettings = Schema.decodeUnknownEffect(
   fromLenientJson(
     Schema.StructWithRest(
@@ -4637,8 +4638,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         Effect.flatMap(decodeClaudeAutoCompactSettings),
         Effect.orElseSucceed(() => undefined),
       );
-      const value =
-        settings?.modelSettings?.[model]?.autoCompactWindow ?? settings?.autoCompactWindow;
+      const value = Option.getOrUndefined(
+        Option.orElse(
+          Option.map(
+            decodeClaudeModelAutoCompactSettings(settings?.modelSettings?.[model]),
+            (entry) => entry.autoCompactWindow,
+          ),
+          () => decodeClaudeAutoCompactWindow(settings?.autoCompactWindow),
+        ),
+      );
       if (value !== undefined) return value === "auto" ? undefined : value;
     }
     return undefined;

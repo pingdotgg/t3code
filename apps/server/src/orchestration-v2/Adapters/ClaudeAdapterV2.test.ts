@@ -6370,7 +6370,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       autoCompactWindow: "",
       model: "claude-opus-5-5",
       userSettings:
-        '{"autoCompactWindow":300000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
+        '{"autoCompactWindow":300000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000},"claude-sonnet-5-5":{"autoCompactWindow":"big"}}}',
       threshold: 400_000,
     },
     {
