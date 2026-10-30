@@ -73,7 +73,7 @@ export const isPdfPreviewFile = (path: string): boolean =>
 
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
-function PdfDocument(props: { src: string; title: string }) {
+function PdfDocument(props: { src: string; title: string; positionKey: string }) {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
   // expose only the first page, even when pdfViewerEnabled reports support.
@@ -91,7 +91,7 @@ function PdfDocument(props: { src: string; title: string }) {
     />
   ) : (
     <Suspense fallback={<FileSurfaceLoading />}>
-      <PdfViewer src={src} title={props.title} />
+      <PdfViewer src={src} title={props.title} positionKey={props.positionKey} />
     </Suspense>
   );
 }
@@ -111,7 +111,7 @@ export function BrowserDocumentFrame(props: {
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
-    <PdfDocument key={key} src={props.src} title={props.title} />
+    <PdfDocument key={key} src={props.src} title={props.title} positionKey={key} />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
       key={key}
