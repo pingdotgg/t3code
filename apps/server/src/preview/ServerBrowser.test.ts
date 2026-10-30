@@ -102,6 +102,7 @@ function makeSession(
       if (method === "Page.captureScreenshot") {
         if (desktopPaintsNothing) {
           desktopCaptureStarted.resolve();
+          if (desktopCaptureRejects) throw new Error("capture failed");
           return new Promise<never>(() => {});
         }
         // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
@@ -293,6 +294,7 @@ let desktopRendersNext = false;
 let desktopSizeAnswer: (() => Promise<Record<string, unknown>>) | null = null;
 /** A minimized host: the capture never answers because the guest paints no frame. */
 let desktopPaintsNothing = false;
+let desktopCaptureRejects = false;
 let desktopCaptureStarted = Promise.withResolvers<void>();
 const desktopDetaches = new NodeEvents.EventEmitter();
 let desktopDetachReady = Promise.withResolvers<void>();
@@ -441,6 +443,7 @@ beforeEach(() => {
   desktopRendersNext = false;
   desktopSizeAnswer = null;
   desktopPaintsNothing = false;
+  desktopCaptureRejects = false;
   desktopCaptureStarted = Promise.withResolvers<void>();
   desktopDetachReady = Promise.withResolvers<void>();
   desktopReleased = Promise.withResolvers<void>();
@@ -621,6 +624,31 @@ it.effect("a desktop tab that paints nothing moves to headless and its viewer re
       // Cleanup is not awaited and has no milestone, so only real time can show it never ran.
       yield* TestClock.withLive(Effect.sleep("100 millis"));
       expect(yield* fs.readFileString(Option.getOrThrow(kept).path)).toBe("a,b");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a desktop tab whose first capture fails moves to headless without a frame", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* ready;
+      desktopRendersNext = true;
+      const { tabId } = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      desktopPaintsNothing = true;
+      desktopCaptureRejects = true;
+      const attaching = yield* browser
+        .attachViewer(viewerInput(tabId, true))
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => desktopCaptureStarted.promise);
+      yield* TestClock.adjust("5 seconds");
+      const viewer = yield* Fiber.join(attaching);
+
+      const items = yield* Queue.clear(viewer.output);
+      expect(items.map((item) => item._tag)).toContain("reconnect");
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.find((session) => session.tabId === tabId)?.headless).toBe(true);
     }),
   ).pipe(Effect.provide(layer)),
 );

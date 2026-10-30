@@ -2450,6 +2450,7 @@ const make = Effect.gen(function* () {
         ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
       ).catch(() => null);
       if (data) viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
+      return data !== null;
     };
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
     yield* Effect.addFinalizer(() =>
@@ -2458,8 +2459,10 @@ const make = Effect.gen(function* () {
       }),
     );
     let screencastStarted = false;
+    const firstLiveFrame = Promise.withResolvers<void>();
     session.on("Page.screencastFrame", (frame) => {
       screencastStarted = true;
+      firstLiveFrame.resolve();
       if (framesInFlight > 0) mayHaveDropped = true;
       framesInFlight += 1;
       const arrivedAt = Date.now();
@@ -2507,7 +2510,9 @@ const make = Effect.gen(function* () {
       await startScreencast(1);
       // An idle page does not repaint for a new screencast, so the viewer
       // starts from a still unless a live frame beat it.
-      if (!screencastStarted) await pushStill();
+      if (screencastStarted || (await pushStill()) || !tab.desktop) return;
+      // A failed still is not proof the page cannot paint; a live frame may still come.
+      await firstLiveFrame.promise;
     });
     if (tab.desktop) {
       const painted = yield* firstFrame.pipe(Effect.timeoutOption(DESKTOP_FIRST_FRAME_TIMEOUT));
