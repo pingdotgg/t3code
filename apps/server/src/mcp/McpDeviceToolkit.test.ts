@@ -551,6 +551,19 @@ describe("device targeting across hosts", () => {
     ),
   );
 
+  it.effect("names a device_screenshot argument the tool does not declare", () =>
+    run([session("mac-mini", "MAC-UDID", "ios")], ({ call }) =>
+      Effect.gen(function* () {
+        const result = yield* call("device_screenshot", {
+          deviceId: "MAC-UDID",
+          includeImage: false,
+        });
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain('Unknown argument "includeImage"');
+      }),
+    ),
+  );
+
   it.effect("tells an agent to open a device id before screenshotting it", () =>
     run([], ({ call }) =>
       Effect.gen(function* () {

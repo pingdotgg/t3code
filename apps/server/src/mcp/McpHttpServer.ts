@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -443,15 +444,49 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   return screenshotPath;
 });
 
+const MAX_NAMED_ARGUMENTS = 5;
+const MAX_ARGUMENT_NAME_CHARS = 64;
+
+/**
+ * Rejects top-level arguments the advertised schema does not list, naming them. Nested objects stay lenient:
+ * the advertised schema merges tagged unions, so strict decoding would reject keys agents were shown.
+ */
+const advertisedArgumentsOnly = (tool: Tool.Any) => {
+  const { properties } = advertisedJsonSchema(tool);
+  const accepted = new Set(Predicate.isObject(properties) ? Object.keys(properties) : []);
+  const acceptedText = [...accepted].join(", ") || "none";
+  return Schema.Record(Schema.String, Schema.Unknown).check(
+    Schema.makeFilter((input) => {
+      const unknown = Object.keys(input).filter((key) => !accepted.has(key));
+      if (unknown.length === 0) return undefined;
+      const named = unknown
+        .slice(0, MAX_NAMED_ARGUMENTS)
+        .map((key) => JSON.stringify(cutText(key, MAX_ARGUMENT_NAME_CHARS)));
+      const more =
+        unknown.length > named.length ? ` and ${unknown.length - named.length} more` : "";
+      return `Unknown argument${unknown.length === 1 ? "" : "s"} ${named.join(", ")}${more}. Accepted arguments: ${acceptedText}.`;
+    }),
+  );
+};
+
 /** Decode with the advertised JSON codec, which permits null for optional fields that the raw schema rejects. */
 const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
 ): Toolkit.Toolkit<Tools> =>
   Toolkit.make(
     ...Object.values(toolkit.tools).map((tool) =>
-      tool.setParameters(Schema.toCodecJson(tool.parametersSchema)),
+      tool.setParameters(
+        advertisedArgumentsOnly(tool).pipe(
+          Schema.decodeTo(Schema.toCodecJson(tool.parametersSchema)),
+        ),
+      ),
     ),
   ) as unknown as Toolkit.Toolkit<Tools>;
+
+const parameterValidationMessage = (error: unknown) =>
+  AiError.isAiError(error) && error.reason._tag === "ToolParameterValidationError"
+    ? error.reason.message
+    : undefined;
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
 
@@ -471,7 +506,9 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
       ? firstFailure._tag
       : "PreviewSnapshotError";
   // Preview errors contain server-authored recovery guidance, never page output.
-  const message = isPreviewAutomationError(firstFailure) ? firstFailure.message : undefined;
+  const message = isPreviewAutomationError(firstFailure)
+    ? firstFailure.message
+    : parameterValidationMessage(firstFailure);
   const result = new McpSchema.CallToolResult({
     isError: true,
     structuredContent: {
@@ -714,9 +751,6 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
             onFailure: imageToolFailure(tool.name, operation, failureText),
             onSuccess: ({ encodedResult }) => {
               const { screenshot, ...rest } = encodedResult as ImageToolResult;
-              const includeImage =
-                (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
-                false;
               const metadata = {
                 ...rest,
                 screenshot: {
@@ -731,15 +765,11 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
                   structuredContent: metadata,
                   content: [
                     { type: "text", text: JSON.stringify(metadata) },
-                    ...(includeImage
-                      ? [
-                          {
-                            type: "image" as const,
-                            data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                            mimeType: screenshot.mimeType,
-                          },
-                        ]
-                      : []),
+                    {
+                      type: "image" as const,
+                      data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
+                      mimeType: screenshot.mimeType,
+                    },
                   ],
                 }),
               );
@@ -769,7 +799,7 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
     (error) =>
       isDeviceToolError(error) || isOrchestratorMcpFailure(error)
         ? error.message
-        : "Device screenshot failed.",
+        : (parameterValidationMessage(error) ?? "Device screenshot failed."),
   );
 });
 
