@@ -5,9 +5,11 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -148,6 +150,28 @@ describe("CloudManagedEndpointRuntime", () => {
     ).toBe("warning");
   });
 
+  it("classifies connection unregistration apart from registration and routine output", () => {
+    expect(
+      ManagedEndpointRuntime.classifyRelayClientOutput(
+        "2026-10-06T00:00:00Z INF Unregistered tunnel connection connIndex=0 event=0 ip=198.41.200.23",
+      ),
+    ).toBe("unregistered");
+    for (const level of ["ERR", "WRN", "FTL", "PNC"]) {
+      expect(
+        ManagedEndpointRuntime.classifyRelayClientOutput(
+          `2026-10-06T00:00:00Z ${level} Unregistered tunnel connection connIndex=0`,
+        ),
+      ).toBe("warning");
+    }
+    for (const line of [
+      "2026-10-06T00:00:00Z INF Initiating graceful shutdown due to signal terminated ...",
+      "2026-10-06T00:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics",
+      "2026-10-06T00:00:00Z DBG Unregistered tunnel connection connIndex=0",
+    ]) {
+      expect(ManagedEndpointRuntime.classifyRelayClientOutput(line)).toBe("debug");
+    }
+  });
+
   it("recognizes tunnel authorization failures without matching ordinary transport errors", () => {
     expect(
       ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
@@ -202,6 +226,83 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(Option.getOrNull(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
     }),
   );
+
+  it.effect("logs a connection unregistration at info with the connector token redacted", () => {
+    const logs: Array<{ readonly level: string; readonly message: unknown }> = [];
+    const unregistrationLogged = Deferred.makeUnsafe<void>();
+    const logger = Logger.make(({ logLevel, message }) => {
+      logs.push({ level: logLevel, message });
+      if (Array.isArray(message) && message[0] === "Relay client tunnel connection unregistered") {
+        Deferred.doneUnsafe(unregistrationLogged, Effect.void);
+      }
+    });
+
+    return Effect.gen(function* () {
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "secret-connector-token",
+        tunnelId: "tunnel-1",
+      };
+      const encoder = new TextEncoder();
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 701,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      yield* runtime.applyConfig(config);
+      yield* Queue.offer(
+        output,
+        encoder.encode(
+          "2026-10-06T00:00:00Z INF Unregistered tunnel connection connIndex=0 token=secret-connector-token\n",
+        ),
+      );
+      yield* Deferred.await(unregistrationLogged);
+
+      // An unregistration is not a registration, so the registration timeout still recovers.
+      yield* TestClock.adjust(Duration.minutes(3));
+      expect(Option.getOrNull(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
+
+      yield* Queue.offer(
+        output,
+        encoder.encode(
+          "2026-10-06T00:00:01Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
+            "2026-10-06T00:00:01Z INF Registered tunnel connection connIndex=0\n",
+        ),
+      );
+      yield* Stream.runHead(runtime.tunnelConnected);
+
+      const relayLogs = logs.filter(
+        ({ message }) =>
+          Array.isArray(message) && String(message[0]).startsWith("Relay client tunnel"),
+      );
+      expect(relayLogs.map(({ level, message }) => [level, (message as unknown[])[0]])).toEqual([
+        ["Info", "Relay client tunnel connection unregistered"],
+        ["Info", "Relay client tunnel connection registered"],
+      ]);
+      expect((relayLogs[0]!.message as unknown[])[1]).toMatchObject({
+        output:
+          "2026-10-06T00:00:00Z INF Unregistered tunnel connection connIndex=0 token=<redacted>",
+      });
+      const logged = JSON.stringify(logs.map(({ message }) => message));
+      expect(logged).not.toContain("secret-connector-token");
+      expect(logged).not.toContain("Starting metrics server");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Logger.layer([logger], { mergeWithExisting: false }),
+          Layer.succeed(References.MinimumLogLevel, "Info"),
+        ),
+      ),
+    );
+  });
 
   const tunnelConfig = {
     providerKind: "cloudflare_tunnel" as const,
