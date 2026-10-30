@@ -1,6 +1,5 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  OnePasswordAccount,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -590,7 +589,7 @@ describe("serverSettings helpers", () => {
     const onePassword = (label: string, account: string) => ({
       kind: SecretProviderKind.make("one_password"),
       label,
-      config: { account: OnePasswordAccount.make(account) },
+      config: { account },
     });
     const current = {
       ...DEFAULT_SERVER_SETTINGS,

@@ -34,6 +34,8 @@
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
+    "@t3tools/secret-provider-definitions": "workspace:*",
+    "@t3tools/secret-provider-onepassword": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@tanstack/react-pacer": "^0.19.4",
     "@tanstack/react-router": "^1.160.2",
