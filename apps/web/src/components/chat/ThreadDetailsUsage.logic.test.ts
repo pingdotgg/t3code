@@ -136,6 +136,18 @@ describe("thread details limits", () => {
     expect(resolved?.sourceLabel).toBeNull();
   });
 
+  it("keeps the instance's own notice when another hub failed to read its accounts", () => {
+    const unreadable = { ...hub("hub-a", []), error: "Connection refused." };
+    const resolved = resolveThreadDetailsLimits(
+      instanceId,
+      [claudeInstance(unsupported)],
+      [unreadable, hub("hub-b", [{ id: "claude-b.json", limits: limitsAt(60) }])],
+      now,
+    );
+
+    expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
+  });
+
   it("counts one login reported by two hubs once, and shows its freshest snapshot", () => {
     const stale = { ...limitsAt(19), checkedAt: "2026-10-30T11:00:00.000Z" };
     const resolved = resolveThreadDetailsLimits(
