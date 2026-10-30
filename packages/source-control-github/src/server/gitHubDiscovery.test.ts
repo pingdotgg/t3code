@@ -3,6 +3,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -125,6 +126,7 @@ it.effect("checks a GitHub token saved as a secret reference against the API", (
     if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
     const item = yield* discovery.probe("/repo");
     assert.deepStrictEqual(paths, ["user"]);
-    assert.include(JSON.stringify(item.auth), "token saved in Settings");
+    assert.strictEqual(item.auth.status, "authenticated");
+    assert.deepStrictEqual(item.auth.account, Option.some("octocat"));
   }),
 );
