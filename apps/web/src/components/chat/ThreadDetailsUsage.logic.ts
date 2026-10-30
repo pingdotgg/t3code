@@ -2,10 +2,15 @@ import type {
   ProviderInstanceId,
   ServerProvider,
   ServerProviderUsageLimits,
+  UsageLimitSourceAccount,
   UsageLimitSourceSnapshot,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
-import { accountKey, collectProviderUsageLimits, limitsNotice } from "@t3tools/shared/usageLimits";
+import {
+  accountKeyResolver,
+  collectProviderUsageLimits,
+  limitsNotice,
+} from "@t3tools/shared/usageLimits";
 
 export interface ThreadDetailsLimits {
   readonly limits: ServerProviderUsageLimits;
@@ -40,11 +45,9 @@ export function resolveThreadDetailsLimits(
   return own ? { limits: own, sourceLabel: null } : null;
 }
 
-type SourceAccount = UsageLimitSourceSnapshot["accounts"][number];
-
 interface HubAccount {
   readonly source: UsageLimitSourceSnapshot;
-  readonly account: SourceAccount;
+  readonly account: UsageLimitSourceAccount;
 }
 
 /**
@@ -61,9 +64,10 @@ function onlyHubAccount(
       .filter((account) => canServeInstance(provider, account))
       .map((account) => ({ source, account })),
   );
+  const resolveKey = accountKeyResolver(candidates.map(({ account }) => account));
   const freshestByAccount = new Map<string, HubAccount>();
   for (const candidate of candidates) {
-    const key = hubAccountKey(candidate);
+    const key = resolveKey(candidate.account) ?? `${candidate.source.id}:${candidate.account.id}`;
     const known = freshestByAccount.get(key);
     if (!known || checkedAtMs(candidate) > checkedAtMs(known)) {
       freshestByAccount.set(key, candidate);
@@ -74,20 +78,14 @@ function onlyHubAccount(
   return limitsNotice(only.account.usageLimits) === null ? only : null;
 }
 
-function hubAccountKey({ source, account }: HubAccount): string {
-  const login = accountKey(account.driver, account.email, account.usageLimits);
-  if (!login) return `${source.id}:${account.id}`;
-  return account.workspaceId ? `${login}:${account.workspaceId}` : login;
-}
-
 const checkedAtMs = ({ account }: HubAccount) => Date.parse(account.usageLimits.checkedAt);
 
 const normalizeEmail = (email: string | undefined) => email?.trim().toLowerCase() || undefined;
 
 /** A hub account for the instance's driver, unless both sides name different logins. */
-function canServeInstance(provider: ServerProvider, account: SourceAccount): boolean {
+function canServeInstance(provider: ServerProvider, account: UsageLimitSourceAccount): boolean {
   if (account.driver !== provider.driver) return false;
-  const own = normalizeEmail(provider.auth.email);
-  const hub = normalizeEmail(account.email);
-  return !own || !hub || own === hub;
+  const instanceEmail = normalizeEmail(provider.auth.email);
+  const hubEmail = normalizeEmail(account.email);
+  return !instanceEmail || !hubEmail || instanceEmail === hubEmail;
 }

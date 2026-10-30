@@ -14,6 +14,8 @@ const now = Date.parse("2026-10-30T12:00:00.000Z");
 const checkedAt = "2026-10-30T11:59:00.000Z";
 const claude = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
+const codex = ProviderDriverKind.make("codex");
+const codexId = ProviderInstanceId.make("codex");
 
 const session = {
   id: "five_hour",
@@ -28,6 +30,12 @@ const unsupported: ServerProviderUsageLimits = {
   checkedAt,
   windows: [],
   unavailable: { reason: "unsupported" },
+};
+
+const probeFailed: ServerProviderUsageLimits = {
+  checkedAt,
+  windows: [],
+  unavailable: { reason: "probeFailed" },
 };
 
 function limitsAt(usedPercent: number): ServerProviderUsageLimits {
@@ -48,6 +56,16 @@ function claudeInstance(usageLimits: ServerProviderUsageLimits): ServerProvider 
     slashCommands: [],
     skills: [],
     usageLimits,
+  };
+}
+
+function codexInstance(usageLimits: ServerProviderUsageLimits, email?: string): ServerProvider {
+  const base = claudeInstance(usageLimits);
+  return {
+    ...base,
+    instanceId: codexId,
+    driver: codex,
+    auth: email ? { ...base.auth, email } : base.auth,
   };
 }
 
@@ -159,17 +177,32 @@ describe("thread details limits", () => {
     expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
   });
 
+  it("counts one login as one account when a hub omits the workspace another reports", () => {
+    const fresher = { ...limitsAt(25), checkedAt: "2026-10-30T11:59:30.000Z" };
+    const resolved = resolveThreadDetailsLimits(
+      instanceId,
+      [claudeInstance(unsupported)],
+      [
+        hub("hub-a", [
+          {
+            id: "claude-a.json",
+            email: "me@example.com",
+            workspaceId: "team-a",
+            limits: limitsAt(19),
+          },
+        ]),
+        hub("hub-b", [{ id: "claude-b.json", email: "me@example.com", limits: fresher }]),
+      ],
+      now,
+    );
+
+    expect(resolved).toEqual({ limits: fresher, sourceLabel: "hub-b" });
+  });
+
   it("falls back to the one hub account when a Codex instance's own probe failed", () => {
-    const codex = ProviderDriverKind.make("codex");
-    const codexId = ProviderInstanceId.make("codex");
-    const probeFailed: ServerProviderUsageLimits = {
-      checkedAt,
-      windows: [],
-      unavailable: { reason: "probeFailed" },
-    };
     const resolved = resolveThreadDetailsLimits(
       codexId,
-      [{ ...claudeInstance(probeFailed), instanceId: codexId, driver: codex }],
+      [codexInstance(probeFailed)],
       [hub("hub", [{ id: "codex-a.json", driver: codex, limits: limitsAt(30) }])],
       now,
     );
@@ -178,22 +211,6 @@ describe("thread details limits", () => {
   });
 
   it("does not borrow a hub account that belongs to a different login", () => {
-    const codex = ProviderDriverKind.make("codex");
-    const codexId = ProviderInstanceId.make("codex");
-    const probeFailed: ServerProviderUsageLimits = {
-      checkedAt,
-      windows: [],
-      unavailable: { reason: "probeFailed" },
-    };
-    const instance = (email: string): ServerProvider => {
-      const base = claudeInstance(probeFailed);
-      return {
-        ...base,
-        instanceId: codexId,
-        driver: codex,
-        auth: { ...base.auth, email },
-      };
-    };
     const hubFor = (email: string) => [
       hub("hub", [{ id: "codex-a.json", driver: codex, email, limits: limitsAt(30) }]),
     ];
@@ -201,7 +218,7 @@ describe("thread details limits", () => {
     expect(
       resolveThreadDetailsLimits(
         codexId,
-        [instance("alice@example.com")],
+        [codexInstance(probeFailed, "alice@example.com")],
         hubFor("bob@example.com"),
         now,
       ),
@@ -209,7 +226,7 @@ describe("thread details limits", () => {
     expect(
       resolveThreadDetailsLimits(
         codexId,
-        [instance(" Alice@Example.com ")],
+        [codexInstance(probeFailed, " Alice@Example.com ")],
         hubFor("alice@example.com"),
         now,
       ),
