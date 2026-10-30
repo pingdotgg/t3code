@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ServerObservability,
   EnvironmentThemeId,
@@ -16,6 +17,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -25,18 +27,21 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerWelcomeEvent,
+  createServerEnvironmentAtoms,
   makeEnvironmentServerWelcomeState,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
@@ -1144,5 +1149,68 @@ describe("server state projection", () => {
       // Cached, it would read as a fresh freeze on the next launch.
       expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
     }),
+  );
+});
+
+describe("server config commands", () => {
+  it.effect("toggles a provider while another provider's update is still running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const updateStarted = yield* Deferred.make<void>();
+        const finishUpdate = yield* Deferred.make<void>();
+        const client = {
+          [WS_METHODS.serverUpdateProvider]: () =>
+            Deferred.succeed(updateStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(finishUpdate)),
+              Effect.as({ providers: [] }),
+            ),
+          [WS_METHODS.serverUpdateSettings]: () => Effect.succeed(CONFIG.settings),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const environments = EnvironmentRegistry.EnvironmentRegistry.of({
+          run: (_environmentId, effect) =>
+            Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          followStream: (_environmentId, stream) =>
+            Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const atoms = createServerEnvironmentAtoms(
+          Atom.runtime(
+            Layer.merge(
+              Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
+              Layer.succeed(Persistence.EnvironmentCacheStore, {} as never),
+            ),
+          ),
+          { initialConfigValueAtom: () => Atom.make(CONFIG) },
+        );
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+
+        const update = atoms.updateProvider.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: { provider: ProviderDriverKind.make("codex") },
+        });
+        yield* Deferred.await(updateStarted);
+        // The provider update RPC stays pending for the whole install and verification.
+        const toggle = yield* Effect.promise(() =>
+          atoms.mutateProviderInstance.run(registry, {
+            environmentId: TARGET.environmentId,
+            input: { patch: {} },
+          }),
+        );
+        expect(toggle._tag).toBe("Success");
+
+        yield* Deferred.succeed(finishUpdate, undefined);
+        expect((yield* Effect.promise(() => update))._tag).toBe("Success");
+      }),
+    ),
   );
 });
