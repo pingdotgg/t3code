@@ -1515,6 +1515,57 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
+  it.live("fails without retrying when a failed resume's replacement reuses the session", () =>
+    Effect.gen(function* () {
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const failResumeOnce = yield* Ref.make(false);
+      yield* unverifiedReplacementHarness(
+        "unverified-replacement-reused-resume",
+        [
+          // Without a generation every ensureThread returns the same native id, like Muse.
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResumeOnce,
+          }),
+        ],
+        ({ orchestrator, worker, dispatchRequest, awaitSettled }) =>
+          Effect.gen(function* () {
+            yield* dispatchRequest(1, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(1);
+            const original = (yield* orchestrator.getThreadProjection(threadId))
+              .providerThreads[0]!;
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("unverified-replacement:detach"),
+              threadId,
+              providerSessionId: original.providerSessionId!,
+            });
+            yield* worker.drain();
+            // Only the first attempt fails to resume; a retry would find the session loaded.
+            yield* Ref.set(failResumeOnce, true);
+            yield* dispatchRequest(2, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(2);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const run2 = projection.runs.at(-1)!;
+            assert.equal(run2.status, "failed");
+            assert.deepEqual(replacementRecordsFor(projection, run2.id), []);
+            const failure = projection.turnItems.findLast((item) => item.type === "error");
+            assert.equal(
+              failure?.type === "error" ? failure.failure.message : null,
+              "claudeAgent provider protocol error: the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session.",
+            );
+            assert.equal((yield* Ref.get(capturedTurns)).length, 1);
+          }),
+      );
+    }),
+  );
+
   it.live("drops replacement bookkeeping when the run stops during replacement", () =>
     Effect.gen(function* () {
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);

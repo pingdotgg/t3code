@@ -1335,33 +1335,35 @@ export const layer: Layer.Layer<
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
         const replacement = yield* loadFromProvider(
-          session
-            .ensureThread({
-              threadId: projection.thread.id,
-              title: projection.thread.title,
-              modelSelection: run.modelSelection,
-              runtimePolicy: resolvedRuntimePolicy,
-              providerSessionId,
-              // Clear the native ref to force a fresh session while preserving row identity.
-              existingProviderThread: { ...providerThread, nativeThreadRef: null },
-              forceNewNativeThread: true,
-            })
-            .pipe(
-              // A provider that hands back its existing session cannot take the recovery handoff.
-              Effect.filterOrFail(
-                (replacement) =>
-                  replacement.nativeThreadRef?.nativeId == null ||
-                  replacement.nativeThreadRef.nativeId !== providerThread.nativeThreadRef?.nativeId,
-                () =>
-                  new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver: session.driver,
-                    detail:
-                      "the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session",
-                  }),
-              ),
-            ),
+          session.ensureThread({
+            threadId: projection.thread.id,
+            title: projection.thread.title,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+            providerSessionId,
+            // Clear the native ref to force a fresh session while preserving row identity.
+            existingProviderThread: { ...providerThread, nativeThreadRef: null },
+            forceNewNativeThread: true,
+          }),
         );
         if (replacement === undefined) return undefined;
+        if (
+          replacement.nativeThreadRef?.nativeId != null &&
+          replacement.nativeThreadRef.nativeId === providerThread.nativeThreadRef?.nativeId
+        ) {
+          // Never retried: the reused session is now marked loaded, so a retry would skip resume
+          // and start the turn without this error or the recovery handoff.
+          yield* settleStartFailure({
+            signal: "provider-thread-load-failure",
+            title: "Provider turn failed to start",
+            error: new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: session.driver,
+              detail:
+                "the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session",
+            }),
+          });
+          return undefined;
+        }
         const { handoff, transferId, createdAt } = yield* recoveryHandoff;
         const replacementWrite = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
