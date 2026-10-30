@@ -9,6 +9,8 @@ import { vi } from "vite-plus/test";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -160,6 +162,56 @@ describe("command permissions", () => {
           expect(denied._tag).toBe("EnvironmentAuthorizationError");
         }),
       ),
+  );
+  it.effect.each([
+    {
+      method: WS_METHODS.taskDocumentsRegister,
+      scopes: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
+    },
+    {
+      method: WS_METHODS.taskDocumentsSave,
+      scopes: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
+    },
+    {
+      method: WS_METHODS.taskDocumentsRelink,
+      scopes: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
+    },
+    { method: WS_METHODS.taskDocumentsUnregister, scopes: [AuthFilesystemWriteScope] },
+    ...[
+      WS_METHODS.taskDocumentsOpen,
+      WS_METHODS.taskDocumentsList,
+      WS_METHODS.taskDocumentsReadRecovery,
+      WS_METHODS.taskDocumentsListRecovery,
+      WS_METHODS.taskDocumentsSubscribeCatalogue,
+      WS_METHODS.taskDocumentsSubscribeDocument,
+    ].map((method) => ({ method, scopes: [AuthFilesystemReadScope] })),
+  ])("requires destination filesystem grants for $method", ({ method, scopes }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const command = createCommandPermissions(runtime, method);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(command.permissionAtom(env))).toBe(false);
+        for (const held of [
+          [],
+          ...scopes.map((scope) => scopes.filter((candidate) => candidate !== scope)),
+          scopes,
+        ]) {
+          registry.set(
+            sessions(env),
+            AsyncResult.success({ ...grant(false), scopes: held, permissions: held }),
+          );
+          expect(registry.get(command.permissionAtom(env))).toBe(held.length === scopes.length);
+          if (held.length === scopes.length) yield* command.authorize(registry, env);
+          else
+            expect((yield* command.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+              "EnvironmentAuthorizationError",
+            );
+        }
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(command.permissionAtom(other))).toBe(false);
+      }),
+    ),
   );
   it.effect("waits for an initial grant", () =>
     Effect.scoped(

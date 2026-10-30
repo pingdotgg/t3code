@@ -2,6 +2,8 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -15,6 +17,17 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.taskDocumentsRegister]: AuthFilesystemWriteScope,
+  [WS_METHODS.taskDocumentsOpen]: AuthFilesystemReadScope,
+  [WS_METHODS.taskDocumentsList]: AuthFilesystemReadScope,
+  [WS_METHODS.taskDocumentsSave]: AuthFilesystemWriteScope,
+  [WS_METHODS.taskDocumentsRelink]: AuthFilesystemWriteScope,
+  [WS_METHODS.taskDocumentsUnregister]: AuthFilesystemWriteScope,
+  [WS_METHODS.taskDocumentsListRecovery]: AuthFilesystemReadScope,
+  [WS_METHODS.taskDocumentsReadRecovery]: AuthFilesystemReadScope,
+  [WS_METHODS.taskDocumentsSubscribeCatalogue]: AuthFilesystemReadScope,
+  [WS_METHODS.taskDocumentsSubscribeDocument]: AuthFilesystemReadScope,
+
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
@@ -76,6 +89,15 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (
+    [
+      WS_METHODS.taskDocumentsRegister,
+      WS_METHODS.taskDocumentsSave,
+      WS_METHODS.taskDocumentsRelink,
+    ].some((tag) => tag === method)
+  ) {
+    return [AuthFilesystemReadScope, AuthFilesystemWriteScope];
+  }
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)

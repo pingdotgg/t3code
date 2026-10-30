@@ -1,3 +1,4 @@
+import * as TaskDocuments from "./tasks/TaskDocuments.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -1340,6 +1341,7 @@ export const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const taskDocuments = yield* TaskDocuments.TaskDocuments;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2825,6 +2827,17 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
         [WS_METHODS.filesystemGetMetadata]: (input) => workspaceFileSystem.getMetadata(input),
+        [WS_METHODS.taskDocumentsRegister]: (input) => taskDocuments.register(input),
+        [WS_METHODS.taskDocumentsOpen]: (input) => taskDocuments.open(input),
+        [WS_METHODS.taskDocumentsList]: () => taskDocuments.list(),
+        [WS_METHODS.taskDocumentsSave]: (input) => taskDocuments.save(input),
+        [WS_METHODS.taskDocumentsRelink]: (input) => taskDocuments.relink(input),
+        [WS_METHODS.taskDocumentsUnregister]: (input) => taskDocuments.unregister(input),
+        [WS_METHODS.taskDocumentsListRecovery]: (input) => taskDocuments.listRecovery(input),
+        [WS_METHODS.taskDocumentsReadRecovery]: (input) => taskDocuments.readRecovery(input),
+        [WS_METHODS.taskDocumentsSubscribeCatalogue]: () => taskDocuments.subscribeCatalogue(),
+        [WS_METHODS.taskDocumentsSubscribeDocument]: (input) =>
+          taskDocuments.subscribeDocument(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
             Effect.mapError(

@@ -1,3 +1,4 @@
+import * as TaskDocuments from "./tasks/TaskDocuments.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
@@ -675,6 +676,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
     ),
   ),
   Layer.provideMerge(layerWorkspace),
+  Layer.provideMerge(TaskDocuments.layer.pipe(Layer.provide(layerPersistence))),
   Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),

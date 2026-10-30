@@ -77,6 +77,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
   it.effect("publishes proven install ownership only for manually updated servers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const platform = yield* HostProcess.Platform;
       const baseDir = yield* fs.makeTempDirectoryScoped();
       const prefix = `${baseDir}/node`;
       const entry = `${prefix}/lib/node_modules/t3/dist/bin.mjs`;
@@ -87,7 +88,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         `${prefix}/lib/node_modules/t3/package.json`,
         '{"name":"t3","version":"0.0.45","bin":{"t3":"./dist/bin.mjs"}}',
       );
-      yield* fs.symlink(entry, `${prefix}/bin/t3`);
+      if (platform !== "win32") yield* fs.symlink(entry, `${prefix}/bin/t3`);
       const config = yield* makeServerConfig(baseDir);
       yield* fs.makeDirectory(config.stateDir, { recursive: true });
       for (const mode of ["web", "desktop"] as const) {
@@ -103,11 +104,11 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           ),
           Effect.provideService(HostProcess.Arguments, ["node", entry]),
           Effect.provideService(HostProcess.IsExecutable, false),
-          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Platform, platform),
           Effect.provideService(HostProcess.Environment, {}),
         );
         expect(descriptor.capabilities.serverInstallation).toEqual(
-          mode === "web" ? { kind: "npm-global", prefix } : undefined,
+          mode === "web" && platform !== "win32" ? { kind: "npm-global", prefix } : undefined,
         );
         expect(descriptor.capabilities.serverSelfUpdate).toBe(
           mode === "web" ? undefined : "desktop-managed",

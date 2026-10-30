@@ -1898,7 +1898,7 @@ describe("storage cleanup reports and local file policies", () => {
         expect(locked).toMatchObject({
           outcome: "failed",
           projectPath: repo,
-          path: worktree,
+          path: yield* fs.realPath(worktree),
           threadId: "thread-1",
           threadTitle: "Thread",
         });
@@ -1906,7 +1906,7 @@ describe("storage cleanup reports and local file policies", () => {
         expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("original\n");
         yield* fs.remove(`${index.trim()}.lock`);
         const gitFile = yield* fs.readFileString(`${worktree}/.git`);
-        yield* fs.writeFileString(`${worktree}/.git`, "gitdir: /missing-git-directory\n");
+        yield* fs.writeFileString(`${worktree}/.git`, `gitdir: ${repo}/.git\n`);
         expect((yield* service.runNow).entries[0]).toMatchObject(changed);
         yield* fs.writeFileString(`${worktree}/.git`, gitFile);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });

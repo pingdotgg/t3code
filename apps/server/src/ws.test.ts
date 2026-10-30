@@ -1,3 +1,4 @@
+import * as TaskDocuments from "./tasks/TaskDocuments.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -547,6 +548,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
+  Layer.mock(TaskDocuments.TaskDocuments)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
 );
 

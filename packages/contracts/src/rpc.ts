@@ -1,4 +1,16 @@
 import {
+  TaskDocumentRef,
+  RegisterTaskDocumentInput,
+  SaveTaskDocumentInput,
+  RelinkTaskDocumentInput,
+  TaskDocumentRecoveryRef,
+  TaskDocumentRecovery,
+  TaskDocumentSummary,
+  OpenTaskDocument,
+  TaskDocumentOperationError,
+  TaskDocumentNotice,
+} from "./taskDocuments.ts";
+import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -410,6 +422,17 @@ export const WS_METHODS = {
   projectsCreateFromThread: "projects.createFromThread",
 
   shellOpenInEditor: "shell.openInEditor",
+
+  taskDocumentsRegister: "taskDocuments.register",
+  taskDocumentsOpen: "taskDocuments.open",
+  taskDocumentsList: "taskDocuments.list",
+  taskDocumentsSave: "taskDocuments.save",
+  taskDocumentsRelink: "taskDocuments.relink",
+  taskDocumentsUnregister: "taskDocuments.unregister",
+  taskDocumentsListRecovery: "taskDocuments.listRecovery",
+  taskDocumentsReadRecovery: "taskDocuments.readRecovery",
+  taskDocumentsSubscribeCatalogue: "taskDocuments.subscribeCatalogue",
+  taskDocumentsSubscribeDocument: "taskDocuments.subscribeDocument",
 
   filesystemBrowse: "filesystem.browse",
   filesystemGetMetadata: "filesystem.getMetadata",
@@ -1327,6 +1350,68 @@ const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
 });
 
+const WsTaskDocumentsRegisterRpc = Rpc.make(WS_METHODS.taskDocumentsRegister, {
+  payload: RegisterTaskDocumentInput,
+  success: OpenTaskDocument,
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskDocumentsOpenRpc = Rpc.make(WS_METHODS.taskDocumentsOpen, {
+  payload: TaskDocumentRef,
+  success: OpenTaskDocument,
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskDocumentsListRpc = Rpc.make(WS_METHODS.taskDocumentsList, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(TaskDocumentSummary),
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskDocumentsSaveRpc = Rpc.make(WS_METHODS.taskDocumentsSave, {
+  payload: SaveTaskDocumentInput,
+  success: OpenTaskDocument,
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskDocumentsRelinkRpc = Rpc.make(WS_METHODS.taskDocumentsRelink, {
+  payload: RelinkTaskDocumentInput,
+  success: OpenTaskDocument,
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskDocumentsUnregisterRpc = Rpc.make(WS_METHODS.taskDocumentsUnregister, {
+  payload: TaskDocumentRef,
+  success: Schema.Void,
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskDocumentsListRecoveryRpc = Rpc.make(WS_METHODS.taskDocumentsListRecovery, {
+  payload: TaskDocumentRef,
+  success: Schema.Array(TaskDocumentRecoveryRef),
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskDocumentsReadRecoveryRpc = Rpc.make(WS_METHODS.taskDocumentsReadRecovery, {
+  payload: TaskDocumentRecoveryRef,
+  success: TaskDocumentRecovery,
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskDocumentsSubscribeCatalogueRpc = Rpc.make(WS_METHODS.taskDocumentsSubscribeCatalogue, {
+  payload: Schema.Struct({}),
+  success: TaskDocumentNotice,
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsTaskDocumentsSubscribeDocumentRpc = Rpc.make(WS_METHODS.taskDocumentsSubscribeDocument, {
+  payload: TaskDocumentRef,
+  success: OpenTaskDocument,
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 const WsFilesystemGetMetadataRpc = Rpc.make(WS_METHODS.filesystemGetMetadata, {
   payload: FilesystemGetMetadataInput,
   success: FilesystemGetMetadataResult,
@@ -2057,6 +2142,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsTaskDocumentsRegisterRpc,
+  WsTaskDocumentsOpenRpc,
+  WsTaskDocumentsListRpc,
+  WsTaskDocumentsSaveRpc,
+  WsTaskDocumentsRelinkRpc,
+  WsTaskDocumentsUnregisterRpc,
+  WsTaskDocumentsListRecoveryRpc,
+  WsTaskDocumentsReadRecoveryRpc,
+  WsTaskDocumentsSubscribeCatalogueRpc,
+  WsTaskDocumentsSubscribeDocumentRpc,
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
