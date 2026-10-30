@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopLinuxPackage from "./DesktopLinuxPackage.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
 // AppImage mounts change each run; the launcher must mount the image itself.
@@ -127,16 +128,23 @@ export const install = Effect.gen(function* () {
   const windows = environment.platform === "win32";
   const shimPath = launcherPath(environment);
   const entry = path.join(environment.serverRoot, SERVER_ENTRY);
+  const systemPackage = yield* DesktopLinuxPackage.findSystemPackageBesideAppImage(environment);
   const target: CliShimTarget = windows
     ? { kind: "windows", executable: process.execPath, entry }
-    : Option.match(environment.appImagePath, {
-        onSome: (appImage) => ({
-          kind: "appimage" as const,
-          appImage,
-          executableName: path.basename(process.execPath),
-        }),
-        onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
-      });
+    : Option.isSome(systemPackage)
+      ? {
+          kind: "direct",
+          executable: systemPackage.value.executable,
+          entry: systemPackage.value.serverEntry,
+        }
+      : Option.match(environment.appImagePath, {
+          onSome: (appImage) => ({
+            kind: "appimage" as const,
+            appImage,
+            executableName: path.basename(process.execPath),
+          }),
+          onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
+        });
   const content = renderCliShim({ target, shimPath, t3Home: environment.baseDir });
 
   return yield* Effect.gen(function* () {

@@ -10,6 +10,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopLinuxPackage from "./DesktopLinuxPackage.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
 // AppImage integrators choose the .desktop filename, so setDesktopName cannot identify it for protocol registration.
@@ -122,6 +123,7 @@ export const make = Effect.gen(function* () {
   const assets = yield* DesktopAssets.DesktopAssets;
 
   const scheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
+  const systemPackage = yield* DesktopLinuxPackage.findSystemPackageBesideAppImage(environment);
   const desktopEntryPath = environment.path.join(
     environment.linuxApplicationsDir,
     environment.linuxDesktopEntryName,
@@ -137,6 +139,7 @@ export const make = Effect.gen(function* () {
     // Inside the mounted AppImage, process.execPath points at a transient
     // /tmp/.mount_* path — the handler must launch the AppImage itself.
     const execTarget = environment.desktopLauncherPath.pipe(
+      Option.orElse(() => Option.map(systemPackage, (installed) => installed.executable)),
       Option.orElse(() => environment.appImagePath),
       Option.getOrElse(() => process.execPath),
     );

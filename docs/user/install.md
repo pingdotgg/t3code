@@ -70,13 +70,20 @@ or use a package manager:
 | Windows            | `winget install T3Tools.T3Code`                              |
 | macOS              | `brew install --cask t3-code`                                |
 | Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb`                           |
+| Fedora             | `sudo dnf install ./T3-Code-*.rpm`                           |
+| openSUSE           | `sudo zypper install ./T3-Code-*.rpm`                        |
 | Arch Linux         | `yay -S t3code-bin`                                          |
 | Arch Linux nightly | `yay -S t3code-nightly-bin`                                  |
 | Nix                | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code` |
 
-The `.deb` updates itself like the other desktop builds. It asks for your
-password to install each update. If your desktop has no password prompt, the
-update fails. Download the new `.deb` and install it the same way.
+The `.deb` and `.rpm` update themselves like the other desktop builds. They ask
+for your password to install each update. If your desktop has no password
+prompt, the update fails. Download the new package and install it the same way.
+
+You can install the `.deb` or `.rpm` over an AppImage you already use. Both
+share your threads and settings. Once the package is installed, links and the
+`t3` command open the package, even when you start the AppImage, so you can
+delete the AppImage whenever you like.
 
 ### Nix (nixpkgs)
 

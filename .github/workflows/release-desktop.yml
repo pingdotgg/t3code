@@ -447,7 +447,8 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev pkg-config
+          # rpm provides rpmbuild, which electron-builder needs for the .rpm.
+          sudo apt-get install -y libsecret-1-dev pkg-config rpm
           if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
               sudo apt-get install -y imagemagick
           fi
@@ -701,6 +702,7 @@ jobs:
             "release/*.zip"
             "release/*.AppImage"
             "release/*.deb"
+            "release/*.rpm"
             "release/*.exe"
           )
           # Preview builds have no publish config, so electron-builder writes

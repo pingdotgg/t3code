@@ -22,7 +22,7 @@ import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
 describe("DesktopUpdates", () => {
-  it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
+  it.effect("updates Linux .deb and .rpm installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
       const linuxState = (packageType: string | undefined) =>
         Effect.scoped(
@@ -35,6 +35,12 @@ describe("DesktopUpdates", () => {
 
       const deb = yield* linuxState("deb\n");
       assert.equal(deb.status, "idle");
+
+      const rpm = yield* linuxState("rpm");
+      assert.equal(rpm.status, "idle");
+
+      const pacman = yield* linuxState("pacman");
+      assert.equal(pacman.status, "disabled");
 
       const unmarked = yield* linuxState(undefined);
       assert.equal(unmarked.status, "disabled");

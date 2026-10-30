@@ -34,7 +34,7 @@ the version.
 - Builds six desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`), gated only on the bundle. macOS and Linux targets build on hardware of their own architecture. Both Windows targets build and sign (with jsign) on a Linux runner, which packages faster than Windows runners, and a Windows job of the target's architecture (`windows-2025` or `windows-11-arm`, the `verify_runner`) runs the packaged natives and the CLI archive. The Windows jobs embed the same-arch Linux CLI archive as the WSL runtime and wait for that artifact partway through, not for the whole Linux job:
   - macOS `arm64` DMG
   - macOS `x64` DMG
-  - Linux `x64` and `arm64` AppImage and `.deb`, from one electron-builder run. The `.deb` updates in the app through electron-updater, which installs it with `dpkg`.
+  - Linux `x64` and `arm64` AppImage, `.deb`, and `.rpm`, from one electron-builder run. The packages update in the app through electron-updater, which installs the `.deb` with `dpkg` and the `.rpm` with `dnf` or `zypper`. The `.rpm` ships its own after-remove script because rpm runs the old package's `%postun` after the new `%post` during an upgrade.
   - Windows `x64` and `arm64` NSIS installer
 - Opens the packaged Linux x64 AppImage (under Xvfb) and macOS arm64 DMG against a seeded database and opens a thread (`scripts/smoke-desktop-app.ts`). A build whose backend or bundle cannot start fails here, so nothing is published. The database in `scripts/fixtures/desktop-launch` is an old snapshot on purpose: the packaged server must migrate it forward, as it does for upgrading users. Do not regenerate it on schema changes.
 - Publishes one GitHub Release with all produced files.
@@ -474,7 +474,7 @@ available.
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
   - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
 - Required release assets for updater:
-  - platform installers (`.exe`, `.dmg`, `.AppImage`, `.deb`, plus macOS `.zip` for Squirrel.Mac update payloads)
+  - platform installers (`.exe`, `.dmg`, `.AppImage`, `.deb`, `.rpm`, plus macOS `.zip` for Squirrel.Mac update payloads)
   - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases
   - `*.blockmap` files (used for differential downloads)
 - macOS metadata note:

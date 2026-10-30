@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
+// @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions and run package scripts in a real shell.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
@@ -41,6 +42,7 @@ import {
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
   resolveBuildOptions,
+  RPM_AFTER_REMOVE_SCRIPT,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
@@ -1089,6 +1091,44 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ),
     );
   });
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "keeps the t3code link when an rpm upgrade runs the old package's %postun",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-rpm-postun-" });
+          const template = yield* fs.readFileString(
+            path.join(import.meta.dirname, "..", RPM_AFTER_REMOVE_SCRIPT),
+          );
+          const script = path.join(root, "postun.sh");
+          yield* fs.writeFileString(
+            script,
+            template
+              .replaceAll("${executable}", "t3code")
+              .replaceAll("${sanitizedProductName}", "T3 Code (Beta)"),
+          );
+          const calls = path.join(root, "calls");
+          yield* fs.makeDirectory(path.join(root, "bin"));
+          yield* fs.writeFileString(
+            path.join(root, "bin", "update-alternatives"),
+            `#!/bin/sh\necho "$*" >> '${calls}'\n`,
+            { mode: 0o755 },
+          );
+          const postun = (installsLeft: string) => {
+            NodeChildProcess.spawnSync("bash", [script, installsLeft], {
+              env: { PATH: `${path.join(root, "bin")}:${process.env.PATH}` },
+            });
+            return fs.readFileString(calls).pipe(Effect.orElseSucceed(() => ""));
+          };
+
+          assert.equal(yield* postun("1"), "");
+          assert.equal(yield* postun("0"), "--remove t3code /opt/T3 Code (Beta)/t3code\n");
+        }),
+      ),
+  );
 
   it.effect("refuses a Linux build on a host that cannot build the browser secret helper", () => {
     const commands: Array<{ readonly command: string }> = [];

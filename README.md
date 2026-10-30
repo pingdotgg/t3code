@@ -68,6 +68,14 @@ Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/r
 sudo apt install ./T3-Code-*.deb
 ```
 
+#### Fedora, openSUSE (`.rpm`)
+
+Download the `.rpm` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
+
+```bash
+sudo dnf install ./T3-Code-*.rpm
+```
+
 #### Arch Linux (AUR)
 
 Stable:

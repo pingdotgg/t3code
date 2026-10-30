@@ -28,6 +28,7 @@ import * as Stream from "effect/Stream";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopLinuxPackage from "../app/DesktopLinuxPackage.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
@@ -319,7 +320,7 @@ function getAutoUpdateDisabledReason(args: {
   isPackaged: boolean;
   platform: NodeJS.Platform;
   appImage?: string | undefined;
-  isDebPackage: boolean;
+  isSystemPackage: boolean;
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
 }): string | null {
@@ -332,8 +333,8 @@ function getAutoUpdateDisabledReason(args: {
   if (args.disabledByEnv) {
     return "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.";
   }
-  if (args.platform === "linux" && !args.appImage && !args.isDebPackage) {
-    return "Automatic updates on Linux require the AppImage or the .deb package.";
+  if (args.platform === "linux" && !args.appImage && !args.isSystemPackage) {
+    return "Automatic updates on Linux require the AppImage, .deb, or .rpm package.";
   }
   return null;
 }
@@ -419,13 +420,12 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  // electron-updater uses this marker to install .deb updates with dpkg.
-  const isDebPackage =
+  const isSystemPackage =
     environment.platform === "linux" && environment.isPackaged
       ? yield* fileSystem
           .readFileString(environment.path.join(environment.resourcesPath, "package-type"))
           .pipe(
-            Effect.map((packageType) => packageType.trim() === "deb"),
+            Effect.map(DesktopLinuxPackage.isSystemPackageType),
             Effect.orElseSucceed(() => false),
           )
       : false;
@@ -442,7 +442,7 @@ export const make = Effect.gen(function* () {
         isPackaged: environment.isPackaged,
         platform: environment.platform,
         appImage: Option.getOrUndefined(config.appImagePath),
-        isDebPackage,
+        isSystemPackage,
         disabledByEnv: config.disableAutoUpdate,
         hasUpdateFeedConfig: hasFeedConfig,
       }),

@@ -11,6 +11,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
+import { isSystemPackageType, systemPackagePaths } from "./DesktopLinuxPackage.ts";
 import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
@@ -102,16 +103,28 @@ export const make = Effect.gen(function* () {
             );
           } catch {}
         }
+        const { displayName } = resolveDesktopAppBranding({
+          isDevelopment: linux.isDevelopment,
+          appVersion: Electron.app.getVersion(),
+        });
+        // Same target as DesktopLinuxUrlHandler, which leaves an identical entry untouched.
+        const appImage = process.env.APPIMAGE?.trim();
+        const systemPackage = systemPackagePaths(displayName);
+        let besideSystemPackage = false;
+        if (appImage) {
+          try {
+            besideSystemPackage = isSystemPackageType(
+              NodeFS.readFileSync(systemPackage.marker, "utf8"),
+            );
+          } catch {}
+        }
         NodeFS.writeFileSync(
           NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName),
           renderUrlHandlerDesktopEntry({
-            displayName: resolveDesktopAppBranding({
-              isDevelopment: linux.isDevelopment,
-              appVersion: Electron.app.getVersion(),
-            }).displayName,
+            displayName,
             execTarget:
               process.env.T3CODE_DESKTOP_LAUNCHER_PATH?.trim() ||
-              process.env.APPIMAGE?.trim() ||
+              (besideSystemPackage ? systemPackage.executable : appImage) ||
               process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),

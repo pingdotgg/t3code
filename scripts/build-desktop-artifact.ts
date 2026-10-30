@@ -348,7 +348,14 @@ export const LINUX_DESKTOP_BUILD_PREREQUISITES = [
     packages: ["libsecret-1-dev", "pkg-config"],
   },
   { id: "imagemagick", description: "ImageMagick", packages: ["imagemagick"] },
+  { id: "rpmbuild", description: "rpmbuild, for the .rpm package", packages: ["rpm"] },
 ] as const;
+
+// One electron-builder run packs the AppImage, .deb and .rpm from the same unpacked app.
+const linuxPackageTargets = (target: string): ReadonlyArray<string> =>
+  target === "AppImage" ? [target, "deb", "rpm"] : [target];
+
+export const RPM_AFTER_REMOVE_SCRIPT = "apps/desktop/resources/linux/rpm-after-remove.sh";
 
 export class LinuxDesktopBuildPrerequisitesMissingError extends Schema.TaggedError<LinuxDesktopBuildPrerequisitesMissingError>()(
   "LinuxDesktopBuildPrerequisitesMissingError",
@@ -1912,6 +1919,7 @@ const rustTargetIsInstalled = Effect.fn("rustTargetIsInstalled")(function* (targ
 
 export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild")(function* (
   arch: typeof BuildArch.Type = "x64",
+  target = "AppImage",
 ) {
   const reuseResourceMonitor = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
     Config.withDefault(false),
@@ -1938,6 +1946,9 @@ export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild"
         desktopBuildProbeSucceeds(ChildProcess.make("magick", ["-version"]), "magick"),
         desktopBuildProbeSucceeds(ChildProcess.make("convert", ["-version"]), "convert"),
       ]).pipe(Effect.map(([magick, convert]) => magick || convert)),
+      rpmbuild: linuxPackageTargets(target).includes("rpm")
+        ? desktopBuildProbeSucceeds(ChildProcess.make("rpmbuild", ["--version"]), "rpmbuild")
+        : Effect.succeed(true),
     },
     { concurrency: "unbounded" },
   );
@@ -2890,7 +2901,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
     buildConfig.linux = {
-      target: target === "AppImage" ? [target, "deb"] : [target],
+      target: linuxPackageTargets(target),
       executableName: "t3code",
       icon: "icons",
       category: "Development",
@@ -2928,6 +2939,28 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         "libxtst6",
         "xdg-utils",
       ],
+    };
+    buildConfig.rpm = {
+      fpm: [
+        `${path.join(repoRoot, "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml")}=/usr/share/metainfo/com.t3tools.t3code.metainfo.xml`,
+        `${path.join(repoRoot, "LICENSE")}=/usr/share/licenses/t3code/LICENSE`,
+      ],
+      // Fedora names first, openSUSE names as rich-dependency fallbacks.
+      depends: [
+        "(alsa-lib or libasound2)",
+        "at-spi2-core",
+        "gtk3",
+        "(libsecret or libsecret-1-0)",
+        "libnotify",
+        "(libuuid or libuuid1)",
+        "libXScrnSaver",
+        "(libXtst or libXtst6)",
+        "(mesa-libgbm or libgbm1)",
+        "nss",
+        "xdg-utils",
+      ],
+      // The stock script would delete /usr/bin/t3code on every rpm upgrade; see the script.
+      afterRemove: path.join(repoRoot, RPM_AFTER_REMOVE_SCRIPT),
     };
   }
 
@@ -3565,7 +3598,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const fs = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
   if (hostPlatform === "linux" && options.platform === "linux") {
-    yield* preflightLinuxDesktopBuild(options.arch);
+    yield* preflightLinuxDesktopBuild(options.arch, options.target);
   }
   if (hostPlatform === "darwin" && options.platform === "mac") {
     yield* preflightMacDesktopBuild(options.arch);

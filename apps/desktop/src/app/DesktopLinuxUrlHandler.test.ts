@@ -69,6 +69,7 @@ const layerHandler = (
     readonly xdgMimeExitCode?: number;
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
+    readonly systemPackageType?: string;
     readonly iconSource?: string;
     readonly iconCopyError?: PlatformError.PlatformError;
   } = {},
@@ -98,7 +99,12 @@ const layerHandler = (
               : Effect.sync(() => {
                   recorded.copies.push({ source, destination });
                 }),
-          readFileString: () => Effect.succeed(input.existingEntry ?? ""),
+          readFileString: (path) =>
+            Effect.succeed(
+              path === "/opt/T3 Code (Alpha)/resources/package-type"
+                ? (input.systemPackageType ?? "")
+                : (input.existingEntry ?? ""),
+            ),
           makeDirectory: (path) =>
             Effect.sync(() => {
               recorded.directories.push(path);
@@ -236,6 +242,23 @@ describe("DesktopLinuxUrlHandler", () => {
       );
     });
   });
+
+  it.effect("hands links to an installed .deb or .rpm instead of the AppImage beside it", () =>
+    Effect.gen(function* () {
+      for (const systemPackageType of ["deb\n", "rpm"]) {
+        const recorded = emptyRecording();
+        yield* runRegister(recorded, { systemPackageType });
+        assert.include(recorded.files[0]?.content, 'Exec="/opt/T3 Code (Alpha)/t3code" %U');
+      }
+
+      const unrelated = emptyRecording();
+      yield* runRegister(unrelated, { systemPackageType: "pacman" });
+      assert.include(
+        unrelated.files[0]?.content,
+        "Exec=/home/alice/Applications/T3-Code.AppImage %U",
+      );
+    }),
+  );
 
   it.effect("launches a distribution package through its configured launcher", () => {
     const recorded = emptyRecording();
