@@ -691,7 +691,54 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   const hasManifest = yield* fileSystem
     .exists(manifestPath)
     .pipe(Effect.orElseSucceed(() => false));
-  return hasManifest ? shimDir : null;
+  if (hasManifest) {
+    return shimDir;
+  }
+  const target = `\\node_modules\\${packageName.toLowerCase().replaceAll("/", "\\")}\\`;
+  // Keep junction prefixes aligned with the shim route; realpath covers npm link.
+  for (const commandPath of [context.resolvedCommandPath, context.realCommandPath]) {
+    // ASCII folding preserves offsets into paths containing characters such as İ.
+    const normalized = commandPath
+      .replaceAll("\\", "/")
+      .replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+    const packageIndex = normalized.lastIndexOf(`/node_modules/${packageName.toLowerCase()}/`);
+    if (packageIndex <= 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
+      continue;
+    }
+    const miseTool = /\/mise\/installs\/([^/]+)\/[^/]+$/.exec(
+      normalized.slice(0, packageIndex),
+    )?.[1];
+    if (miseTool && miseTool !== "node") {
+      continue;
+    }
+    // dirname preserves drive and UNC root separators, matching the shim route.
+    const prefix = path.dirname(commandPath.slice(0, packageIndex + "/node_modules".length));
+    const command = path.basename(commandPath, path.extname(commandPath));
+    const shim = yield* fileSystem
+      .readFileString(path.join(prefix, `${command}.cmd`))
+      .pipe(Effect.orElseSucceed(() => ""));
+    // Only npm shim invocations prove ownership; comments and assignments can mention any package.
+    const invokesPackage = shim
+      .toLowerCase()
+      .split(/\r?\n/)
+      .some((line) => {
+        const invocation = line
+          .trim()
+          .replace(/^endlocal & goto #_undefined_# 2>nul \|\| title %comspec% &\s*/, "")
+          .replace(
+            /^@?(?:"(?:%_prog%|%(?:dp0%|~dp0)\\node\.exe)"|node(?:\.exe)?)\s+(?:--[\w=-]+\s+)*/,
+            "",
+          );
+        const invokedPath = /^@?"(%(?:dp0%|~dp0)\\[^"]+)"\s+%\*$/.exec(invocation)?.[1];
+        return (
+          invokedPath?.startsWith(`%dp0%${target}`) || invokedPath?.startsWith(`%~dp0${target}`)
+        );
+      });
+    if (invokesPackage) {
+      return prefix;
+    }
+  }
+  return null;
 });
 
 export function makePackageManagedProviderMaintenanceResolver(

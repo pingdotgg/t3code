@@ -2,6 +2,7 @@
 import { expect, it } from "@effect/vitest";
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeWindowsPath from "@effect/platform-node/NodePath";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
@@ -10,6 +11,7 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
@@ -587,6 +589,116 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
       );
       expect(posix.update).toBeNull();
+    }),
+  );
+
+  const npmExe = (prefix: string) =>
+    NodePath.win32.join(
+      prefix,
+      "node_modules",
+      "@example",
+      "package-tool",
+      "bin",
+      "package-tool.exe",
+    );
+  const npmShim =
+    '@echo off\r\n"%dp0%\\node_modules\\@example\\package-tool\\bin\\package-tool.exe" %*\r\n';
+  const windowsNpmFixture = () => {
+    const files = new Map<string, string>();
+    const resolve = (resolvedCommandPath: string, realCommandPath = resolvedCommandPath) =>
+      packageToolUpdate
+        .resolve({
+          binaryPath: resolvedCommandPath,
+          resolvedCommandPath,
+          realCommandPath,
+          env: {},
+          platform: "win32",
+        })
+        .pipe(
+          Effect.provide(NodeWindowsPath.layerWin32),
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              exists: (path) => Effect.succeed(files.has(path)),
+              readFileString: (path) => Effect.succeed(files.get(path) ?? ""),
+            }),
+          ),
+        );
+    return { files, resolve };
+  };
+
+  it.effect(
+    "uses the same Windows npm update prefix and lock for a package executable and its shim",
+    () =>
+      Effect.gen(function* () {
+        const { files, resolve } = windowsNpmFixture();
+        const realPrefix = "C:\\node-22";
+        files.set(
+          NodePath.win32.join(realPrefix, "package-tool.cmd"),
+          '@echo off\r\nset "_prog=node"\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@example\\package-tool\\bin\\package-tool.js" %*\r\n',
+        );
+        // A junction must retain its visible prefix, including Unicode and root separators.
+        for (const prefix of ["C:\\Users\\İbrahimİ\\npm", "C:\\", "\\\\server\\share\\"]) {
+          const shim = NodePath.win32.join(prefix, "package-tool.cmd");
+          files.set(shim, npmShim.replace("%dp0%", "%~dp0"));
+          files.set(
+            NodePath.win32.join(prefix, "node_modules", "@example", "package-tool", "package.json"),
+            "{}",
+          );
+          const direct = yield* resolve(npmExe(prefix), npmExe(realPrefix));
+          const throughShim = yield* resolve(shim);
+          expect(direct.update).toMatchObject({
+            executable: "npm",
+            args: [
+              "install",
+              "-g",
+              "--prefix",
+              prefix,
+              "--allow-scripts=@example/package-tool",
+              "@example/package-tool@latest",
+            ],
+            lockKey: `npm-global:${normalizeCommandPath(prefix)}`,
+          });
+          expect(direct.update).toEqual(throughShim.update);
+        }
+        // npm link has no root shim in the project; the real global package owns updates.
+        const linked = yield* resolve(npmExe("C:\\project"), npmExe(realPrefix));
+        expect(linked.update).toMatchObject({
+          executable: "npm",
+          args: [
+            "install",
+            "-g",
+            "--prefix",
+            realPrefix,
+            "--allow-scripts=@example/package-tool",
+            "@example/package-tool@latest",
+          ],
+          lockKey: `npm-global:${normalizeCommandPath(realPrefix)}`,
+        });
+      }),
+  );
+
+  it.effect("keeps projects, nested dependencies and mise tool versions manual on Windows", () =>
+    Effect.gen(function* () {
+      const { files, resolve } = windowsNpmFixture();
+      const project = "C:\\project";
+      files.set(NodePath.win32.join(project, "node_modules", ".bin", "package-tool.cmd"), npmShim);
+      expect((yield* resolve(npmExe(project))).update).toBeNull();
+      files.set(
+        NodePath.win32.join(project, "package-tool.cmd"),
+        `@echo off\r\nrem ${npmShim.split("\r\n")[1]}\r\n${npmShim.replace("@example", "@unrelated")}`,
+      );
+      expect((yield* resolve(npmExe(project))).update).toBeNull();
+
+      for (const prefix of [
+        "C:\\npm\\node_modules\\parent",
+        "C:\\Users\\me\\mise\\installs\\npm-example-package-tool\\1.0.0",
+      ]) {
+        files.set(NodePath.win32.join(prefix, "package-tool.cmd"), npmShim);
+        expect((yield* resolve(npmExe(prefix))).update).toBeNull();
+      }
     }),
   );
 
