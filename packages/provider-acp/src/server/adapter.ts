@@ -7784,6 +7784,61 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }),
         );
 
+        const rollbackUnlocked = Effect.fn("AcpAdapterV2.rollbackThread.unlocked")(
+          function* (rollbackInput: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) {
+            const currentTurn = yield* Ref.get(activeTurn);
+            if (currentTurn !== null) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver,
+                detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while turn ${currentTurn.providerTurnId} is active`,
+              });
+            }
+            yield* awaitRuntimeTeardown();
+            itemIdentityVersion = 2;
+            prepareTerminalEnvironment(
+              yield* readMcpContext(rollbackInput.providerThread.appThreadId),
+            );
+            const replacement = yield* startReplacementAcpRuntime(
+              rollbackInput.providerThread.appThreadId,
+              (candidate) =>
+                commitReplacementSession(rollbackInput.providerThread.appThreadId, candidate),
+            ).pipe(Effect.retry({ times: 1 }));
+            const now = yield* DateTime.now;
+            return {
+              providerThread: {
+                ...rollbackInput.providerThread,
+                nativeThreadRef: {
+                  driver,
+                  nativeId: replacement.sessionId,
+                  strength: "strong" as const,
+                },
+                nativeConversationHeadRef: null,
+                nativeMetadata: {
+                  ...rollbackInput.providerThread.nativeMetadata,
+                  itemIdentityVersion: 2 as const,
+                },
+                status: "idle" as const,
+                updatedAt: now,
+              },
+              providerTurns: [],
+              messages: [],
+              runtimeRequests: [],
+            };
+          },
+          (effect, rollbackInput) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                    driver,
+                    providerThreadId: rollbackInput.providerThread.id,
+                    checkpointId: rollbackInput.target.checkpointId,
+                    cause,
+                  }),
+              ),
+            ),
+        );
+
         const sessionRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver,
@@ -8431,61 +8486,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
               ),
           ),
-          rollbackThread: (rollbackInput) =>
-            runtimeTransitionPermit
-              .withPermit(
-                Effect.gen(function* () {
-                  const currentTurn = yield* Ref.get(activeTurn);
-                  if (currentTurn !== null) {
-                    return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                      driver,
-                      detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while turn ${currentTurn.providerTurnId} is active`,
-                    });
-                  }
-                  yield* awaitRuntimeTeardown();
-                  itemIdentityVersion = 2;
-                  prepareTerminalEnvironment(
-                    yield* readMcpContext(rollbackInput.providerThread.appThreadId),
-                  );
-                  const replacement = yield* startReplacementAcpRuntime(
-                    rollbackInput.providerThread.appThreadId,
-                    (candidate) =>
-                      commitReplacementSession(rollbackInput.providerThread.appThreadId, candidate),
-                  ).pipe(Effect.retry({ times: 1 }));
-                  const now = yield* DateTime.now;
-                  return {
-                    providerThread: {
-                      ...rollbackInput.providerThread,
-                      nativeThreadRef: {
+          withRollbackAdmission: (rollbackInput, use) =>
+            runtimeTransitionPermit.withPermit(
+              Effect.gen(function* () {
+                yield* awaitRuntimeTeardown().pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterRollbackThreadError({
                         driver,
-                        nativeId: replacement.sessionId,
-                        strength: "strong" as const,
-                      },
-                      nativeConversationHeadRef: null,
-                      nativeMetadata: {
-                        ...rollbackInput.providerThread.nativeMetadata,
-                        itemIdentityVersion: 2 as const,
-                      },
-                      status: "idle" as const,
-                      updatedAt: now,
-                    },
-                    providerTurns: [],
-                    messages: [],
-                    runtimeRequests: [],
-                  };
-                }),
-              )
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterRollbackThreadError({
-                      driver,
-                      providerThreadId: rollbackInput.providerThread.id,
-                      checkpointId: rollbackInput.target.checkpointId,
-                      cause,
-                    }),
-                ),
-              ),
+                        providerThreadId: rollbackInput.providerThread.id,
+                        checkpointId: rollbackInput.target.checkpointId,
+                        cause,
+                      }),
+                  ),
+                );
+                const currentTurn = yield* Ref.get(activeTurn);
+                if (
+                  currentTurn !== null ||
+                  (yield* sessionRuntime.hasPendingBackgroundWork ?? Effect.succeed(false))
+                ) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver,
+                    detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while provider work is active`,
+                  });
+                }
+                return yield* use(() => rollbackUnlocked(rollbackInput));
+              }),
+            ),
+          rollbackThread: (rollbackInput) =>
+            runtimeTransitionPermit.withPermit(rollbackUnlocked(rollbackInput)),
           forkThread: Effect.fn("AcpAdapterV2.forkThread")(
             function* (forkInput) {
               return yield* runtimeTransitionPermit.withPermit(

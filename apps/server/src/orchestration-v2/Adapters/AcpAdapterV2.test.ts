@@ -3351,6 +3351,19 @@ describe("AcpAdapterV2", () => {
       if (activeRollback._tag === "Failure") {
         assert.include(String(activeRollback.failure.cause), "while turn");
       }
+      const activeAdmission = yield* runtime.withRollbackAdmission!(
+        {
+          providerThread,
+          providerThreadTurns: [],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-acp-active-admission"),
+            appRunOrdinal: 0,
+          },
+        },
+        () => Effect.die("active ACP turn must not admit restore"),
+      ).pipe(Effect.result);
+      assert.equal(activeAdmission._tag, "Failure");
       const firstProviderTurnId = idAllocator.derive.providerTurn({
         driver: ACP_TEST_DRIVER,
         nativeTurnId: acpScopedNativeId(instanceId, `${firstSessionId}:turn:1`),
@@ -3537,15 +3550,24 @@ describe("AcpAdapterV2", () => {
         runtimePolicy,
       });
 
-      yield* runtime.rollbackThread({
-        providerThread,
-        providerThreadTurns: [],
-        target: {
-          type: "thread_start",
-          checkpointId: CheckpointId.make("checkpoint-acp-rollback-retry-generation"),
-          appRunOrdinal: 0,
+      assert.isFalse(yield* hasPendingBackgroundWork);
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-acp-rollback-admission-" });
+      const file = path.join(directory, "workspace.txt");
+      yield* fs.writeFileString(file, "current");
+      yield* runtime.withRollbackAdmission!(
+        {
+          providerThread,
+          providerThreadTurns: [],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-acp-rollback-retry-generation"),
+            appRunOrdinal: 0,
+          },
         },
-      });
+        (rollback) => fs.writeFileString(file, "restored").pipe(Effect.andThen(rollback())),
+      );
+      assert.equal(yield* fs.readFileString(file), "restored");
 
       assert.equal(runtimeOrdinalSeen, 3);
       assert.deepEqual(
@@ -7375,6 +7397,27 @@ describe("AcpAdapterV2", () => {
         .pipe(Effect.exit);
       if (Exit.isSuccess(interruptExit)) assert.fail("missing hard teardown must fail interrupt");
       assert.include(Cause.pretty(interruptExit.cause), "session is poisoned");
+
+      let admitted = false;
+      const admissionExit = yield* runtime.withRollbackAdmission!(
+        {
+          providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("poisoned-rollback"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
+        },
+        () =>
+          Effect.sync(() => {
+            admitted = true;
+          }),
+      ).pipe(Effect.exit);
+      if (Exit.isSuccess(admissionExit))
+        assert.fail("poisoned session must reject rollback admission");
+      assert.include(Cause.pretty(admissionExit.cause), "session is poisoned");
+      assert.isFalse(admitted);
 
       const startExit = yield* runtime
         .startTurn(

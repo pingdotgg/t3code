@@ -641,6 +641,13 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;
+  /** Reject active native work, then hold admission through `use` and its unlocked rollback. */
+  readonly withRollbackAdmission?: <A, E, R>(
+    input: ProviderAdapterV2RollbackThreadInput,
+    use: (
+      rollback: () => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>,
+    ) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ProviderAdapterV2Error, R>;
   readonly forkThread: (
     input: ProviderAdapterV2ForkThreadInput,
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;

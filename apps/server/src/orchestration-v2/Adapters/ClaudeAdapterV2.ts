@@ -4365,6 +4365,7 @@ function claudeProposedPlan(input: unknown): string | null {
 }
 
 export interface ClaudeAdapterV2Options {
+  readonly testHooks?: { readonly afterTerminalEvent?: Effect.Effect<void> };
   readonly instanceId: ProviderInstanceId;
   readonly settings: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
@@ -4575,6 +4576,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
+        const rollbackAdmission = yield* Semaphore.make(1);
         const taskOutputTails = new Map<
           string,
           { readonly fiber: Fiber.Fiber<void>; readonly stop: Deferred.Deferred<void> }
@@ -7505,6 +7507,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ],
             { concurrency: 1 },
           );
+          yield* adapterOptions.testHooks?.afterTerminalEvent ?? Effect.void;
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
@@ -10866,12 +10869,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ),
               ),
           ),
-          startTurn,
+          startTurn: (turnInput) => rollbackAdmission.withPermit(startTurn(turnInput)),
           compactThread: (turnInput) =>
-            startTurn({
-              ...turnInput,
-              message: { ...turnInput.message, text: "/compact" },
-            }),
+            rollbackAdmission.withPermit(
+              startTurn({
+                ...turnInput,
+                message: { ...turnInput.message, text: "/compact" },
+              }),
+            ),
           steerTurn,
           stopTask: Effect.fn("ClaudeAdapterV2.stopTask")(function* ({ providerThread, taskId }) {
             const liveQuery = yield* Ref.get(queryContext);
@@ -11055,6 +11060,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 driver: CLAUDE_PROVIDER,
                 providerThreadId: snapshotInput.providerThread.id,
                 cause: "Claude V2 adapter does not implement snapshots.",
+              }),
+            ),
+          withRollbackAdmission: (rollbackInput, use) =>
+            rollbackAdmission.withPermit(
+              Effect.gen(function* () {
+                const currentTurn = yield* Ref.get(activeTurn);
+                const nativeThreadId = rollbackInput.providerThread.nativeThreadRef?.nativeId;
+                const goal =
+                  nativeThreadId == null
+                    ? rollbackInput.providerThread.goal
+                    : (goalsByNativeThread.get(nativeThreadId) ??
+                      rollbackInput.providerThread.goal);
+                if (
+                  currentTurn !== null ||
+                  goal?.status === "active" ||
+                  (yield* runtime.hasPendingBackgroundWork!)
+                ) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: `Cannot roll back Claude provider thread ${rollbackInput.providerThread.id} while provider work is active.`,
+                  });
+                }
+                return yield* use(() => runtime.rollbackThread(rollbackInput));
               }),
             ),
           rollbackThread: Effect.fn("ClaudeAdapterV2.rollbackThread")(
