@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -2291,6 +2292,115 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect.each([
+      {
+        name: "native binary installation error",
+        stderr:
+          "  Error: claude native binary not installed.  \nRun claude install to repair it.\n",
+        firstLine: "Error: claude native binary not installed.",
+      },
+      {
+        name: "oversized first line",
+        stderr: `  Error: claude native binary not installed. ${"x".repeat(10_000)}  \nsecond line`,
+        firstLine: `Error: claude native binary not installed. ${"x".repeat(468)}…`,
+      },
+      {
+        name: "ANSI color and repeated whitespace",
+        stderr: "\u001b[31m  Error: claude\t native binary not installed.  \u001b[0m\nsecond line",
+        firstLine: "Error: claude native binary not installed.",
+      },
+      {
+        name: "leading blank lines",
+        stderr: "\n \t\r\n\u001b[0m\n  Error: claude native binary not installed.\nsecond line",
+        firstLine: "Error: claude native binary not installed.",
+      },
+      {
+        name: "exactly 512 characters",
+        stderr: `Error: claude native binary not installed. ${"x".repeat(469)}`,
+        firstLine: `Error: claude native binary not installed. ${"x".repeat(469)}`,
+      },
+    ])("includes a trimmed, capped version failure detail: $name", ({ stderr, firstLine }) =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities(),
+        );
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.auth.status, "unknown");
+        assert.isTrue(status.installed);
+        assert.exists(status.message);
+        const message = status.message!;
+        assert.include(message, "Error: claude native binary not installed.");
+        assert.notInclude(message, "  Error:");
+        assert.notInclude(message, "\n");
+        assert.notInclude(message, "Run claude install");
+        assert.notInclude(message, "second line");
+        const summary = "Claude Agent CLI is installed but failed to run. ";
+        assert.strictEqual(message, `${summary}${firstLine}`);
+        assert.isAtMost(firstLine.length, 512);
+        if (stderr.length > 512) {
+          assert.strictEqual(firstLine.length, 512);
+        }
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            assert.deepStrictEqual(args, ["--version"]);
+            return { stdout: "", stderr, code: 1 };
+          }),
+        ),
+      ),
+    );
+
+    it.effect("logs the stderr excerpt when the Claude version command exits non-zero", () => {
+      const messages: Array<unknown> = [];
+      const logCapture = Logger.make<unknown, void>(({ message }) => {
+        messages.push(message);
+      });
+      const stderr =
+        "Error: claude native binary not installed.\nRun claude install to repair it.\n";
+      return Effect.gen(function* () {
+        yield* checkClaudeProviderStatus(defaultClaudeSettings, claudeCapabilities());
+        const versionWarning = messages.find((message) =>
+          JSON.stringify(message).includes(
+            "Claude Agent CLI version probe exited with a non-zero status.",
+          ),
+        );
+        assert.exists(versionWarning);
+        assert.include(
+          JSON.stringify(versionWarning),
+          "Error: claude native binary not installed.",
+        );
+      }).pipe(
+        Effect.provide([
+          Logger.layer([logCapture], { mergeWithExisting: false }),
+          layerMockSpawner((args) => {
+            assert.deepStrictEqual(args, ["--version"]);
+            return { stdout: "", stderr, code: 1 };
+          }),
+        ]),
+      );
+    });
+
+    it.effect.each(["", " \t\n \r\n\u001b[0m "])(
+      "keeps the generic version failure message when stderr has no meaningful line: %j",
+      (stderr) =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities(),
+          );
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.message, "Claude Agent CLI is installed but failed to run.");
+        }).pipe(
+          Effect.provide(
+            layerMockSpawner((args) => {
+              assert.deepStrictEqual(args, ["--version"]);
+              return { stdout: "", stderr, code: 1 };
+            }),
+          ),
+        ),
+    );
+
     it.effect("reports a logged-out CLI as unauthenticated", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(

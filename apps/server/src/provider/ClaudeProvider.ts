@@ -1,3 +1,4 @@
+import * as NodeUtil from "node:util";
 import {
   type ClaudeSettings,
   type ModelCapabilities,
@@ -539,10 +540,19 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const version = versionProbe.success.value;
   const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
   if (version.code !== 0) {
+    const firstStderrLine = NodeUtil.stripVTControlCharacters(version.stderr)
+      .split(/\r?\n/)
+      .map((line) => line.trim().replace(/\s+/g, " "))
+      .find((line) => line.length > 0);
+    const stderrExcerpt =
+      firstStderrLine && firstStderrLine.length > 512
+        ? `${firstStderrLine.slice(0, 511)}…`
+        : firstStderrLine;
     yield* Effect.logWarning("Claude Agent CLI version probe exited with a non-zero status.", {
       exitCode: version.code,
       stdoutLength: version.stdout.length,
       stderrLength: version.stderr.length,
+      stderrExcerpt,
     });
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
@@ -554,7 +564,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "error",
         auth: { status: "unknown" },
-        message: "Claude Agent CLI is installed but failed to run.",
+        message: stderrExcerpt
+          ? `Claude Agent CLI is installed but failed to run. ${stderrExcerpt}`
+          : "Claude Agent CLI is installed but failed to run.",
       },
     });
   }
