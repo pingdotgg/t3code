@@ -39,6 +39,7 @@ function hasReasoningControl(model: ServerProviderModel): boolean {
 
 // Reasoning is the norm, so only its absence is labeled, and only when other models have it.
 // Null capabilities mean unknown (e.g. a custom model the server has not resolved yet), not absent.
+// The "default" slug defers to the provider's own model setting, so its reasoning is unknown too.
 function describeModelCapabilities(
   model: ServerProviderModel,
   flagMissingReasoning: boolean,
@@ -53,7 +54,12 @@ function describeModelCapabilities(
         descriptor.options.some((option) => option.id === "fast" || option.label === "Fast")),
   );
   if (hasFastMode) labels.push("Fast mode");
-  if (flagMissingReasoning && model.capabilities && !hasReasoningControl(model)) {
+  if (
+    flagMissingReasoning &&
+    model.capabilities &&
+    model.slug !== "default" &&
+    !hasReasoningControl(model)
+  ) {
     labels.push("No reasoning");
   }
   return labels;
