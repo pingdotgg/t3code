@@ -102,8 +102,8 @@ const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } a
 const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSchema);
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
-/** A dialog that opens mid-read blocks page script, so a desktop size read gives up after this. */
-const DESKTOP_VIEWPORT_READ_TIMEOUT_MS = 1_000;
+/** A dialog blocks page script, so a desktop size read gives up after this. */
+const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
 
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
@@ -311,12 +311,11 @@ interface ServerTab {
   setting: PreviewViewportSetting;
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
-  /** Last CSS size measured on the desktop, usable while a dialog blocks page script. */
+  /** Last usable CSS size measured on the desktop. */
   desktopViewport: { readonly width: number; readonly height: number } | null;
-  /** Numbers desktop size reads, so a slower older read cannot overwrite a newer one. */
-  desktopViewportReads: number;
-  /** The read that stored `desktopViewport`. */
-  desktopViewportApplied: number;
+  desktopViewportRead: Promise<ServerTab["desktopViewport"]>;
+  /** A read queued behind `desktopViewportRead`, shared by every caller that waits for it. */
+  desktopViewportNext: Promise<ServerTab["desktopViewport"]> | null;
   loading: boolean;
   closing: boolean;
   recording: Recording | null;
@@ -465,7 +464,6 @@ const make = Effect.gen(function* () {
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
   const agentTurns = yield* (yield* PreviewAgentActivity.PreviewAgentActivity).changes;
-  const runSync = Effect.runSyncWith(yield* Effect.context<never>());
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
@@ -559,8 +557,6 @@ const make = Effect.gen(function* () {
     if (tab.dialog === dialog) tab.dialog = null;
     ServerBrowserPage.invalidateRefs(tab.page);
     broadcastControl(tab);
-    // The desktop page could not be measured while the dialog was open.
-    if (tab.desktop) await broadcastViewport(tab).catch(constVoid);
   };
 
   const report = (tab: ServerTab, navStatus: PreviewNavStatus) => {
@@ -618,9 +614,7 @@ const make = Effect.gen(function* () {
 
   // Desktop pages have no Playwright viewport; an isolated world keeps page script
   // from overriding the CSS size, and failed reads preserve the last usable size.
-  const measureDesktopViewport = async (tab: ServerTab) => {
-    if (tab.dialog) return tab.desktopViewport;
-    const read = ++tab.desktopViewportReads;
+  const readDesktopViewport = async (tab: ServerTab) => {
     const readSize = async () => {
       const { frameTree } = await tab.cdp.send("Page.getFrameTree");
       const { executionContextId } = await tab.cdp.send("Page.createIsolatedWorld", {
@@ -634,23 +628,26 @@ const make = Effect.gen(function* () {
       });
       return asRecord(result.value);
     };
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const size = await Promise.race([
+    const size = await runPromise(
       // A navigation can destroy the isolated world mid-read.
-      readSize().catch(() => null),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), DESKTOP_VIEWPORT_READ_TIMEOUT_MS);
-      }),
-    ]);
-    clearTimeout(timer);
-    if (read < tab.desktopViewportApplied) return tab.desktopViewport;
-    if (!size || typeof size.width !== "number" || typeof size.height !== "number")
-      return tab.desktopViewport;
-    if (size.width <= 0 || size.height <= 0) return tab.desktopViewport;
-    tab.desktopViewportApplied = read;
-    tab.desktopViewport = { width: size.width, height: size.height };
+      Effect.promise(() => readSize().catch(() => null)).pipe(
+        Effect.timeoutOption(DESKTOP_VIEWPORT_READ_TIMEOUT),
+        Effect.map(Option.getOrNull),
+      ),
+    );
+    const width = size?.width;
+    const height = size?.height;
+    if (typeof width === "number" && width > 0 && typeof height === "number" && height > 0)
+      tab.desktopViewport = { width, height };
     return tab.desktopViewport;
   };
+
+  // Reads run one at a time, and callers that arrive during a read share the next one.
+  const measureDesktopViewport = (tab: ServerTab) =>
+    (tab.desktopViewportNext ??= tab.desktopViewportRead.then(() => {
+      tab.desktopViewportNext = null;
+      return (tab.desktopViewportRead = readDesktopViewport(tab));
+    }));
 
   const layoutSize = async (tab: ServerTab) => {
     if (tab.desktop) return measureDesktopViewport(tab);
@@ -681,7 +678,7 @@ const make = Effect.gen(function* () {
 
   const broadcastViewport = async (tab: ServerTab) => {
     const size = await layoutSize(tab);
-    if (!size) return;
+    if (!size || tab.closing) return;
     for (const viewer of tab.viewers) viewer.push({ _tag: "viewport", ...size });
   };
 
@@ -838,8 +835,8 @@ const make = Effect.gen(function* () {
       colorScheme: "system",
       zoomFactor: 1,
       desktopViewport: null,
-      desktopViewportReads: 0,
-      desktopViewportApplied: 0,
+      desktopViewportRead: Promise.resolve(null),
+      desktopViewportNext: null,
       loading: false,
       closing: false,
       recording: null,
@@ -856,31 +853,8 @@ const make = Effect.gen(function* () {
     await applyRendering(tab, snapshot);
     if (desktop) {
       // The desktop resizes and zooms its webview itself; viewers map input with the new size.
-      // Resizes arrive in bursts, so one read runs and at most one more follows it.
-      let resizing: Promise<void> | null = null;
-      let resizedAgain = false;
       cdp.on("Page.frameResized", () => {
-        if (tab.viewers.size === 0) return;
-        if (resizing) {
-          resizedAgain = true;
-          return resizing;
-        }
-        resizing = (async () => {
-          do {
-            resizedAgain = false;
-            await broadcastViewport(tab).catch(constVoid);
-          } while (resizedAgain);
-          resizing = null;
-        })();
-        return resizing;
-      });
-      // Someone at the desktop can close a dialog in its own window, outside resolveDialog.
-      cdp.on("Page.javascriptDialogClosed", () => {
-        if (!tab.dialog) return;
-        tab.dialog = null;
-        ServerBrowserPage.invalidateRefs(page);
-        broadcastControl(tab);
-        if (tab.viewers.size > 0) void broadcastViewport(tab).catch(constVoid);
+        if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
       });
       await cdp.send("Page.enable");
     }
@@ -2369,7 +2343,6 @@ const make = Effect.gen(function* () {
     const recentFrames: Array<number> = [];
     let screencastParams = Promise.resolve();
     let screencastScale = 1;
-    let ended = false;
     const startScreencast = (scale: number) => {
       screencastScale = scale;
       screencastParams = screencastParams.then(async () => {
@@ -2393,11 +2366,6 @@ const make = Effect.gen(function* () {
       pressedButtons: new Map(),
       push: (next) => {
         // Dropped frames must still release Chromium.
-        if (ended) {
-          if (next._tag === "frame") runFork(next.ack);
-          return;
-        }
-        if (next._tag === "gone" || next._tag === "reconnect") ended = true;
         if (Queue.offerUnsafe(output, next)) return;
         if (next._tag === "frame") runFork(next.ack);
         // State a stalled viewer cannot miss replaces its backlog. It runs
@@ -2416,15 +2384,6 @@ const make = Effect.gen(function* () {
           const chooser =
             next._tag === "control" || next._tag === "viewport" ? fileChooserMessage(tab) : null;
           if (chooser && tab.control.controller === viewer.id) Queue.offerUnsafe(output, chooser);
-          // One-time notifications cannot be rebuilt from state; keep them in order.
-          // A former controller may still cache an older picker, so closes stay too.
-          // If they no longer all fit, the oldest go, so the latest clipboard survives.
-          const notifications = dropped.value.filter((item) =>
-            ["fileChooserClosed", "popup", "download", "clipboard"].includes(item._tag),
-          );
-          const room = VIEWER_OUTPUT_LIMIT - runSync(Queue.size(output));
-          for (const item of notifications.slice(Math.max(0, notifications.length - room)))
-            Queue.offerUnsafe(output, item);
           for (const item of dropped.value) if (item._tag === "frame") runFork(item.ack);
         }
       },
