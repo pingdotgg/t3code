@@ -968,13 +968,17 @@ export const t3Default = (
       return newThread(input, input.message);
     case "create_threads":
       return {
-        threads: (Array.isArray(input.threads) ? input.threads : []).map((request) => ({
-          ...newThread(request, isRecord(request) ? request.prompt : undefined),
-          createdBy: "agent",
-          creationSource: "mcp",
-          providerInstanceId: sample.base.codex ? "codex" : "claudeAgent",
-          model: sample.base.model,
-        })),
+        threads: (Array.isArray(input.threads) ? input.threads : []).map((request) => {
+          const target = isRecord(request) && isRecord(request.target) ? request.target : {};
+          return {
+            ...newThread(request, isRecord(request) ? request.prompt : undefined),
+            createdBy: "agent",
+            creationSource: "mcp",
+            providerInstanceId:
+              target.providerInstanceId ?? (sample.base.codex ? "codex" : "claudeAgent"),
+            model: target.model ?? sample.base.model,
+          };
+        }),
       };
     case "orchestrator_capabilities":
       return {
@@ -1046,11 +1050,13 @@ export const t3Default = (
       const launched = sample.threads.get(threadId);
       if (launched !== undefined) {
         const items = launched.brief
-          ? [{ position: 1, createdBy: "user", text: launched.brief }]
+          ? [{ position: 1, createdBy: "agent", creationSource: "mcp", text: launched.brief }]
           : [];
         const thread = {
           threadId,
           title: launched.title,
+          createdBy: "agent",
+          creationSource: "mcp",
           status: launched.brief ? "running" : "idle",
         };
         return { thread, items, nextPosition: items.length + 1, hasMore: false };
