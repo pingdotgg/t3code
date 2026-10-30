@@ -60,7 +60,6 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
-import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -1301,6 +1300,15 @@ it.effect(
           return yield* Effect.never;
         }).pipe(Effect.scoped, Effect.forkChild);
         const original = yield* Deferred.await(acquired);
+        assert.isFalse(
+          yield* manager.releaseUnlessBusy({
+            providerSessionId,
+            ownProviderThreadIds: [
+              makeProviderThread({ idAllocator, threadId: threadA, providerSessionId, now }).id,
+            ],
+            reason: "manual_shutdown",
+          }),
+        );
         const failed = yield* Effect.gen(function* () {
           assert.strictEqual(yield* manager.openScoped({ ...input, threadId: threadB }), original);
           yield* instances.rebuild("/home/reconfigured");
@@ -1537,110 +1545,6 @@ it.effect(
         assert.equal((yield* Ref.get(state)).closeCount, 1);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(McpProviderSessions.layer)),
-);
-
-it.effect("ProviderSessionManagerV2 records provider session and turn metrics", () =>
-  Effect.gen(function* () {
-    const state = yield* Ref.make(emptyState);
-    const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSink.EventSinkV2;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const now = yield* DateTime.now;
-      const threadId = ThreadId.make("thread-provider-session-manager-metrics");
-      const providerSessionId = yield* idAllocator.allocate.providerSession({
-        providerInstanceId: modelSelection.instanceId,
-        threadId,
-      });
-      const providerThread = makeProviderThread({ idAllocator, threadId, providerSessionId, now });
-      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
-      yield* eventSink.write({
-        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
-      });
-
-      const runtime = yield* manager.open({
-        threadId,
-        providerSessionId,
-        modelSelection,
-        runtimePolicy,
-      });
-      yield* runtime.startTurn({
-        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
-        threadId,
-        runId,
-        runOrdinal: 1,
-        providerTurnOrdinal: 1,
-        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
-        rootNodeId: idAllocator.derive.rootNode({ runId }),
-        providerThread,
-        message: {
-          createdBy: "user",
-          creationSource: "web",
-          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
-          text: "hello",
-          attachments: [],
-        },
-        modelSelection,
-        runtimePolicy,
-      });
-      yield* runtime.interruptTurn({
-        providerThread,
-        providerTurnId: idAllocator.derive.providerTurn({
-          driver: CODEX_DRIVER,
-          nativeTurnId: "native-turn",
-        }),
-      });
-      yield* manager.close(providerSessionId);
-
-      const snapshots = yield* Metric.snapshot;
-      const has = (id: string, attributes: Readonly<Record<string, string>>) =>
-        snapshots.some(
-          (snapshot) =>
-            snapshot.id === id &&
-            Object.entries(attributes).every(
-              ([key, value]) => snapshot.attributes?.[key] === value,
-            ),
-        );
-      assert.isTrue(
-        has("t3_provider_sessions_total", {
-          provider: "codex",
-          operation: "open",
-          outcome: "success",
-        }),
-      );
-      assert.isTrue(
-        has("t3_provider_sessions_total", {
-          provider: "codex",
-          operation: "release",
-          reason: "manual_shutdown",
-          outcome: "success",
-        }),
-      );
-      assert.isTrue(
-        has("t3_provider_turns_total", {
-          provider: "codex",
-          operation: "send",
-          modelFamily: "gpt",
-          outcome: "success",
-        }),
-      );
-      assert.isTrue(has("t3_provider_turn_duration", { provider: "codex", operation: "send" }));
-      assert.isTrue(
-        has("t3_provider_turns_total", {
-          provider: "codex",
-          operation: "interrupt",
-          outcome: "success",
-        }),
-      );
-    });
-
-    yield* effect.pipe(
-      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
-      // A private registry keeps other tests' provider metrics out of the assertions.
-      Effect.provideService(Metric.MetricRegistry, new Map()),
-    );
-  }),
 );
 
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>

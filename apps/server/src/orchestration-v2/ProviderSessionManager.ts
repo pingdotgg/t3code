@@ -962,7 +962,9 @@ export const layerWithOptions = (
               if (
                 own !== undefined &&
                 [...existing.busyTurns].some(
-                  (turnKey) => !own.some((id) => turnKey.startsWith(busyTurnPrefix(id))),
+                  (turnKey) =>
+                    typeof turnKey !== "string" ||
+                    !own.some((id) => turnKey.startsWith(busyTurnPrefix(id))),
                 )
               ) {
                 return ["kept", current] as const;
@@ -1747,10 +1749,11 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
-        const withBusyTurn = (
-          start: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"],
-        ): ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"] =>
-(input) =>
+        const withBusyTurn =
+          (
+            start: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"],
+          ): ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"] =>
+          (input) =>
             observeActivity(
               providerSessionId,
               ensureThreadAttached({
@@ -2340,7 +2343,6 @@ export const layerWithOptions = (
               ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
             >(new Map());
             const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
-            const now = yield* Clock.currentTimeMillis;
             const entry: LiveSessionEntry = {
               attachedThreadIds: new Set([input.threadId]),
               loadedProviderThreadKeyByThread: new Map(),
@@ -2359,7 +2361,6 @@ export const layerWithOptions = (
               scope: sessionScope,
               idleGeneration: 0,
               busyTurns: new Set(),
-              lastActivityAtMs: now,
               idleFiber: null,
               pinnedSinceMs: null,
               idleThreadUnloads: new Map(),
