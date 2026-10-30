@@ -769,6 +769,7 @@ export const make = Effect.gen(function* () {
 
   const resolveRepository = Effect.fn("BitbucketApi.resolveRepository")(function* (input: {
     readonly cwd: string;
+    readonly reference?: string;
     readonly context?: SourceControlProvider.SourceControlProviderContext;
     readonly repository?: string;
   }) {
@@ -779,6 +780,10 @@ export const make = Effect.gen(function* () {
     if (input.repository !== undefined) {
       return yield* requireRepositoryLocator(input.repository);
     }
+
+    const url = input.reference ? URL.parse(input.reference) : null;
+    const link = url ? definition.parseChangeRequestUrl(url) : null;
+    if (link) return yield* requireRepositoryLocator(link.repository);
 
     const fromContext =
       input.context?.provider.kind === "bitbucket"
@@ -877,19 +882,27 @@ export const make = Effect.gen(function* () {
     readonly sourceRepositoryName: string;
     readonly isCrossRepository: boolean;
   }) {
-    if (
-      input.context?.provider.kind === "bitbucket" &&
-      !input.isCrossRepository &&
-      parseBitbucketRemoteUrl(input.context.remoteUrl) !== null
-    ) {
-      return input.context.remoteName;
-    }
-
     if (!input.isCrossRepository) {
-      const remoteName = yield* git
-        .resolvePrimaryRemoteName(input.cwd)
-        .pipe(Effect.orElseSucceed(() => null));
-      if (remoteName) return remoteName;
+      const context = input.context?.provider.kind === "bitbucket" ? input.context : undefined;
+      const remoteName =
+        context?.remoteName ??
+        (yield* git.resolvePrimaryRemoteName(input.cwd).pipe(Effect.orElseSucceed(() => null)));
+      if (remoteName) {
+        const remoteUrl =
+          context?.remoteUrl ??
+          (yield* readConfigValueNullable(input.cwd, `remote.${remoteName}.url`));
+        const repository =
+          remoteUrl && (context || recognizeRemoteWith(definition, remoteUrl))
+            ? parseBitbucketRemoteUrl(remoteUrl)
+            : null;
+        if (
+          repository &&
+          `${repository.workspace}/${repository.repoSlug}`.toLowerCase() ===
+            input.sourceRepositoryName.toLowerCase()
+        ) {
+          return remoteName;
+        }
+      }
     }
 
     const cloneUrls = yield* getRepository({

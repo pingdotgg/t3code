@@ -185,6 +185,114 @@ it.effect("parses pull request responses from the Bitbucket REST API", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect.each([false, true])("honors PR URL repositories, context=%s", (withContext) => {
+  const { execute, git, layer } = makeLayer({
+    response: (request) =>
+      Response.json(
+        request.url.endsWith("/pullrequests/42")
+          ? {
+              ...bitbucketPullRequest,
+              source: {
+                branch: { name: "feature/source-control" },
+                repository: { full_name: "another/app" },
+              },
+              destination: { branch: { name: "main" }, repository: { full_name: "another/app" } },
+            }
+          : {
+              ...repositoryJson,
+              full_name: "another/app",
+              links: { clone: [{ name: "ssh", href: "git@bitbucket.org:another/app.git" }] },
+            },
+      ),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const input = {
+      cwd: "/repo",
+      reference: "https://bitbucket.org/another/app/pull-requests/42",
+      ...(withContext
+        ? {
+            context: {
+              provider: {
+                kind: SourceControlProviderKind.make("bitbucket"),
+                name: "Bitbucket",
+                baseUrl: "https://bitbucket.org",
+              },
+              remoteName: "origin",
+              remoteUrl: "git@bitbucket.org:pingdotgg/t3code.git",
+            },
+          }
+        : {}),
+    };
+    yield* bitbucket.getPullRequest(input);
+    yield* bitbucket.checkoutPullRequest(input);
+    assert.deepStrictEqual(
+      execute.mock.calls.slice(0, 2).map(([request]) => request.url),
+      [
+        "https://api.test.local/2.0/repositories/another/app/pullrequests/42",
+        "https://api.test.local/2.0/repositories/another/app/pullrequests/42",
+      ],
+    );
+    assert.deepStrictEqual(git.ensureRemote.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      preferredName: "another",
+      url: "git@bitbucket.org:another/app.git",
+    });
+    assert.deepStrictEqual(git.fetchRemoteBranch.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      remoteName: "octocat",
+      remoteBranch: "feature/source-control",
+      localBranch: "feature/source-control",
+    });
+    assert.deepStrictEqual(git.setBranchUpstream.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      branch: "feature/source-control",
+      remoteName: "octocat",
+      remoteBranch: "feature/source-control",
+    });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each([false, true])(
+  "reuses matching checkout remotes for numeric references, context=%s",
+  (withContext) => {
+    const { git, layer } = makeLayer({
+      response: () =>
+        Response.json({
+          ...bitbucketPullRequest,
+          source: { ...bitbucketPullRequest.source, repository: { full_name: "pingdotgg/t3code" } },
+        }),
+    });
+    return Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      yield* bitbucket.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "#42",
+        ...(withContext
+          ? {
+              context: {
+                provider: {
+                  kind: SourceControlProviderKind.make("bitbucket"),
+                  name: "Bitbucket",
+                  baseUrl: "https://bitbucket.org",
+                },
+                remoteName: "upstream",
+                remoteUrl: "git@bitbucket.org:PingDotGG/T3Code.git",
+              },
+            }
+          : {}),
+      });
+      assert.strictEqual(git.ensureRemote.mock.calls.length, 0);
+      assert.deepStrictEqual(git.fetchRemoteBranch.mock.calls[0]?.[0], {
+        cwd: "/repo",
+        remoteName: withContext ? "upstream" : "origin",
+        remoteBranch: "feature/source-control",
+        localBranch: "feature/source-control",
+      });
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 it.effect("lists pull requests with Bitbucket state and source branch query params", () => {
   const { execute, layer } = makeLayer({
     response: () =>
