@@ -142,6 +142,13 @@ const browserTestProject = {
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
         },
+        // Headless Chromium denies clipboard writes even after a click unless the context grants them.
+        grantClipboardWrite: async ({ context }) => {
+          await context.grantPermissions(["clipboard-write"]);
+        },
+        revokePermissions: async ({ context }) => {
+          await context.clearPermissions();
+        },
       },
     },
   },

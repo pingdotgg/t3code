@@ -5,6 +5,10 @@ declare module "vite-plus/test/browser" {
   interface BrowserCommands {
     /** Defined in vite.config.ts. Moves Playwright's mouse off the page. */
     resetPointer: () => Promise<void>;
+    /** Defined in vite.config.ts. Grants clipboard-write to the browser context. */
+    grantClipboardWrite: () => Promise<void>;
+    /** Defined in vite.config.ts. Clears every permission granted to the browser context. */
+    revokePermissions: () => Promise<void>;
   }
 }
 

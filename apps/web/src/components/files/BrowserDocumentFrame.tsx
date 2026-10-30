@@ -287,6 +287,7 @@ export function HtmlRenderDocument(props: {
         title={props.title}
         // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
         sandbox="allow-scripts allow-forms"
+        allow="clipboard-write"
         loading="lazy"
         onLoad={() => {
           setLoaded(true);
