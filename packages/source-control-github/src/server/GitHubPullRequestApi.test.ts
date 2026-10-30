@@ -574,6 +574,7 @@ const checkContextsPage = (
   });
 
 const pullRequestRefs = encodeJson({ base: { sha: "a1b2c3d" }, head: { sha: "b1c2d3e" } });
+const pullRequestMergeBase = encodeJson({ merge_base_commit: { sha: "c1d2e3f" } });
 
 const crossRepositoryDetail = (headRefOid = "abc123") =>
   coreResponse({
@@ -2856,6 +2857,34 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("expands a pull request file from its merge base, not the moved base tip", () =>
+    Effect.gen(function* () {
+      const answers: Record<string, string> = {
+        "repos/acme/web/pulls/7": pullRequestRefs,
+        "repos/acme/web/compare/a1b2c3d...b1c2d3e?per_page=1&page=2": pullRequestMergeBase,
+        "repos/acme/web/contents/src/a.ts?ref=a1b2c3d": "base tip\n",
+        "repos/acme/web/contents/src/a.ts?ref=c1d2e3f": "merge base\n",
+        "repos/acme/web/contents/src/a.ts?ref=b1c2d3e": "head\n",
+      };
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(output(call.kind === "rest" ? (answers[call.path] ?? "") : "")),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const contents = yield* cli.getPullRequestDiffFileContents({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        changeType: "change",
+        oldPath: "src/a.ts",
+        newPath: "src/a.ts",
+      });
+
+      expect(contents).toEqual({ oldContents: "merge base\n", newContents: "head\n" });
+    }),
+  );
+
   it.effect("reports unusable diff revisions as a structured error", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("not-a-sha\tstill-not-a-sha\n")));
@@ -2885,6 +2914,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("reports undecodable diff file contents as binary", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestRefs)));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestMergeBase)));
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("binary�contents", false, true)));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -2911,6 +2941,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("returns valid text containing a literal replacement character", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestRefs)));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestMergeBase)));
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("before�after")));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
