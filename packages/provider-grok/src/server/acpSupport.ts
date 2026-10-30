@@ -16,6 +16,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeXAiPromptCompletionRuntime } from "./xaiAcpExtension.ts";
 
 const GROK_API_KEY_ENV = "XAI_API_KEY";
@@ -129,16 +130,12 @@ export const makeGrokAcpRuntime = Effect.fn("GrokAcpSupport.makeGrokAcpRuntime")
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
 > {
   const processGroupPlatform = yield* HostProcess.Platform.pipe(Effect.provide(NodeServices.layer));
+  const environment = input.environment ?? (yield* mergeProviderInstanceEnvironment(undefined));
   const acpContext = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
-      spawn: buildGrokAcpSpawnInput(
-        input.grokSettings,
-        input.cwd,
-        input.environment,
-        input.runtimeMode,
-      ),
-      authMethodId: resolveGrokAuthMethodId(input.environment),
+      spawn: buildGrokAcpSpawnInput(input.grokSettings, input.cwd, environment, input.runtimeMode),
+      authMethodId: resolveGrokAuthMethodId(environment),
       cancelMeta: { ...input.cancelMeta, ...GROK_ACP_CANCEL_META },
       initializeMeta: GROK_ACP_INITIALIZE_META,
       ...grokAcpRuntimeProcessOwnership(processGroupPlatform),

@@ -16,7 +16,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
-import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -31,6 +30,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { collectUint8StreamText } from "./collectStreamText.ts";
+import { mergeProviderInstanceEnvironment } from "./instanceEnvironment.ts";
 import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
@@ -40,25 +40,6 @@ const MISE_WRAPPER_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
-
-const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
-  Object.fromEntries(
-    Object.entries(input).flatMap(([key, value]) =>
-      Option.match(value, {
-        onNone: () => [],
-        onSome: (resolved) => [[key, resolved]],
-      }),
-    ),
-  );
-
-const CommandLookupEnvConfig = Config.all({
-  PATH: Config.String("PATH").pipe(Config.option),
-  Path: Config.String("Path").pipe(Config.option),
-  path: Config.String("path").pipe(Config.option),
-  PATHEXT: Config.String("PATHEXT").pipe(Config.option),
-}).pipe(Config.map(compactEnv));
-
-const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
 export interface ProviderMaintenanceResolutionContext {
   readonly binaryPath: string;
@@ -337,11 +318,10 @@ const runProbe = Effect.fn("runProbe")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
     // Windows package managers are `.cmd` shims that need the shell.
-    const resolved = yield* resolveSpawnCommand(command, args, { env, extendEnv: true });
+    const resolved = yield* resolveSpawnCommand(command, args, { env });
     const child = yield* spawner.spawn(
       ChildProcess.make(resolved.command, resolved.args, {
         env,
-        extendEnv: true,
         shell: resolved.shell,
       }),
     );
@@ -393,13 +373,14 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   packageName: string,
 ) {
   // Match the updater's pnpm and server environment, rather than the instance's.
-  const pnpmPath = yield* resolveCommandPath("pnpm");
+  const env = yield* mergeProviderInstanceEnvironment(undefined, yield* HostProcess.Environment);
+  const pnpmPath = yield* resolveCommandPath("pnpm", { env });
   if (!pnpmPath) return null;
   // Silent reporting keeps project package-manager warnings out of the JSON.
   const outdated = yield* runProbe(
     pnpmPath,
     ["outdated", "-g", "--reporter=silent", "--format", "json", packageName],
-    {},
+    env,
     // pnpm outdated exits 1 when updates are available.
     [0, 1],
   );
@@ -413,7 +394,7 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   const listed = yield* runProbe(
     pnpmPath,
     ["ls", "-g", "--reporter=silent", "--depth", "0", "--json", packageName],
-    {},
+    env,
   );
   const listedEntries = listed ? Option.getOrUndefined(decodePnpmList(listed)) : undefined;
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
@@ -725,7 +706,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     return yield* resolver.resolve(null);
   }
 
-  const env = options?.env ?? (yield* readCommandLookupEnv);
+  const env = options?.env ?? (yield* mergeProviderInstanceEnvironment(undefined));
   const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
   if (!resolvedCommandPath) {
     return yield* resolver.resolve(null);
