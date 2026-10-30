@@ -226,7 +226,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
             plan.filter((row) =>
               row.detail.startsWith("SEARCH messages USING INTEGER PRIMARY KEY"),
             ),
-            2,
+            1,
             plan.map((row) => row.detail).join("\n"),
           );
         }
