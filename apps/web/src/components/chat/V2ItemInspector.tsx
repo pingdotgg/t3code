@@ -23,6 +23,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
+import { FileChangeInlineDiff } from "./FileChangeInlineDiff";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ShellCommandBlock } from "./ShellCommandBlock";
@@ -306,9 +307,17 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
               </Button>
             ) : null}
           </div>
-          {item.status === "failed" && item.diffStr?.trim() ? (
-            <StructuredValue value={item.diffStr} />
-          ) : null}
+          {item.status === "failed" ? (
+            item.diffStr?.trim() ? (
+              <StructuredValue value={item.diffStr} />
+            ) : null
+          ) : (
+            <FileChangeInlineDiff
+              item={item}
+              pending={outputState.pending}
+              error={outputState.error}
+            />
+          )}
           {item.changes !== undefined && item.changes.length > 0 ? (
             <ul className="space-y-1 font-mono text-muted-foreground">
               {item.changes.map((change) => (

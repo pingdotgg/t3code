@@ -277,8 +277,14 @@ describe("orchestration V2 wire projection", () => {
     expect(projected).not.toHaveProperty("oldStr");
     expect(projected).not.toHaveProperty("newStr");
     expect(projected).toMatchObject({ fileName: "src/main.ts", additions: 3, deletions: 1 });
+    // Clients fetch the withheld diff on expand; re-projection keeps the marker.
+    expect(projected).toMatchObject({ diffOmitted: true });
+    expect(projectTurnItemForWire(projected)).toEqual(projected);
     expect(item.diffStr).toBe("+new code");
     expect(projectTurnItemForDetail(item)).toMatchObject({ diffStr: "+new code" });
+    expect(projectTurnItemForDetail({ ...item, diffOmitted: true })).not.toHaveProperty(
+      "diffOmitted",
+    );
     expect(projectTurnItemForDetail(item)).not.toHaveProperty("oldStr");
     expect(projectTurnItemForDetail(item)).not.toHaveProperty("newStr");
     const { diffStr: _diff, ...contentOnly } = item;
@@ -287,6 +293,12 @@ describe("orchestration V2 wire projection", () => {
       newStr: "new code",
     });
     expect(projectTurnItemForWire(contentOnly)).not.toHaveProperty("newStr");
+    expect(projectTurnItemForWire(contentOnly)).toMatchObject({ diffOmitted: true });
+    const { diffStr: _noDiff, oldStr: _noOld, newStr: _noNew, ...nothingRecorded } = item;
+    expect(projectTurnItemForWire(nothingRecorded)).not.toHaveProperty("diffOmitted");
+    expect(projectTurnItemForWire({ ...nothingRecorded, diffStr: " \n" })).not.toHaveProperty(
+      "diffOmitted",
+    );
     const failed = projectTurnItemForWire({
       ...item,
       status: "failed",
@@ -294,6 +306,7 @@ describe("orchestration V2 wire projection", () => {
     });
     expect(failed).toMatchObject({ diffStr: "String to replace not found" });
     expect(failed).not.toHaveProperty("newStr");
+    expect(failed).not.toHaveProperty("diffOmitted");
   });
 
   it("retains only result identities and failure metadata in live tool events", () => {

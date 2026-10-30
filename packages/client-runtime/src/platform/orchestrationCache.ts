@@ -10,8 +10,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
-// Older caches may contain human turns that bypassed server history budgets.
-export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 5 as const;
+// Older caches may contain human turns that bypassed server history budgets. 8 drops records an
+// older client wrote without file changes' `diffOmitted`; a resumed thread replays only newer
+// events, so those rows would never fetch their diff. 6 and 7 are compact record versions
+// (threadCacheEncoding.ts): skipping them keeps mobile from reading a compact record as a full one.
+export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 8 as const;
 
 export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),

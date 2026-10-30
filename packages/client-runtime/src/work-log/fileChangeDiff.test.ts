@@ -1,6 +1,10 @@
+import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { describe, expect, it } from "vite-plus/test";
-import { getRenderablePatch, resolveFileDiffPath } from "./diffRendering";
-import { toolCallDiff } from "./toolCallDiff";
+import { toolCallDiff } from "./fileChangeDiff.ts";
+
+function renderedFiles(patch: string | undefined) {
+  return patch ? parsePatchFiles(patch.trim()).flatMap((parsed) => parsed.files) : [];
+}
 
 describe("toolCallDiff", () => {
   it("renders recorded hunks without reading a repository, including renamed paths", () => {
@@ -13,13 +17,11 @@ describe("toolCallDiff", () => {
         diffStr: "@@ -1 +1 @@\n-before\n+after\n",
         ...(changes ? { changes } : {}),
       });
-      const rendered = getRenderablePatch(patch);
-      expect(rendered?.kind).toBe("files");
-      if (rendered?.kind !== "files") throw new Error("Expected a file diff");
-      expect(rendered.files).toHaveLength(1);
-      expect(resolveFileDiffPath(rendered.files[0]!)).toBe(changes ? "new.ts" : "old.ts");
-      expect(rendered.files[0]!.additionLines.join("")).toContain("after");
-      expect(rendered.files[0]!.deletionLines.join("")).toContain("before");
+      const files = renderedFiles(patch);
+      expect(files).toHaveLength(1);
+      expect(files[0]!.name).toBe(changes ? "new.ts" : "old.ts");
+      expect(files[0]!.additionLines.join("")).toContain("after");
+      expect(files[0]!.deletionLines.join("")).toContain("before");
     }
   });
 
@@ -39,17 +41,16 @@ describe("toolCallDiff", () => {
         ],
       ] as const) {
         const recordedContent = `${content}${ending}`;
-        const rendered = getRenderablePatch(
+        const files = renderedFiles(
           toolCallDiff({
             fileName: "file with spaces.ts",
             diffStr: recordedContent,
             changes: [{ operation, path: "file with spaces.ts" }],
           }).patch,
         );
-        expect(rendered?.kind).toBe("files");
-        if (rendered?.kind !== "files") throw new Error("Expected a file diff");
-        expect(resolveFileDiffPath(rendered.files[0]!)).toBe("file with spaces.ts");
-        const file = rendered.files[0]!;
+        expect(files.length).toBeGreaterThan(0);
+        const file = files[0]!;
+        expect(file.name ?? file.prevName).toBe("file with spaces.ts");
         const lines = content.split("\n").length;
         expect(file.additionLines).toHaveLength(operation === "add" ? lines : 0);
         expect(file.deletionLines).toHaveLength(operation === "delete" ? lines : 0);
@@ -97,7 +98,7 @@ describe("toolCallDiff", () => {
     });
     expect(diff.truncated).toBe(true);
     expect(diff.patch).not.toContain("output truncated");
-    expect(getRenderablePatch(diff.patch)?.kind).toBe("files");
+    expect(renderedFiles(diff.patch)).toHaveLength(1);
     expect(toolCallDiff({ fileName: "a.ts", newStr: `content${suffix}` })).toMatchObject({
       content: [{ label: "Recorded content after", text: "content" }],
       truncated: true,

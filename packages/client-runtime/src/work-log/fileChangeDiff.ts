@@ -1,7 +1,16 @@
+import type { FileDiffMetadata } from "@pierre/diffs";
+import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
-import { getRenderablePatch, resolveFileDiffPath } from "./diffRendering";
 
 type FileChange = Extract<OrchestrationV2TurnItem, { type: "file_change" }>;
+
+function parsedPatchFiles(patch: string): ReadonlyArray<FileDiffMetadata> {
+  try {
+    return parsePatchFiles(patch.trim()).flatMap((parsed) => parsed.files);
+  } catch {
+    return [];
+  }
+}
 
 function toolCallPatch(item: Pick<FileChange, "diffStr" | "fileName" | "changes">) {
   let patch = item.diffStr;
@@ -10,11 +19,11 @@ function toolCallPatch(item: Pick<FileChange, "diffStr" | "fileName" | "changes"
   const rawFileOperation = change?.operation === "add" || change?.operation === "delete";
   if (patch.startsWith("diff --git ") || patch.startsWith("--- ")) {
     if (!rawFileOperation) return patch;
-    const parsed = getRenderablePatch(patch, "tool-call-format");
+    const files = parsedPatchFiles(patch);
     if (
-      parsed?.kind === "files" &&
-      parsed.files.every((file) => {
-        const path = resolveFileDiffPath(file).replaceAll("\\", "/");
+      files.length > 0 &&
+      files.every((file) => {
+        const path = (file.name ?? file.prevName ?? "").replaceAll("\\", "/");
         return (
           file.hunks.length > 0 &&
           item.changes?.some((recorded) => {

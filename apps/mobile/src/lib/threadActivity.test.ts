@@ -32,6 +32,7 @@ import {
   type ThreadFeedCache,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
+  turnItemShowsFileDiff,
 } from "./threadActivity";
 
 const threadId = ThreadId.make("thread-1");
@@ -594,6 +595,39 @@ describe("buildThreadFeed", () => {
     expect(activities[1]?.getFullDetail()).toContain("keep input");
     expect(activities[2]?.detail).toBe("src/example.ts");
     expect(items[0]).toMatchObject({ output: rawOutput });
+  });
+
+  it("expands a Claude Edit to its fetched diff, not the item's JSON", () => {
+    // The wire form of a completed Claude Edit: the server withholds the patch and marks it.
+    const edit: OrchestrationV2TurnItem = {
+      ...base("item-claude-edit", "2026-06-20T00:00:04.000Z", 3),
+      providerThreadId: ProviderThreadId.make("claude-session"),
+      providerTurnId: ProviderTurnId.make("claude-turn"),
+      nativeItemRef: {
+        driver: ProviderDriverKind.make("claude"),
+        nativeId: "toolu_01EditPatch",
+        strength: "strong",
+      },
+      title: "Edit",
+      type: "file_change",
+      fileName: "/tmp/scratch/greet.ts",
+      diffOmitted: true,
+    };
+    const [activity] = buildThreadFeed([projected(edit, 0)]).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(activity).toMatchObject({ canExpand: true, fetchesDetail: true });
+    expect(turnItemShowsFileDiff(edit)).toBe(true);
+    expect(activity?.getFullDetail()).toBeNull();
+    expect(activity?.getCopyText()).toContain("greet.ts");
+
+    // Without a recorded diff (or from an older server) the row keeps today's detail.
+    const { diffOmitted: _omitted, ...unrecorded } = edit;
+    const [plain] = buildThreadFeed([projected(unrecorded, 0)]).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(plain?.fetchesDetail).toBe(false);
+    expect(plain?.getFullDetail()).toContain('"fileName": "/tmp/scratch/greet.ts"');
   });
 
   it("anchors feedback before later committed turns", () => {

@@ -39,7 +39,13 @@ export function toolItemForDisplay(item: OrchestrationV2TurnItem): Orchestration
       return displayItem;
     }
     case "file_change": {
-      const { diffStr, oldStr: _oldStr, newStr: _newStr, ...displayItem } = item;
+      const {
+        diffStr,
+        oldStr: _oldStr,
+        newStr: _newStr,
+        diffOmitted: _diffOmitted,
+        ...displayItem
+      } = item;
       // A failed edit's diffStr holds the provider's error, not a diff.
       return item.status === "failed" && diffStr?.trim()
         ? { ...displayItem, diffStr }

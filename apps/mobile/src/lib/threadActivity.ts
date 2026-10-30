@@ -787,6 +787,11 @@ export function formatItemFullDetail(
   );
 }
 
+/** A file change whose recorded diff the expanded row fetches and renders as its body. */
+export function turnItemShowsFileDiff(item: OrchestrationV2TurnItem): boolean {
+  return item.type === "file_change" && item.status !== "failed" && turnItemNeedsDetailFetch(item);
+}
+
 function toFeedActivity(
   row: OrchestrationV2ProjectedTurnItem,
   attemptId: RunAttemptId | null,
@@ -808,7 +813,10 @@ function toFeedActivity(
         ? readPaths.join("\n") || null
         : item.type === "notification"
           ? item.detail?.trim() || null
-          : formatItemFullDetail(row, item),
+          : // The expanded row shows the fetched diff instead, as web does.
+            turnItemShowsFileDiff(item)
+            ? null
+            : formatItemFullDetail(row, item),
   );
   const getCopyText = memoizeValue(() =>
     item.type === "proposed_plan"

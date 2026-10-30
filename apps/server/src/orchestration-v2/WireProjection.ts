@@ -169,10 +169,18 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       };
     }
     case "file_change": {
-      const { diffStr, oldStr: _old, newStr: _new, ...projected } = item;
-      return item.status === "failed" && diffStr?.trim()
-        ? { ...projected, diffStr: truncateDetail(diffStr) }
-        : projected;
+      const { diffStr, oldStr, newStr, ...projected } = item;
+      // A failed edit's diffStr holds the provider's error, not a diff.
+      if (item.status === "failed") {
+        return diffStr?.trim() ? { ...projected, diffStr: truncateDetail(diffStr) } : projected;
+      }
+      // Re-projecting an already projected item must keep the marker.
+      const recorded =
+        item.diffOmitted === true ||
+        Boolean(diffStr?.trim()) ||
+        oldStr !== undefined ||
+        newStr !== undefined;
+      return recorded ? { ...projected, diffOmitted: true } : projected;
     }
     case "subagent":
       return {
@@ -253,19 +261,20 @@ export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): Orchest
         result:
           item.result === null ? null : (truncateDetail(item.result, MAX_ON_DEMAND_BYTES) ?? null),
       };
-    case "file_change":
+    case "file_change": {
+      const { diffStr, oldStr, newStr, diffOmitted: _omitted, ...projected } = item;
+      const contentOnly = !diffStr?.trim();
       return {
-        ...projectTurnItemForWire(item),
-        ...(item.diffStr === undefined
-          ? {}
-          : { diffStr: truncateDetail(item.diffStr, MAX_ON_DEMAND_BYTES) }),
-        ...(!item.diffStr?.trim() && item.oldStr !== undefined
-          ? { oldStr: truncateDetail(item.oldStr, MAX_ON_DEMAND_BYTES) }
+        ...projected,
+        ...(diffStr === undefined ? {} : { diffStr: truncateDetail(diffStr, MAX_ON_DEMAND_BYTES) }),
+        ...(contentOnly && oldStr !== undefined
+          ? { oldStr: truncateDetail(oldStr, MAX_ON_DEMAND_BYTES) }
           : {}),
-        ...(!item.diffStr?.trim() && item.newStr !== undefined
-          ? { newStr: truncateDetail(item.newStr, MAX_ON_DEMAND_BYTES) }
+        ...(contentOnly && newStr !== undefined
+          ? { newStr: truncateDetail(newStr, MAX_ON_DEMAND_BYTES) }
           : {}),
       };
+    }
     case "handoff":
       return projectTurnItemForWire(item);
     default:

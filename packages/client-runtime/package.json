@@ -387,6 +387,10 @@
       "types": "./src/work-log/itemDetail.ts",
       "default": "./src/work-log/itemDetail.ts"
     },
+    "./work-log/file-change-diff": {
+      "types": "./src/work-log/fileChangeDiff.ts",
+      "default": "./src/work-log/fileChangeDiff.ts"
+    },
     "./work-log/presentation": {
       "types": "./src/work-log/presentation.ts",
       "default": "./src/work-log/presentation.ts"

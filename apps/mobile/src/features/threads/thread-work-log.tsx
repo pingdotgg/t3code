@@ -65,6 +65,7 @@ import { cn } from "../../lib/cn";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
 import {
   formatItemFullDetail,
+  turnItemShowsFileDiff,
   type ThreadFeedActivity,
   workEntryRowLabel,
 } from "../../lib/threadActivity";
@@ -91,6 +92,7 @@ import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText"
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { FilePreviewGallery } from "../../components/FilePreviewGallery";
 import { ThreadMarkdownImage } from "./ThreadMarkdownImage";
+import { FileChangeDiffText } from "./FileChangeDiffText";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -977,9 +979,12 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     call && shownItem.type === "command_execution" && shownItem.exitCode
       ? shownItem.exitCode
       : null;
+  const showsFileDiff = turnItemShowsFileDiff(row.projectedItem.item);
+  const fileDiffItem =
+    expanded && showsFileDiff && fetchedItem?.type === "file_change" ? fetchedItem : null;
   const fullDetail =
     expanded && !reasoning && !call
-      ? fetchedItem && !isRead
+      ? fetchedItem && !isRead && !showsFileDiff
         ? formatItemFullDetail(row.projectedItem, fetchedItem)
         : row.getFullDetail()
       : null;
@@ -990,16 +995,20 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       ? null
       : shownItem.type === "file_search" || shownItem.type === "web_search"
         ? turnItemOutputText(shownItem)
-        : fetchedItem
-          ? (turnItemOutputText(fetchedItem) ??
-            (outputImages.length > 0 || viewedImagePath ? null : "No output."))
-          : fetchedDetail.error
-            ? `Couldn't load output: ${fetchedDetail.error}`
-            : row.fetchesDetail
-              ? fetchedDetail.data
-                ? "Output is no longer available."
-                : "Loading output…"
-              : null;
+        : showsFileDiff && fetchedItem
+          ? null
+          : fetchedItem
+            ? (turnItemOutputText(fetchedItem) ??
+              (outputImages.length > 0 || viewedImagePath ? null : "No output."))
+            : fetchedDetail.error
+              ? `Couldn't load output: ${fetchedDetail.error}`
+              : row.fetchesDetail
+                ? fetchedDetail.data
+                  ? "Output is no longer available."
+                  : showsFileDiff
+                    ? "Loading diff…"
+                    : "Loading output…"
+                : null;
   const exitLine =
     failedExitCode === null ? null : (
       <Text className="mt-1.5 font-mono text-2xs leading-normal text-danger-foreground">
@@ -1150,6 +1159,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       {expanded &&
       (reasoning ||
         fullDetail ||
+        fileDiffItem ||
         call ||
         fetchedOutput ||
         viewedImagePath ||
@@ -1250,6 +1260,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                 {fetchedOutput}
               </Text>
             ) : null}
+            {fileDiffItem ? <FileChangeDiffText item={fileDiffItem} /> : null}
             {streamsOutput ? null : exitLine}
           </ScrollView>
           {streamsOutput ? (

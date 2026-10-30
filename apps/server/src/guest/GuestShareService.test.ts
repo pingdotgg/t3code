@@ -509,7 +509,7 @@ it.effect("gives the guest a command's detail and output, but no file diffs", ()
     ] as const) {
       const change = (yield* guestShares.item(session, id)).item;
       assert.deepInclude(change, { type: "file_change", fileName });
-      assert.doesNotHaveAnyKeys(change, ["diffStr", "oldStr", "newStr"]);
+      assert.doesNotHaveAnyKeys(change, ["diffStr", "oldStr", "newStr", "diffOmitted"]);
     }
     const frames = Array.from(
       yield* Stream.runCollect(yield* guestShares.commandOutput(session, command)),
@@ -527,6 +527,60 @@ it.effect("gives the guest a command's detail and output, but no file diffs", ()
     for (const request of refused) {
       assert.isTrue(Exit.isFailure(yield* Effect.exit(request)));
     }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("streams file changes to guests without a diff to fetch", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    yield* writeItem("item:before", {
+      type: "file_change",
+      status: "completed",
+      fileName: "src/auth.ts",
+      diffStr: "-const token = 1;\n+const token = 2;\n",
+    });
+    const events = yield* guestShares.stream(session);
+    yield* writeItem("item:after", {
+      type: "file_change",
+      status: "completed",
+      fileName: "src/config.ts",
+      oldStr: "",
+      newStr: "export const key = 1;\n",
+    });
+    yield* writeItem("item:failed", {
+      type: "file_change",
+      status: "failed",
+      fileName: "src/missing.ts",
+      diffStr: "String to replace not found",
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.guest-share.close",
+      commandId: CommandId.make("close-after-file-changes"),
+      threadId,
+    });
+    const received = Array.from(yield* Stream.runCollect(events));
+    const fileChanges = received.flatMap((event) =>
+      event.type !== "thread"
+        ? []
+        : event.item.kind === "snapshot"
+          ? event.item.projection.visibleTurnItems.map((row) => row.item)
+          : event.item.kind === "event" && event.item.event.type === "turn-item.updated"
+            ? [event.item.event.payload]
+            : [],
+    );
+    const byId = new Map(
+      fileChanges.flatMap((item) => (item.type === "file_change" ? [[item.id, item]] : [])),
+    );
+    // The owner's wire marks these diffOmitted; a guest's row must not offer to fetch them.
+    for (const id of ["item:before", "item:after"]) {
+      const change = byId.get(TurnItemId.make(id));
+      assert.isDefined(change);
+      assert.doesNotHaveAnyKeys(change, ["diffOmitted", "diffStr", "oldStr", "newStr"]);
+    }
+    assert.deepInclude(byId.get(TurnItemId.make("item:failed")), {
+      diffStr: "String to replace not found",
+    });
   }).pipe(Effect.provide(layerTest)),
 );
 

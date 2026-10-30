@@ -1625,6 +1625,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     diffStr: Schema.optional(Schema.String),
     oldStr: Schema.optional(Schema.String),
     newStr: Schema.optional(Schema.String),
+    /** Set on the wire when a recorded diff or file content was withheld; fetch it with getTurnItem. */
+    diffOmitted: Schema.optional(Schema.Boolean),
     changes: Schema.optional(Schema.Array(OrchestrationV2FileChangeDetail)),
   }),
   Schema.Struct({
@@ -2454,6 +2456,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     diffStr: Schema.optional(Schema.String),
     oldStr: Schema.optional(Schema.String),
     newStr: Schema.optional(Schema.String),
+    /** Set on the wire when a recorded diff or file content was withheld; fetch it with getTurnItem. */
+    diffOmitted: Schema.optional(Schema.Boolean),
     changes: Schema.optional(Schema.Array(OrchestrationV2FileChangeDetail)),
   }),
   Schema.Struct({
