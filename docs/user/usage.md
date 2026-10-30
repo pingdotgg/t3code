@@ -158,7 +158,7 @@ settings section when you no longer need it.
 
 ## API credit balances
 
-A server can also read a credit balance endpoint. Add a usage source in **Settings → Providers → Usage providers**, select **API credit balance endpoint**, and enter the endpoint URL and bearer credential. The credential stays on the selected server.
+A server can also read a credit balance endpoint. Add a usage source in **Settings → Providers → Usage providers**, select **API credit balance endpoint**, and enter the endpoint URL and bearer credential. The credential stays on the selected server and is only sent over https, or over plain http to an endpoint on the same machine (localhost).
 
 **Usage → Limits** shows each balance in its own currency with the vendor's glyph, the time it was checked, and an expandable account list. The glyph is matched from the balance `id` or `label` (for example `openrouter`, `deepseek-USD`, `Venice`); an endpoint can also name one explicitly with an `icon` field, and unrecognized vendors show their initials. A partial balance includes only verified accounts; unknown accounts are not counted as zero. Refresh Usage to request another reading. Remote web and mobile clients receive the readings from the environment, so credentials are not copied to the device. Native mobile clients need a version that supports credit balances; older clients can use the environment's web interface.
 

@@ -49,6 +49,21 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   }
 }
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function creditEndpointTransportAllowed(url: string): boolean {
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    return false;
+  }
+  return (
+    target.protocol === "https:" ||
+    (target.protocol === "http:" && LOOPBACK_HOSTS.has(target.hostname))
+  );
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
@@ -71,6 +86,14 @@ export const make = Effect.gen(function* () {
       return { ...base, accounts: [], error: "No management key configured." };
     }
     if (config.kind === "credits") {
+      // The bearer credential travels in the clear over http, so only loopback may use it.
+      if (!creditEndpointTransportAllowed(config.url)) {
+        return {
+          ...base,
+          accounts: [],
+          error: "Credit endpoints must use https unless they run on this machine.",
+        };
+      }
       const result = yield* client
         .execute(
           HttpClientRequest.get(config.url).pipe(

@@ -124,6 +124,11 @@ export function AddUsageLimitSourceDialog({
                 onChange={(event) => setUrl(event.target.value)}
                 autoFocus
               />
+              {kind === "credits" ? (
+                <p className="text-xs text-muted-foreground">
+                  Use https unless the endpoint runs on this machine.
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="usage-source-key">

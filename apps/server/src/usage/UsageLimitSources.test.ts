@@ -112,7 +112,7 @@ it.effect("publishes live credit balances without inventing subscription windows
         usageLimitSources: {
           [UsageLimitSourceId.make("api-credits")]: {
             kind: "credits",
-            url: "http://credits.test/credits",
+            url: "https://credits.test/credits",
             managementKey: "local-secret",
             enabled: true,
           },
@@ -126,7 +126,7 @@ it.effect("publishes live credit balances without inventing subscription windows
         HttpClient.make((request) =>
           Effect.sync(() => {
             expect(request.method).toBe("GET");
-            expect(request.url).toBe("http://credits.test/credits");
+            expect(request.url).toBe("https://credits.test/credits");
             expect(request.headers.authorization).toBe("Bearer local-secret");
             return HttpClientResponse.fromWeb(
               request,
@@ -167,7 +167,7 @@ it.effect("keeps a failed credit request unknown and hides remote error bodies",
         usageLimitSources: {
           [UsageLimitSourceId.make("api-credits")]: {
             kind: "credits",
-            url: "http://credits.test/credits",
+            url: "https://credits.test/credits",
             managementKey: "local-secret",
             enabled: true,
           },
@@ -183,6 +183,40 @@ it.effect("keeps a failed credit request unknown and hides remote error bodies",
             HttpClientResponse.fromWeb(request, new Response("remote-secret", { status: 503 })),
           ),
         ),
+      ),
+      NodeCrypto.layer,
+    ]),
+    Effect.scoped,
+  ),
+);
+
+it.effect("refuses to send the credential to a non-loopback http endpoint", () =>
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    yield* sources.refresh;
+    const [snapshot] = yield* sources.current;
+    expect(snapshot?.balances).toBeUndefined();
+    expect(snapshot?.error).toBe(
+      "Credit endpoints must use https unless they run on this machine.",
+    );
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("api-credits")]: {
+            kind: "credits",
+            url: "http://credits.example.net/credits",
+            managementKey: "local-secret",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("the request must not be sent")),
       ),
       NodeCrypto.layer,
     ]),
