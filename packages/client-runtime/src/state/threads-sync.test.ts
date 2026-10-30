@@ -129,6 +129,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const retryCount = yield* Ref.make(0);
   const subscriptionCount = yield* SubscriptionRef.make(0);
   const loaderCalls = yield* Ref.make(0);
+  const snapshotLoads = yield* Queue.unbounded<void>();
+  const httpSnapshot = yield* Ref.make<ThreadSnapshotLoadResult>(
+    options?.httpSnapshot ?? { _tag: "unavailable" },
+  );
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
@@ -179,11 +183,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
       Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
+        Effect.andThen(Queue.offer(snapshotLoads, undefined)),
+        Effect.andThen(
           threadId === THREAD_ID
-            ? (options?.httpSnapshot ??
-                ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
-            : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
+            ? Ref.get(httpSnapshot)
+            : Effect.succeed({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
         ),
       ),
   });
@@ -281,6 +285,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     retryCount,
     subscriptionCount,
     loaderCalls,
+    snapshotLoads,
+    httpSnapshot,
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
     lastAcceptBoundedSnapshot,
@@ -2010,6 +2016,30 @@ describe("EnvironmentThreads", () => {
       expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
       expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
       expect(yield* Ref.get(harness.removedThreads)).toEqual([]);
+    }),
+  );
+
+  it.effect("loads a new thread whose first snapshot request ran before it existed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ httpSnapshot: { _tag: "missing" } });
+      yield* Queue.take(harness.snapshotLoads);
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+
+      yield* harness.replaceSession;
+      yield* Queue.take(harness.snapshotLoads);
+      yield* Ref.set(harness.httpSnapshot, {
+        _tag: "present",
+        snapshot: { snapshotSequence: 11, projection: BASE_PROJECTION },
+      });
+      yield* TestClock.adjust("250 millis");
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(11);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
     }),
   );
 
