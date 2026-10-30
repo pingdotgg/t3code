@@ -37,7 +37,7 @@ import {
   type RunId,
   type RuntimeRequestId,
 } from "@t3tools/contracts";
-import type * as Cause from "effect/Cause";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
@@ -668,7 +668,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Deferred.succeed(lent, connection).pipe(Effect.andThen(Effect.never)),
       )
       .pipe(
-        Effect.catch((error) => Deferred.fail(lent, error)),
+        Effect.catchCause((cause) => Deferred.failCause(lent, cause)),
         Effect.forkScoped,
       );
     return yield* Deferred.await(lent);
@@ -2655,6 +2655,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 ).pipe(Effect.annotateLogs({ errorTag: causeErrorTag(cause) })),
               ),
               Effect.option,
+              Effect.catchCause((cause) =>
+                Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeedNone,
+              ),
             );
             if (next._tag === "None") {
               return yield* failAll("The OpenCode event stream was lost and could not reconnect.");
