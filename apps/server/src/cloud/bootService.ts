@@ -824,7 +824,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const windowsSession: WindowsSession = {
     localAppData: yield* windowsVariable("LOCALAPPDATA"),
     userId: `${yield* windowsVariable("USERDOMAIN")}\\${yield* windowsVariable("USERNAME")}`,
-    taskName: serviceTaskName(yield* windowsVariable("USERNAME")),
+    taskName: serviceTaskName(
+      yield* windowsVariable("USERDOMAIN"),
+      yield* windowsVariable("USERNAME"),
+    ),
     systemRoot: (yield* windowsVariable("SystemRoot")) || "C:\\Windows",
   };
   // The unit is per user, so the launcher to stop is the one serving the installed unit's home.
