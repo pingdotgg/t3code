@@ -484,6 +484,19 @@ function codexMcpToolOutput(
 
 // A hung MCP resource read must not hold run ingestion open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
+// Session setup and turn/start answer promptly; silence this long means a wedged app-server.
+const CODEX_APP_SERVER_REQUEST_DEADLINE = "2 minutes";
+// A stopped app-server ignores SIGTERM, so release escalates to SIGKILL.
+const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds";
+
+class CodexAppServerUnresponsiveError extends Schema.TaggedError<CodexAppServerUnresponsiveError>()(
+  "CodexAppServerUnresponsiveError",
+  { method: Schema.String },
+) {
+  override get message() {
+    return `Codex app-server did not answer ${this.method} within ${CODEX_APP_SERVER_REQUEST_DEADLINE}.`;
+  }
+}
 
 function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined {
   if (item.type !== "mcpToolCall") return undefined;
@@ -1399,6 +1412,7 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
+    forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
     shell: spawnCommand.shell,
   });
 });
@@ -1757,21 +1771,31 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ProviderAdapter.ProviderAdapterV2Event,
           ProviderAdapter.ProviderAdapterEventStreamError
         >();
-        // Drain final notifications before the session manager retires the dead process.
+        // Failing the event stream makes the session manager release this app-server.
         // Queue.fail lets readers take items already buffered before they see the failure.
-        yield* client.awaitTermination.pipe(
-          Effect.catch((cause) =>
-            Queue.fail(
-              events,
-              new ProviderAdapter.ProviderAdapterEventStreamError({
-                driver: CODEX_PROVIDER,
-                providerSessionId: input.providerSessionId,
-                cause,
+        const retireAppServer = (cause: unknown) =>
+          Queue.fail(
+            events,
+            new ProviderAdapter.ProviderAdapterEventStreamError({
+              driver: CODEX_PROVIDER,
+              providerSessionId: input.providerSessionId,
+              cause,
+            }),
+          );
+        yield* client.awaitTermination.pipe(Effect.catch(retireAppServer), Effect.forkScoped);
+        // The outcome of an unanswered request is unknown, so it fails rather than retries.
+        const withAppServerDeadline =
+          (method: string) =>
+          <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            effect.pipe(
+              Effect.timeoutOrElse({
+                duration: CODEX_APP_SERVER_REQUEST_DEADLINE,
+                orElse: () => {
+                  const error = new CodexAppServerUnresponsiveError({ method });
+                  return retireAppServer(error).pipe(Effect.andThen(Effect.fail(error)));
+                },
               }),
-            ),
-          ),
-          Effect.forkScoped,
-        );
+            );
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
@@ -6650,7 +6674,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               else next.delete(threadId);
               return next;
             });
-            const started = yield* client.request("turn/start", turnStartParams);
+            const started = yield* client
+              .request("turn/start", turnStartParams)
+              .pipe(withAppServerDeadline("turn/start"));
             // A turn/started notification may have registered and completed this turn already.
             if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== turnInput) return;
             yield* registerRootTurn({
@@ -6940,6 +6966,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   thread: response.thread,
                 }),
               ),
+              withAppServerDeadline("thread/start"),
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterEnsureThreadError({
@@ -6986,6 +7013,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                   ),
                 ),
+                withAppServerDeadline("thread/resume"),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
               return {

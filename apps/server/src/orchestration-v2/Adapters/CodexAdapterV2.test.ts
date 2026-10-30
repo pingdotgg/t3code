@@ -39,6 +39,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
@@ -939,6 +940,7 @@ describe("CodexAdapterV2 session initialize", () => {
             runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           }),
         initializeRequests: () => initializeRequests,
+        runtime,
       };
     });
 
@@ -1109,6 +1111,151 @@ describe("CodexAdapterV2 session initialize", () => {
       const providerThread = yield* session.ensureThread("thread-initialize-interrupted");
       assert.equal(providerThread.nativeThreadRef?.nativeId, "initialize-interrupted");
       assert.equal(session.initializeRequests(), 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  // The no-op notification lands right after the request is written, so the
+  // test advances the clock only once the app-server is known to be silent.
+  const requestWritten: CodexReplay.CodexAppServerReplayEntry = {
+    type: "emit_inbound",
+    label: "request-written",
+    frame: { method: "t3/test/requestWritten", params: {} },
+  };
+  const awaitRequestWritten =
+    (written: Deferred.Deferred<void>) =>
+    (
+      entry: Parameters<
+        NonNullable<CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"]>
+      >[0],
+    ) =>
+      entry.label === "request-written" ? Deferred.succeed(written, undefined) : Effect.void;
+  const UNANSWERED_REQUEST_BUDGET = "5 minutes";
+
+  // regression: #24300 a stopped shared app-server left thread/start pending forever
+  it.effect("fails thread/start that the shared app-server never answers", () =>
+    Effect.gen(function* () {
+      const written = yield* Deferred.make<void>();
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "thread-start-unanswered",
+          entries: [...replayPreamble("thread-start-unanswered").slice(0, 4), requestWritten],
+        }),
+        awaitRequestWritten(written),
+      );
+
+      const outcome = yield* session
+        .ensureThread("thread-start-unanswered")
+        .pipe(
+          Effect.exit,
+          Effect.timeoutOption(UNANSWERED_REQUEST_BUDGET),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Deferred.await(written);
+      yield* TestClock.adjust(UNANSWERED_REQUEST_BUDGET);
+      const settled = yield* Fiber.join(outcome);
+
+      assert.isTrue(
+        Option.isSome(settled),
+        `ensureThread was still waiting on thread/start after ${UNANSWERED_REQUEST_BUDGET}`,
+      );
+      if (Option.isSome(settled)) {
+        assert.isTrue(Exit.isFailure(settled.value), "thread/start resolved without a response");
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  // regression: #24300 a wedged shared app-server stayed ready for the next thread
+  it.effect("retires the shared app-server after a request deadline", () =>
+    Effect.gen(function* () {
+      const written = yield* Deferred.make<void>();
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "thread-start-retired",
+          entries: [...replayPreamble("thread-start-retired").slice(0, 4), requestWritten],
+        }),
+        awaitRequestWritten(written),
+      );
+      const events = yield* session.runtime.events.pipe(
+        Stream.runDrain,
+        Effect.exit,
+        Effect.timeoutOption(UNANSWERED_REQUEST_BUDGET),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const ensured = yield* session
+        .ensureThread("thread-start-retired")
+        .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(written);
+      yield* TestClock.adjust(UNANSWERED_REQUEST_BUDGET);
+      yield* Fiber.join(ensured);
+
+      const settled = yield* Fiber.join(events);
+      assert.isTrue(
+        Option.isSome(settled) && Exit.isFailure(settled.value),
+        "session events did not fail after thread/start passed its deadline",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  // regression: #24300 a stopped shared app-server left turn/start pending forever
+  it.effect("fails turn/start that the shared app-server never answers", () =>
+    Effect.gen(function* () {
+      const written = yield* Deferred.make<void>();
+      const preamble = codexReplayPreamble({
+        nativeThreadId: "turn-start-unanswered",
+        nativeTurnId: "turn-unanswered",
+        prompt: "Hello",
+      });
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "turn-start-unanswered",
+          entries: [...preamble.slice(0, 6), requestWritten],
+        }),
+        awaitRequestWritten(written),
+      );
+      const threadId = ThreadId.make("thread-turn-start-unanswered");
+      const providerThread = yield* session.ensureThread(threadId);
+
+      const outcome = yield* session.runtime
+        .startTurn(
+          makeCodexTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("turn-start-unanswered-attempt"),
+            text: "Hello",
+          }),
+        )
+        .pipe(
+          Effect.exit,
+          Effect.timeoutOption(UNANSWERED_REQUEST_BUDGET),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Deferred.await(written);
+      yield* TestClock.adjust(UNANSWERED_REQUEST_BUDGET);
+      const settled = yield* Fiber.join(outcome);
+
+      assert.isTrue(
+        Option.isSome(settled),
+        `startTurn was still waiting on turn/start after ${UNANSWERED_REQUEST_BUDGET}`,
+      );
+      if (Option.isSome(settled)) {
+        assert.isTrue(Exit.isFailure(settled.value), "turn/start resolved without a response");
+      }
     }).pipe(
       Effect.scoped,
       Effect.provide(
