@@ -29,6 +29,7 @@ interface ProjectItemsInput {
   readonly projectGroupByTargetKey: ReadonlyMap<string, SidebarProjectSnapshot>;
   readonly locationByEnvironmentId: ReadonlyMap<EnvironmentId, CommandPaletteProjectLocation>;
   readonly runProject: (project: CommandPaletteProject) => Promise<void>;
+  readonly valuePrefix?: string;
 }
 
 function projectFaviconIcon(project: Project) {
@@ -69,11 +70,11 @@ export function buildProjectSearchItems(input: ProjectItemsInput) {
   });
 }
 
-/** Projects as targets of the "New thread in..." submenu. */
+/** Projects as targets of a submenu such as "New thread in...". */
 export function buildNewThreadInProjectItems(input: ProjectItemsInput) {
   return buildProjectActionItems({
     projects: input.projects,
-    valuePrefix: "new-thread-in",
+    valuePrefix: input.valuePrefix ?? "new-thread-in",
     searchTerms: (project) => {
       const group = input.projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
       const location = input.locationByEnvironmentId.get(project.environmentId);

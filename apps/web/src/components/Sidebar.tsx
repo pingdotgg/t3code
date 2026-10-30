@@ -9,6 +9,7 @@ import {
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
+import { requestTranscriptImport } from "./TranscriptImportDialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
@@ -1215,6 +1216,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           api.contextMenu.show(
             [
               { id: "new-thread", label: "New thread" },
+              ...(readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope)
+                ? [{ id: "import-transcript", label: "Import Claude Code conversation…" }]
+                : []),
               { id: "copy-path", label: "Copy path" },
               { id: "project-settings", label: "Project settings", icon: "settings" },
             ],
@@ -1225,6 +1229,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         switch (clicked.value) {
           case "new-thread":
             startThreadInProjectFolder(group);
+            return;
+          case "import-transcript":
+            requestTranscriptImport({
+              environmentId: group.environmentId,
+              projectId: group.id,
+              projectName: group.displayName,
+            });
             return;
           case "copy-path":
             copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });

@@ -58,6 +58,7 @@ import {
   ChevronRightIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
+  FileTextIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
@@ -73,6 +74,7 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
+import { requestTranscriptImport } from "./TranscriptImportDialog";
 import {
   useDeferredValue,
   useEffect,
@@ -244,6 +246,7 @@ import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
 const NEW_THREAD_IN_GROUP = "projects";
+const IMPORT_TRANSCRIPT_GROUP = "import-transcript-projects";
 
 /** The submenu an open intent starts in; its groups resolve while rendering. */
 function openIntentView(intent: CommandPaletteOpenIntent | null): CommandPaletteView | null {
@@ -801,6 +804,24 @@ function OpenCommandPaletteDialog(props: {
     ];
   })();
 
+  const importTranscriptItems = enumerateCommandPaletteItems(
+    buildNewThreadInProjectItems({
+      projects: pickerProjects.filter((project) =>
+        readEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope),
+      ),
+      projectGroupByTargetKey,
+      locationByEnvironmentId: projectEnvironmentLocationById,
+      valuePrefix: "import-transcript-in",
+      runProject: async (project) => {
+        requestTranscriptImport({
+          environmentId: project.environmentId,
+          projectId: project.id,
+          projectName: project.displayName,
+        });
+      },
+    }),
+  );
+
   const {
     threadItems: allThreadItems,
     threadMessageItems,
@@ -1190,6 +1211,20 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: NEW_THREAD_IN_GROUP, label: "Projects", items: projectThreadItems }],
     });
+
+    if (importTranscriptItems.length > 0) {
+      actionItems.push({
+        kind: "submenu",
+        value: "action:import-transcript-in",
+        searchTerms: ["import", "claude code", "export", "conversation", "transcript", "txt"],
+        title: "Import Claude Code conversation...",
+        icon: <FileTextIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <FileTextIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          { value: IMPORT_TRANSCRIPT_GROUP, label: "Projects", items: importTranscriptItems },
+        ],
+      });
+    }
   }
 
   if (scratchTargetEnvironmentId !== null) {

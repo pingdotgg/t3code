@@ -235,8 +235,41 @@ const makeImporter = Effect.fn(function* (
     ),
   );
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
-  return { run: importer.importRecentAgentThreads({ projectId }), published };
+  return { run: importer.importRecentAgentThreads({ projectId }), importer, published };
 });
+
+it.effect("imports an exported transcript as a thread without a native session", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { importer } = yield* makeImporter([]);
+
+    const result = yield* importer.importClaudeExport({
+      projectId,
+      contents: "> Fix it\n\n⏺ Bash(vp test)\n  ⎿  1 failed\n\n⏺ Fixed\n",
+    });
+
+    expect(result.messageCount).toBe(2);
+    const records = yield* projections.getThreadRecords(result.threadId, [
+      "messages",
+      "providerThreads",
+    ]);
+    expect(records.messages.map((message) => [message.role, message.text])).toEqual([
+      ["user", "Fix it"],
+      ["assistant", "Fixed"],
+    ]);
+    expect(records.thread).toMatchObject({
+      projectId,
+      title: "Fix it",
+      historyOrigin: "v1_import",
+      activeProviderThreadId: null,
+    });
+    expect(records.providerThreads).toEqual([]);
+    const unreadable = yield* importer
+      .importClaudeExport({ projectId, contents: "not an export" })
+      .pipe(Effect.flip);
+    expect(unreadable._tag).toBe("AgentSessionTranscriptUnreadableError");
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
 
 it.effect(
   "ignores owned sessions, including archived and deleted threads, but imports other instances and unowned sessions",

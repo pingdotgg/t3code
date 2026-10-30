@@ -55,6 +55,18 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+### Continue a Claude Code conversation
+
+Save the conversation with `/export` in Claude Code, then right-click a project in
+the sidebar, or open the command palette, and choose **Import Claude Code
+conversation**. Pick or drop the `.txt` file. It opens as a new thread in that
+project with your prompts and Claude's replies, up to 200 messages. Tool output and
+thinking are left out.
+
+Your next message starts a fresh session and gives the agent the imported history,
+as a [portable handoff](./portable-handoffs.md) does. Files up to 8 MiB can be
+imported, from web and desktop.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

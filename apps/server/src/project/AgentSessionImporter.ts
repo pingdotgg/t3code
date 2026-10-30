@@ -8,6 +8,8 @@ import {
   AgentSessionImportSource,
   AgentSessionScanError,
   AgentSessionSource,
+  AgentSessionTranscriptUnreadableError,
+  defaultInstanceIdForDriver,
   EventId,
   MessageId,
   ProjectId,
@@ -16,6 +18,8 @@ import {
   TurnItemId,
   type AgentSessionImportInput,
   type AgentSessionImportResult,
+  type AgentSessionTranscriptImportInput,
+  type AgentSessionTranscriptImportResult,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -36,6 +40,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
+import { parseClaudeExportTranscript } from "./ClaudeExportTranscript.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
@@ -401,7 +406,94 @@ const make = Effect.gen(function* () {
     return { importedCount, skippedCount } satisfies AgentSessionImportResult;
   });
 
-  return { importRecentAgentThreads };
+  // An exported transcript has no resumable session, so the thread starts without a
+  // provider thread and its first new message hands the imported history over.
+  const importClaudeExport = Effect.fn("AgentSessionImporter.importClaudeExport")(function* (
+    input: AgentSessionTranscriptImportInput,
+  ) {
+    const project = yield* projects.getById(input.projectId).pipe(
+      Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(new AgentSessionImportProjectNotFoundError({ projectId: input.projectId })),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+    const transcript = parseClaudeExportTranscript(input.contents);
+    if (transcript === null) return yield* new AgentSessionTranscriptUnreadableError();
+    const threadId = yield* idAllocator.allocate
+      .thread({ projectId: project.id })
+      .pipe(
+        Effect.mapError(
+          (cause) => new AgentSessionScanError({ operation: "import-transcript", cause }),
+        ),
+      );
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const instanceId = defaultInstanceIdForDriver(driver);
+    const now = yield* DateTime.now;
+    const createdAt = DateTime.formatIso(now);
+    const appThread: OrchestrationV2AppThread = {
+      createdBy: "user",
+      creationSource: "server",
+      id: threadId,
+      projectId: project.id,
+      title: transcript.title,
+      providerInstanceId: instanceId,
+      modelSelection: { instanceId, model: DEFAULT_MODEL_BY_PROVIDER[driver] ?? DEFAULT_MODEL },
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      branch: null,
+      worktreePath: null,
+      linkedPullRequest: null,
+      branchPullRequest: null,
+      activeProviderThreadId: null,
+      historyOrigin: "v1_import",
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: "settled",
+      settledAt: now,
+      unsettledAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      pinnedAt: null,
+      pinOrderKey: null,
+      activeOrderKey: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    yield* eventSink
+      .write({
+        events: [
+          {
+            id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${threadId}:created`),
+            type: "thread.created",
+            threadId,
+            providerInstanceId: instanceId,
+            occurredAt: now,
+            payload: appThread,
+          },
+          ...transcript.messages.flatMap((message, index) =>
+            messageEvents({ threadId, index, message: { ...message, createdAt } }),
+          ),
+        ],
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new AgentSessionScanError({ operation: "import-transcript", cause }),
+        ),
+      );
+    return {
+      threadId,
+      messageCount: transcript.messages.length,
+    } satisfies AgentSessionTranscriptImportResult;
+  });
+
+  return { importRecentAgentThreads, importClaudeExport };
 });
 
 type AgentSessionImporterShape = Effect.Success<typeof make>;

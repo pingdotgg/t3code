@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex"]);
@@ -78,10 +84,35 @@ export const AgentSessionImportResult = Schema.Struct({
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 
+// A text export is read whole on the client and sent once; 8 MiB covers very long sessions.
+export const AGENT_SESSION_TRANSCRIPT_MAX_CHARS = 8 * 1024 * 1024;
+
+/** A conversation exported with Claude Code's `/export`, imported as a new thread. */
+export const AgentSessionTranscriptImportInput = Schema.Struct({
+  projectId: ProjectId,
+  contents: Schema.String.check(Schema.isMaxLength(AGENT_SESSION_TRANSCRIPT_MAX_CHARS)),
+});
+export type AgentSessionTranscriptImportInput = typeof AgentSessionTranscriptImportInput.Type;
+
+export const AgentSessionTranscriptImportResult = Schema.Struct({
+  threadId: ThreadId,
+  messageCount: NonNegativeInt,
+});
+export type AgentSessionTranscriptImportResult = typeof AgentSessionTranscriptImportResult.Type;
+
+export class AgentSessionTranscriptUnreadableError extends Schema.TaggedError<AgentSessionTranscriptUnreadableError>()(
+  "AgentSessionTranscriptUnreadableError",
+  {},
+) {
+  override get message(): string {
+    return "The file has no prompts from an exported Claude Code conversation.";
+  }
+}
+
 export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanError>()(
   "AgentSessionScanError",
   {
-    operation: Schema.Literals(["read-settings", "read-projects"]),
+    operation: Schema.Literals(["read-settings", "read-projects", "import-transcript"]),
     cause: Schema.Defect(),
   },
 ) {
