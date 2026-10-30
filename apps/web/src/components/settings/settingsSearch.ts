@@ -340,6 +340,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["reasoning effort thinking bars graph word label level composer"],
   },
   {
+    id: "usage-display",
+    title: "Usage meters",
+    to: "/settings/appearance",
+    searchTerms: ["usage limits context window percent left used remaining count up down quota"],
+  },
+  {
     id: "math-rendering",
     title: "Render math",
     to: "/settings/appearance",

@@ -303,6 +303,16 @@ describe("ClientSettings quit confirmation", () => {
   });
 });
 
+describe("ClientSettings usage display", () => {
+  it("keeps usage meters counting down for older settings and rejects unknown directions", () => {
+    expect(decodeClientSettings({}).usageDisplay).toBe("left");
+    const settings = decodeClientSettings({ usageDisplay: "used" });
+    expect(settings.usageDisplay).toBe("used");
+    expect(encodeClientSettings(settings).usageDisplay).toBe("used");
+    expect(() => decodeClientSettings({ usageDisplay: "remaining" })).toThrow();
+  });
+});
+
 describe("provider enabled defaults", () => {
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");

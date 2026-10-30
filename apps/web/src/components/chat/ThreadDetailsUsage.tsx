@@ -9,8 +9,8 @@ import {
   formatDuration,
   type LimitPace,
   limitsNotice,
+  meterPercent,
   paceOf,
-  remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import type { ReactNode } from "react";
 
@@ -37,7 +37,7 @@ export interface ThreadDetailsUsageInput {
 
 /**
  * The selected provider's limit windows and the thread's context window.
- * Every row reads as room left, so a longer bar always means more headroom.
+ * Every row reads the same way, all room left or all used, so bars compare at a glance.
  */
 export function ThreadDetailsUsage({
   providerInstanceId,
@@ -69,7 +69,7 @@ export function ThreadDetailsUsage({
         {notice ? (
           <UsageRow
             label="Limits"
-            left={null}
+            usedPercent={null}
             value="Unavailable"
             tooltip={<span className="text-foreground">{notice}</span>}
           />
@@ -91,18 +91,14 @@ function LimitRow({
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const left = remainingPercent(window);
   const pace = paceOf(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   return (
     <UsageRow
       label={window.label}
-      left={left}
+      usedPercent={window.usedPercent}
       tooltip={
         <>
-          <span className="text-foreground">
-            {window.label}: {left}% left
-          </span>
           {window.resetsAt && resetsAt > now ? (
             <span className="text-muted-foreground">
               Resets in {formatDuration(resetsAt - now)} ·{" "}
@@ -124,28 +120,24 @@ function ContextRow({
   readonly spaced: boolean;
 }) {
   const maxTokens = usage.maxTokens ?? null;
-  const left =
-    maxTokens !== null && usage.usedPercentage !== null
-      ? Math.round(100 - Math.max(0, Math.min(100, usage.usedPercentage)))
-      : null;
+  const usedPercent = maxTokens !== null ? usage.usedPercentage : null;
   const used = formatContextWindowTokens(usage.usedTokens);
   return (
     <UsageRow
       label="Context"
-      left={left}
+      usedPercent={usedPercent}
       muted
       className={cn(spaced && "mt-2")}
       tooltip={
         <>
-          {left !== null ? <span className="text-foreground">Context: {left}% left</span> : null}
-          <span className={left !== null ? "text-muted-foreground" : "text-foreground"}>
+          <span className={usedPercent !== null ? "text-muted-foreground" : "text-foreground"}>
             {maxTokens !== null
               ? `${used} of ${formatContextWindowTokens(maxTokens)} tokens used`
               : `${used} tokens used`}
           </span>
         </>
       }
-      value={left === null ? used : undefined}
+      value={usedPercent === null ? used : undefined}
     />
   );
 }
@@ -153,20 +145,23 @@ function ContextRow({
 /** One label, hairline, and value row; the whole row opens the details tooltip. */
 function UsageRow({
   label,
-  left,
+  usedPercent,
   tooltip,
   value,
   muted = false,
   className,
 }: {
   readonly label: string;
-  readonly left: number | null;
+  readonly usedPercent: number | null;
   readonly tooltip: ReactNode;
   /** Replaces the percentage when there is none. */
   readonly value?: string | undefined;
   readonly muted?: boolean;
   readonly className?: string | undefined;
 }) {
+  const display = usePrimarySettings((settings) => settings.usageDisplay);
+  const percent = usedPercent === null ? null : meterPercent(usedPercent, display);
+  const left = usedPercent === null ? null : meterPercent(usedPercent, "left");
   const tone = left === null ? null : left <= 10 ? "error" : left <= 20 ? "warning" : null;
   return (
     <Tooltip>
@@ -174,7 +169,7 @@ function UsageRow({
         render={
           <div
             tabIndex={0}
-            aria-label={`${label}: ${value ?? `${left}% left`}`}
+            aria-label={`${label}: ${value ?? `${percent}% ${display}`}`}
             className={cn(
               "col-span-3 grid h-6 cursor-default grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]",
               className,
@@ -183,9 +178,9 @@ function UsageRow({
         }
       >
         <span className="max-w-28 truncate text-muted-foreground">{label}</span>
-        {left !== null ? (
+        {percent !== null ? (
           <span className="relative h-[3px] rounded-full bg-muted-foreground/30 dark:bg-muted-foreground/20">
-            {left > 0 ? (
+            {percent > 0 ? (
               <span
                 className={cn(
                   "absolute inset-y-0 left-0 rounded-full",
@@ -197,7 +192,7 @@ function UsageRow({
                         ? "bg-muted-foreground"
                         : "bg-foreground/80",
                 )}
-                style={{ width: `max(${left}%, 6px)` }}
+                style={{ width: `max(${percent}%, 6px)` }}
               />
             ) : null}
           </span>
@@ -206,22 +201,29 @@ function UsageRow({
           className={cn(
             // Text-only rows span the bar column so they never widen the shared value column.
             "text-end font-medium tabular-nums",
-            left === null && "col-span-2",
+            percent === null && "col-span-2",
             tone === "error"
               ? "text-error-foreground"
               : tone === "warning"
                 ? "text-warning-foreground"
-                : left === null
+                : percent === null
                   ? "text-muted-foreground"
                   : "text-foreground/80",
           )}
         >
-          {value ?? `${left}%`}
+          {value ?? `${percent}%`}
         </span>
       </TooltipTrigger>
       {/* Rows sit 8px inside the card; clear its edge instead of overlapping it. */}
       <TooltipPopup side="left" sideOffset={16}>
-        <div className="flex flex-col gap-0.5">{tooltip}</div>
+        <div className="flex flex-col gap-0.5">
+          {percent !== null ? (
+            <span className="text-foreground">
+              {label}: {percent}% {display}
+            </span>
+          ) : null}
+          {tooltip}
+        </div>
       </TooltipPopup>
     </Tooltip>
   );

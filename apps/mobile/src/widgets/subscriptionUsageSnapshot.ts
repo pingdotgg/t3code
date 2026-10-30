@@ -4,17 +4,25 @@ import {
   type LimitAccount,
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
+import type { UsageDisplay } from "@t3tools/contracts/settings";
 
 import type { WidgetTheme } from "./widgetTheme";
 
 export interface SubscriptionUsageSnapshot {
   theme?: WidgetTheme;
+  usageDisplay?: UsageDisplay;
   url?: string;
   checkedAt: number;
   providers: Array<{
     name: string;
     detail: string;
-    windows: Array<{ kind?: string; label: string; remaining: number; reset: string }>;
+    windows: Array<{
+      kind?: string;
+      label: string;
+      remaining: number;
+      used: number;
+      reset: string;
+    }>;
     expiresAt: number;
     totalWindows: number;
   }>;
@@ -105,6 +113,7 @@ function subscriptionUsageProps(
                 kind: window.kind,
                 label: window.label,
                 remaining: Math.round(window.remainingPercent),
+                used: window.usedPercent,
                 reset: window.resets[0]
                   ? `Next reset ${new Date(window.resets[0].at).toLocaleString(undefined, {
                       month: "short",

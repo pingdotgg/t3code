@@ -14,6 +14,7 @@ import {
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
+import type { UsageDisplay } from "@t3tools/contracts/settings";
 
 import * as DateTime from "effect/DateTime";
 
@@ -603,8 +604,9 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
 
-export function remainingPercent(window: ServerProviderUsageWindow): number {
-  return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
+export function meterPercent(usedPercent: number, display: UsageDisplay): number {
+  const used = Math.max(0, Math.min(100, usedPercent));
+  return Math.round(display === "used" ? used : 100 - used);
 }
 
 function resetMillis(window: ServerProviderUsageWindow): number | null {
@@ -621,13 +623,39 @@ export function elapsedShare(window: ServerProviderUsageWindow, now: number): nu
   return Math.max(0, Math.min(1, (length - (resetsAt - now)) / length));
 }
 
-// Bars show quota remaining, so even pace tracks time remaining.
-export function paceRemainingPercent(
+// Even pace tracks the window the way the bar tracks quota: time left, or time elapsed.
+export function paceMarkPercent(
   window: ServerProviderUsageWindow,
   now: number,
+  display: UsageDisplay,
 ): number | null {
   const elapsed = elapsedShare(window, now);
-  return elapsed === null ? null : Math.round((1 - elapsed) * 100);
+  if (elapsed === null) return null;
+  return Math.round((display === "used" ? elapsed : 1 - elapsed) * 100);
+}
+
+export function poolMeterPercent(pool: LimitPoolWindow, display: UsageDisplay): number {
+  return display === "used" ? pool.usedPercent : pool.remainingPercent;
+}
+
+export function refillDelta(percent: number, display: UsageDisplay): string {
+  return `${display === "used" ? "\u2212" : "+"}${percent}%`;
+}
+
+export function paceMarkLabel(percent: number, display: UsageDisplay): string {
+  return `${percent}% of the window ${display === "used" ? "elapsed" : "left"}`;
+}
+
+// What a reset restores: the far end of the empty track, or the end of the used fill.
+export function refillSpan(
+  usedPercent: number,
+  refillPercent: number,
+  display: UsageDisplay,
+): { readonly start: number; readonly width: number } | null {
+  const filled = meterPercent(usedPercent, display);
+  const width = Math.min(display === "used" ? filled : 100 - filled, refillPercent);
+  if (width <= 0) return null;
+  return { start: display === "used" ? filled - width : 100 - width, width };
 }
 
 export type LimitPace = "ahead" | "on" | "under";

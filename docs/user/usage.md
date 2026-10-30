@@ -89,13 +89,13 @@ the dialog.
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your enabled environments and hubs you read one number per window rather than a
-list. Each window card shows how much of the pool is left and a bar with one segment per account,
+list. Each window card shows how much of the pool is left, or used if you count up, and a bar with one segment per account,
 kept in the same column across windows. Accounts are ordered by their next 5-hour refill, soonest
 first. For an account with no weekly quota left, this is when its session becomes usable again.
 The first available window is used when no account reports a 5-hour limit. A gap means the
 account does not report that window. When the provider reports reset times, the card also says
 when the next reset lands and how much it hands back. The hatched
-part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
+part of a segment is what that reset restores, or clears if you count up. Tap a segment or account row for the account's plan,
 where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
 with banked reset credits show a ticket count and the **Use reset** action in the account details.
 Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
@@ -106,7 +106,7 @@ The same account signed in on more than one environment, or reported by a hub as
 Filter with the environment dropdown to see what a single machine has.
 
 When a Claude or Codex account has no overall weekly quota left, its pooled session contribution
-shows 0% left. The next refill depends on both reset times: an exhausted session must also reset,
+shows 0% left, or 100% used if you count up. The next refill depends on both reset times: an exhausted session must also reset,
 and a partly spent session may only regain its unused portion when the week resets. Missing or
 stale reset times have no refill estimate; refresh Limits for a new reading. Claude's
 model-specific weekly allowances keep their reported values.
@@ -121,10 +121,17 @@ closes when you dismiss it or send your next message. It uses the same snapshot 
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
 To keep them in view on web and desktop, turn on **Usage** in **Settings → Appearance → Thread details**, or right-click the thread details card.
-The bottom of the thread details card then shows how much is left in each limit window of the
-current provider account and in the thread's context window. Some windows, such as a weekly Opus
+The bottom of the thread details card then shows how much is left, or used if you count up, in
+each limit window of the current provider account and in the thread's context window. Some windows, such as a weekly Opus
 limit, count only one model. Hover a row to see when it resets, your pace, or
 the token count.
+
+Limits count down by default, showing how much is left. To count up instead, from 0% at the
+start of a window to 100% at the limit, set **Settings → Appearance → Usage meters** to **% used**
+on web and desktop, or turn on **Show % used** in **Settings → Appearance** on mobile. Each device
+keeps its own choice. On web and desktop it covers Limits, `/usage-limits`, and the thread details
+card, including its context row. On mobile it covers Limits, `/usage-limits`, and the home screen
+widgets. The legacy context window indicator in the composer always shows how much context is used.
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials

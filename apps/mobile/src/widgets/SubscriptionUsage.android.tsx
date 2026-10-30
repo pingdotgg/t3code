@@ -76,6 +76,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
               ) : null}
               {shown.map((window) => {
                 const low = window.remaining <= 10;
+                const percent = props.usageDisplay === "used" ? window.used : window.remaining;
                 return (
                   <Column key={window.label} modifiers={[fillMaxWidth(), padding(0, 4, 0, 0)]}>
                     <Text
@@ -83,11 +84,11 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
                       maxLines={1}
                       style={{ fontSize: 11 }}
                     >
-                      {`${window.label} · ${window.remaining}% left`}
+                      {`${window.label} · ${percent}% ${props.usageDisplay === "used" ? "used" : "left"}`}
                     </Text>
                     <Column modifiers={[fillMaxWidth(), padding(0, 3, 0, 3)]}>
                       <LinearProgressIndicator
-                        progress={window.remaining / 100}
+                        progress={percent / 100}
                         color={low ? colors.error : colors.primary}
                         trackColor={colors.surfaceVariant}
                         modifiers={[fillMaxWidth(), height(6)]}

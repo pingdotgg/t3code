@@ -5,6 +5,7 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
   type EffortDisplay,
+  type UsageDisplay,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_GLASS_OPACITY,
@@ -81,6 +82,11 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
 const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   label: "Word",
   bars: "Bars",
+};
+
+const USAGE_DISPLAY_LABELS: Record<UsageDisplay, string> = {
+  left: "% left",
+  used: "% used",
 };
 
 export function AppearanceSettingsPanel() {
@@ -303,6 +309,38 @@ export function AppearanceSettingsPanel() {
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   <SelectItem value="label">Word (default)</SelectItem>
                   <SelectItem value="bars">Bars</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("usage-display")}
+          description="Show usage limits and context as the share left, counting down, or the share used, counting up."
+          resetAction={
+            settings.usageDisplay !== DEFAULT_UNIFIED_SETTINGS.usageDisplay ? (
+              <SettingResetButton
+                label="usage meters"
+                onClick={() =>
+                  updateSettings({ usageDisplay: DEFAULT_UNIFIED_SETTINGS.usageDisplay })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.usageDisplay}
+                onValueChange={(value) => {
+                  if (value === "left" || value === "used") updateSettings({ usageDisplay: value });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Usage meters">
+                  <SelectValue>{USAGE_DISPLAY_LABELS[settings.usageDisplay]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="left">% left (default)</SelectItem>
+                  <SelectItem value="used">% used</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
