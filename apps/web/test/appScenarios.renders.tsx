@@ -182,7 +182,7 @@ it("app-stream-assistant-turn", async () => {
   const counted = await measure(async () => {
     let text = "";
     for (let delta = 0; delta < STREAM_DELTAS; delta++) {
-      text += `word${delta} `;
+      text += `word${delta}\n\n`;
       await act(() =>
         emitThreadEvent(LIVE, {
           type: "turn-item.updated",
@@ -204,6 +204,8 @@ it("app-stream-assistant-turn", async () => {
   // Only the streaming row changes; history rows must not re-render with it.
   expect(counted.components.UserTimelineRow).toBeUndefined();
   expect(counted.components.AssistantTimelineRow).toBe(STREAM_DELTAS);
+  // Each delta adds a paragraph; finished blocks keep their render.
+  expect(counted.components.MarkdownParagraph).toBe(STREAM_DELTAS);
   await report("app-stream-assistant-turn", [counted], { commits: false });
 });
 
