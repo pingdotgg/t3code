@@ -8,7 +8,11 @@ import remarkRehype from "remark-rehype";
 import { type PluggableList, unified } from "unified";
 import { VFile } from "vfile";
 
+import { remarkFastParse } from "../../markdown/remarkFastParse";
 import { remarkParseWithoutUnusedSyntax } from "./markdownSyntaxGates";
+
+// Prototype switch while the fast parser is measured against micromark.
+const FAST_PARSE = import.meta.env?.VITE_T3_MARKDOWN_PARSER === "fast";
 
 export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string;
 
@@ -23,7 +27,11 @@ interface MarkdownRendererOptions {
 // reuses one instead of parsing again. Parsing is most of the cost of rendering markdown.
 // An element and the hast it keeps hold about 20 bytes per source character, so ~10 MB.
 const MAX_CACHED_CHARS = 500_000;
-const rendered = new Map<string, ReactElement>();
+interface Rendered {
+  readonly tree: Root;
+  element?: ReactElement;
+}
+const rendered = new Map<string, Rendered>();
 let cachedChars = 0;
 let nextRendererId = 0;
 
@@ -31,10 +39,10 @@ let nextRendererId = 0;
 const ENTRY_OVERHEAD_CHARS = 200;
 const entrySize = (key: string) => key.length + ENTRY_OVERHEAD_CHARS;
 
-function remember(key: string, element: ReactElement) {
+function remember(key: string, entry: Rendered) {
   // One huge message would otherwise evict everything else.
   if (entrySize(key) > MAX_CACHED_CHARS / 4) return;
-  rendered.set(key, element);
+  rendered.set(key, entry);
   cachedChars += entrySize(key);
   for (const oldest of rendered.keys()) {
     if (cachedChars <= MAX_CACHED_CHARS) break;
@@ -53,6 +61,7 @@ export function createMarkdownRenderer({
   const processor = unified()
     .use(remarkParse)
     .use(remarkParseWithoutUnusedSyntax)
+    .use(FAST_PARSE ? [remarkFastParse] : [])
     .use(remarkPlugins)
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(rehypePlugins)
@@ -82,7 +91,7 @@ export function createMarkdownRenderer({
     }
   };
 
-  return (text: string, cache: boolean): ReactElement => {
+  const parse = (text: string, cache: boolean): Rendered => {
     const key = keyPrefix + text;
     const cached = rendered.get(key);
     if (cached !== undefined) {
@@ -94,16 +103,25 @@ export function createMarkdownRenderer({
     const file = new VFile(text);
     const tree = processor.runSync(processor.parse(file), file) as Root;
     prepare(tree);
-    const element = toJsxRuntime(tree, {
-      Fragment,
-      components,
-      ignoreInvalidStyle: true,
-      jsx,
-      jsxs,
-      passKeys: true,
-      passNode: true,
-    });
-    if (cache) remember(key, element);
-    return element;
+    const entry: Rendered = { tree };
+    if (cache) remember(key, entry);
+    return entry;
+  };
+
+  return {
+    /** The sanitized tree; cached trees are shared, so callers must not change them. */
+    tree: (text: string, cache: boolean): Root => parse(text, cache).tree,
+    render: (text: string, cache: boolean): ReactElement => {
+      const entry = parse(text, cache);
+      return (entry.element ??= toJsxRuntime(entry.tree, {
+        Fragment,
+        components,
+        ignoreInvalidStyle: true,
+        jsx,
+        jsxs,
+        passKeys: true,
+        passNode: true,
+      }));
+    },
   };
 }

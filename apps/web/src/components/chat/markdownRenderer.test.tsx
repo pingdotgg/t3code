@@ -18,7 +18,7 @@ describe("createMarkdownRenderer", () => {
     rehypePlugins: CHAT_MARKDOWN_REHYPE_PLUGINS,
     components: {},
     urlTransform,
-  });
+  }).render;
 
   it.each([
     '# Title\n\nText with `code`, **bold**, [a link](https://example.com "t") and https://bare.example.com.',
@@ -62,7 +62,7 @@ describe("createMarkdownRenderer", () => {
         rehypePlugins: CHAT_MARKDOWN_REHYPE_PLUGINS,
         components: {},
         urlTransform,
-      })(source, false);
+      }).render(source, false);
       expect(renderToStaticMarkup(streamed)).toBe(
         renderToStaticMarkup(
           <ReactMarkdown

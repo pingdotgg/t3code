@@ -190,6 +190,13 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
+import {
+  type MarkdownIslandOptions,
+  renderHastWithIslands,
+  withProperties,
+} from "./chat/markdownIslands";
+import type { Element as HastElement } from "hast";
+import { matchInlineSkills } from "@t3tools/shared/inlineSkills";
 import { splitMarkdownBlocks } from "./chat/markdownStreamBlocks";
 import { MarkdownMermaidCodeBlock } from "./chat/MarkdownMermaidCodeBlock";
 import { MarkdownTable } from "./chat/MarkdownTable";
@@ -1664,6 +1671,124 @@ function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: Pluggable
   return renderer;
 }
 
+// Prototype switch while the static-HTML renderer is measured against the element renderer.
+const MARKDOWN_ISLANDS = import.meta.env.VITE_T3_MARKDOWN_ISLANDS === "1";
+
+type ChatMarkdownComponentState = ReturnType<typeof useChatMarkdownState>["componentState"];
+
+function hastClassName(node: HastElement): string | undefined {
+  const { className } = node.properties;
+  return Array.isArray(className) ? className.join(" ") : (className as string | undefined);
+}
+
+// Paragraphs and list items turn skill mentions in their text into chips, except in code and links.
+function hastTextHasSkill(
+  node: HastElement,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): boolean {
+  return node.children.some((child) =>
+    child.type === "text"
+      ? !matchInlineSkills(child.value, skills).next().done
+      : child.type === "element" &&
+        child.tagName !== "code" &&
+        child.tagName !== "a" &&
+        hastTextHasSkill(child, skills),
+  );
+}
+
+const HEADING_LEVELS: Record<string, number> = { h1: 1, h2: 2, h3: 3, h4: 4, h5: 5, h6: 6 };
+
+const markdownIslandOptionsByState = new WeakMap<
+  ChatMarkdownComponentState,
+  MarkdownIslandOptions
+>();
+
+/** Which elements need CHAT_MARKDOWN_COMPONENTS, and what the others' components add. */
+function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslandOptions {
+  const cached = markdownIslandOptionsByState.get(state);
+  if (cached) return cached;
+  const {
+    cwd,
+    headingLevelOffset,
+    imageBaseDir,
+    inlineCodeFileLinkMetaByText,
+    mathEnabled,
+    onTaskListChange,
+    skills,
+  } = state;
+  const options: MarkdownIslandOptions = {
+    components: CHAT_MARKDOWN_COMPONENTS,
+    variant: String(headingLevelOffset),
+    isIsland: (node) => {
+      switch (node.tagName) {
+        case "a":
+        case "img":
+        case "pre":
+        case "details":
+        case "table":
+          return true;
+        case "blockquote":
+          return GITHUB_ALERT_PRESENTATIONS[String(node.properties.dataAlert ?? "")] !== undefined;
+        case "div":
+          return artifactTemplateFromHastProperties(node.properties) !== null;
+        case "input":
+          return node.properties.type === "checkbox" && onTaskListChange !== undefined;
+        case "code": {
+          if (mathEnabled && mathKind(hastClassName(node))) return true;
+          if (node.properties.dataInlineCode == null) return false;
+          const codeText = hastPlainTextDeep(node);
+          return (
+            (inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
+              resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd)) != null
+          );
+        }
+        case "p":
+        case "li":
+          return skills.length > 0 && hastTextHasSkill(node, skills);
+        default:
+          return false;
+      }
+    },
+    staticElement: (node) => {
+      const level = HEADING_LEVELS[node.tagName];
+      if (level !== undefined) {
+        return headingLevelOffset > 0
+          ? withProperties(node, { ariaLevel: Math.min(level + headingLevelOffset, 6) })
+          : node;
+      }
+      switch (node.tagName) {
+        case "ol": {
+          const itemCount = node.children.filter(
+            (child) => child.type === "element" && child.tagName === "li",
+          ).length;
+          const gutter = orderedListGutterStyle(itemCount, node.properties.start);
+          if (!gutter) return node;
+          const authored = typeof node.properties.style === "string" ? node.properties.style : "";
+          return withProperties(node, {
+            style: `${authored}${authored ? ";" : ""}--list-gutter:${gutter["--list-gutter"]}`,
+          });
+        }
+        case "li":
+          return hastClassName(node)?.includes("task-list-item")
+            ? withProperties(node, { dataListItemOffset: node.position?.start.offset })
+            : node;
+        case "input":
+          return node.properties.type === "checkbox" ? withProperties(node, { readOnly: true }) : node;
+        default:
+          return node;
+      }
+    },
+  };
+  markdownIslandOptionsByState.set(state, options);
+  return options;
+}
+
+// Static inline code has no React handler; the component path selects on double-click itself.
+function selectStaticInlineCode(event: ReactMouseEvent<HTMLElement>) {
+  const code = (event.target as HTMLElement).closest?.("code[data-inline-code]");
+  if (code && event.currentTarget.contains(code)) window.getSelection()?.selectAllChildren(code);
+}
+
 const MarkdownSource = memo(function MarkdownSource({
   text,
   remarkPlugins,
@@ -1688,8 +1813,16 @@ const MarkdownSource = memo(function MarkdownSource({
         components: CHAT_MARKDOWN_COMPONENTS,
         urlTransform: markdownUrlTransform,
       });
+  const islandState = MARKDOWN_ISLANDS ? use(ChatMarkdownRendererContext) : null;
   return (
-    <ChatMarkdownTextContext value={text}>{render(text, shared && cache)}</ChatMarkdownTextContext>
+    <ChatMarkdownTextContext value={text}>
+      {islandState
+        ? renderHastWithIslands(
+            render.tree(text, shared && cache),
+            markdownIslandOptions(islandState),
+          )
+        : render.render(text, shared && cache)}
+    </ChatMarkdownTextContext>
   );
 });
 
@@ -1753,6 +1886,7 @@ function ChatMarkdown({
       )}
       data-streaming={componentState.isStreaming ? "" : undefined}
       onCopy={handleCopy}
+      onDoubleClick={MARKDOWN_ISLANDS ? selectStaticInlineCode : undefined}
     >
       <ChatMarkdownRendererContext value={componentState}>
         {blocks.map((source, index) => (

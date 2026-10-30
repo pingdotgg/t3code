@@ -23,6 +23,8 @@ import { rehypeHeadingIds } from "../../src/components/chat/markdownFragments";
 import { remarkParseWithoutUnusedSyntax } from "../../src/components/chat/markdownSyntaxGates";
 import { rehypeTextDirection } from "../../src/components/chat/markdownTextDirection";
 import { splitMarkdownBlocks } from "../../src/components/chat/markdownStreamBlocks";
+import { parseMarkdown } from "../../src/markdown/parseMarkdown";
+import { remarkFastParse } from "../../src/markdown/remarkFastParse";
 
 const dir = process.env.MD_BENCH_DIR ?? NodePath.join(process.env.HOME ?? "", "bench-work/md-bench");
 const candidates = NodePath.join(dir, "candidates/node_modules");
@@ -46,6 +48,29 @@ const processor = unified()
   .use(rehypePlugins)
   .freeze();
 const parseOnly = unified().use(remarkParse).use(remarkParseWithoutUnusedSyntax).use(remarkPlugins).freeze();
+const plainRemarkPlugins: PluggableList = [...CHAT_MARKDOWN_REMARK_PLUGINS];
+const fastProcessor = unified()
+  .use(remarkParse)
+  .use(remarkParseWithoutUnusedSyntax)
+  .use(remarkFastParse)
+  .use(plainRemarkPlugins)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypePlugins)
+  .freeze();
+const plainProcessor = unified()
+  .use(remarkParse)
+  .use(remarkParseWithoutUnusedSyntax)
+  .use(plainRemarkPlugins)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypePlugins)
+  .freeze();
+const plainParseOnly = unified().use(remarkParse).use(remarkParseWithoutUnusedSyntax).use(plainRemarkPlugins).freeze();
+const elements = (p: typeof fastProcessor) => (text: string) => {
+  const file = new VFile(text);
+  return toJsxRuntime(p.runSync(p.parse(file), file) as Root, { Fragment, jsx, jsxs, ignoreInvalidStyle: true, passKeys: true });
+};
+const fastElement = elements(fastProcessor);
+const plainElement = elements(plainProcessor);
 
 const t3Hast = (text: string) => {
   const file = new VFile(text);
@@ -129,6 +154,10 @@ for (const [name, corpus] of Object.entries(corpora)) {
   const corpusFences = corpus.flatMap(fences);
   describe(`${name} (${corpus.length} docs, ${(bytes / 1e3).toFixed(0)} KB, ${corpusFences.length} fences)`, () => {
     bench("t3: parse (remark + plugins, mdast)", () => void corpus.forEach((t) => parseOnly.runSync(parseOnly.parse(t))), options);
+    bench("t3 no math: parse only (micromark mdast)", () => void corpus.forEach((t) => plainParseOnly.parse(t)), options);
+    bench("fast: parse only (mdast)", () => void corpus.forEach((t) => parseMarkdown(t)), options);
+    bench("t3 no math: to React elements", () => void corpus.forEach(plainElement), options);
+    bench("fast: to React elements (same plugins)", () => void corpus.forEach(fastElement), options);
     bench("t3: to hast (parse + rehype + sanitize)", () => void corpus.forEach(t3Hast), options);
     bench("t3: to React elements", () => void corpus.forEach(t3Element), options);
     bench("t3: elements + renderToStaticMarkup", () => void corpus.forEach((t) => renderToStaticMarkup(t3Element(t))), options);
