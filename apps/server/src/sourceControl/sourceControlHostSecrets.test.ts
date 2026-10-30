@@ -5,7 +5,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { resolveSettingsSecret } from "../secrets/settingsSecretValue.ts";
-import { resolveSourceControlHostSecrets } from "./sourceControlHostSecrets.ts";
+import {
+  collectSourceControlHostSecretReferences,
+  resolveSourceControlHostSecrets,
+} from "./sourceControlHostSecrets.ts";
 
 const source = (reference: string) => ({
   provider: SecretProviderId.make("homelab"),
@@ -59,4 +62,54 @@ it.effect("leaves the resolver unused for a kind that holds no reference", () =>
     assert.strictEqual(resolved, hosts);
     assert.deepEqual(reads, []);
   }).pipe(Effect.provide(layerResolver)),
+);
+
+it("collects the references held in credential fields and skips literal values", () => {
+  assert.deepEqual(collectSourceControlHostSecretReferences(hosts), [
+    source("missing#token"),
+    source("bitbucket#token"),
+  ]);
+  assert.deepEqual(
+    collectSourceControlHostSecretReferences({
+      bitbucket: { accessToken: "literal" },
+      github: { tokens: { "github.com": "ghp_literal" } },
+    }),
+    [],
+  );
+});
+
+it.effect("reads a collected reference again once it is invalidated", () =>
+  Effect.gen(function* () {
+    let current = "stale";
+    const cache = new Map<string, string>();
+    const resolver = SecretResolver.SecretResolver.of({
+      read: (references) =>
+        Effect.sync(() =>
+          references.map((reference) => {
+            const hit = cache.get(reference.reference);
+            if (hit !== undefined) return hit;
+            cache.set(reference.reference, current);
+            return current;
+          }),
+        ),
+      invalidate: (references) =>
+        Effect.sync(() => {
+          for (const reference of references ?? []) cache.delete(reference.reference);
+        }),
+    });
+    const read = () =>
+      resolveSourceControlHostSecrets(hosts, "bitbucket", (reference) =>
+        resolveSettingsSecret(resolver, reference),
+      );
+    assert.deepEqual((yield* read()).bitbucket, {
+      email: "me@example.test",
+      accessToken: "stale",
+    });
+    current = "rotated";
+    yield* resolver.invalidate(collectSourceControlHostSecretReferences(hosts));
+    assert.deepEqual((yield* read()).bitbucket, {
+      email: "me@example.test",
+      accessToken: "rotated",
+    });
+  }),
 );

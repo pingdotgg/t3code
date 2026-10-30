@@ -49,6 +49,18 @@ export function writeSecretFieldValues(
 
 type SourceControlHostsSettings = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 
+/** Every secret provider reference held in any host kind's credential fields. */
+export function collectSourceControlHostSecretReferences(
+  hosts: SourceControlHostsSettings,
+): ReadonlyArray<SecretReference> {
+  return [...SOURCE_CONTROL_HOST_SECRET_FIELDS].flatMap(([kind, fields]) =>
+    fields.flatMap((field) => {
+      const value = hosts[kind]?.[field];
+      return isSecretReference(value) ? [value] : [];
+    }),
+  );
+}
+
 /** Replaces each secret provider reference in one host kind's credential fields with the secret it names. */
 export const resolveSourceControlHostSecrets = Effect.fn("SourceControlHost.resolveSecrets")(
   function* <R>(
