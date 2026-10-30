@@ -465,6 +465,7 @@ const make = Effect.gen(function* () {
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
   const agentTurns = yield* (yield* PreviewAgentActivity.PreviewAgentActivity).changes;
+  const runSync = Effect.runSyncWith(yield* Effect.context<never>());
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
@@ -615,12 +616,8 @@ const make = Effect.gen(function* () {
     );
   };
 
-  /**
-   * Reads the desktop page's CSS size, including scrollbars and native zoom, in
-   * an isolated world so page script cannot override it. Keeps the last size
-   * while a dialog blocks script, when a read fails or times out, when a newer
-   * read already stored a size, and for a hidden webview's 0x0.
-   */
+  // Desktop pages have no Playwright viewport; an isolated world keeps page script
+  // from overriding the CSS size, and failed reads preserve the last usable size.
   const measureDesktopViewport = async (tab: ServerTab) => {
     if (tab.dialog) return tab.desktopViewport;
     const read = ++tab.desktopViewportReads;
@@ -655,11 +652,6 @@ const make = Effect.gen(function* () {
     return tab.desktopViewport;
   };
 
-  /**
-   * The CSS size the page lays out in. A desktop page is measured, since a page
-   * Playwright reached over CDP has no viewport. A headless page's size is its
-   * viewport shrunk by the tab's zoom, as Chrome zooms.
-   */
   const layoutSize = async (tab: ServerTab) => {
     if (tab.desktop) return measureDesktopViewport(tab);
     const size = tab.page.viewportSize();
@@ -2395,9 +2387,7 @@ const make = Effect.gen(function* () {
         if (next._tag === "frame") runFork(next.ack);
         // State a stalled viewer cannot miss replaces its backlog. It runs
         // synchronously so an older replacement can never land after a newer one.
-        else if (
-          ["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)
-        ) {
+        else if (["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)) {
           const dropped = Effect.runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
           Queue.offerUnsafe(output, next);
@@ -2417,7 +2407,7 @@ const make = Effect.gen(function* () {
           const notifications = dropped.value.filter((item) =>
             ["fileChooserClosed", "popup", "download", "clipboard"].includes(item._tag),
           );
-          const room = VIEWER_OUTPUT_LIMIT - Effect.runSync(Queue.size(output));
+          const room = VIEWER_OUTPUT_LIMIT - runSync(Queue.size(output));
           for (const item of notifications.slice(Math.max(0, notifications.length - room)))
             Queue.offerUnsafe(output, item);
           for (const item of dropped.value) if (item._tag === "frame") runFork(item.ack);

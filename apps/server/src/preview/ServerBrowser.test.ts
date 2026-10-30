@@ -86,7 +86,10 @@ const PNG_HEADER = (() => {
   return header.toString("base64");
 })();
 
-function makeSession(frame: ReturnType<typeof makeFrame> | undefined, viewport: { width: number; height: number }) {
+function makeSession(
+  frame: ReturnType<typeof makeFrame> | undefined,
+  viewport: { width: number; height: number },
+) {
   const events = new NodeEvents.EventEmitter();
   return {
     on: vi.fn((name: string, callback: (...args: unknown[]) => void) => events.on(name, callback)),
@@ -106,7 +109,12 @@ function makeSession(frame: ReturnType<typeof makeFrame> | undefined, viewport: 
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
       if (method === "Page.createIsolatedWorld") {
         return {
-          executionContextId: (input as { worldName?: string }).worldName === "t3-preview-viewport" ? 9 : (input as { worldName?: string }).worldName === "t3-preview" ? 1 : 7,
+          executionContextId:
+            (input as { worldName?: string }).worldName === "t3-preview-viewport"
+              ? 9
+              : (input as { worldName?: string }).worldName === "t3-preview"
+                ? 1
+                : 7,
         };
       }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 1) {
@@ -123,7 +131,8 @@ function makeSession(frame: ReturnType<typeof makeFrame> | undefined, viewport: 
         else pageCopy = "";
         return { result: { value } };
       }
-      if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 9) return { result: { value: { ...viewport } } };
+      if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 9)
+        return { result: { value: { ...viewport } } };
       return { result: { value: "evaluated" } };
     }),
   };
@@ -209,7 +218,8 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
     grantPermissions: vi.fn(async () => {}),
     newCDPSession: async (target: unknown) => {
       const session = makeSession(
-        target === page ? undefined : (target as ReturnType<typeof makeFrame>), cssViewport,
+        target === page ? undefined : (target as ReturnType<typeof makeFrame>),
+        cssViewport,
       );
       sessions.push(session);
       return session;
@@ -278,6 +288,8 @@ let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
 let desktopHiddenNext = false;
 const desktopDetaches = new NodeEvents.EventEmitter();
+let desktopDetachReady = Promise.withResolvers<void>();
+let desktopReleased = Promise.withResolvers<void>();
 const desktopTabs = new Set<string>();
 const desktopRenders = (tabId: string) => {
   if (desktopRendersNext) {
@@ -326,6 +338,7 @@ const dependencies = Layer.mergeAll(
           const onDetach = (key: { threadId: string; tabId: string }) =>
             Queue.offerUnsafe(queue, key);
           desktopDetaches.on("detach", onDetach);
+          desktopDetachReady.resolve();
           return onDetach;
         }),
         (onDetach) => Effect.sync(() => desktopDetaches.off("detach", onDetach)),
@@ -345,7 +358,10 @@ const dependencies = Layer.mergeAll(
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
-        Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
+        Effect.sync(() => {
+          releasedDesktopTabs.push(key.tabId);
+          desktopReleased.resolve();
+        }),
       ),
     pointer: () => Effect.void,
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
@@ -376,24 +392,13 @@ const viewerInput = (tabId: string, canOperate: boolean) => ({
   maxHeight: 800,
   quality: 70,
 });
-/** Waits for a viewport. Pulling drains the queue, so it also discards what arrived with it. */
 const stallViewer = (
   viewer: ServerBrowser.ServerBrowserViewer,
   item: ServerBrowser.ServerBrowserViewerOutput,
 ) => {
-  // The service hands out the read side of a queue it also writes to.
   const output = viewer.output as unknown as Queue.Queue<ServerBrowser.ServerBrowserViewerOutput>;
   while (Queue.offerUnsafe(output, item));
 };
-const viewerInput = (tabId: string, canOperate: boolean) => ({
-  threadId: scope.thread.threadId,
-  tabId,
-  canOperate,
-  maxWidth: 1280,
-  maxHeight: 800,
-  quality: 70,
-});
-/** Waits for a viewport. Pulling drains the queue, so it also discards what arrived with it. */
 const nextViewerViewport = (viewer: ServerBrowser.ServerBrowserViewer) =>
   Stream.fromQueue(viewer.output).pipe(
     Stream.filter((item) => item._tag === "viewport"),
@@ -413,6 +418,8 @@ beforeEach(() => {
   focusedFrame = null;
   desktopTabs.clear();
   desktopRendersNext = false;
+  desktopDetachReady = Promise.withResolvers<void>();
+  desktopReleased = Promise.withResolvers<void>();
   desktopHiddenNext = false;
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
@@ -1130,6 +1137,11 @@ it.live("a page's file picker goes to the controller and takes its uploaded file
       let offered = yield* Queue.take(viewer.output);
       while (offered._tag !== "fileChooser") offered = yield* Queue.take(viewer.output);
       expect(offered).toMatchObject({ multiple: false, accept: ".csv" });
+      stallViewer(viewer, { _tag: "frame", data: Buffer.alloc(0), ack: Effect.void });
+      yield* viewer.input({ type: "resize", width: 900, height: 600 });
+      expect(yield* Queue.takeAll(viewer.output)).toEqual(
+        expect.arrayContaining([{ _tag: "viewport", width: 900, height: 600 }, offered]),
+      );
       const file = (name: string) => ({ name, mimeType: "text/csv", buffer: Buffer.from(name) });
       const answer = (chooserId: string) =>
         browser.answerFileChooser({
@@ -1466,8 +1478,7 @@ it.live("a late first desktop size still reaches viewers when a newer read fails
       const context = desktopConnections[0]!.context;
       const cdp = context.sessions[0]!;
       // The viewer attached while hidden, so no size is known yet.
-      while (!cdp.send.mock.calls.some(([method]) => method === "Runtime.evaluate"))
-        yield* Effect.yieldNow;
+      yield* Effect.promise(() => cdp.emitAsync("Page.frameResized"));
       const send = cdp.send.getMockImplementation()!;
       const late = Promise.withResolvers<Record<string, unknown>>();
       yield* Effect.addFinalizer(() => Effect.sync(() => late.resolve({})));
@@ -1593,12 +1604,11 @@ it.live("a desktop reconnect replaces a stalled viewer's full backlog", () =>
       const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
       const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, false));
       yield* nextViewerViewport(viewer);
-      while (desktopDetaches.listenerCount("detach") === 0) yield* Effect.yieldNow;
+      yield* Effect.promise(() => desktopDetachReady.promise);
       // The viewer stopped reading: its output is full when the desktop takes the page back.
       stallViewer(viewer, { _tag: "frame", data: Buffer.alloc(0), ack: Effect.void });
-      const capacity = yield* Queue.size(viewer.output);
       desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId: opened.tabId });
-      while ((yield* Queue.size(viewer.output)) === capacity) yield* Effect.yieldNow;
+      yield* Effect.promise(() => desktopReleased.promise);
       expect(yield* Queue.takeAll(viewer.output)).toEqual([{ _tag: "reconnect" }]);
     }),
   ).pipe(Effect.provide(layer)),
@@ -1615,13 +1625,12 @@ it.live("a queued reconnect survives later viewer state on a stalled viewer", ()
       const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, false));
       yield* nextViewerViewport(viewer);
       const cdp = desktopConnections[0]!.context.sessions[0]!;
-      while (desktopDetaches.listenerCount("detach") === 0) yield* Effect.yieldNow;
+      yield* Effect.promise(() => desktopDetachReady.promise);
       stallViewer(viewer, { _tag: "frame", data: Buffer.alloc(0), ack: Effect.void });
       // One free slot: the reconnect lands as the last queued item.
       yield* Queue.take(viewer.output);
-      const capacity = (yield* Queue.size(viewer.output)) + 1;
       desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId: opened.tabId });
-      while ((yield* Queue.size(viewer.output)) < capacity) yield* Effect.yieldNow;
+      yield* Effect.promise(() => desktopReleased.promise);
       yield* Effect.promise(() => cdp.emitAsync("Page.frameResized"));
       expect((yield* Queue.takeAll(viewer.output)).at(-1)).toEqual({ _tag: "reconnect" });
     }),
