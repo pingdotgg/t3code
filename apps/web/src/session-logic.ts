@@ -3,6 +3,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import {
   type AssetResource,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2Run,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -1121,19 +1122,50 @@ export function findRevertCheckpoint(
   );
 }
 
-/** A run with no ready checkpoint (stopped, failed capture) may have touched files. */
-export function runsChangedFiles(
-  checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
-  runIds: Iterable<RunId>,
-): boolean {
-  for (const runId of runIds) {
-    const checkpoint = checkpoints.findLast(
-      (candidate) => candidate.runId === runId && candidate.status === "ready",
+export type RevertFileCheck =
+  | { readonly kind: "changed" }
+  | { readonly kind: "diff"; readonly toTurnCount: number };
+
+/**
+ * Whether rewinding to `turnCount` leaves changed files behind. Summaries can be empty despite
+ * changes (failed summary, filtered git imports), so an empty result still needs the real diff.
+ * Checkpoints snapshot the whole worktree, so diffing to the latest run's checkpoint also covers
+ * earlier runs that never captured one.
+ */
+export function revertFileCheck(
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>,
+  checkpoints: ReadonlyArray<
+    Pick<OrchestrationV2Checkpoint, "runId" | "status" | "files" | "filesTotal">
+  >,
+  turnCount: number,
+): RevertFileCheck {
+  const laterRuns = runs.filter(
+    (run) => run.ordinal > turnCount && run.status !== "rolled_back" && run.status !== "queued",
+  );
+  const latestRun = laterRuns.reduce<(typeof laterRuns)[number] | null>(
+    (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
+    null,
+  );
+  const readyCheckpoint = (runId: RunId) =>
+    checkpoints.findLast(
+      (checkpoint) => checkpoint.runId === runId && checkpoint.status === "ready",
     );
-    if (checkpoint === undefined) return true;
-    if (checkpoint.files.length > 0 || (checkpoint.filesTotal?.count ?? 0) > 0) return true;
+  // The turn diff query only resolves checkpoints of completed runs.
+  if (
+    latestRun === null ||
+    latestRun.status !== "completed" ||
+    readyCheckpoint(latestRun.id) === undefined
+  ) {
+    return { kind: "changed" };
   }
-  return false;
+  const summarizedChanges = laterRuns.some((run) => {
+    const checkpoint = readyCheckpoint(run.id);
+    return (
+      checkpoint !== undefined &&
+      (checkpoint.files.length > 0 || (checkpoint.filesTotal?.count ?? 0) > 0)
+    );
+  });
+  return summarizedChanges ? { kind: "changed" } : { kind: "diff", toTurnCount: latestRun.ordinal };
 }
 
 export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhase {
