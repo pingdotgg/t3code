@@ -73,7 +73,7 @@ export const RemotePairingTargetError = Schema.Union([
 ]);
 export type RemotePairingTargetError = typeof RemotePairingTargetError.Type;
 
-const cannotCarryPublicCertificate = (host: string): boolean => {
+const isDirectAddressHost = (host: string): boolean => {
   if (!URL.canParse(`http://${host}`)) return false;
   const { hostname } = new URL(`http://${host}`);
   return (
@@ -85,12 +85,12 @@ const cannotCarryPublicCertificate = (host: string): boolean => {
 };
 
 /**
- * Prefixes a scheme-less host with `http://` when it cannot carry a publicly trusted
- * certificate (IP literal, `localhost`, mDNS `.local`), since T3 serves plain HTTP there.
+ * Gives a scheme-less host `http://` when it is an IP literal, `localhost`, or an mDNS
+ * `.local` name, where a T3 server reached directly serves plain HTTP, and `https://` otherwise.
  */
 export const withDefaultRemoteScheme = (value: string): string => {
   if (URL_SCHEME_PREFIX.test(value)) return value;
-  return `${cannotCarryPublicCertificate(value) ? "http" : "https"}://${value}`;
+  return `${isDirectAddressHost(value) ? "http" : "https"}://${value}`;
 };
 
 const hasSupportedRemoteBackendProtocol = (url: URL): boolean =>
