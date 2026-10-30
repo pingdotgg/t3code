@@ -1102,8 +1102,12 @@ function ThreadDetailBody(
   useAnimatedReaction(
     () => floatingCoverageTarget,
     (target, previous) => {
-      // The first run already sits at its target; animating to it would move the feed's end.
-      if (previous === null) return;
+      // The first run applies its target without animating; animating would move the feed's end.
+      // The target can change after the first render but before this first run.
+      if (previous === null) {
+        floatingControlCoverage.set(target);
+        return;
+      }
       floatingControlCoverage.set(
         withTiming(target, { duration: 180, reduceMotion: ReduceMotion.System }, (finished) => {
           if (finished) runOnJS(repinAfterCoverageSettles)(target);
