@@ -8,6 +8,7 @@ import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area
 import { AdaptiveWorkspaceContext, useAdaptiveWorkspaceLayout } from "./adaptive-workspace-context";
 import { threadSelectionDeferral } from "./deferred-navigation";
 import { uuidv4 } from "../../lib/uuid";
+import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -272,8 +273,9 @@ function AdaptiveWorkspaceLayoutContent(
   const enabledTabs = useEnabledNavigationTabs();
   const { scale, fabSize } = useAndroidControlSizing();
   const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize);
+  // The rail stays while the keyboard sets the sidebar aside; only the list pane collapses.
   const navigationRailWidth =
-    shouldRenderNavigationRail && (showPrimarySidebar || workspacePage)
+    shouldRenderNavigationRail && (sidebarWithoutKeyboard || workspacePage)
       ? ANDROID_WORKSPACE_RAIL_WIDTH
       : 0;
   const [hinge, setHinge] = useState<VerticalHinge | null>(null);
@@ -806,6 +808,9 @@ function AdaptiveWorkspaceLayoutContent(
   // Showing or hiding the sidebar clips a fixed-width list. A hinge resize instead tracks the
   // animated edge, so the header actions slide with it rather than jumping or being covered.
   const listPaneGap = layout.listPaneGap ?? 0;
+  const keyboardSidebarRest = sidebarRestsOpen
+    ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+    : 0;
   const drawnSidebarWidth = useDerivedValue(
     () => renderedSidebarWidth.value * (keyboardHold.value ? 1 - keyboardProgress.value : 1),
   );
@@ -814,15 +819,42 @@ function AdaptiveWorkspaceLayoutContent(
       listPaneCeiling,
       Math.max(listPaneFloor, drawnSidebarWidth.value - listPaneGap),
     ),
-    // Following the keyboard, the list rides the sidebar's edge like the content beside it,
-    // instead of being uncovered in place.
-    transform: [{ translateX: drawnSidebarWidth.value - renderedSidebarWidth.value }],
   }));
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     // Fading a UIKit glass ancestor can leave remounted header effects missing.
     opacity:
-      Platform.OS === "ios" || floatingTabsEnabled ? 1 : Math.min(1, drawnSidebarWidth.value / 80),
-    width: drawnSidebarWidth.value,
+      keyboardHold.value || Platform.OS === "ios" || floatingTabsEnabled
+        ? 1
+        : Math.min(1, drawnSidebarWidth.value / 80),
+    // Held by the keyboard, it keeps its resting width and slides, so nothing relays out.
+    width: keyboardHold.value ? renderedSidebarWidth.value : drawnSidebarWidth.value,
+    transform: [
+      {
+        translateX: keyboardHold.value ? drawnSidebarWidth.value - renderedSidebarWidth.value : 0,
+      },
+    ],
+  }));
+  // The content keeps the width React laid it out at and rides the sidebar's edge, so a keyboard
+  // transition relays nothing out per frame, the way UIKit animates the iOS split view.
+  // While the keyboard is moving, the detail card continues past its right edge, so the strip the
+  // narrower settled column leaves on the way back shows the card instead of the row behind it.
+  const contentOverhangStyle = useAnimatedStyle(() => ({
+    opacity: keyboardHold.value && keyboardProgress.value > 0 && keyboardProgress.value < 1 ? 1 : 0,
+    transform: [
+      {
+        translateX: keyboardHold.value ? drawnSidebarWidth.value - renderedSidebarWidth.value : 0,
+      },
+    ],
+  }));
+  const threadHeader = useToolbarLayout(false, composerKeyboardActive);
+  const threadHeaderHeight =
+    threadHeader.paddingTop + threadHeader.height + threadHeader.paddingBottom;
+  const contentKeyboardStyle = useAnimatedStyle(() => ({
+    transform: [
+      {
+        translateX: keyboardHold.value ? drawnSidebarWidth.value - renderedSidebarWidth.value : 0,
+      },
+    ],
   }));
 
   // Clip the navigator at its settled width so native headers and markdown reflow only once per pane toggle.
@@ -922,6 +954,10 @@ function AdaptiveWorkspaceLayoutContent(
           // content pane, laid out after it, covers it, in the same mount as the page.
           style={[
             workspacePage ? { position: "absolute", top: 0, bottom: 0, left: 0 } : null,
+            // Out of the row while the keyboard slides it.
+            keyboardHoldsSidebar
+              ? { position: "absolute", top: 0, bottom: 0, left: navigationRailWidth }
+              : null,
             sidebarAnimatedStyle,
           ]}
         >
@@ -975,20 +1011,30 @@ function AdaptiveWorkspaceLayoutContent(
         </Animated.View>
       ) : null}
       <View
+        // While the keyboard slides the sidebar beneath this column, the row's own background
+        // shows through instead; a zIndex change would reorder the views and drop focus.
         className={
           Platform.OS === "android"
-            ? "flex-1 overflow-hidden bg-header"
+            ? keyboardHoldsSidebar
+              ? "flex-1 overflow-hidden"
+              : "flex-1 overflow-hidden bg-header"
             : "flex-1 overflow-hidden bg-screen"
         }
         collapsable={false}
       >
-        <View
+        <Animated.View
           collapsable={false}
-          style={
-            // While the keyboard moves the sidebar, the content tracks its edge every frame so
-            // the two land together; a settled width would jump when React commits mid-slide.
-            keyboardHoldsSidebar
-              ? { flex: 1, marginRight: contentEndGap }
+          // The animated style stays attached so its shift resets when the keyboard lets go.
+          style={[
+            keyboardHoldsSidebar && contentTargetWidth !== null
+              ? {
+                  position: "absolute",
+                  top: 0,
+                  bottom: 0,
+                  // React places it at the sidebar's resting edge; only the keyboard's share moves.
+                  left: keyboardSidebarRest,
+                  width: contentTargetWidth,
+                }
               : contentTargetWidth !== null
                 ? {
                     flex: 1,
@@ -996,8 +1042,9 @@ function AdaptiveWorkspaceLayoutContent(
                     alignSelf: contentAnchor.end ? "flex-end" : "flex-start",
                     marginRight: contentAnchor.end ? contentEndGap : 0,
                   }
-                : { flex: 1 }
-          }
+                : { flex: 1 },
+            contentKeyboardStyle,
+          ]}
         >
           {/* Android holds the content still, so its floating controls keep its width. */}
           <WorkspaceContentWidthContext
@@ -1040,7 +1087,36 @@ function AdaptiveWorkspaceLayoutContent(
               ) : null}
             </WorkspaceSettledContentWidthContext>
           </WorkspaceContentWidthContext>
-        </View>
+        </Animated.View>
+        {keyboardHoldsSidebar && contentTargetWidth !== null ? (
+          <>
+            <Animated.View
+              pointerEvents="none"
+              className="absolute top-0 bg-header"
+              style={[
+                {
+                  left: keyboardSidebarRest + contentTargetWidth,
+                  width: keyboardSidebarRest + contentEndGap,
+                  height: threadHeaderHeight,
+                },
+                contentOverhangStyle,
+              ]}
+            />
+            <Animated.View
+              pointerEvents="none"
+              className="absolute bottom-0 rounded-tr-[28px] bg-thread-canvas"
+              style={[
+                {
+                  // Starts under the card's rounded corner so the two read as one card.
+                  left: keyboardSidebarRest + contentTargetWidth - 28,
+                  width: keyboardSidebarRest + 28,
+                  top: threadHeaderHeight,
+                },
+                contentOverhangStyle,
+              ]}
+            />
+          </>
+        ) : null}
       </View>
       <WorkspaceInspectorPane
         pathname={props.pathname}
