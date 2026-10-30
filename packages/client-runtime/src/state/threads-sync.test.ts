@@ -112,6 +112,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly latestLocalTurnOrdinal?: number | null;
   };
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
+  /** Verdicts consumed in order; the last verdict repeats for later probes. */
+  readonly httpSnapshots?: ReadonlyArray<ThreadSnapshotLoadResult>;
   /** The test sends the completion marker itself instead of the fake server sending it first. */
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -178,14 +180,18 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   );
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
-      Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
+      Ref.modify(loaderCalls, (count) => {
+        const call = count + 1;
+        const verdict: ThreadSnapshotLoadResult =
           threadId === THREAD_ID
-            ? (options?.httpSnapshot ??
-                ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
-            : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
-        ),
-      ),
+            ? options?.httpSnapshots !== undefined
+              ? (options.httpSnapshots[Math.min(call - 1, options.httpSnapshots.length - 1)] ?? {
+                  _tag: "unavailable",
+                })
+              : (options?.httpSnapshot ?? { _tag: "unavailable" })
+            : { _tag: "unavailable" };
+        return [verdict, call];
+      }),
   });
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
@@ -444,6 +450,56 @@ describe("EnvironmentThreads", () => {
         expect(yield* Ref.get(h.loaderCalls)).toBe(1);
         expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(1);
       }),
+  );
+
+  it.effect(
+    "retries a pending pre-allocated id's missing probe until its send commits the thread",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          // Verdicts consumed in call order; the last one repeats. The loop backs
+          // off through the missing verdicts (250ms, 500ms, 1000ms, 2s) until the
+          // thread commits and the fifth probe finds it.
+          httpSnapshots: [
+            { _tag: "missing" },
+            { _tag: "missing" },
+            { _tag: "missing" },
+            { _tag: "missing" },
+            { _tag: "present", snapshot: { snapshotSequence: 5, projection: BASE_PROJECTION } },
+          ],
+        });
+        yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
+
+        // The clock jump releases the 250ms, 500ms and 1000ms sleeps; three probes
+        // see "missing", then the fifth (after the 2s sleep) finds the thread.
+        yield* TestClock.adjust("2 seconds");
+        yield* TestClock.adjust("4 seconds");
+        const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+        expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+        expect(yield* Ref.get(h.loaderCalls)).toBe(5);
+        expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(1);
+        yield* Effect.yieldNow;
+        expect(yield* Ref.get(h.lastSubscribeAfterSequence)).toBe(5);
+      }),
+  );
+
+  it.effect("treats an id as deleted once the pending-creation probe budget lapses", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+      });
+      yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
+
+      // Backoff delays cap at 8s; the budget lapses after 17 probes.
+      for (let i = 0; i < 20; i++) {
+        yield* TestClock.adjust("10 seconds");
+      }
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "deleted");
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(17);
+      // The parked subscription must not have opened the socket.
+      expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(0);
+    }),
   );
 
   it.effect("flushes newer data after an older background write completes", () =>

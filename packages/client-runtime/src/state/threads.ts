@@ -11,6 +11,7 @@ import {
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
@@ -175,6 +176,12 @@ function matchesThreadSnapshot(
       currentHistory.latestLocalTurnOrdinal === history.latestLocalTurnOrdinal)
   );
 }
+
+// A pre-allocated draft id's probe runs before its send's launch commits the
+// thread, so "missing" is not definitive until no launch can be in flight.
+const THREAD_PENDING_CREATION_PROBE_DELAY_START_MILLIS = 250;
+const THREAD_PENDING_CREATION_PROBE_DELAY_MAX_MILLIS = 8000;
+const THREAD_PENDING_CREATION_PROBE_BUDGET_MILLIS = 90_000;
 
 function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadState {
   return {
@@ -965,43 +972,62 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
-            yield* snapshotLoader.load(prepared, threadId);
-          switch (httpResult._tag) {
-            case "present": {
-              if (canLoadHistory && httpResult.history !== undefined) {
-                yield* Ref.set(acceptsBoundedSocketSnapshots, true);
+          let missingWaitMillis = 0;
+          let missingProbes = 0;
+          probe: for (;;) {
+            const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
+              yield* snapshotLoader.load(prepared, threadId);
+            switch (httpResult._tag) {
+              case "present": {
+                if (canLoadHistory && httpResult.history !== undefined) {
+                  yield* Ref.set(acceptsBoundedSocketSnapshots, true);
+                }
+                // Atomic projection + progressive meta so a settled bounded window
+                // never persists as a complete full-timeline cache entry. Socket
+                // snapshots still go through applyItem (resetHistory).
+                yield* applyLock.withPermits(1)(
+                  Effect.gen(function* () {
+                    yield* SubscriptionRef.set(lastSequence, httpResult.snapshot.snapshotSequence);
+                    const history: ThreadHistoryMeta =
+                      httpResult.history !== undefined
+                        ? {
+                            historyCursor: httpResult.history.historyCursor,
+                            hasMoreHistory: httpResult.history.hasMoreHistory,
+                            loading: false,
+                            error: null,
+                            expanded: false,
+                            latestLocalTurnOrdinal:
+                              httpResult.history.latestLocalTurnOrdinal ?? null,
+                          }
+                        : EMPTY_THREAD_HISTORY_META;
+                    yield* setThread(httpResult.snapshot.projection, { history });
+                    yield* remember;
+                  }),
+                );
+                current = yield* SubscriptionRef.get(state);
+                break probe;
               }
-              // Atomic projection + progressive meta so a settled bounded window
-              // never persists as a complete full-timeline cache entry. Socket
-              // snapshots still go through applyItem (resetHistory).
-              yield* applyLock.withPermits(1)(
-                Effect.gen(function* () {
-                  yield* SubscriptionRef.set(lastSequence, httpResult.snapshot.snapshotSequence);
-                  const history: ThreadHistoryMeta =
-                    httpResult.history !== undefined
-                      ? {
-                          historyCursor: httpResult.history.historyCursor,
-                          hasMoreHistory: httpResult.history.hasMoreHistory,
-                          loading: false,
-                          error: null,
-                          expanded: false,
-                          latestLocalTurnOrdinal: httpResult.history.latestLocalTurnOrdinal ?? null,
-                        }
-                      : EMPTY_THREAD_HISTORY_META;
-                  yield* setThread(httpResult.snapshot.projection, { history });
-                  yield* remember;
-                }),
-              );
-              current = yield* SubscriptionRef.get(state);
-              break;
-            }
-            case "missing": {
-              yield* setDeleted();
-              return yield* Effect.never;
-            }
-            case "unavailable": {
-              break;
+              case "missing": {
+                // The send holding this pre-allocated id commits its launch seconds
+                // later; keep probing with backoff so the subscription revives on
+                // the same instance instead of parking an empty timeline. Once the
+                // budget lapses the id is treated as deleted as before.
+                if (missingWaitMillis >= THREAD_PENDING_CREATION_PROBE_BUDGET_MILLIS) {
+                  yield* setDeleted();
+                  return yield* Effect.never;
+                }
+                const delay = Math.min(
+                  THREAD_PENDING_CREATION_PROBE_DELAY_START_MILLIS * 2 ** missingProbes,
+                  THREAD_PENDING_CREATION_PROBE_DELAY_MAX_MILLIS,
+                );
+                missingWaitMillis += delay;
+                missingProbes += 1;
+                yield* Effect.sleep(Duration.millis(delay));
+                continue probe;
+              }
+              case "unavailable": {
+                break probe;
+              }
             }
           }
         }
