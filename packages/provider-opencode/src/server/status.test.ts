@@ -123,8 +123,9 @@ it.effect(
         metadata: { orgID: "workspace-id" },
       };
       const fingerprints = new Map([
-        ["console-key", "3e45cfde9158185930d4cc7020a4e390895574fd54bd8f9631d23a336bbf94f0"],
-        ["oauth-access", "44787b5311d57ff90911ebaf148f0381be1788d003774c3b43029d6fed1d528b"],
+        // Console credentials share one workspace fingerprint across token refreshes.
+        ["console-key", "b57cd91082439e0caec0a8016b42c874b7c0cb734814d5fedfca398f62a3614f"],
+        ["oauth-access", "b57cd91082439e0caec0a8016b42c874b7c0cb734814d5fedfca398f62a3614f"],
         ["go-key", "d0e590e93fc9bd9353f2b993c0c287391cae505da2a78cb698b75418d2f5367e"],
         ["inline-key", "85649de18e63305548b6407e185f708483727ee6189cc4bc9512ddb17e23e776"],
       ]);
