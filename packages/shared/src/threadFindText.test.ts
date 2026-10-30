@@ -21,6 +21,14 @@ it("excludes review attachments rendered as context chips", () => {
   ]);
 });
 
+it("indexes single tildes in user paths as typed", () => {
+  const text = "Install as ~/a/x, then read (~/a/guide.md).";
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })?.join("")).toBe(text);
+  expect(
+    searchableMessageSegments({ role: "user", text: "Drop ~~old~~", streaming: false })?.join(""),
+  ).toBe("Drop old");
+});
+
 it("excludes structured context chips without joining text across them", () => {
   expect(
     searchableMessageSegments({

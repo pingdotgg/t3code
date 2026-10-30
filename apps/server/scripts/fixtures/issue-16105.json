@@ -1,0 +1,38 @@
+{
+  "threadId": "9480aec7-3adf-40ed-a5b8-1758521cd391",
+  "timestamp": "2026-10-21T12:00:00.000Z",
+  "title": "16105 synthetic markdown proof",
+  "contextVisual": "UNVERIFIED: no generated terminal record available; empty-record context tests extraction only",
+  "messages": [
+    {
+      "fixture": "F1",
+      "role": "user",
+      "text": "Install ~/folder-a/skills/x, then read (~/folder-a/guide.md).\nKeep ~solo~ and ~~old~~ with **bold** and [guide](https://example.com).\n> Quote ~/quote/a then (~/quote/b).\n- List ~/list/a then (~/list/b).\n\n| A | B |\n| - | - |\n| ~/table/a | (~/table/b) |"
+    },
+    {
+      "fixture": "F1A",
+      "role": "assistant",
+      "text": "Install ~/folder-a/skills/x, then read (~/folder-a/guide.md).\nKeep ~solo~ and ~~old~~ with **bold** and [guide](https://example.com).\n> Quote ~/quote/a then (~/quote/b).\n- List ~/list/a then (~/list/b).\n\n| A | B |\n| - | - |\n| ~/table/a | (~/table/b) |"
+    },
+    {
+      "fixture": "F2",
+      "role": "user",
+      "text": "Inline `~/inline/a` and `~/inline/b`; <b>literal html</b>.\n```text\n~/backtick/a then (~/backtick/b).\n```\n~~~text\n~/tildefence/a then (~/tildefence/b).\n~~~\n\nTail ~/hidden/a then (~/hidden/b).\n[terminal label](t3-context://v1/terminal/terminal_1)",
+      "context": {
+        "version": 1,
+        "records": []
+      }
+    },
+    {
+      "fixture": "F3",
+      "role": "user",
+      "text": "Automation ~/auto/a then (~/auto/b). Keep ~~old~~.",
+      "scheduledTaskId": "task:proof-16105"
+    },
+    {
+      "fixture": "F4",
+      "role": "user",
+      "text": "Legacy ~/legacy/a then (~/legacy/b).\n\n<terminal_context>\n- Terminal 1 line 12:\n  12 | hidden output\n</terminal_context>"
+    }
+  ]
+}
