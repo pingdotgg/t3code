@@ -1,6 +1,8 @@
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { parseNativeAppMention } from "@t3tools/shared/nativeAppMentions";
+import { NativeAppChip } from "./NativeAppChip";
 import {
   Extension,
   findChildren,
@@ -510,6 +512,35 @@ const ComposerContextReferenceExtension = Node.create({
   },
 });
 
+const ComposerApplicationExtension = Node.create({
+  name: "composer-application",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return { href: { default: "" }, source: { default: "" } };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-composer-application]" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["span", { "data-composer-application": "", ...HTMLAttributes }];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(ComposerApplicationNodeView);
+  },
+});
+
+function ComposerApplicationNodeView({ node }: NodeViewProps) {
+  const mention = parseNativeAppMention(String(node.attrs.href));
+  return (
+    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+      {mention ? <NativeAppChip {...mention} /> : String(node.attrs.source)}
+    </NodeViewWrapper>
+  );
+}
+
 function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
@@ -836,6 +867,7 @@ function createComposerExtensions(richText: boolean) {
     ComposerUndoGroupingExtension,
     ComposerTextDirectionExtension,
     ComposerMentionExtension,
+    ComposerApplicationExtension,
     ComposerSkillExtension,
     ComposerCitationExtension,
     ComposerContextReferenceExtension,

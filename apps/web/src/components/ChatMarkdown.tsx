@@ -92,6 +92,8 @@ import type { Pluggable, PluggableList } from "unified";
 import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
+import { parseNativeAppMention } from "@t3tools/shared/nativeAppMentions";
+import { NativeAppChip } from "./NativeAppChip";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
@@ -400,7 +402,7 @@ const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
 
 function markdownUrlTransform(href: string) {
   if (parseAssistantCitationHref(href)) return href;
-  if (parseComposerContextHref(href)) return href;
+  if (parseComposerContextHref(href) || parseNativeAppMention(href)) return href;
   if (parseThreadLinkHref(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
   return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
@@ -450,7 +452,7 @@ function fileLinkSourcesKey(
   imageBaseDir: string | undefined,
 ): string {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
-    .filter((href) => !parseComposerContextHref(href))
+    .filter((href) => !parseComposerContextHref(href) && !parseNativeAppMention(href))
     .map(normalizeMarkdownLinkHrefKey)
     .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd));
   const spans = extractInlineCodeSpans(text).filter((span) =>
@@ -1078,6 +1080,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
+    const application = href ? parseNativeAppMention(href) : null;
+    if (application) return <NativeAppChip {...application} />;
     if (citation) return <AssistantCitationChip citation={citation} />;
     const threadLink = href ? parseThreadLinkHref(href) : null;
     if (threadLink) {

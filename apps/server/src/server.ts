@@ -174,6 +174,7 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as CuaDriver from "./cua/CuaDriver.ts";
+import * as CuaApplications from "./cua/CuaApplications.ts";
 import * as BrowserTabs from "./mcp/BrowserTabs.ts";
 import * as CuaWindowPreview from "./cua/CuaWindowPreview.ts";
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
@@ -593,6 +594,7 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   CuaWindowPreview.layer,
+  CuaApplications.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,

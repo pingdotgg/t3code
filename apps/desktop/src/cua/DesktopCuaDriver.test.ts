@@ -64,6 +64,9 @@ const fixture = Effect.fn(function* (
     }),
     loadEmbedded: async () => ({
       EmbeddedCuaDriverHost: class {
+        static withOptions() {
+          return new this();
+        }
         async start() {
           starts++;
           Queue.offerUnsafe(starting, undefined);

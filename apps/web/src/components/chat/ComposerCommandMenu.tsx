@@ -8,6 +8,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ProjectEntry,
+  type CuaApplication,
   type ProviderDriverKind,
   type PullRequestContextMetadata,
   type ScopedThreadRef,
@@ -33,8 +34,17 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
+import { NativeAppIcon } from "../NativeAppChip";
 
 export type ComposerCommandItem =
+  | {
+      id: string;
+      type: "application";
+      application: CuaApplication;
+      environmentId: string;
+      label: string;
+      description: string;
+    }
   | {
       id: string;
       type: "path";
@@ -156,12 +166,12 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                   ? "Searching workspace skills..."
                   : props.triggerKind === "pull-request"
                     ? "Finding pull request..."
-                    : "Searching workspace files..."
+                    : "Searching files, threads, and applications..."
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
                     ? "No skills found. Try / to browse provider commands."
                     : props.triggerKind === "path"
-                      ? "No matching files or folders."
+                      ? "No matching files, threads, or applications."
                       : "No matching command."))}
             </p>
           </div>
@@ -214,7 +224,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
-      {props.item.type === "environment" ? (
+      {props.item.type === "application" ? (
+        <NativeAppIcon app={props.item.application} environmentId={props.item.environmentId} />
+      ) : props.item.type === "environment" ? (
         <EnvironmentMachineIcon
           kind={props.item.machine}
           aria-hidden="true"
@@ -259,7 +271,7 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
 }
 
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
-  path: "Files and folders",
+  path: "Files, threads, and applications",
   "pull-request": "Pull requests",
   "slash-command": "Commands",
   skill: "Skills",

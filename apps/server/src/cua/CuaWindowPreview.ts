@@ -7,6 +7,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type * as CuaSdk from "@trycua/cua-driver";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -14,7 +15,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
@@ -26,6 +26,7 @@ import * as Stream from "effect/Stream";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import {
+  clearCuaWindowTarget,
   readCuaWindowTarget,
   type CuaWindowTarget,
 } from "@t3tools/provider-core/server/cuaToolPresentation";
@@ -56,18 +57,15 @@ export class CuaWindowPreview extends Context.Service<
   }
 >()("t3/cua/CuaWindowPreview") {}
 
-export type SdkModule = Pick<
-  typeof CuaSdk,
-  "CuaDriver" | "GetWindowStateInput" | "GetDesktopStateInput"
->;
+export type SdkModule = Pick<typeof CuaSdk, "CuaDriver" | "GetWindowStateInput">;
 // `connect` is typed as the interface, but every implementation is the
 // generated class with the native handle to release.
 type SdkClient = Pick<
   CuaSdk.CuaDriver,
-  "getWindowState" | "getDesktopState" | "shutdown" | "uniffiDestroy"
+  "getWindowState" | "callTool" | "listToolsJson" | "shutdown" | "uniffiDestroy"
 >;
 
-const REFRESH_INTERVAL = Duration.seconds(1.5);
+const REFRESH_INTERVAL = Duration.millis(250);
 /** Long edge of the preview frame; small enough for a floating card over the app WS. */
 const MAX_DIMENSION = 800;
 const IDLE_STATE: CuaWindowPreviewState = { status: "idle" };
@@ -94,19 +92,61 @@ const loadSdk = Effect.fn("CuaWindowPreview.loadSdk")(function* () {
   return yield* new CuaWindowPreviewSdkError({ cause: "@trycua/cua-driver is not installed." });
 });
 
-/**
- * Captures the window the agent last targeted, or the whole desktop before it
- * has named one. A window that disappeared falls back to the desktop rather
- * than failing, so the card keeps showing something while the agent moves on.
- */
+// Runtime schemas can advertise native extensions without changing the SDK ABI.
+const previewTools = Schema.fromJsonString(
+  Schema.Struct({
+    tools: Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        input_schema: Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Unknown) }),
+      }),
+    ),
+  }),
+);
+const previewMetadata = Schema.fromJsonString(
+  Schema.Struct({
+    app_name: Schema.optionalKey(Schema.String),
+    window_title: Schema.optionalKey(Schema.String),
+    screenshot_width: Schema.Number,
+    screenshot_height: Schema.Number,
+  }),
+);
+
+const encodePreviewArgs = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+/** Captures only the selected window; desktop pixels cannot stand in for it. */
 const captureFrame = Effect.fn("CuaWindowPreview.capture")(function* (
   sdk: SdkModule,
   client: SdkClient,
-  target: CuaWindowTarget | undefined,
+  target: CuaWindowTarget,
+  displayOnly: boolean,
 ) {
   const capturedAt = DateTime.formatIso(yield* DateTime.now);
-  if (target) {
-    const window = yield* Effect.tryPromise({
+  const window = yield* Effect.gen(function* () {
+    if (displayOnly && target.windowId <= BigInt(Number.MAX_SAFE_INTEGER)) {
+      const args = yield* encodePreviewArgs({
+        pid: target.pid,
+        window_id: Number(target.windowId),
+        include_accessibility_tree: false,
+        include_screenshot: true,
+        max_dimension: MAX_DIMENSION,
+        display_only: true,
+      });
+      const result = yield* Effect.tryPromise({
+        try: (signal) => client.callTool("get_window_state", args, { signal }),
+        catch: (cause) => new CuaWindowPreviewCaptureError({ cause }),
+      });
+      if (result.isError) return yield* new CuaWindowPreviewCaptureError({ cause: result.text });
+      const metadata = yield* Schema.decodeUnknownEffect(previewMetadata)(result.structuredJson);
+      return {
+        appName: metadata.app_name,
+        windowTitle: metadata.window_title,
+        screenshotWidth: metadata.screenshot_width,
+        screenshotHeight: metadata.screenshot_height,
+        images: result.images,
+      };
+    }
+    return yield* Effect.tryPromise({
       try: (signal) =>
         client.getWindowState(
           sdk.GetWindowStateInput.new({
@@ -119,33 +159,30 @@ const captureFrame = Effect.fn("CuaWindowPreview.capture")(function* (
           { signal },
         ),
       catch: (cause) => new CuaWindowPreviewCaptureError({ cause }),
-    }).pipe(Effect.option);
-    const image = Option.isSome(window) ? window.value.images[0] : undefined;
-    if (Option.isSome(window) && image) {
-      return {
-        ...(window.value.appName ? { appName: window.value.appName } : {}),
-        ...(window.value.windowTitle ? { windowTitle: window.value.windowTitle } : {}),
-        width: window.value.screenshotWidth ?? 0,
-        height: window.value.screenshotHeight ?? 0,
-        mimeType: image.mimeType,
-        dataBase64: image.dataBase64,
-        capturedAt,
-      } satisfies CuaWindowPreviewFrame;
-    }
-  }
-  const desktop = yield* Effect.tryPromise({
-    try: (signal) => client.getDesktopState(sdk.GetDesktopStateInput.new({}), { signal }),
-    catch: (cause) => new CuaWindowPreviewCaptureError({ cause }),
-  });
-  const image = desktop.images[0];
-  if (desktop.isError || !image) {
+    });
+  }).pipe(Effect.mapError((cause) => new CuaWindowPreviewCaptureError({ cause })));
+  const image = window.images[0];
+  if (!image) {
     return yield* new CuaWindowPreviewCaptureError({
-      cause: desktop.errorCode ?? desktop.text ?? "no image",
+      cause: "Window capture is unavailable.",
     });
   }
+  const appName =
+    target.app?.name ??
+    (/^(ApplicationFrameHost|WWAHost)(\.exe)?$/iu.test(window.appName ?? "")
+      ? window.windowTitle
+      : window.appName);
+  const app = target.app?.bundleId
+    ? { _tag: "app-id" as const, appId: target.app.bundleId }
+    : appName
+      ? { _tag: "display-name" as const, displayName: appName.slice(0, 160) }
+      : undefined;
   return {
-    width: 0,
-    height: 0,
+    ...(app ? { app } : {}),
+    ...(appName ? { appName } : {}),
+    ...(window.windowTitle ? { windowTitle: window.windowTitle } : {}),
+    width: window.screenshotWidth ?? 0,
+    height: window.screenshotHeight ?? 0,
     mimeType: image.mimeType,
     dataBase64: image.dataBase64,
     capturedAt,
@@ -226,17 +263,80 @@ export const make = Effect.fn("CuaWindowPreview.make")(function* (
             Effect.andThen(Effect.sync(() => client.uniffiDestroy())),
           ),
       );
-      yield* captureFrame(module, client, readCuaWindowTarget(threadId)).pipe(
-        Effect.flatMap((frame) => publish(preview, { status: "live", frame })),
-        Effect.catchTags({
-          CuaWindowPreviewCaptureError: (error) =>
-            publish(preview, {
-              status: "unavailable",
-              detail: typeof error.cause === "string" ? error.cause : error.message,
-            }),
-        }),
-        Effect.repeat(Schedule.spaced(refreshInterval)),
+      const displayOnly = yield* Effect.tryPromise({
+        try: (signal) => client.listToolsJson({ signal }),
+        catch: (cause) => new CuaWindowPreviewSdkError({ cause }),
+      }).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(previewTools)),
+        Effect.map((inventory) =>
+          inventory.tools.some(
+            (tool) =>
+              tool.name === "get_window_state" && "display_only" in tool.input_schema.properties,
+          ),
+        ),
+        Effect.orElseSucceed(() => false),
       );
+      let previousTarget: CuaWindowTarget | undefined;
+      let unchangedFrames = 0;
+      const capture = Effect.suspend(() => {
+        const target = readCuaWindowTarget(threadId);
+        if (target?.pid !== previousTarget?.pid || target?.windowId !== previousTarget?.windowId) {
+          unchangedFrames = 0;
+          previousTarget = undefined;
+        }
+        if (!target) return publish(preview, { status: "live" });
+        const isCurrent = () => {
+          const current = readCuaWindowTarget(threadId);
+          return current?.pid === target?.pid && current?.windowId === target?.windowId;
+        };
+        return captureFrame(module, client, target, displayOnly).pipe(
+          // Compositor transitions can briefly fail a frame. Keep the current
+          // frame during bounded retries, but report persistent capture loss.
+          Effect.retry({ times: 2, schedule: Schedule.spaced("150 millis"), while: isCurrent }),
+          Effect.flatMap((frame) => {
+            if (!isCurrent()) return Effect.void;
+            const previous = preview.state.status === "live" ? preview.state.frame : undefined;
+            const unchanged =
+              previousTarget !== undefined &&
+              previous &&
+              previous.dataBase64 === frame.dataBase64 &&
+              previous.mimeType === frame.mimeType &&
+              previous.width === frame.width &&
+              previous.height === frame.height &&
+              previous.appName === frame.appName &&
+              previous.windowTitle === frame.windowTitle &&
+              previous.app?._tag === frame.app?._tag &&
+              (previous.app?._tag === "app-id" ? previous.app.appId : previous.app?.displayName) ===
+                (frame.app?._tag === "app-id" ? frame.app.appId : frame.app?.displayName);
+            previousTarget = target;
+            unchangedFrames = unchanged ? Math.min(unchangedFrames + 1, 3) : 0;
+            return unchanged ? Effect.void : publish(preview, { status: "live", frame });
+          }),
+          Effect.catchTags({
+            CuaWindowPreviewCaptureError: (error) => {
+              unchangedFrames = 0;
+              return isCurrent()
+                ? publish(preview, {
+                    status: "unavailable",
+                    detail: typeof error.cause === "string" ? error.cause : error.message,
+                  })
+                : Effect.void;
+            },
+          }),
+        );
+      });
+      return yield* Effect.gen(function* () {
+        const startedAt = yield* Clock.currentTimeMillis;
+        yield* capture;
+        const elapsed = Math.max(0, (yield* Clock.currentTimeMillis) - startedAt);
+        // Poll static windows at 1 FPS; changed frames immediately restore 4 FPS.
+        // Leave at least as much idle time as capture time.
+        // Slow captures lower the rate instead of filling a queue or busy-looping.
+        const minimumInterval = readCuaWindowTarget(threadId)
+          ? Duration.toMillis(refreshInterval) * (unchangedFrames >= 3 ? 4 : 1)
+          : 1500;
+        yield* Effect.sleep(Math.max(minimumInterval - elapsed, elapsed));
+      }).pipe(Effect.forever);
     },
     (effect, _threadId, preview) =>
       effect.pipe(
@@ -287,6 +387,7 @@ export const make = Effect.fn("CuaWindowPreview.make")(function* (
       preview.live = (yield* mcpSessions.read(event.threadId))?.cuaDriver?.socketPath !== undefined;
       yield* reconcile(event.threadId);
     } else if (status !== "pending") {
+      clearCuaWindowTarget(event.threadId);
       const preview = threads.get(event.threadId);
       if (!preview) return;
       preview.live = false;

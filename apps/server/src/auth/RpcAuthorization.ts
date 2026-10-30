@@ -62,6 +62,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverCheckComputerUse]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverListApplications]: AuthOrchestrationReadScope,
   // Operate: the check reads the host's browser profiles; the action installs a tool.
   [WS_METHODS.serverCheckBrowserTabs]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverRunBrowserTabsAction]: AuthOrchestrationOperateScope,

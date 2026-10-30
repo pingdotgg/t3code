@@ -188,6 +188,7 @@ import { terminalOutputStream, withTerminalOutputWindow } from "./terminal/Outpu
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as CuaDriver from "./cua/CuaDriver.ts";
+import * as CuaApplications from "./cua/CuaApplications.ts";
 import * as BrowserTabs from "./mcp/BrowserTabs.ts";
 import * as CuaWindowPreview from "./cua/CuaWindowPreview.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -2183,6 +2184,10 @@ export const layerWsRpc = (
                 ? driver.value.status
                 : Effect.succeed({ platform: "other", running: false } as const),
             ),
+          ),
+        [WS_METHODS.serverListApplications]: () =>
+          Effect.flatMap(Effect.serviceOption(CuaApplications.CuaApplications), (service) =>
+            Option.isSome(service) ? service.value.list : Effect.succeed([]),
           ),
         [WS_METHODS.serverCheckBrowserTabs]: (_input) =>
           Effect.serviceOption(BrowserTabs.BrowserTabs).pipe(

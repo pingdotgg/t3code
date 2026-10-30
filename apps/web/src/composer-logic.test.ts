@@ -11,6 +11,7 @@ import {
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
 import { describe, expect, it } from "vite-plus/test";
+import { formatNativeAppMention } from "@t3tools/shared/nativeAppMentions";
 
 import {
   clampCollapsedComposerCursor,
@@ -24,8 +25,15 @@ import {
   isPathSuggestionCurrent,
   replaceTextRange,
 } from "./composer-logic";
+
 import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
 import { formatTerminalContextReference } from "./lib/terminalContext";
+
+it("treats an application chip as one cursor position", () => {
+  const source = formatNativeAppMention({ name: "Helium" }, "host");
+  expect(collapseExpandedComposerCursor(`${source} x`, source.length)).toBe(1);
+  expect(expandCollapsedComposerCursor(`${source} x`, 1)).toBe(source.length);
+});
 
 const terminalReference = formatTerminalContextReference({
   id: "ctx-1",

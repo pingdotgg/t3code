@@ -9,6 +9,7 @@ import {
   type ScopedThreadRef,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
+import { projectNativeAppMentions } from "./nativeAppMentions.ts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
 const COMPOSER_CONTEXT_HREF_PREFIX = `${CONTEXT_PROTOCOL}//v1/`;
@@ -330,13 +331,14 @@ export function projectComposerContextForProvider(input: {
   text: string;
   records: ReadonlyArray<ComposerContextRecord>;
 }): string {
-  const occurrences = collectComposerContextReferences(input.text);
-  if (occurrences.length === 0) return input.text;
+  const text = projectNativeAppMentions(input.text);
+  const occurrences = collectComposerContextReferences(text);
+  if (occurrences.length === 0) return text;
   const recordsById = new Map<ComposerContextId, ComposerContextRecord | undefined>();
   for (const record of input.records) {
     recordsById.set(record.contextId, recordsById.has(record.contextId) ? undefined : record);
   }
-  const body = replaceComposerContextReferences(input.text, (occurrence) =>
+  const body = replaceComposerContextReferences(text, (occurrence) =>
     formatComposerContextProviderMarker(
       recordsById.get(occurrence.contextId)?.kind ?? occurrence.kind,
       occurrence.label,

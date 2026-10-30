@@ -1950,17 +1950,30 @@ export default function ChatView(props: ChatViewProps) {
   // Each new call reopens a card the user closed; a browser or device already floating stays.
   const computerUse = selectLatestComputerUse(serverProjection?.turnItems ?? []);
   const lastShownComputerUseItemId = useRef<string | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Floats the computer card when the shown thread's projection reports a new computer use call.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Floats the computer card for a new computer use call in the shown thread's projection and dismisses it when the run settles.
   useEffect(() => {
-    if (!activeThreadRef || !computerUse?.inProgress || shouldUsePlanSidebarSheet) return;
+    if (!activeThreadRef) return;
+    const current = activePreviewMiniPlayer;
+    if (latestRunSettled) {
+      if (current?.source.kind === "computer") {
+        usePreviewMiniPlayerStore.getState().close(activeThreadRef);
+      }
+      return;
+    }
+    if (!computerUse?.inProgress || shouldUsePlanSidebarSheet) return;
     if (lastShownComputerUseItemId.current === computerUse.itemId) return;
     lastShownComputerUseItemId.current = computerUse.itemId;
     if (!getClientSettings().browserAutoShowFloatingPreview) return;
-    const current =
-      usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(activeThreadRef)];
     if (current && current.source.kind !== "computer") return;
     usePreviewMiniPlayerStore.getState().open(activeThreadRef, COMPUTER_MINI_PLAYER_SOURCE);
-  }, [activeThreadRef, computerUse, shouldUsePlanSidebarSheet]);
+  }, [
+    activePreviewMiniPlayer,
+    activeThreadRef,
+    computerUse,
+    lastShownComputerUseItemId,
+    latestRunSettled,
+    shouldUsePlanSidebarSheet,
+  ]);
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
   const activeProjectRepository = sourceControlClients.repositorySelector(

@@ -127,6 +127,7 @@ export function expandCollapsedComposerCursor(
   for (const segment of segments) {
     if (
       segment.type === "mention" ||
+      segment.type === "application" ||
       segment.type === "citation" ||
       segment.type === "context-reference"
     ) {
@@ -210,6 +211,7 @@ export function collapseExpandedComposerCursor(
   for (const segment of segments) {
     if (
       segment.type === "mention" ||
+      segment.type === "application" ||
       segment.type === "citation" ||
       segment.type === "context-reference"
     ) {

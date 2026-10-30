@@ -1,5 +1,10 @@
 import { CuaDriverMcpConfiguration, type DesktopCuaDriverRequest } from "@t3tools/contracts";
-import type { EmbeddedCuaDriverHost, EmbeddedDriverConnection } from "@trycua/cua-driver/embedded";
+import { cuaDriverHostOptions } from "@t3tools/shared/cuaDriverHostOptions";
+import type {
+  EmbeddedCuaDriverHost,
+  EmbeddedDriverConnection,
+  EmbeddedDriverHostOptions,
+} from "@trycua/cua-driver/embedded";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Context from "effect/Context";
@@ -16,10 +21,11 @@ import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublish
 
 export interface DesktopCuaDriverDependencies {
   readonly loadEmbedded: () => Promise<{
-    readonly EmbeddedCuaDriverHost: new (
-      path: string,
-      hostBundleId: string,
-    ) => Pick<EmbeddedCuaDriverHost, "start" | "stop" | "waitForExit" | "uniffiDestroy">;
+    readonly EmbeddedCuaDriverHost: {
+      readonly withOptions: (
+        options: EmbeddedDriverHostOptions,
+      ) => Pick<EmbeddedCuaDriverHost, "start" | "stop" | "waitForExit" | "uniffiDestroy">;
+    };
   }>;
   readonly loadElectron: () => Promise<
     Pick<
@@ -33,7 +39,21 @@ const decodeMcpConfiguration = Schema.decodeEffect(CuaDriverMcpConfiguration);
 // The SDK loads its native libraries from the archive's .unpacked sibling
 // through our @ubjs/node patch, so a packaged app imports it in place.
 const defaultDependencies: DesktopCuaDriverDependencies = {
-  loadEmbedded: () => import("@trycua/cua-driver/embedded"),
+  loadEmbedded: async () => {
+    const module = await import("@trycua/cua-driver/embedded");
+    return {
+      EmbeddedCuaDriverHost: {
+        withOptions: (options) => {
+          const host = module.EmbeddedCuaDriverHost.withOptions(options);
+          // The generated factory's interface omits the native object's disposal method.
+          if (!(host instanceof module.EmbeddedCuaDriverHost)) {
+            throw new Error("Cua Driver returned an unexpected host object.");
+          }
+          return host;
+        },
+      },
+    };
+  },
   loadElectron: () => import("@trycua/cua-driver/electron"),
 };
 
@@ -217,7 +237,14 @@ export const make = Effect.fn("desktop.cuaDriver.make")(function* (
     const module = yield* Effect.tryPromise(dependencies.loadEmbedded);
     const owned = yield* Effect.try(() => {
       const owned: OwnedHost = {
-        host: new module.EmbeddedCuaDriverHost(binaryPath.value, environment.appUserModelId),
+        host: module.EmbeddedCuaDriverHost.withOptions(
+          cuaDriverHostOptions(
+            binaryPath.value,
+            environment.appUserModelId,
+            environment.platform,
+            process.env,
+          ),
+        ),
         abort: new AbortController(),
       };
       hosts.add(owned);

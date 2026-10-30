@@ -84,7 +84,7 @@ export const ToolActivityNativeAppReference = Schema.Union([
   Schema.TaggedStruct("app-id", {
     appId: TrimmedNonEmptyStringSchema.check(
       Schema.isMaxLength(512),
-      Schema.isPattern(/^[A-Za-z0-9._-]+$/u),
+      Schema.isPattern(/^[A-Za-z0-9._-]+(?:![A-Za-z0-9._-]+)?$/u),
     ),
   }),
   Schema.TaggedStruct("display-name", {
