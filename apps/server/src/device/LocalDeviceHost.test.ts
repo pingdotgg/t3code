@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
@@ -43,6 +44,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-agent-start-" });
+  const hub = { running: true, spawnFails: false };
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
   for (const [name, version, entry] of [
@@ -63,21 +65,30 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make(() =>
-        Effect.succeed(
-          ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(123),
-            stdout: Stream.empty,
-            stderr: Stream.empty,
-            all: Stream.empty,
-            exitCode: Effect.never,
-            isRunning: Effect.succeed(true),
-            kill: () => Effect.void,
-            stdin: Sink.drain,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-            unref: Effect.succeed(Effect.void),
-          }),
-        ),
+        hub.spawnFails
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                description: "Hub entry missing",
+              }),
+            )
+          : Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(123),
+                stdout: Stream.empty,
+                stderr: Stream.empty,
+                all: Stream.empty,
+                exitCode: Effect.never,
+                isRunning: Effect.sync(() => hub.running),
+                kill: () => Effect.void,
+                stdin: Sink.drain,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+                unref: Effect.succeed(Effect.void),
+              }),
+            ),
       ),
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, {
@@ -103,7 +114,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir, daemonHealthy };
+  return { host, fs, stateDir, hub, daemonHealthy };
 });
 
 describe("AgentDevice startup", () => {
@@ -239,7 +250,30 @@ describe("AgentDevice startup", () => {
       expect((yield* host.ensureAgentReady(() => Effect.void)).agentDevice).toEqual(
         ready.agentDevice,
       );
+      expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
       expect(attempts).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps releasing agent sessions while a dead hub fails to restart and after", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { host, hub } = yield* agentFixture((stateDir) =>
+        fs
+          .writeFileString(
+            `${stateDir}/daemon.json`,
+            JSON.stringify({ httpPort: 12345, token: "test-token" }),
+          )
+          .pipe(Effect.orDie, Effect.as(processOutput(0))),
+      );
+      yield* host.ensureAgentReady(() => Effect.void);
+      hub.running = false;
+      hub.spawnFails = true;
+      expect((yield* host.ensureReady(() => Effect.void).pipe(Effect.result))._tag).toBe("Failure");
+      expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
+      hub.spawnFails = false;
+      yield* host.ensureReady(() => Effect.void);
+      expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

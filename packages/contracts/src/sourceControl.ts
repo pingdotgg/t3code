@@ -2,11 +2,7 @@ import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
-/**
- * Open on purpose, like `ProviderDriverKind`: a server can report a host this client does not
- * ship a definition for, and clients fall back to a generic presentation instead of failing to
- * decode.
- */
+/** Accept unknown hosts so clients can fall back to generic presentation. */
 export const SourceControlProviderKind = TrimmedNonEmptyString.check(
   Schema.isMaxLength(64),
   Schema.isPattern(/^[a-z][a-z0-9-]*$/),
@@ -104,7 +100,6 @@ export const SourceControlPublishRepositoryResult = Schema.Struct({
   remoteName: TrimmedNonEmptyString,
   remoteUrl: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
-  upstreamBranch: Schema.optional(TrimmedNonEmptyString),
   status: SourceControlPublishStatus,
 });
 export type SourceControlPublishRepositoryResult = typeof SourceControlPublishRepositoryResult.Type;
@@ -160,6 +155,8 @@ export const SourceControlProviderDiscoveryItem = Schema.Struct({
   kind: SourceControlProviderKind,
   ...SourceControlDiscoverySharedFields,
   auth: SourceControlProviderAuth,
+  /** The server is configured to sign in through the host's app; clients offer it only then. */
+  appSignIn: Schema.optionalKey(Schema.Boolean),
 });
 export type SourceControlProviderDiscoveryItem = typeof SourceControlProviderDiscoveryItem.Type;
 
@@ -184,6 +181,63 @@ export class SourceControlProviderError extends Schema.TaggedError<SourceControl
 ) {
   override get message(): string {
     return `Source control provider ${this.provider} failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
+export const SourceControlSignInInput = Schema.Struct({
+  provider: SourceControlProviderKind,
+  host: TrimmedNonEmptyString,
+});
+export type SourceControlSignInInput = typeof SourceControlSignInInput.Type;
+
+/** A device-flow code the user enters at `verificationUri` in any browser. */
+export const SourceControlSignInPrompt = Schema.Struct({
+  userCode: TrimmedNonEmptyString,
+  verificationUri: TrimmedNonEmptyString,
+  expiresAt: Schema.Number,
+});
+export type SourceControlSignInPrompt = typeof SourceControlSignInPrompt.Type;
+
+export const SourceControlSignInResult = Schema.Struct({
+  account: TrimmedNonEmptyString,
+});
+export type SourceControlSignInResult = typeof SourceControlSignInResult.Type;
+
+export const SourceControlSignInFailure = Schema.Literals([
+  "unsupported",
+  "not-started",
+  "cancelled",
+  "denied",
+  "expired",
+  "failed",
+]);
+export type SourceControlSignInFailure = typeof SourceControlSignInFailure.Type;
+
+export const SourceControlAppAccessInput = Schema.Struct({
+  provider: SourceControlProviderKind,
+  host: TrimmedNonEmptyString,
+  repository: TrimmedNonEmptyString,
+});
+export type SourceControlAppAccessInput = typeof SourceControlAppAccessInput.Type;
+
+/** Whether the server's forge app sign-in reaches a repository; `signed-out` when not in use. */
+export const SourceControlAppAccess = Schema.Struct({
+  status: Schema.Literals(["covered", "not-covered", "signed-out"]),
+});
+export type SourceControlAppAccess = typeof SourceControlAppAccess.Type;
+
+export class SourceControlSignInError extends Schema.TaggedError<SourceControlSignInError>()(
+  "SourceControlSignInError",
+  {
+    provider: SourceControlProviderKind,
+    host: Schema.String,
+    reason: SourceControlSignInFailure,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
   }
 }
 

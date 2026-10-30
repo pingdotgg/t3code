@@ -13,7 +13,9 @@ import * as Fiber from "effect/Fiber";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 import {
   createProviderVersionAdvisory,
@@ -36,8 +38,7 @@ import {
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
-// These write `#!/bin/sh` stubs and evaluate them with darwin/linux path
-// semantics; a Windows temp path cannot be split on `:`.
+// Shell stubs use POSIX paths; Windows temp paths cannot split on colon.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const makeTempDir = (name: string) =>
   Crypto.Crypto.pipe(
@@ -140,6 +141,39 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(version).toBe("1.2.0");
       }),
     ),
+  );
+
+  it.effect("reads the latest version from the npm registry", () =>
+    resolveLatestProviderVersion(manualPackageTool).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "1.2.3" }))),
+        ),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("1.2.3");
+      }),
+    ),
+  );
+
+  it.effect("gives up on a registry body that stalls after the headers", () =>
+    Effect.gen(function* () {
+      const lookup = yield* resolveLatestProviderVersion(manualPackageTool).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(new ReadableStream()))),
+          ),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("4 seconds");
+      expect(lookup.pollUnsafe()).toBeDefined();
+      expect(yield* Fiber.join(lookup)).toBeNull();
+    }),
   );
 
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
@@ -333,10 +367,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ).toBeNull();
   });
 
-  // The Codex Windows installer exposes `%LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin`
-  // as a junction into `%CODEX_HOME%\\packages\\standalone\\current\\bin`. Node's
-  // realpath follows junctions, so the real path carries the standalone marker
-  // even though the visible path does not.
+  // The Windows Codex bin junction resolves into CODEX_HOME/packages/standalone/current/bin.
   it.effect("recognizes a Windows standalone install through its junctioned bin dir", () =>
     Effect.gen(function* () {
       const visiblePath =
@@ -629,7 +660,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           command: "pnpm add -g --allow-build=@example/package-tool @example/package-tool@latest",
           lockKey: "pnpm-global",
         });
-        // Older pnpm rejects the unknown flag, and runs install scripts before 10.
         expect((yield* updateCommand(pnpmVersion("10.3.0")))?.command).toBe(
           "pnpm add -g @example/package-tool@latest",
         );
@@ -810,7 +840,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     "prefers npm ownership over the Node keg the package lives under",
     () =>
       Effect.gen(function* () {
-        // `brew install node` keeps npm globals inside the node keg.
         const tempDir = yield* makeTempDir("t3-homebrew-node-capabilities");
         const keg = NodePath.join(tempDir, "Cellar", "node", "22.1.0");
         const target = NodePath.join(
@@ -905,7 +934,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       name: "codex",
       prefix: "/usr/local",
     });
-    // A plain /usr/local/bin binary is not evidence of Homebrew (#8832).
     expect(homebrewOwnershipFromCommandPath("/usr/local/bin/codex")).toBeNull();
     expect(homebrewOwnershipFromCommandPath("/srv/Cellar/claude/1.0.0/bin/claude")).toMatchObject({
       prefix: "/srv",

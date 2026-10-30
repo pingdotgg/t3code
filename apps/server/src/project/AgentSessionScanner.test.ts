@@ -46,6 +46,7 @@ const layerProjectStore = (importedWorkspaceRoots: ReadonlyArray<string>) =>
 interface ScannerTestInput {
   readonly claudeHomePath: string;
   readonly codexHomePath: string;
+  readonly piAgentDir?: string;
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   readonly configBaseDir?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
@@ -64,6 +65,20 @@ const layerScannerTest = (input: ScannerTestInput) =>
             [ProviderInstanceId.make("codex")]: {
               driver: ProviderDriverKind.make("codex"),
               config: { homePath: input.codexHomePath },
+            },
+            // Keeps the default Pi instance off the developer's real ~/.pi.
+            [ProviderInstanceId.make("pi")]: {
+              driver: ProviderDriverKind.make("pi"),
+              enabled: true,
+              environment: [
+                {
+                  name: "PI_CODING_AGENT_DIR",
+                  value: input.piAgentDir ?? `${input.claudeHomePath}/pi-agent`,
+                  sensitive: false,
+                },
+                { name: "PI_CODING_AGENT_SESSION_DIR", value: "", sensitive: false },
+              ],
+              config: {},
             },
             ...input.providerInstances,
           },
@@ -561,9 +576,32 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const codexHomePath = yield* makeTempDir("t3code-codex-legacy-");
         const claudeEnvironmentHome = yield* makeTempDir("t3code-claude-env-");
         const codexEnvironmentHome = yield* makeTempDir("t3code-codex-env-");
+        const piAgentDir = yield* makeTempDir("t3code-pi-agent-");
+        const piSessionDir = yield* makeTempDir("t3code-pi-sessions-");
         const claudeWorkspace = yield* makeTempDir("t3code-workspace-claude-");
         const codexWorkspace = yield* makeTempDir("t3code-workspace-codex-");
+        const piWorkspace = yield* makeTempDir("t3code-workspace-pi-");
+        const piFlatWorkspace = yield* makeTempDir("t3code-workspace-pi-flat-");
 
+        // Pi nests sessions per cwd by default and keeps a custom session directory flat.
+        for (const [filePath, cwd, mtime] of [
+          [
+            path.join(piAgentDir, "sessions", "--slug--", "2026-01-03_pi.jsonl"),
+            piWorkspace,
+            "2026-01-03T00:00:00.000Z",
+          ],
+          [
+            path.join(piSessionDir, "2026-01-04_pi-flat.jsonl"),
+            piFlatWorkspace,
+            "2026-01-04T00:00:00.000Z",
+          ],
+        ] as const) {
+          yield* writeTranscript({
+            filePath,
+            contents: `${encodeTranscriptRecord({ type: "session", version: 3, id: "pi", cwd })}\n`,
+            mtimeMs: Date.parse(mtime),
+          });
+        }
         yield* writeTranscript({
           filePath: path.join(claudeEnvironmentHome, "projects", "-actual", "session.jsonl"),
           contents: claudeSessionLine(claudeWorkspace),
@@ -598,12 +636,31 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               environment: [{ name: "CODEX_HOME", value: codexEnvironmentHome, sensitive: false }],
               config: {},
             },
+            [ProviderInstanceId.make("pi")]: {
+              driver: ProviderDriverKind.make("pi"),
+              enabled: true,
+              environment: [
+                { name: "PI_CODING_AGENT_DIR", value: piAgentDir, sensitive: false },
+                { name: "PI_CODING_AGENT_SESSION_DIR", value: "", sensitive: false },
+              ],
+              config: {},
+            },
+            [ProviderInstanceId.make("pi-flat")]: {
+              driver: ProviderDriverKind.make("pi"),
+              enabled: true,
+              environment: [
+                { name: "PI_CODING_AGENT_SESSION_DIR", value: piSessionDir, sensitive: false },
+              ],
+              config: {},
+            },
           },
         });
 
-        expect(result.candidates.map((candidate) => candidate.path)).toEqual([
-          codexWorkspace,
-          claudeWorkspace,
+        expect(result.candidates.map((candidate) => [candidate.path, candidate.sources])).toEqual([
+          [piFlatWorkspace, ["pi"]],
+          [piWorkspace, ["pi"]],
+          [codexWorkspace, ["codex"]],
+          [claudeWorkspace, ["claudeAgent"]],
         ]);
       }),
     );
@@ -745,7 +802,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         yield* fileSystem.makeDirectory(submoduleGitDir, { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(submoduleGitDir, "config"),
-          '[remote "origin"]\n\turl = ssh://github.com/pingdotgg/vendor.git\n',
+          '[remote "origin"]\n\turl = ssh://gitlab.com/pingdotgg/libs/vendor.git\n',
         );
         yield* fileSystem.writeFileString(
           path.join(submodule, ".git"),
@@ -767,7 +824,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ).toEqual([
           {
             path: submodule,
-            git: { remoteKey: "github.com/pingdotgg/vendor", repository: "pingdotgg/vendor" },
+            git: {
+              remoteKey: "gitlab.com/pingdotgg/libs/vendor",
+              repository: "pingdotgg/libs/vendor",
+            },
           },
           { path: noRemote, git: { remoteKey: null, repository: null } },
           { path: plain, git: null },
@@ -980,13 +1040,14 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   });
 
   describe("recentThreads", () => {
-    it.effect("imports recent Claude and Codex sessions for the selected project only", () =>
+    it.effect("imports recent Claude, Codex, and Pi sessions for the selected project only", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
         yield* TestClock.setTime(nowMs);
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const piAgentDir = yield* makeTempDir("t3code-pi-agent-");
         const workspace = yield* makeTempDir("t3code-workspace-");
         const otherWorkspace = yield* makeTempDir("t3code-workspace-other-");
 
@@ -1050,21 +1111,96 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           ].join("\n"),
           mtimeMs: nowMs - 60 * 60 * 1000,
         });
+        const piMessage = (
+          id: string,
+          parentId: string | null,
+          message: { readonly role: string; readonly content: unknown },
+        ) =>
+          encodeTranscriptRecord({
+            type: "message",
+            id,
+            parentId,
+            timestamp: "2026-08-24T11:00:00.000Z",
+            message,
+          });
+        // The user rewound to the first prompt; the abandoned branch stays in the file.
+        yield* writeTranscript({
+          filePath: path.join(piAgentDir, "sessions", "--selected--", "2026-08-24_pi.jsonl"),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session",
+              version: 3,
+              id: "pi-recent",
+              cwd: workspace,
+            }),
+            piMessage("a1", null, { role: "user", content: "Plan the change" }),
+            piMessage("a2", "a1", {
+              role: "assistant",
+              content: [{ type: "text", text: "Abandoned answer" }],
+            }),
+            piMessage("a3", "a2", { role: "user", content: "Abandoned follow-up" }),
+            piMessage("b1", "a1", {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "Hidden reasoning" },
+                { type: "toolCall", id: "call-1", name: "bash", arguments: {} },
+              ],
+            }),
+            piMessage("bn", "b1", { role: "toolResult", content: null }),
+            piMessage("b2", "bn", {
+              role: "toolResult",
+              content: [{ type: "text", text: "Tool output" }],
+            }),
+            piMessage("b3", "b2", {
+              role: "assistant",
+              content: [{ type: "text", text: "Active answer" }],
+            }),
+            encodeTranscriptRecord({
+              type: "session_info",
+              id: "b4",
+              parentId: "b3",
+              name: "Pi refactor",
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs - 30 * 60 * 1000,
+        });
+        // Version 1 sessions predate the entry tree.
+        yield* writeTranscript({
+          filePath: path.join(piAgentDir, "sessions", "--selected--", "2025-01-01_pi-v1.jsonl"),
+          contents: [
+            encodeTranscriptRecord({ type: "session", id: "pi-v1", cwd: workspace }),
+            encodeTranscriptRecord({
+              type: "message",
+              message: { role: "user", content: "Legacy prompt" },
+            }),
+            encodeTranscriptRecord({
+              type: "message",
+              message: { role: "assistant", content: [{ type: "text", text: "Legacy answer" }] },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs - 2 * 24 * 60 * 60 * 1000,
+        });
 
         const threads = yield* runRecentThreads({
           claudeHomePath,
           codexHomePath,
+          piAgentDir,
           workspaceRoot: workspace,
         });
 
         expect(threads.map((thread) => thread.providerSessionId)).toEqual([
+          "pi-recent",
           "codex-recent",
           "claude-recent",
+          "pi-v1",
         ]);
         expect(threads.map((thread) => thread.messages.map((message) => message.text))).toEqual([
+          ["Plan the change", "Active answer"],
           ["Review this code", "Looks good"],
           ["Fix the project", "Done"],
+          ["Legacy prompt", "Legacy answer"],
         ]);
+        expect(threads[0]).toMatchObject({ source: "pi", title: "Pi refactor" });
       }),
     );
 
