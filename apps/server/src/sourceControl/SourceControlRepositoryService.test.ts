@@ -302,15 +302,16 @@ const stubLfsEnv = (skipSmudge = "") => {
 };
 
 it.effect.each([
-  ["tracks LFS files", STOCK_LFS_CONFIG, "lfs", undefined, true],
-  ["tracks no LFS files", STOCK_LFS_CONFIG, "plain", undefined, false],
-  ["is empty", STOCK_LFS_CONFIG, "empty", undefined, false],
+  ["tracks LFS files", STOCK_LFS_CONFIG, "lfs", undefined, true, undefined],
+  ["tracks no LFS files", STOCK_LFS_CONFIG, "plain", undefined, false, undefined],
+  ["is empty", STOCK_LFS_CONFIG, "empty", undefined, false, undefined],
   [
     "skips LFS content through the filter",
     { "filter.lfs.process": "git-lfs filter-process --skip" },
     "lfs",
     undefined,
     false,
+    undefined,
   ],
   [
     "tolerates LFS download errors",
@@ -318,9 +319,19 @@ it.effect.each([
     "lfs",
     undefined,
     false,
+    undefined,
   ],
-  ["skips LFS content through the environment", STOCK_LFS_CONFIG, "lfs", "1", false],
-] as const)("LFS download after a clone that %s", ([, config, contents, skipSmudge, pulls]) =>
+  ["skips LFS content through the environment", STOCK_LFS_CONFIG, "lfs", "1", false, undefined],
+  ["sits inside a repo that alone enables LFS", STOCK_LFS_CONFIG, "lfs", undefined, false, {}],
+  [
+    "sits inside a repo that overrides a global LFS skip",
+    STOCK_LFS_CONFIG,
+    "lfs",
+    undefined,
+    false,
+    { "filter.lfs.process": "git-lfs filter-process --skip" },
+  ],
+] as const)("LFS pull after a clone that %s", ([, config, contents, skipSmudge, pulls, checkout]) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -351,8 +362,10 @@ it.effect.each([
       Effect.provide(
         layer({
           git: {
-            readConfigValue: (_cwd, key) =>
-              Effect.succeed((config as Record<string, string>)[key] ?? null),
+            readConfigValue: (cwd, key) => {
+              const seen = cwd === destinationPath ? (checkout ?? config) : config;
+              return Effect.succeed((seen as Record<string, string>)[key] ?? null);
+            },
             // Only the pull is faked: machines running this suite need not have git-lfs.
             execute: (input) => {
               commands.push(input);
