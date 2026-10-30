@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   NonNegativeInt,
+  settingsSecretLiteral,
   SourceControlProviderKind,
   TrimmedNonEmptyString,
   type SourceControlProviderAuth,
@@ -567,7 +568,11 @@ function resolveCredential(
   env: Config.Success<typeof BitbucketApiEnvConfig>,
 ): BitbucketCredential | null {
   return (
-    credentialFrom(settings) ??
+    credentialFrom({
+      accessToken: settingsSecretLiteral(settings.accessToken),
+      email: settings.email,
+      apiToken: settingsSecretLiteral(settings.apiToken),
+    }) ??
     credentialFrom({
       accessToken: Option.getOrElse(env.accessToken, () => ""),
       email: Option.getOrElse(env.email, () => ""),
@@ -663,7 +668,7 @@ export const make = Effect.gen(function* () {
 
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
 
-  const currentCredential = host.settings.get.pipe(
+  const currentCredential = host.settings.getWithSecrets(BitbucketClient.definition.kind).pipe(
     Effect.map((settings) =>
       resolveCredential(
         readSourceControlHostSettings(
