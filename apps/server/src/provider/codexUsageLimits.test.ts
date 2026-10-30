@@ -1,4 +1,7 @@
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import type { V2GetAccountRateLimitsResponse__RateLimitSnapshot } from "effect-codex-app-server/schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -125,6 +128,61 @@ describe("codexRateLimitsToLimits", () => {
       );
     },
   );
+});
+
+describe("Codex fallback routing", () => {
+  it("keeps an account with spendable credits after its weekly allowance runs out", () => {
+    const now = Date.parse(checkedAt);
+    const exhaustedWeek = {
+      limitId: "codex",
+      planType: "plus",
+      primary: { usedPercent: 12, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+      secondary: { usedPercent: 100, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+    } satisfies V2GetAccountRateLimitsResponse__RateLimitSnapshot;
+    const exhaustedWindow = (snapshot: V2GetAccountRateLimitsResponse__RateLimitSnapshot) =>
+      exhaustedUsageWindow(
+        {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          usageLimits: codexRateLimitsToLimits({ checkedAt, snapshot }),
+        } satisfies ServerProvider,
+        now,
+        "gpt-6-luna",
+      );
+    const credits = { hasCredits: true, unlimited: false, balance: "42.50" };
+
+    expect(exhaustedWindow({ ...exhaustedWeek, credits: null })?.id).toBe("secondary");
+    expect(
+      exhaustedWindow({
+        ...exhaustedWeek,
+        credits: { hasCredits: false, unlimited: false, balance: "0" },
+      })?.id,
+    ).toBe("secondary");
+    expect(exhaustedWindow({ ...exhaustedWeek, credits, spendControlReached: true })?.id).toBe(
+      "secondary",
+    );
+    expect(
+      exhaustedWindow({ ...exhaustedWeek, credits, spendControlReached: false }),
+      "weekly allowance used up but credits remain spendable",
+    ).toBeUndefined();
+    expect(
+      exhaustedWindow({
+        ...exhaustedWeek,
+        credits: { hasCredits: false, unlimited: true },
+        spendControlReached: false,
+      }),
+      "weekly allowance used up but credits are unlimited",
+    ).toBeUndefined();
+  });
 });
 
 describe("codexRateLimitsToUpdate", () => {
