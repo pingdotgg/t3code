@@ -1,6 +1,9 @@
 import { useEffect, useRef } from "react";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useLocation } from "@tanstack/react-router";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useUiStateStore } from "../../uiStateStore";
+import { isThreadRoutePathname } from "../../threadRoutes";
 
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 
@@ -59,15 +62,19 @@ export function useSidebarScopeRoutePersistence(input: {
   const selectCollection = useUiStateStore((state) => state.selectProjectCollection);
   const heldRouteKey = useUiStateStore((state) => state.sidebarScopeRouteKey);
   const holdScopeRoute = useUiStateStore((state) => state.holdSidebarScopeRoute);
+  const pathname = useLocation({ select: (location) => location.pathname });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists route-driven scope changes and releases saved holds when navigation leaves their thread
   useEffect(() => {
+    const heldThread = heldRouteKey === null ? null : parseScopedThreadKey(heldRouteKey);
     if (input.widensScope) {
       clearSelection();
       selectCollection(null, null);
     } else if (
-      input.routeKey !== null &&
       heldRouteKey !== null &&
-      input.routeKey !== heldRouteKey
+      input.routeKey !== heldRouteKey &&
+      (input.routeKey !== null ||
+        heldThread === null ||
+        !isThreadRoutePathname(pathname, heldThread))
     ) {
       holdScopeRoute(null);
     }
@@ -78,6 +85,7 @@ export function useSidebarScopeRoutePersistence(input: {
     input.routeKey,
     heldRouteKey,
     holdScopeRoute,
+    pathname,
   ]);
 }
 

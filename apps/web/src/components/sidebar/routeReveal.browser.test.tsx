@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { PERSISTED_STATE_KEY, useUiStateStore } from "../../uiStateStore";
 import {
   type SidebarRouteReveal,
@@ -34,7 +34,7 @@ function RevealList(props: {
 const rowKeys = (count: number) => Array.from({ length: count }, (_, index) => `thread-${index}`);
 const newReveal = (): SidebarRouteReveal => ({ observedKey: null, pendingKey: null });
 
-function PersistScopeRoute({ routeKey }: { readonly routeKey: string }) {
+function PersistScopeRoute({ routeKey }: { readonly routeKey: string | null }) {
   useSidebarScopeRoutePersistence({ routeKey, widensScope: false });
   return null;
 }
@@ -51,15 +51,32 @@ it("releases the persisted group hold after navigation leaves its thread", async
   };
   useUiStateStore.setState({ projectCollections: [{ id: "group", name: "Group", members: [] }] });
   useUiStateStore.getState().selectProjectCollection("group", "env:t");
-  // The route is supplied as a prop to exercise the persistence hook without a router shell.
-  await using screen = await render(<PersistScopeRoute routeKey="env:t" />, { router: false });
+  await using screen = await render(<PersistScopeRoute routeKey="env:t" />, { router: "/env/t" });
   expect(useUiStateStore.getState().sidebarScopeRouteKey).toBe("env:t");
-  await screen.rerender(<PersistScopeRoute routeKey="env:u" />);
-  expect(useUiStateStore.getState().sidebarScopeRouteKey).toBeNull();
-  expect(JSON.parse(localStorage.getItem(PERSISTED_STATE_KEY) ?? "{}")).toMatchObject({
-    sidebarScopeRouteKey: null,
-  });
-  expect(useUiStateStore.getState().activeProjectCollectionId).toBe("group");
+  await screen.rerender(<PersistScopeRoute routeKey={null} />);
+  expect(useUiStateStore.getState().sidebarScopeRouteKey).toBe("env:t");
+  for (const [navigation, routeKey] of [
+    [{ to: "/$environmentId/$threadId", params: { environmentId: "env", threadId: "u" } }, "env:u"],
+    [{ to: "/" }, null],
+    [{ to: "/draft/$draftId", params: { draftId: "new" } }, null],
+    [{ to: "/settings" }, null],
+  ] as const) {
+    await act(() =>
+      screen.router!.navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: "env", threadId: "t" },
+      }),
+    );
+    await screen.rerender(<PersistScopeRoute routeKey="env:t" />);
+    await act(() => useUiStateStore.getState().selectProjectCollection("group", "env:t"));
+    await act(() => screen.router!.navigate(navigation));
+    await screen.rerender(<PersistScopeRoute routeKey={routeKey} />);
+    expect(useUiStateStore.getState().sidebarScopeRouteKey).toBeNull();
+    expect(JSON.parse(localStorage.getItem(PERSISTED_STATE_KEY) ?? "{}")).toMatchObject({
+      sidebarScopeRouteKey: null,
+    });
+    expect(useUiStateStore.getState().activeProjectCollectionId).toBe("group");
+  }
 });
 
 describe("useActiveRowReveal", () => {

@@ -1,6 +1,5 @@
 import {
   deriveLogicalProjectKeyFromSettings,
-  resolveProjectGroupingMode,
   type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import type { SidebarProjectGroupMember, SidebarProjectSnapshot } from "./sidebarProjectGrouping";
@@ -135,21 +134,18 @@ export function collectionMemberMatchesRow(
   settings: ProjectGroupingSettings,
 ): boolean {
   if (member.kind === "scratch") return row.isScratch === true;
+  if (row.memberProjects.some((project) => project.physicalProjectKey === member.physicalKey))
+    return true;
   const memberMode =
     settings.sidebarProjectGroupingOverrides[member.physicalKey] ??
     settings.sidebarProjectGroupingMode;
-  return row.memberProjects.some((project) => {
-    if (project.physicalProjectKey === member.physicalKey) return true;
-    const mode = resolveProjectGroupingMode(project, settings);
-    if (mode !== memberMode) return false;
-    return (
-      (mode === "repository"
-        ? member.repositoryKey
-        : mode === "repository_path"
-          ? member.repositoryPathKey
-          : null) === row.projectKey
-    );
-  });
+  const alias =
+    memberMode === "repository"
+      ? member.repositoryKey
+      : memberMode === "repository_path"
+        ? member.repositoryPathKey
+        : null;
+  return alias !== null && alias === row.projectKey;
 }
 
 export function editProjectCollectionMembers(input: {

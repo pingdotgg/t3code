@@ -147,6 +147,23 @@ describe("project collections", () => {
       project("remote", "/repo", { environmentId: EnvironmentId.make("remote") }),
     ]);
     expect(scope(learned[0]!, remote).catalog).toHaveLength(1);
+    for (const [defaultMode, localMode] of [
+      ["repository", "repository_path"],
+      ["repository_path", "repository"],
+    ] as const) {
+      const mixed = {
+        ...settings(defaultMode),
+        sidebarProjectGroupingOverrides: { "local:/repo": localMode },
+      };
+      const root = capture(catalog([project("local", "/repo")], mixed));
+      const replacement = catalog(
+        [project("remote", "/repo", { environmentId: EnvironmentId.make("remote") })],
+        mixed,
+      );
+      expect(scope(root, replacement, mixed).catalog.map((row) => row.id)).toEqual([
+        ProjectId.make("remote"),
+      ]);
+    }
     const duplicateRows = catalog([
       project("old", "/repo"),
       project("new", "/repo/", { repositoryIdentity: null, updatedAt: "2026-01-02T00:00:00Z" }),
