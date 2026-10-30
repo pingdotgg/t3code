@@ -342,7 +342,7 @@ export interface ThreadFeedProps {
   readonly onEditPendingMessage: ((message: QueuedThreadMessage) => void) | null;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  /** Null while the thread's creation is queued: reading detail then caches a not-found as deleted. */
+  /** Null while the thread's creation is queued: reading detail then shows a not-found as deleted. */
   readonly detailRef: ScopedThreadRef | null;
   readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
