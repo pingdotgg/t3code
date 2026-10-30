@@ -87,6 +87,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import {
   subagentResultForRun,
   delegatedTaskProgress,
+  delegatedTaskResultRun,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -477,16 +478,19 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
 const isApprovalRequestKind = Schema.is(ProviderRequestKind);
 
 function pendingTaskApproval(
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
+  child: Pick<OrchestrationV2ThreadProjection, "runs" | "messages" | "nodes" | "runtimeRequests">,
   taskId: NodeId,
   originalRun: OrchestrationV2Run | undefined,
 ) {
+  // A follow-up promoted to Steer waits on approvals in the run it joined.
+  const joinedRunId = delegatedTaskResultRun(child, taskId)?.id;
   const taskRunIds = new Set(
     child.runs
       .filter(
         (run) =>
           !ThreadManagementService.isTerminalRunStatus(run.status) &&
           (run.delegatedTaskId === taskId ||
+            run.id === joinedRunId ||
             // Legacy tasks own only their original run, not later turns in the child thread.
             (run.delegatedTaskId === undefined && run.id === originalRun?.id)),
       )
@@ -515,8 +519,7 @@ function pendingTaskApproval(
 
 function directAppOwnedChildTasks(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents">,
-  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
-  returnedRunIds: ReadonlySet<RunId | null>,
+  target: Pick<OrchestrationV2ThreadProjection, "thread">,
 ): ReadonlyArray<OrchestrationV2Subagent> {
   if (
     target.thread.lineage.parentThreadId !== parent.thread.id ||
@@ -524,33 +527,22 @@ function directAppOwnedChildTasks(
   ) {
     return [];
   }
-  const original = parent.subagents.find(
+  return parent.subagents.filter(
     (task) =>
       task.origin === "app_owned" &&
       task.threadId === parent.thread.id &&
-      task.id ===
-        (target.thread.forkedFrom?.type === "node" ? target.thread.forkedFrom.nodeId : undefined) &&
-      task.childThreadId === target.thread.id,
-  );
-  const taskIds = new Set(
-    target.runs
-      .filter((run) => returnedRunIds.has(run.id))
-      .map((run) => run.delegatedTaskId ?? original?.id),
-  );
-  return parent.subagents.filter(
-    (task) =>
-      taskIds.has(task.id) &&
-      task.origin === "app_owned" &&
       task.childThreadId === target.thread.id,
   );
 }
 
 function taskResultTransfer(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">,
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
+  child: Pick<OrchestrationV2ThreadProjection, "runs" | "messages" | "contextTransfers">,
   task: OrchestrationV2Subagent,
 ) {
   const originalRun = delegatedTaskRun(child, task);
+  // A follow-up promoted to Steer shares the transfer of the run it joined.
+  const resultRun = delegatedTaskResultRun(child, task.id);
   const resultRunIds = new Set(
     child.runs
       .filter(
@@ -561,6 +553,7 @@ function taskResultTransfer(
       .map((run) => run.id),
   );
   if (originalRun !== undefined) resultRunIds.add(originalRun.id);
+  if (resultRun !== undefined) resultRunIds.add(resultRun.id);
   return parent.contextTransfers.find(
     (transfer) =>
       transfer.type === "subagent_result" &&
@@ -572,24 +565,14 @@ function taskResultTransfer(
 }
 
 function pageIncludesTerminalTaskResult(input: {
-  readonly parent: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">;
   readonly page: ReadonlyArray<OrchestrationV2ThreadProjection["visibleTurnItems"][number]>;
-  readonly task: OrchestrationV2Subagent;
-  readonly target: Pick<
-    OrchestrationV2ThreadProjection,
-    "thread" | "runs" | "contextTransfers" | "messages" | "turnItems"
-  >;
+  readonly run: OrchestrationV2Run;
+  readonly target: Pick<OrchestrationV2ThreadProjection, "thread" | "messages" | "turnItems">;
   readonly maxChars: number;
 }): boolean {
-  const transfer = taskResultTransfer(input.parent, input.target, input.task);
-  if (transfer === undefined) return false;
-  const run =
-    transfer.sourcePoint.runId === undefined
-      ? delegatedTaskRun(input.target, input.task)
-      : input.target.runs.find((run) => run.id === transfer.sourcePoint.runId);
-  if (run === undefined || !isTerminalTaskStatus(taskStatusForRun(run))) return false;
+  if (!isTerminalTaskStatus(taskStatusForRun(input.run))) return false;
 
-  const result = subagentResultForRun(input.target, run);
+  const result = subagentResultForRun(input.target, input.run);
   if (result.messageId === null && result.turnItemId === null) return false;
 
   return input.page.some((row) => {
@@ -1437,9 +1420,7 @@ const make = Effect.gen(function* () {
     const progress = delegatedTaskProgress(childControls);
     const taskResultRun =
       childRun?.delegatedTaskId === task.id
-        ? childControls.runs
-            .filter((run) => run.delegatedTaskId === task.id)
-            .toSorted((a, b) => b.ordinal - a.ordinal)[0]
+        ? delegatedTaskResultRun(childControls, task.id)
         : progress.resultRun;
     const taskWorkState =
       childRun?.delegatedTaskId === task.id
@@ -2846,18 +2827,32 @@ const make = Effect.gen(function* () {
       const returnedRunIds = new Set(
         page.filter((row) => row.sourceThreadId === target.thread.id).map((row) => row.item.runId),
       );
-      const tasks =
-        parent === undefined ? [] : directAppOwnedChildTasks(parent, target, returnedRunIds);
+      const tasks = parent === undefined ? [] : directAppOwnedChildTasks(parent, target);
       if (
         parent !== undefined &&
         scope.thread !== undefined &&
         tasks.length > 0 &&
         (input.textOffset ?? 0) === 0
       ) {
+        // Promotion moves the queued user message to its joined run, possibly outside this page.
+        const taskMessages = yield* threadManagement
+          .getThreadRecords(target.thread.id, ["messages"], {
+            messageIds: target.runs
+              .filter((run) => run.status === "cancelled" && run.delegatedTaskId !== undefined)
+              .map((run) => run.userMessageId)
+              .filter((id): id is MessageId => id !== null),
+          })
+          .pipe(Effect.mapError(threadManagementFailure));
+        const taskTarget = { ...target, messages: taskMessages.messages };
         for (const task of tasks) {
-          const transfer = taskResultTransfer(parent, target, task);
-          const resultRunId = transfer?.sourcePoint.runId ?? delegatedTaskRun(target, task)?.id;
-          const resultRunIds = resultRunId === undefined ? [] : [resultRunId];
+          const transfer = taskResultTransfer(parent, taskTarget, task);
+          if (transfer === undefined) continue;
+          const run =
+            transfer.sourcePoint.runId === undefined
+              ? delegatedTaskRun(target, task)
+              : target.runs.find((candidate) => candidate.id === transfer.sourcePoint.runId);
+          if (run === undefined || !returnedRunIds.has(run.id)) continue;
+          const resultRunIds = [run.id];
           const resultRecords = yield* threadManagement
             .getThreadRecords(target.thread.id, ["messages", "turnItems"], {
               messageRoles: ["assistant"],
@@ -2868,9 +2863,8 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(threadManagementFailure));
           if (
             pageIncludesTerminalTaskResult({
-              parent,
               page,
-              task,
+              run,
               target: { ...target, ...resultRecords },
               maxChars,
             })

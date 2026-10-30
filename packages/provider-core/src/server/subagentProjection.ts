@@ -221,6 +221,31 @@ export function subagentResultForRun(
   };
 }
 
+/** Promotion cancels the queued run; its moved message identifies the turn that now owns the work. */
+export function delegatedTaskResultRun(
+  child: {
+    readonly runs: OrchestrationV2ThreadProjection["runs"];
+    readonly messages: ReadonlyArray<Pick<OrchestrationV2ConversationMessage, "id" | "runId">>;
+  },
+  taskId: NodeId,
+): OrchestrationV2Run | undefined {
+  const run = child.runs
+    .filter((candidate) => candidate.delegatedTaskId === taskId)
+    .toSorted((a, b) => b.ordinal - a.ordinal)[0];
+  if (run?.status !== "cancelled") return run;
+  const steeredRunId = child.messages.find((message) => message.id === run.userMessageId)?.runId;
+  let resolved = child.runs.find(
+    (candidate) => candidate.id === steeredRunId && candidate.id !== run.id,
+  );
+  if (resolved === undefined) return run;
+  const continuationOf = (from: OrchestrationV2Run) =>
+    child.runs.find((candidate) => candidate.restartContinuationOfRunId === from.id);
+  for (let next = continuationOf(resolved); next !== undefined; next = continuationOf(next)) {
+    resolved = next;
+  }
+  return resolved;
+}
+
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
   readonly messages: ReadonlyArray<

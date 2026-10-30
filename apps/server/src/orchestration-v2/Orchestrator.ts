@@ -161,6 +161,7 @@ import {
   makeSubagentChildThread,
   subagentResultForRun,
   delegatedTaskProgress,
+  delegatedTaskResultRun,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
@@ -430,6 +431,29 @@ export interface OrchestratorV2Shape {
 export class OrchestratorV2 extends Context.Service<OrchestratorV2, OrchestratorV2Shape>()(
   "t3/orchestration-v2/Orchestrator/OrchestratorV2",
 ) {}
+
+/** Shared results wait for the joined task, not unrelated later tasks. */
+function runsOfTask(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  run: OrchestrationV2Run,
+): ReadonlyArray<OrchestrationV2Run> {
+  if (run.delegatedTaskId !== undefined) {
+    return runs.filter((candidate) => candidate.delegatedTaskId === run.delegatedTaskId);
+  }
+  // Ownerless runs (a monitor turn a task joined) share no task id; only the
+  // run's own restart continuations can still change its result.
+  const chain = [run];
+  const seen = new Set([run.id]);
+  for (let index = 0; index < chain.length; index += 1) {
+    for (const candidate of runs) {
+      if (candidate.restartContinuationOfRunId === chain[index]!.id && !seen.has(candidate.id)) {
+        seen.add(candidate.id);
+        chain.push(candidate);
+      }
+    }
+  }
+  return chain;
+}
 
 /** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
@@ -12010,12 +12034,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? options.task.id === forkedFrom.nodeId
             ? options.resultRun
             : undefined
-          : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+          : delegatedTaskResultRun(childControls, options.task.id);
       if (childRun === undefined) return;
+      const steered = taskRuns.length > 0 && childRun.delegatedTaskId !== options.task.id;
       const outcome = runOutcome(childRun);
       const terminalStatus = delegatedTaskTerminalStatus(outcome);
       if (terminalStatus === null) {
-        if (childRun.delegatedTaskId === undefined || childRun.id !== options.syncRunId) return;
+        if (
+          (childRun.delegatedTaskId === undefined || childRun.id !== options.syncRunId) &&
+          !(steered && taskRuns.some((run) => run.id === options.syncRunId))
+        )
+          return;
         const task = options.task;
         const status: OrchestrationV2Subagent["status"] =
           childRun.status === "queued"
@@ -12072,7 +12101,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (
         yield* childAwaitsRestartContinuation(
-          taskRuns.length === 0 ? childControls.runs : taskRuns,
+          taskRuns.length === 0 ? childControls.runs : runsOfTask(childControls.runs, childRun),
           childRun,
           options?.settledContinuationOf,
         )
@@ -12127,10 +12156,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (transfer.sourcePoint.runId === childRun.id ||
             (options.task.id === forkedFrom.nodeId && transfer.sourcePoint.runId === undefined)),
       );
-      if (existingResultTransfer !== undefined) {
+      // A promoted task may share a transfer before its own result is settled.
+      if (steered ? task.result !== null : existingResultTransfer !== undefined) {
         return;
       }
 
+      const sharesResultTransfer =
+        steered && (childRun.delegatedTaskId !== undefined || existingResultTransfer !== undefined);
       const now = yield* DateTime.now;
       const result = subagentResultForRun(childProjection, { ...childRun, status: outcome });
       const parentRun =
@@ -12265,14 +12297,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 },
               },
             ]),
-        {
-          type: "context-transfer.created",
-          threadId: parentThreadId,
-          ...(parentRun === undefined ? {} : { runId: parentRun.id }),
-          providerInstanceId: childRun.providerInstanceId,
-          occurredAt: now,
-          payload: resultTransfer,
-        },
+        ...(sharesResultTransfer
+          ? []
+          : [
+              {
+                type: "context-transfer.created" as const,
+                threadId: parentThreadId,
+                ...(parentRun === undefined ? {} : { runId: parentRun.id }),
+                providerInstanceId: childRun.providerInstanceId,
+                occurredAt: now,
+                payload: resultTransfer,
+              },
+            ]),
       ];
       yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
 
@@ -13485,10 +13521,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         { messageRoles: ["user"] },
       );
       if (taskId !== undefined) {
-        const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
-        const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+        const run = delegatedTaskResultRun(child, taskId);
         if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
-        return yield* childAwaitsRestartContinuation(runs, run);
+        return yield* childAwaitsRestartContinuation(runsOfTask(child.runs, run), run);
       }
       const progress = delegatedTaskProgress(child);
       if (progress.state !== "result_available") return true;
