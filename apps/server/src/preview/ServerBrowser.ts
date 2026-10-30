@@ -856,8 +856,23 @@ const make = Effect.gen(function* () {
     await applyRendering(tab, snapshot);
     if (desktop) {
       // The desktop resizes and zooms its webview itself; viewers map input with the new size.
+      // Resizes arrive in bursts, so one read runs and at most one more follows it.
+      let resizing: Promise<void> | null = null;
+      let resizedAgain = false;
       cdp.on("Page.frameResized", () => {
-        if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
+        if (tab.viewers.size === 0) return;
+        if (resizing) {
+          resizedAgain = true;
+          return resizing;
+        }
+        resizing = (async () => {
+          do {
+            resizedAgain = false;
+            await broadcastViewport(tab).catch(constVoid);
+          } while (resizedAgain);
+          resizing = null;
+        })();
+        return resizing;
       });
       // Someone at the desktop can close a dialog in its own window, outside resolveDialog.
       cdp.on("Page.javascriptDialogClosed", () => {
