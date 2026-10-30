@@ -17,11 +17,13 @@ import {
   livePipelineRunOf,
   nestPipelineSteps,
   pipelineParentsOfSteps,
+  pipelineProgressSegments,
   pipelineStepLabel,
   pipelineStepsOfParents,
   type PipelineLiveRuns,
   type PipelineNestable,
   type PipelineNesting,
+  type PipelineProgressStatus,
 } from "@t3tools/client-runtime/state/pipeline-nesting";
 import {
   threadSearchMatchKey,
@@ -414,6 +416,27 @@ export interface ThreadListV2Item {
   readonly stepStatus?: ReturnType<typeof resolveThreadListV2StepStatus>;
   /** On a pipeline step: its label under the parent. */
   readonly stepLabel?: string;
+  /** On a pipeline's parent: one progress bar segment per step, in run order. */
+  readonly pipelineProgress?: ReadonlyArray<ThreadListV2PipelineSegment>;
+  /** On a pipeline's parent with step rows: whether they all show. Collapsed, only the open step's does. */
+  readonly pipelineExpanded?: boolean;
+}
+
+export interface ThreadListV2PipelineSegment {
+  readonly stepId: string;
+  readonly status: PipelineProgressStatus;
+}
+
+function samePipelineProgress(
+  left: ReadonlyArray<ThreadListV2PipelineSegment> | undefined,
+  right: ReadonlyArray<ThreadListV2PipelineSegment> | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined || left.length !== right.length) return false;
+  return left.every(
+    (segment, index) =>
+      segment.stepId === right[index]!.stepId && segment.status === right[index]!.status,
+  );
 }
 
 export interface ThreadListV2Layout {
@@ -517,6 +540,8 @@ export function threadListV2ListItemsAreEqual(
         previous.item.nested === item.item.nested &&
         previous.item.isLastStep === item.item.isLastStep &&
         previous.item.stepStatus === item.item.stepStatus &&
+        previous.item.pipelineExpanded === item.item.pipelineExpanded &&
+        samePipelineProgress(previous.item.pipelineProgress, item.item.pipelineProgress) &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
@@ -728,6 +753,8 @@ export function buildThreadListV2Items(input: {
   readonly isWorking?: (thread: EnvironmentThreadShell) => boolean;
   /** Live pipeline runs of every environment that offers pipelines. */
   readonly pipelineRuns?: PipelineLiveRuns;
+  /** Pipeline parents, as `environmentId:threadId`, that list all their steps. */
+  readonly expandedPipelineKeys?: ReadonlyArray<string>;
   readonly inboxReturnAt?: (thread: EnvironmentThreadShell) => number | undefined;
   readonly snoozedShelfExpanded?: boolean;
   readonly settledShelfExpanded?: boolean;
@@ -932,14 +959,25 @@ export function buildThreadListV2Items(input: {
   const visibleSettled =
     input.settledShelfExpanded !== false ? pagedSettled : pagedSettled.filter(holdsSelected);
 
+  const expandedPipelines = new Set(input.expandedPipelineKeys);
   const items: ThreadListV2Item[] = [];
-  // A parent's steps follow it directly, so the list reads in the order it draws.
+  // A parent's steps follow it directly, so the list reads in the order it draws. A collapsed
+  // pipeline shows its progress bar instead, keeping only the open step's row like a collapsed shelf.
   const pushRow = (
     thread: EnvironmentThreadShell,
     row: Pick<ThreadListV2Item, "variant" | "snoozed" | "pinned" | "wokeAt">,
   ) => {
-    const steps = stepsByParentKey.get(`${thread.environmentId}:${thread.id}`);
+    const key = `${thread.environmentId}:${thread.id}`;
+    const steps = stepsByParentKey.get(key);
     const run = livePipelineRunOf(input.pipelineRuns, thread);
+    const progress =
+      thread.pipeline != null && thread.pipeline.stepId === null
+        ? pipelineProgressSegments(run, steps ?? [], resolveThreadListV2Status)
+        : [];
+    const expanded = expandedPipelines.has(key);
+    const shownSteps = expanded
+      ? steps
+      : steps?.filter((step) => `${step.environmentId}:${step.id}` === selectedThreadKey);
     items.push({
       thread,
       ...row,
@@ -947,8 +985,14 @@ export function buildThreadListV2Items(input: {
       ...(steps === undefined && run === undefined
         ? {}
         : { stepStatus: resolveThreadListV2StepStatus(steps ?? [], run) }),
+      ...(progress.length === 0
+        ? {}
+        : {
+            pipelineProgress: progress.map(({ stepId, status }) => ({ stepId, status })),
+          }),
+      ...(steps === undefined ? {} : { pipelineExpanded: expanded }),
     });
-    steps?.forEach((step, index) => {
+    shownSteps?.forEach((step, index) => {
       items.push({
         thread: step,
         variant: "slim",
@@ -957,7 +1001,7 @@ export function buildThreadListV2Items(input: {
         wokeAt: null,
         isLast: false,
         nested: true,
-        isLastStep: index === steps.length - 1,
+        isLastStep: index === shownSteps.length - 1,
         stepLabel: pipelineStepLabel(input.pipelineRuns, step),
       });
     });

@@ -3,6 +3,10 @@ import { AsyncResult } from "effect/reactivity";
 
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 
+// Pipelines start collapsed, so only the latest expansions are worth keeping.
+const MAX_EXPANDED_PIPELINES = 200;
+const NO_EXPANDED_PIPELINES: readonly string[] = [];
+
 export function useThreadListV2ShelfPreferences() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -14,6 +18,9 @@ export function useThreadListV2ShelfPreferences() {
   const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled !== false;
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
+  const expandedPipelineKeys =
+    (loaded ? preferencesResult.value.threadListExpandedPipelines : undefined) ??
+    NO_EXPANDED_PIPELINES;
 
   // Transforms read optimistic state so same-frame presses toggle twice.
   const toggleSnoozedShelf = () => {
@@ -40,6 +47,19 @@ export function useThreadListV2ShelfPreferences() {
       }),
     });
   };
+  const togglePipelineExpanded = (threadKey: string) => {
+    if (!loaded) return;
+    savePreferences({
+      transform: (current) => {
+        const keys = current.threadListExpandedPipelines ?? [];
+        return {
+          threadListExpandedPipelines: keys.includes(threadKey)
+            ? keys.filter((key) => key !== threadKey)
+            : [...keys, threadKey].slice(-MAX_EXPANDED_PIPELINES),
+        };
+      },
+    });
+  };
 
   return {
     loaded,
@@ -47,8 +67,10 @@ export function useThreadListV2ShelfPreferences() {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    expandedPipelineKeys,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    togglePipelineExpanded,
   } as const;
 }

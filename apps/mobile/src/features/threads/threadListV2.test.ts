@@ -375,12 +375,38 @@ describe("buildThreadListV2Items", () => {
         pipeline: { runId: "run-1" as never, stepId: id as never },
         ...patch,
       });
-    const build = (threads: EnvironmentThreadShell[]) =>
-      buildThreadListV2Items({ threads, environmentId: null, searchQuery: "", now: NOW });
+    const build = (
+      threads: EnvironmentThreadShell[],
+      collapsed?: { readonly selectedThreadKey?: string },
+    ) =>
+      buildThreadListV2Items({
+        threads,
+        environmentId: null,
+        searchQuery: "",
+        now: NOW,
+        expandedPipelineKeys: collapsed ? [] : [`${environmentId}:flow`],
+        selectedThreadKey: collapsed?.selectedThreadKey ?? null,
+      });
     const steps = [
       step("two", "2026-06-01T00:02:00.000Z"),
       step("one", "2026-06-01T00:01:00.000Z", { settledOverride: "settled" }),
     ];
+
+    // Collapsed by default: the parent carries a progress bar and lists only the open step.
+    const collapsed = build([parent("flow"), ...steps], {});
+    expect(collapsed.items.map((item) => item.thread.id)).toEqual(["flow"]);
+    expect(collapsed.items[0]?.pipelineExpanded).toBe(false);
+    expect(collapsed.items[0]?.pipelineProgress).toEqual([
+      { stepId: "one", status: "completed" },
+      { stepId: "two", status: "completed" },
+    ]);
+    const open = build([parent("flow"), ...steps], {
+      selectedThreadKey: `${environmentId}:two`,
+    });
+    expect(open.items.map((item) => [item.thread.id, item.isLastStep])).toEqual([
+      ["flow", undefined],
+      ["two", true],
+    ]);
 
     // A newer step lifts the run above older threads; steps keep step order and ignore their own settled state.
     const layout = build([
@@ -436,6 +462,7 @@ describe("buildThreadListV2Items", () => {
         now: NOW,
         workingShelfEnabled: true,
         workingShelfExpanded: true,
+        expandedPipelineKeys: [`${environmentId}:flow`],
         isWorking: (thread) => working.has(thread.id),
         pipelineRuns: indexPipelineLiveRuns([
           {
@@ -1525,6 +1552,55 @@ describe("threadListV2ListItemsAreEqual", () => {
     expect(rows(earlier).snoozeWakeLabelText).toBe("2h");
     expect(rows(later).snoozeWakeLabelText).toBe("1h");
     expect(threadListV2ListItemsAreEqual(rows(earlier), rows(later))).toBe(false);
+  });
+
+  it("notices a pipeline parent's expansion and step progress", () => {
+    const flow = makeThread({
+      id: ThreadId.make("flow"),
+      title: "Flow: x",
+      pipeline: { runId: "run-1" as never, stepId: null },
+    });
+    const step = makeThread({
+      id: ThreadId.make("one"),
+      title: "Flow · one",
+      pipeline: { runId: "run-1" as never, stepId: "one" as never },
+    });
+    const parentRow = (expanded: boolean, stepRunStatus: "running" | "completed") =>
+      buildThreadListV2ListItems({
+        items: buildThreadListV2Items({
+          threads: [flow, step],
+          environmentId: null,
+          searchQuery: "",
+          now: NOW,
+          expandedPipelineKeys: expanded ? [`${environmentId}:flow`] : [],
+          pipelineRuns: indexPipelineLiveRuns([
+            {
+              environmentId,
+              runs: [
+                {
+                  id: "run-1",
+                  status: "running",
+                  currentStepIndex: 0,
+                  steps: [
+                    { stepId: "one", name: "Plan", status: stepRunStatus, childThreadId: "one" },
+                  ],
+                } as never,
+              ],
+            },
+          ]),
+        }).items,
+        pendingTasks: [],
+      })[0]!;
+
+    expect(
+      threadListV2ListItemsAreEqual(parentRow(false, "running"), parentRow(false, "running")),
+    ).toBe(true);
+    expect(
+      threadListV2ListItemsAreEqual(parentRow(false, "running"), parentRow(true, "running")),
+    ).toBe(false);
+    expect(
+      threadListV2ListItemsAreEqual(parentRow(false, "running"), parentRow(false, "completed")),
+    ).toBe(false);
   });
 
   it("notices a trailing-divider flip caused by a neighbour change", () => {

@@ -438,9 +438,11 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    expandedPipelineKeys,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    togglePipelineExpanded,
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(props.threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
@@ -485,6 +487,7 @@ export function HomeScreen(props: HomeScreenProps) {
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
+    expandedPipelineKeys,
     selectedThreadKey,
   });
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
@@ -588,6 +591,9 @@ export function HomeScreen(props: HomeScreenProps) {
         isLastStep={item.item.isLastStep}
         stepStatus={item.item.stepStatus}
         stepLabel={item.item.stepLabel}
+        pipelineProgress={item.item.pipelineProgress}
+        pipelineExpanded={item.item.pipelineExpanded}
+        onTogglePipelineSteps={togglePipelineExpanded}
         hasQueuedMessages={item.hasQueuedMessages}
         snoozed={item.item.snoozed}
         pinned={item.item.pinned}

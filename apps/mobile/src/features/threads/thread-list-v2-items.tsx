@@ -29,7 +29,9 @@ import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3t
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import {
+  countFinishedPipelineSegments,
   mergePipelineParentStatus,
+  type PipelineProgressStatus,
   type PipelineStepStatus,
 } from "@t3tools/client-runtime/state/pipeline-nesting";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -82,6 +84,7 @@ import {
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
+  type ThreadListV2PipelineSegment,
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
@@ -192,6 +195,70 @@ function PipelineStepConnector(props: {
         style={{ left: props.left }}
       />
     </>
+  );
+}
+
+const PIPELINE_SEGMENT_CLASS_NAME: Record<PipelineProgressStatus, string> = {
+  completed: "bg-adaptive-emerald-600-400",
+  running: "bg-adaptive-sky-600-400",
+  attention: "bg-adaptive-indigo-600-300",
+  failed: "bg-adaptive-rose-600-400",
+  stopped: "bg-foreground-muted",
+  skipped: "bg-foreground-muted/35",
+  pending: "bg-foreground-muted/15",
+};
+
+/** A pipeline parent's progress: one segment per step and a done count. Tapping it shows or hides the steps. */
+function PipelineProgressLine(props: {
+  readonly segments: ReadonlyArray<ThreadListV2PipelineSegment>;
+  /** Unset while no step has a row to show. */
+  readonly expanded: boolean | undefined;
+  readonly onToggle: () => void;
+  readonly iconTintClassName: string;
+  readonly countClassName: string;
+}) {
+  const content = (
+    <>
+      {props.expanded === undefined ? null : (
+        <SymbolView
+          name="chevron.right"
+          size={10}
+          tintColorClassName={props.iconTintClassName}
+          type="monochrome"
+          weight="semibold"
+          style={{ transform: [{ rotate: props.expanded ? "90deg" : "0deg" }] }}
+        />
+      )}
+      <View className="min-w-0 flex-1 flex-row gap-0.5">
+        {props.segments.map((segment) => (
+          <View
+            key={segment.stepId}
+            className={cn("h-1 flex-1 rounded-full", PIPELINE_SEGMENT_CLASS_NAME[segment.status])}
+          />
+        ))}
+      </View>
+      <Text className={cn("text-2xs tabular-nums", props.countClassName)}>
+        {countFinishedPipelineSegments(props.segments)}/{props.segments.length}
+      </Text>
+    </>
+  );
+  if (props.expanded === undefined) {
+    return <View className="flex-row items-center gap-1.5">{content}</View>;
+  }
+  return (
+    <Pressable
+      // Padding cancelled by negative margin grows the touch target without moving the bar.
+      className="-my-1.5 flex-row items-center gap-1.5 py-1.5"
+      accessibilityRole="button"
+      accessibilityLabel={props.expanded ? "Hide pipeline steps" : "Show pipeline steps"}
+      accessibilityState={{ expanded: props.expanded }}
+      onPress={props.onToggle}
+      // Handle long-press so opening the iOS row menu cannot also toggle the steps on release.
+      onLongPress={() => undefined}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      {content}
+    </Pressable>
   );
 }
 
@@ -679,6 +746,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly stepStatus?: PipelineStepStatus | null;
   /** On a pipeline step: its label under the parent; the thread title when unset. */
   readonly stepLabel?: string;
+  /** On a pipeline's parent: its progress bar. */
+  readonly pipelineProgress?: ReadonlyArray<ThreadListV2PipelineSegment>;
+  /** On a pipeline's parent with step rows: whether they all show. */
+  readonly pipelineExpanded?: boolean;
+  readonly onTogglePipelineSteps?: (threadKey: string) => void;
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
   readonly pinned?: boolean;
@@ -761,6 +833,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onUnpinThread,
     onSetThreadAutoSettle,
     onMoveThread,
+    onTogglePipelineSteps,
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
@@ -828,14 +901,42 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       input: { threadId: thread.id, visitedAt: props.wokeAt },
     });
   }, [props.wokeAt, thread.environmentId, thread.id, visitThread]);
+  const pipelineProgress = props.pipelineProgress;
+  const pipelineExpanded = props.pipelineExpanded;
   // VoiceOver cannot focus buttons inside the accessible row.
+  const pipelineAccessibilityActions = useMemo(
+    () =>
+      pipelineExpanded === undefined
+        ? []
+        : [
+            {
+              name: "togglePipelineSteps",
+              label: pipelineExpanded ? "Hide pipeline steps" : "Show pipeline steps",
+            },
+          ],
+    [pipelineExpanded],
+  );
   const rowAccessibilityActions = useMemo(
     () => [
       ...(prBadgeLabel ? [{ name: "openPullRequests", label: prBadgeLabel }] : []),
       ...(showsWoke ? [{ name: "dismissWoke", label: "Dismiss Woke notification" }] : []),
+      ...pipelineAccessibilityActions,
     ],
-    [prBadgeLabel, showsWoke],
+    [prBadgeLabel, showsWoke, pipelineAccessibilityActions],
   );
+  const rowAccessibilityLabel = [
+    thread.title,
+    props.hasQueuedMessages ? "messages queued to send" : null,
+    pipelineProgress
+      ? `${countFinishedPipelineSegments(pipelineProgress)} of ${pipelineProgress.length} steps done`
+      : null,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
+  const rowAccessibilityState = {
+    selected,
+    ...(pipelineExpanded === undefined ? {} : { expanded: pipelineExpanded }),
+  };
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
@@ -853,6 +954,27 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     setBoundIdentity(rowIdentity);
     setCustomSnoozeOpen(false);
   }
+  const togglePipelineSteps = useCallback(
+    () => onTogglePipelineSteps?.(rowIdentity),
+    [onTogglePipelineSteps, rowIdentity],
+  );
+  const pipelineProgressLine = pipelineProgress ? (
+    <PipelineProgressLine
+      segments={pipelineProgress}
+      expanded={pipelineExpanded}
+      onToggle={togglePipelineSteps}
+      iconTintClassName={
+        selected
+          ? selectedThreadRowColors.mutedIconTintClassName
+          : rowAppearance.tertiaryIconTintClassName
+      }
+      countClassName={
+        selected
+          ? selectedThreadRowColors.mutedForegroundClassName
+          : rowAppearance.tertiaryForegroundClassName
+      }
+    />
+  ) : null;
   const handleSnooze = useCallback(
     (snoozedUntil: string) => onSnoozeThread(thread, snoozedUntil),
     [onSnoozeThread, thread],
@@ -1457,6 +1579,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </View>
         ) : null}
       </View>
+      {pipelineProgressLine ? (
+        <View className="mt-2" style={{ paddingLeft: titleTextInset }}>
+          {pipelineProgressLine}
+        </View>
+      ) : null}
     </>
   );
 
@@ -1476,11 +1603,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityHint={swipeAccessibilityHint}
         accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
-        accessibilityState={{ selected }}
+        accessibilityState={rowAccessibilityState}
         accessibilityActions={rowAccessibilityActions}
         onAccessibilityAction={(event) => {
           if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
           if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
+          if (event.nativeEvent.actionName === "togglePipelineSteps") togglePipelineSteps();
         }}
         onPress={() => {
           close();
@@ -1507,7 +1635,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityHint={swipeAccessibilityHint}
         accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
-        accessibilityState={{ selected }}
+        accessibilityState={rowAccessibilityState}
+        accessibilityActions={pipelineAccessibilityActions}
+        onAccessibilityAction={(event) => {
+          if (event.nativeEvent.actionName === "togglePipelineSteps") togglePipelineSteps();
+        }}
         className={rowAppearance.className}
         onPress={() => {
           close();
@@ -1577,6 +1709,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 selected={selected}
               />
             ) : null}
+            {pipelineProgressLine ? <View className="mt-1">{pipelineProgressLine}</View> : null}
           </View>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {nested && statusLabel ? (
