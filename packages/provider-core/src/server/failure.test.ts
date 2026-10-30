@@ -133,6 +133,23 @@ it("uses the innermost category without carrying an outer reason into it", () =>
   );
 });
 
+it("explains a native thread another client is writing to", () => {
+  const inUse = new ProviderAdapter.ProviderAdapterThreadInUseError({
+    driver: ProviderDriverKind.make("codex"),
+    providerThreadId: ProviderThreadId.make("provider-thread:in-use"),
+    detail: "This conversation is open in another Codex client.",
+    cause: new Error("thread provider-thread:in-use already has an active writer"),
+  });
+  const cause = new ProviderAdapter.ProviderAdapterTurnStartError({
+    driver: ProviderDriverKind.make("codex"),
+    threadId: ThreadId.make("thread:in-use"),
+    providerThreadId: ProviderThreadId.make("provider-thread:in-use"),
+    runId: RunId.make("run:in-use"),
+    cause: inUse,
+  });
+  assert.equal(makeProviderFailure({ cause: Cause.fail(cause) }).message, inUse.message);
+});
+
 it("does not expose defect text nested inside a known error category", () => {
   const failure = makeProviderFailure({
     cause: {

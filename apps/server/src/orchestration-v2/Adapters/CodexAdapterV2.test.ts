@@ -2817,6 +2817,73 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("reports a thread another Codex client is writing to as in use", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "thread-open-elsewhere";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-resume-active-writer",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "unused-turn",
+                prompt: "unused-prompt",
+              }).slice(0, 5),
+              {
+                type: "expect_outbound",
+                label: "thread/resume",
+                frame: {
+                  id: 3,
+                  method: "thread/resume",
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    cwd: CODEX_TEST_RUNTIME_POLICY.cwd,
+                    model: CODEX_TEST_MODEL_SELECTION.model,
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "active writer",
+                frame: {
+                  id: 3,
+                  error: {
+                    code: -32600,
+                    message: `thread ${nativeThreadId} already has an active writer`,
+                  },
+                },
+              },
+            ],
+          }),
+        );
+
+        const error = yield* Effect.flip(
+          harness.runtime.resumeThread({
+            providerThread: harness.providerThread,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          }),
+        );
+
+        assert.equal(error._tag, "ProviderAdapterThreadInUseError");
+        assert.nestedPropertyVal(error, "providerThreadId", harness.providerThread.id);
+        assert.include(error.message, "open in another Codex client");
+        assert.nestedPropertyVal(
+          error,
+          "cause.errorMessage",
+          `thread ${nativeThreadId} already has an active writer`,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("resolves retryable app-server errors on resumed provider activity", () =>
     Effect.scoped(
       Effect.gen(function* () {
