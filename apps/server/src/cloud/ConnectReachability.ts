@@ -140,8 +140,13 @@ export function classifyReachability(
     ? fail(
         "dns_failed",
         "The T3 Connect address does not resolve from this machine.",
-        "Check the DNS settings on this machine or its VPN.",
-        exitNodeHint(exitNode),
+        "After tunnel setup, allow time for DNS caches to refresh and check again. If it persists, compare DNS on this machine and another network.",
+        [
+          "This check cannot tell whether the public DNS record is missing or this network has a stale or filtered answer.",
+          exitNodeHint(exitNode),
+        ]
+          .filter(Boolean)
+          .join(" "),
       )
     : fail(
         "timeout",
@@ -154,7 +159,9 @@ export function classifyReachability(
 /** The loud diagnosis the CLI prints and the server logs. */
 export function formatReachabilityFailure(result: Unreachable): string {
   return [
-    "✕ T3 Connect is NOT reachable from other devices",
+    result.cause === "dns_failed"
+      ? "✕ This machine could not verify T3 Connect reachability"
+      : "✕ T3 Connect is NOT reachable from other devices",
     `  ${result.reason}`,
     ...(result.hint ? [`  ${result.hint}`] : []),
     `  Fix: ${result.fix}`,
