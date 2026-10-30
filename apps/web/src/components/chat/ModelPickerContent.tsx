@@ -1,5 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  AuthSettingsWriteScope,
   type ProviderInstanceId,
   type EnvironmentId,
   type ProviderDriverKind,
@@ -52,7 +53,9 @@ import {
 import {
   useEnvironmentModelPreferences,
   useToggleEnvironmentModelFavorite,
+  useUpdateEnvironmentModelPreferences,
 } from "~/hooks/useSettings";
+import { useEnvironmentScope } from "~/state/session";
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
@@ -80,6 +83,7 @@ type ModelPickerItem = {
   continuationGroupKey?: string | undefined;
   isLegacy?: boolean | undefined;
   isUnavailable?: boolean | undefined;
+  isCustom?: boolean | undefined;
 };
 
 export function resolveModelPickerSelectedModel(input: {
@@ -451,9 +455,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
   const toggleFavorite = useToggleEnvironmentModelFavorite(props.environmentId);
+  const updateModelPreferences = useUpdateEnvironmentModelPreferences(props.environmentId);
+  const canHideModels = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
 
   const focusSearchInput = () => {
     searchInputRef.current?.focus({ preventScroll: true });
+  };
+
+  const hideModel = (instanceId: ProviderInstanceId, slug: string) => {
+    focusSearchInput();
+    void updateModelPreferences({
+      setModelsHidden: [{ provider: instanceId, model: slug, hidden: true }],
+    });
   };
 
   const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
@@ -563,6 +576,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           ...(model.badge ? { badge: model.badge } : {}),
           ...(model.isLegacy ? { isLegacy: true } : {}),
           ...(model.isUnavailable ? { isUnavailable: true } : {}),
+          ...(model.isCustom ? { isCustom: true } : {}),
           instanceId,
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
@@ -1012,6 +1026,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     acpRegistryAgentId={model.acpRegistryAgentId}
                     acpRegistryIconUrl={model.acpRegistryIconUrl}
                     isFavorite={favoritesSet.has(providerModelKey(model.instanceId, model.slug))}
+                    isCustom={model.isCustom}
+                    canHide={canHideModels}
                     isSelected={
                       selectedModelKeys !== undefined
                         ? selectedModelKeySet.has(modelKey)
@@ -1023,6 +1039,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                     disabledReason={disabledReason}
                     onToggleFavorite={toggleFavorite}
+                    onHide={hideModel}
                   />
                 );
               }}

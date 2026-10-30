@@ -1,6 +1,6 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo } from "react";
-import { CheckIcon, StarIcon } from "lucide-react";
+import { CheckIcon, EyeOffIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName, getProviderRowLabel } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
@@ -23,6 +23,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
   isFavorite: boolean;
+  isCustom?: boolean | undefined;
+  canHide: boolean;
   isSelected: boolean;
   showProvider: boolean;
   showNewBadge?: boolean;
@@ -30,6 +32,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   jumpLabel?: string | null;
   disabledReason?: string | null;
   onToggleFavorite: (instanceId: ProviderInstanceId, slug: string) => void;
+  onHide: (instanceId: ProviderInstanceId, slug: string) => void;
 }) {
   const model = {
     slug: props.slug,
@@ -120,7 +123,31 @@ export const ModelListRow = memo(function ModelListRow(props: {
             {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
           </TooltipPopup>
         </Tooltip>
-        {/* Last, and always reserved, so stars and the check keep fixed columns. */}
+        <Tooltip>
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
+            <Button
+              size="icon-xs"
+              variant="ghost-muted"
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onHide(props.instanceId, props.slug);
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+              disabled={!props.canHide || props.isCustom || Boolean(props.disabledReason)}
+              aria-label={`Hide ${getDisplayModelName(model)} from picker`}
+            >
+              <EyeOffIcon className="size-3.5 opacity-0 group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100 sm:size-3" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipPopup side="top" align="center">
+            {props.isCustom
+              ? "Custom models are always shown in the picker"
+              : !props.canHide
+                ? "Settings permission required to hide models"
+                : "Hide from picker. Restore in Settings > Providers."}
+          </TooltipPopup>
+        </Tooltip>
+        {/* Reserve the selection indicator so row actions keep fixed columns. */}
         <CheckIcon
           className={cn("size-3.5", !props.isSelected && "invisible")}
           aria-hidden="true"
