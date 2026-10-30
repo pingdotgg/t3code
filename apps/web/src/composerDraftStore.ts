@@ -1161,9 +1161,7 @@ export function deriveEffectiveComposerModelState(input: {
     : baseModel;
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerSelectionsFromModelSelection(input.threadModelSelection) ??
-    providerSelectionsFromModelSelection(input.projectModelSelection) ??
-    null;
+    providerSelectionsFromModelSelection(input.threadModelSelection ?? input.projectModelSelection);
 
   return {
     selectedModel,
