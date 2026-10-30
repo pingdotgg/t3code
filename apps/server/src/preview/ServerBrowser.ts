@@ -477,8 +477,11 @@ const make = Effect.gen(function* () {
 
   const closedPendingTabs = new Set<string>();
   const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
-  /** Downloads a tab keeps while it moves to a new headless page. */
-  const movedDownloads = new Map<string, Array<ServerDownload>>();
+  /** What a tab keeps while it moves to a new headless page. */
+  const movedTabs = new Map<
+    string,
+    { readonly url: string; readonly downloads: Array<ServerDownload> }
+  >();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
@@ -732,7 +735,7 @@ const make = Effect.gen(function* () {
     else void tab.page.close().catch(constVoid);
     if (tab.isolatedContext) void tab.page.context().close().catch(constVoid);
     void tab.recording?.encoder.close().catch(constVoid);
-    if (!movedDownloads.has(key)) {
+    if (!movedTabs.has(key)) {
       void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
     }
     reportLiveTabs();
@@ -743,14 +746,14 @@ const make = Effect.gen(function* () {
 
   const moveTabToHeadless = Effect.fnUntraced(function* (tab: ServerTab) {
     const key = tabKey(tab.threadId, tab.tabId);
-    yield* manager
-      .markHeadless({ threadId: tab.threadId, tabId: tab.tabId, reload: true })
-      .pipe(Effect.ignore);
-    movedDownloads.set(key, tab.downloads);
+    yield* manager.markHeadless({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore);
+    // Another viewer that timed out on this tab may have moved it already.
+    if (tabs.get(key) !== tab) return;
+    movedTabs.set(key, { url: tab.page.url(), downloads: tab.downloads });
     dropTab(tab, false);
     yield* findTab(tab.threadId, tab.tabId).pipe(Effect.ignore);
     // The session closed before the new page opened, so nothing owns the files.
-    if (movedDownloads.delete(key)) {
+    if (movedTabs.delete(key)) {
       void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
     }
   });
@@ -790,8 +793,8 @@ const make = Effect.gen(function* () {
   const createTab = async (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
-    const keptDownloads = movedDownloads.get(tabKey(snapshot.threadId, snapshot.tabId));
-    movedDownloads.delete(tabKey(snapshot.threadId, snapshot.tabId));
+    const moved = movedTabs.get(tabKey(snapshot.threadId, snapshot.tabId));
+    movedTabs.delete(tabKey(snapshot.threadId, snapshot.tabId));
     const desktop =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
@@ -850,7 +853,7 @@ const make = Effect.gen(function* () {
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
       openerTabId: adopted?.openerTabId,
-      downloads: keptDownloads ?? [],
+      downloads: moved?.downloads ?? [],
       fileChooser: null,
       dialog: null,
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
@@ -991,15 +994,14 @@ const make = Effect.gen(function* () {
     tabs.set(key, tab);
     reportLiveTabs();
     // Existing desktop and popup PDFs can start loading before interception attaches.
-    if (
-      snapshot.navStatus._tag === "Loading" &&
-      ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
-    ) {
+    const initialUrl =
+      moved?.url ?? (snapshot.navStatus._tag === "Loading" ? snapshot.navStatus.url : null);
+    if (initialUrl !== null && ((!adopted && !desktop) || isPdfAssetUrl(initialUrl))) {
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (
-        (desktop || adopted) && page.url() === snapshot.navStatus.url
+        (desktop || adopted) && page.url() === initialUrl
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
+          : page.goto(initialUrl, options)
       ).then(constVoid, (cause: unknown) => {
         throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
       });

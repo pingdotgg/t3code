@@ -596,13 +596,28 @@ it.effect("a desktop tab that paints nothing moves to headless and its viewer re
       let offered = yield* Queue.take(painting.output);
       while (offered._tag !== "download") offered = yield* Queue.take(painting.output);
       const downloadId = offered.id;
+      yield* Effect.promise(() => desktopConnections[0]!.context.page.goto(url));
       desktopPaintsNothing = true;
       const attaching = yield* browser
         .attachViewer(viewerInput(tabId, true))
         .pipe(Effect.forkScoped);
       yield* Effect.promise(() => desktopCaptureStarted.promise);
+      const secondViewer = yield* browser
+        .attachViewer(viewerInput(tabId, true))
+        .pipe(Effect.forkScoped);
+      // It queues behind the first capture, so its screencast is the milestone.
+      const desktopSessions = desktopConnections[0]!.context.sessions;
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(desktopSessions.at(-1)!.send).toHaveBeenCalledWith(
+            "Page.startScreencast",
+            expect.anything(),
+          );
+        }),
+      );
       yield* TestClock.adjust("5 seconds");
       const stalled = yield* Fiber.join(attaching);
+      yield* Fiber.join(secondViewer);
 
       const items = yield* Queue.clear(stalled.output);
       expect(items.map((item) => item._tag)).toContain("reconnect");
