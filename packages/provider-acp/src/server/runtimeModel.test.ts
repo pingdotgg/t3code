@@ -329,6 +329,35 @@ describe("AcpRuntimeModel", () => {
     ).toBe(true);
   });
 
+  it("forwards an empty ACP v1 plan to clear previous entries", () => {
+    const entries = [
+      [{ content: "Inspect state", priority: "high", status: "pending" }],
+      [],
+    ] as const;
+    const updates = entries.flatMap(
+      (plan) =>
+        parseSessionUpdateEvent({
+          sessionId: "session-1",
+          update: { sessionUpdate: "plan", entries: plan },
+        }).events,
+    );
+
+    expect(updates).toMatchObject([
+      {
+        _tag: "PlanUpdated",
+        payload: {
+          nativePlanId: "legacy",
+          kind: "items",
+          plan: [{ step: "Inspect state", status: "pending" }],
+        },
+      },
+      {
+        _tag: "PlanUpdated",
+        payload: { nativePlanId: "legacy", kind: "items", plan: [] },
+      },
+    ]);
+  });
+
   it("projects typed ACP plan and content updates", () => {
     const planResult = parseSessionUpdateEvent({
       sessionId: "session-1",

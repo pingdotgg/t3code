@@ -1392,17 +1392,15 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         step: entry.content.trim().length > 0 ? entry.content.trim() : `Step ${index + 1}`,
         status: normalizePlanStepStatus(entry.status),
       }));
-      if (plan.length > 0) {
-        events.push({
-          _tag: "PlanUpdated",
-          payload: {
-            nativePlanId: "legacy",
-            kind: "items",
-            plan,
-          },
-          rawPayload: params,
-        });
-      }
+      events.push({
+        _tag: "PlanUpdated",
+        payload: {
+          nativePlanId: "legacy",
+          kind: "items",
+          plan,
+        },
+        rawPayload: params,
+      });
       break;
     }
     case "plan_update": {
