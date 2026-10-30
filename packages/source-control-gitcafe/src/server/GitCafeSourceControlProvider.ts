@@ -295,6 +295,8 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("gitcafe"),
+    // Fork pulls share bare branch names; read past them to this repository's own pull.
+    headBranchProbe: ({ headSelectors }) => ({ headSelectors, limit: 20 }),
     repositoryNameFromRemoteUrl: (url) => GitCafeHosts.parseGitCafeRemote(url)?.repository ?? null,
     getChangeRequest: getPull,
     listChangeRequests: Effect.fn("GitCafeSourceControlProvider.listChangeRequests")(
