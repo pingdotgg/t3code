@@ -28,15 +28,28 @@ describe("GrokCredentials", () => {
   });
 
   it("accepts a string email and a missing email", () => {
-    expect(
-      decode(
-        JSON.stringify({
-          [accountKey]: { key: "oidc-token", auth_mode: "oidc", email: "user@example.com" },
-        }),
-      )[accountKey]?.email,
-    ).toBe("user@example.com");
-    expect(
-      decode(JSON.stringify({ [accountKey]: { key: "oidc-token", auth_mode: "oidc" } }))[accountKey],
-    ).toEqual({ key: "oidc-token", auth_mode: "oidc" });
+    const withEmail = decode(
+      JSON.stringify({
+        [accountKey]: {
+          key: "oidc-token",
+          auth_mode: "oidc",
+          email: "user@example.com",
+        },
+      }),
+    );
+    expect(withEmail[accountKey]?.email).toBe("user@example.com");
+
+    const withoutEmail = decode(
+      JSON.stringify({
+        [accountKey]: {
+          key: "oidc-token",
+          auth_mode: "oidc",
+        },
+      }),
+    );
+    expect(withoutEmail[accountKey]).toEqual({
+      key: "oidc-token",
+      auth_mode: "oidc",
+    });
   });
 });
