@@ -7,6 +7,7 @@ import type {
   IncomingShareDraft,
   selectIncomingShareAttachmentsForServer,
 } from "../sharing/incoming-share-model";
+import { applyShareTemplate } from "../sharing/share-templates";
 
 export type ShareImportPhase =
   | "idle"
@@ -65,6 +66,8 @@ export interface ShareImportTarget {
   readonly draftKey: string;
   readonly destination: IncomingShareDestination;
   readonly shareId: string;
+  /** The share template prompt that wraps the shared text. */
+  readonly template?: string;
 }
 
 export interface ShareImportDeps {
@@ -133,6 +136,7 @@ function keyOf(target: ShareImportTarget): string {
     target.destination.environmentId,
     target.destination.projectId,
     target.shareId,
+    target.template ?? null,
   ]);
 }
 
@@ -193,7 +197,7 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
 
   async function runImport(key: string, entry: Entry): Promise<void> {
     const { signal } = entry.controller;
-    const { shareId, destination, draftKey } = entry.target;
+    const { shareId, destination, draftKey, template } = entry.target;
     // A phase atom node of a superseded import may still be cached; rebuilding
     // it lets a route that switches back start over instead of showing the
     // abandoned import's last phase.
@@ -219,7 +223,7 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
       let skippedAttachmentCount: number;
       try {
         ({ skippedAttachmentCount } = await deps.mergeIntoDraft(draftKey, {
-          text: share.text,
+          text: template === undefined ? share.text : applyShareTemplate(template, share.text),
           attachments: selected.attachments,
           sourceShareId: shareId,
         }));

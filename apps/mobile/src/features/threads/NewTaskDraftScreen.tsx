@@ -52,6 +52,7 @@ import {
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { Chip } from "../../components/ui/Chip";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -90,7 +91,9 @@ import {
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
+import { shareTemplateLabel, usableShareTemplates } from "../sharing/share-templates";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { appAtomRegistry } from "../../state/atom-registry";
 
@@ -265,6 +268,22 @@ export function NewTaskDraftScreen(props: {
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isReturningToProjectPicker, setIsReturningToProjectPicker] = useState(false);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const shareTemplates = AsyncResult.isSuccess(preferences)
+    ? usableShareTemplates(preferences.value.shareTemplates)
+    : null;
+  const [shareTemplateChoice, setShareTemplateChoice] = useState<{
+    readonly shareId: string;
+    readonly template: string | null;
+  } | null>(null);
+  const chosenShareTemplate =
+    incomingShare && shareTemplateChoice?.shareId === incomingShare.id ? shareTemplateChoice : null;
+  // Null templates means preferences are still loading, so the choice is not known yet.
+  const isIncomingShareAwaitingTemplate = Boolean(
+    incomingShare &&
+    chosenShareTemplate === null &&
+    (shareTemplates === null || shareTemplates.length > 0),
+  );
   const requestedInitialProjectAvailable = Boolean(
     props.initialProjectRef?.environmentId &&
     props.initialProjectRef.projectId &&
@@ -303,7 +322,14 @@ export function NewTaskDraftScreen(props: {
   );
   const shareImportTarget = (() => {
     if (!props.incomingShareId || flowKey === undefined || !flow.draftKey) return null;
-    if (!selectedProject || !incomingShare || isIncomingShareAwaitingServerConfig) return null;
+    if (
+      !selectedProject ||
+      !incomingShare ||
+      isIncomingShareAwaitingServerConfig ||
+      isIncomingShareAwaitingTemplate
+    ) {
+      return null;
+    }
     const initialEnvironmentId = props.initialProjectRef?.environmentId;
     const initialProjectId = props.initialProjectRef?.projectId;
     if (
@@ -323,6 +349,7 @@ export function NewTaskDraftScreen(props: {
         projectId: String(selectedProject.id),
       },
       shareId: incomingShare.id,
+      ...(chosenShareTemplate?.template ? { template: chosenShareTemplate.template } : {}),
     };
   })();
   const shareImportPhase = useAtomValue(
@@ -691,7 +718,9 @@ export function NewTaskDraftScreen(props: {
           : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
             ? "Choose a base branch before creating a worktree."
             : null
-      : "Wait for shared content to finish importing.";
+      : isIncomingShareAwaitingTemplate && !isImportingShare
+        ? "Choose a template for the shared content."
+        : "Wait for shared content to finish importing.";
   const chooseProject = () => {
     if (isComposerInteractionLocked) {
       return;
@@ -718,6 +747,30 @@ export function NewTaskDraftScreen(props: {
       onChooseEnvironment={() => openContextPicker("NewTaskEnvironment")}
     />
   );
+  // A remounted route has no choice while its earlier import still runs; that import keeps its own.
+  const shareTemplatePicker =
+    incomingShare && shareTemplates && isIncomingShareAwaitingTemplate && !isImportingShare ? (
+      <View className="gap-2 px-3 pb-2" testID="share-template-picker">
+        <Text textRole="footnote" className="text-foreground-muted">
+          Use a template for the shared content?
+        </Text>
+        <View className="flex-row flex-wrap gap-2">
+          {shareTemplates.map((template) => (
+            <Chip
+              key={template.id}
+              label={shareTemplateLabel(template.prompt)}
+              onPress={() =>
+                setShareTemplateChoice({ shareId: incomingShare.id, template: template.prompt })
+              }
+            />
+          ))}
+          <Chip
+            label="No template"
+            onPress={() => setShareTemplateChoice({ shareId: incomingShare.id, template: null })}
+          />
+        </View>
+      </View>
+    ) : null;
   const shareUnavailableNotice = isIncomingShareUnavailable ? (
     <Text textRole="footnote" className="text-center text-foreground-muted">
       The shared content is no longer in the inbox. You can continue editing this task draft.
@@ -899,6 +952,7 @@ export function NewTaskDraftScreen(props: {
           content: heroViewport,
           controls: (
             <View className="pb-1">
+              {shareTemplatePicker}
               {projectClone && projectClone.phase !== "done" && selectedProject ? (
                 <View className="px-1 pb-2">
                   <ProjectCloneBanner

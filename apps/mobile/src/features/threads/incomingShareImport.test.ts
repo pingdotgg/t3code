@@ -155,6 +155,15 @@ describe("incoming share imports", () => {
     expect(deps.onWarnings).toHaveBeenCalledWith(["too big"]);
   });
 
+  it("wraps the shared text in the chosen template", async () => {
+    const { drafts, imports, watch } = setup();
+    const target = importTarget({ template: "Review {{shared}} for bugs." });
+    watch(target);
+    await imports.settled(target);
+
+    expect(drafts.get("draft-a")?.text).toBe("mine\nReview shared text for bugs.");
+  });
+
   it("runs once when its atom node is removed and rebuilt", async () => {
     const { imports, deps } = setup();
     const tasks: Array<() => void> = [];
