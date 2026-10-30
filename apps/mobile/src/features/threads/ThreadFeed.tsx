@@ -2542,7 +2542,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   });
   const settledPaneWidth = useWorkspaceSettledContentWidth();
   const [measuredViewportWidth, setViewportWidth] = useState(() =>
-    props.layoutVariant === "split" ? 0 : windowWidth,
+    props.layoutVariant !== "compact" ? 0 : windowWidth,
   );
   const viewportWidth =
     settledPaneWidth !== null ? Math.round(settledPaneWidth) : measuredViewportWidth;
@@ -2634,7 +2634,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     props.threadId,
     fileShareSourceIdentifier,
   );
-  const horizontalPadding = props.layoutVariant === "split" ? 20 : 16;
+  const horizontalPadding = props.layoutVariant !== "compact" ? 20 : 16;
   const contentLeftInset = props.contentSideInsets?.left ?? 0;
   const contentRightInset = props.contentSideInsets?.right ?? 0;
   const usableViewportWidth = Math.max(0, viewportWidth - contentLeftInset - contentRightInset);
@@ -3573,7 +3573,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             // Horizontal Duo reservations are already included in the row padding.
             contentInsetAdjustmentBehavior={
               usesNativeAutomaticInsets
-                ? duoColumns && props.layoutVariant === "split"
+                ? duoColumns && props.layoutVariant !== "compact"
                   ? "scrollableAxes"
                   : "automatic"
                 : "never"
