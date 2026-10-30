@@ -1,11 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
 
-import {
-  EnvironmentId,
-  ServerConfig,
-  type ServerNpmRelease,
-  ServerNpmReleaseError,
-} from "@t3tools/contracts";
+import { EnvironmentId, ServerConfig, ServerNpmReleaseError } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -13,8 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
 
-import { environmentIdsKey } from "./environmentAtomList";
-import { npmReleaseAtom, npmReleaseFailureMessage, npmReleasePublishedAtom } from "./npmRelease";
+import { npmReleaseAtom, npmReleaseFailureMessage } from "./npmRelease";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { serverEnvironment } from "./server";
 
@@ -31,7 +25,6 @@ vi.mock("./primaryEnvironment", () => ({
 const version = "0.0.46-nightly.20261012.3021";
 const first = EnvironmentId.make("first");
 const second = EnvironmentId.make("second");
-const pending = EnvironmentId.make("pending");
 const decodeServerConfig = Schema.decodeUnknownSync(ServerConfig);
 
 const configFor = (environmentId: EnvironmentId | null, supported = true) =>
@@ -73,42 +66,6 @@ function setup(supported = true) {
     .mockImplementation((environmentId) => Atom.make(configFor(environmentId, supported)));
   return vi.mocked(serverEnvironment.npmRelease).mockReset();
 }
-
-it("checks publication separately against each environment's registry", () => {
-  const query = setup();
-  query.mockImplementation(({ environmentId }) =>
-    Atom.make(
-      environmentId === pending
-        ? AsyncResult.initial(true)
-        : AsyncResult.success(environmentId === first ? { version } : null),
-    ),
-  );
-  const registry = AtomRegistry.make();
-  try {
-    expect(
-      registry.get(npmReleasePublishedAtom(version)(environmentIdsKey([first, second, pending]))),
-    ).toEqual([
-      { published: true, reason: null },
-      { published: false, reason: `t3@${version} is not in this environment's npm registry yet` },
-      { published: false, reason: "Still checking this environment's npm registry" },
-    ]);
-    expect(query).toHaveBeenCalledWith({ environmentId: first, input: { spec: version } });
-    expect(query).toHaveBeenCalledWith({ environmentId: second, input: { spec: version } });
-  } finally {
-    registry.dispose();
-  }
-});
-
-it("does not query any registry when no server needs a publication check", () => {
-  const query = setup();
-  const registry = AtomRegistry.make();
-  try {
-    expect(registry.get(npmReleasePublishedAtom(version)(""))).toEqual([]);
-    expect(query).not.toHaveBeenCalled();
-  } finally {
-    registry.dispose();
-  }
-});
 
 it.effect(
   "resolves track metadata through the primary environment and follows primary changes",
@@ -174,28 +131,6 @@ it.effect("resolves track metadata through a supporting server when there is no 
   }),
 );
 
-it("keeps a failed registry check unpublished without a browser fetch", () => {
-  const query = setup();
-  const error = new ServerNpmReleaseError({ reason: "npm could not be started on this machine." });
-  query.mockReturnValue(
-    Atom.make(
-      AsyncResult.failure<ServerNpmRelease | null, ServerNpmReleaseError>(Cause.fail(error)),
-    ),
-  );
-  using fetch = vi
-    .spyOn(globalThis, "fetch")
-    .mockRejectedValue(new Error("Unexpected browser fetch"));
-  const registry = AtomRegistry.make();
-  try {
-    expect(registry.get(npmReleasePublishedAtom(version)(environmentIdsKey([first])))).toEqual([
-      { published: false, reason: error.message },
-    ]);
-    expect(fetch).not.toHaveBeenCalled();
-  } finally {
-    registry.dispose();
-  }
-});
-
 it.effect("does not call an unsupported RPC or fetch public npm for an older primary server", () =>
   Effect.gen(function* () {
     const query = setup(false);
@@ -215,12 +150,6 @@ it.effect("does not call an unsupported RPC or fetch public npm for an older pri
       expect(npmReleaseFailureMessage(Cause.fail(error))).toContain(
         "Update it before switching tracks",
       );
-      expect(registry.get(npmReleasePublishedAtom(version)(environmentIdsKey([first])))).toEqual([
-        {
-          published: false,
-          reason: expect.stringContaining("does not support registry lookups"),
-        },
-      ]);
       expect(query).not.toHaveBeenCalled();
       expect(fetch).not.toHaveBeenCalled();
     } finally {

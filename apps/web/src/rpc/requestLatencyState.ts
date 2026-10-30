@@ -30,7 +30,6 @@ const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
 // about a request the user never made does not say what is wrong. A sign-in wait
 // lasts as long as the user takes on the forge.
 const untrackedRpcAckMethods = new Set<string>([
-  WS_METHODS.serverGetNpmRelease,
   WS_METHODS.serverGetUsageSummary,
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.sourceControlSignInWait,

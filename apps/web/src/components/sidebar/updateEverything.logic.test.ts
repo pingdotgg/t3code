@@ -29,7 +29,6 @@ function machine(
         serverVersion,
         capabilities: {
           repositoryIdentity: true,
-          npmReleaseLookup: true,
           ...(selfUpdate ? { serverSelfUpdate: selfUpdate } : {}),
           ...(selfUpdate === "desktop-managed"
             ? { desktopAppUpdate: true, desktopAppChannelSwitch: true }
@@ -70,7 +69,6 @@ describe("collectServerUpdateTargets", () => {
         machine("manual", "0.0.40", undefined),
       ],
       "0.0.50",
-      true,
     );
 
     expect(targets.map((target) => [target.serverLabel, target.targetVersion])).toEqual([
@@ -86,66 +84,6 @@ describe("collectServerUpdateTargets", () => {
       ["manual", "needs a manual update"],
     ]);
   });
-
-  it("waits for npm only for hosts that install from it or when the release may lack archives", () => {
-    const hosts = [
-      machine("archive-service", "0.0.41-nightly.20260914.1700", "boot-service"),
-      machine("npm-service", "0.0.41-nightly.20260914.1699", "boot-service"),
-      machine("legacy-respawn", "0.1.4-nightly.20261027.3796", "respawn"),
-      machine("desktop", "0.1.4-nightly.20261027.3796", "desktop-managed"),
-    ];
-    const waits = (releaseArchivesPublished: boolean) =>
-      collectServerUpdateTargets(
-        hosts,
-        "0.1.5-nightly.20261029.3873",
-        releaseArchivesPublished,
-      ).waitForNpm.map((target) => target.serverLabel);
-
-    expect(waits(true)).toEqual(["npm-service", "legacy-respawn"]);
-    expect(waits(false)).toEqual(["archive-service", "npm-service", "legacy-respawn"]);
-  });
-
-  it.each([undefined, false])(
-    "keeps legacy updates and channel checks without registry lookup support (%s)",
-    (npmReleaseLookup) => {
-      const hosts = [
-        machine("archive-service", "0.0.41-nightly.20260914.1700", "boot-service"),
-        machine("npm-service", "0.0.41-nightly.20260914.1699", "boot-service"),
-        machine("legacy-respawn", "0.1.4-nightly.20261027.3796", "respawn"),
-        machine("other-track", "0.1.3", "boot-service"),
-      ].map((host) => ({
-        ...host,
-        serverConfig: {
-          ...host.serverConfig!,
-          environment: {
-            ...host.serverConfig!.environment,
-            capabilities: {
-              repositoryIdentity: true,
-              serverSelfUpdate: host.serverConfig!.environment.capabilities.serverSelfUpdate!,
-              ...(npmReleaseLookup === undefined ? {} : { npmReleaseLookup }),
-            },
-          },
-        },
-      }));
-      for (const releaseArchivesPublished of [true, false]) {
-        const { targets, skipped, waitForNpm } = collectServerUpdateTargets(
-          [...hosts, machine("new-server", "0.1.4-nightly.20261027.3796", "respawn")],
-          "0.1.5-nightly.20261029.3873",
-          releaseArchivesPublished,
-        );
-        expect(targets.map((target) => target.serverLabel)).toEqual([
-          "archive-service",
-          "npm-service",
-          "legacy-respawn",
-          "new-server",
-        ]);
-        expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
-          ["other-track", "on the stable channel"],
-        ]);
-        expect(waitForNpm.map((target) => target.serverLabel)).toEqual(["new-server"]);
-      }
-    },
-  );
 });
 
 describe("collectChannelSwitchTargets", () => {

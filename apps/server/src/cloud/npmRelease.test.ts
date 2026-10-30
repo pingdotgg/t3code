@@ -2,9 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ServerNpmReleaseError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Fiber from "effect/Fiber";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Result from "effect/Result";
@@ -155,6 +157,34 @@ it.effect("falls back to public npm only when npm is not installed", () =>
       "https://registry.npmjs.org/t3/9.9.9",
       "https://registry.npmjs.org/t3/latest",
     ]);
+  }),
+);
+
+it.effect("runs at most two npm lookups at once", () =>
+  Effect.gen(function* () {
+    const started = yield* Queue.unbounded<void>();
+    const release = yield* Deferred.make<void>();
+    let running = 0;
+    let peak = 0;
+    const service = yield* makeService(() =>
+      Effect.gen(function* () {
+        peak = Math.max(peak, ++running);
+        yield* Queue.offer(started, undefined);
+        yield* Deferred.await(release);
+        running--;
+        return output('{"error":{"code":"E404"}}', 1);
+      }),
+    );
+    const lookups = yield* Effect.forEach(
+      ["1.0.0", "1.0.1", "1.0.2"],
+      (spec) => service.get({ spec }),
+      { concurrency: "unbounded" },
+    ).pipe(Effect.forkChild);
+    yield* Queue.take(started);
+    yield* Queue.take(started);
+    yield* Deferred.succeed(release, undefined);
+    expect(yield* Fiber.join(lookups)).toEqual([null, null, null]);
+    expect(peak).toBe(2);
   }),
 );
 

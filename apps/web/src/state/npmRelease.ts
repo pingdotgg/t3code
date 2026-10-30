@@ -3,9 +3,8 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { Atom } from "effect/reactivity";
 
-import { environmentAtomList } from "./environmentAtomList";
 import { environmentSummaries } from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { serverEnvironment } from "./server";
@@ -57,28 +56,4 @@ export const npmReleaseAtom = Atom.family((spec: string) =>
         ),
       );
   }).pipe(Atom.withLabel(`npm-release:${spec}`)),
-);
-
-export const npmReleasePublishedAtom = Atom.family((version: string) =>
-  environmentAtomList(`npm-release-published:${version}`, (environmentId) =>
-    Atom.make((get) => {
-      const unsupported = unsupportedLookup(get(serverEnvironment.configValueAtom(environmentId)));
-      if (unsupported !== null) return { published: false, reason: unsupported.message };
-      const release = get(
-        serverEnvironment.npmRelease({ environmentId, input: { spec: version } }),
-      );
-      if (AsyncResult.isFailure(release)) {
-        return { published: false, reason: npmReleaseFailureMessage(release.cause) };
-      }
-      if (AsyncResult.isSuccess(release) && release.value === null) {
-        return {
-          published: false,
-          reason: `t3@${version} is not in this environment's npm registry yet`,
-        };
-      }
-      return AsyncResult.isSuccess(release)
-        ? { published: true, reason: null }
-        : { published: false, reason: "Still checking this environment's npm registry" };
-    }),
-  ),
 );
