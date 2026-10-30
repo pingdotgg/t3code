@@ -1,0 +1,111 @@
+{
+  "projection_projects": [
+    {
+      "project_id": "56e5440c-c20b-4d6c-9668-96225853634b",
+      "title": "Issue 8394 fixtures",
+      "workspace_root": "__WORKSPACE_ROOT__",
+      "scripts_json": "[]",
+      "created_at": "2026-10-22T00:45:10.231Z",
+      "updated_at": "2026-10-22T00:45:10.231Z",
+      "deleted_at": null,
+      "default_model_selection_json": null,
+      "default_thread_env_mode": null,
+      "favicon_path": null,
+      "auto_pull": 0,
+      "project_icon_json": null
+    }
+  ],
+  "orchestration_v2_projection_threads": [
+    {
+      "thread_id": "thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7",
+      "project_id": "56e5440c-c20b-4d6c-9668-96225853634b",
+      "title": "Issue 8394 synthetic evidence",
+      "default_provider": "codex",
+      "runtime_mode": "full-access",
+      "interaction_mode": "default",
+      "active_provider_thread_id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1",
+      "created_at": "2026-10-22T00:45:10.394Z",
+      "updated_at": "2026-10-22T00:53:28.680Z",
+      "archived_at": null,
+      "deleted_at": null,
+      "payload_json": "{\"createdBy\": \"system\", \"creationSource\": \"server\", \"id\": \"thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7\", \"projectId\": \"56e5440c-c20b-4d6c-9668-96225853634b\", \"title\": \"Issue 8394 synthetic evidence\", \"providerInstanceId\": \"codex\", \"modelSelection\": {\"instanceId\": \"codex\", \"model\": \"gpt-6-astra\"}, \"runtimeMode\": \"full-access\", \"interactionMode\": \"default\", \"branch\": null, \"worktreePath\": null, \"pullRequests\": [], \"activeProviderThreadId\": \"provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1\", \"lineage\": {\"parentThreadId\": null, \"relationshipToParent\": null, \"rootThreadId\": \"thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7\"}, \"forkedFrom\": null, \"createdAt\": \"2026-10-22T00:45:10.394Z\", \"updatedAt\": \"2026-10-22T00:53:28.680Z\", \"archivedAt\": null, \"settledOverride\": null, \"settledAt\": null, \"snoozedUntil\": null, \"snoozedAt\": null, \"lastVisitedAt\": \"2026-10-22T00:53:28.680Z\", \"titleRegeneration\": null, \"deletedAt\": null}",
+      "provider_instance_id": "codex"
+    }
+  ],
+  "orchestration_v2_projection_runs": [
+    {
+      "run_id": "run:thread:thread%3Aproject%3A56e5440c-c20b-4d6c-9668-96225853634b%3Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7:ordinal:1",
+      "thread_id": "thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7",
+      "ordinal": 1,
+      "provider": "codex",
+      "provider_thread_id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1",
+      "status": "completed",
+      "requested_at": "2026-10-22T00:46:05.350Z",
+      "completed_at": "2026-10-22T00:46:15.899Z",
+      "payload_json": "{\"id\": \"run:thread:thread%3Aproject%3A56e5440c-c20b-4d6c-9668-96225853634b%3Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7:ordinal:1\", \"threadId\": \"thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7\", \"ordinal\": 1, \"providerInstanceId\": \"codex\", \"modelSelection\": {\"instanceId\": \"codex\", \"model\": \"gpt-6-astra\"}, \"providerThreadId\": \"provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1\", \"userMessageId\": \"5dddd070-2ffb-4177-a9a2-5e227839f185\", \"rootNodeId\": \"node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root\", \"activeAttemptId\": \"run-attempt:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:attempt:1\", \"status\": \"completed\", \"queuePosition\": null, \"requestedAt\": \"2026-10-22T00:46:05.350Z\", \"startedAt\": \"2026-10-22T00:46:07.825Z\", \"completedAt\": \"2026-10-22T00:46:15.899Z\", \"checkpointId\": null, \"contextHandoffId\": null}",
+      "provider_instance_id": "codex"
+    }
+  ],
+  "orchestration_v2_projection_run_attempts": [
+    {
+      "attempt_id": "run-attempt:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:attempt:1",
+      "thread_id": "thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7",
+      "run_id": "run:thread:thread%3Aproject%3A56e5440c-c20b-4d6c-9668-96225853634b%3Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7:ordinal:1",
+      "attempt_ordinal": 1,
+      "root_node_id": "node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root",
+      "provider": "codex",
+      "provider_thread_id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1",
+      "provider_turn_id": null,
+      "status": "completed",
+      "payload_json": "{\"id\": \"run-attempt:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:attempt:1\", \"runId\": \"run:thread:thread%3Aproject%3A56e5440c-c20b-4d6c-9668-96225853634b%3Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7:ordinal:1\", \"attemptOrdinal\": 1, \"rootNodeId\": \"node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root\", \"providerInstanceId\": \"codex\", \"providerThreadId\": \"provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1\", \"providerTurnId\": null, \"reason\": \"initial\", \"status\": \"completed\", \"startedAt\": \"2026-10-22T00:46:07.825Z\", \"completedAt\": \"2026-10-22T00:46:15.883Z\"}",
+      "provider_instance_id": "codex"
+    }
+  ],
+  "orchestration_v2_projection_nodes": [
+    {
+      "node_id": "node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root",
+      "thread_id": "thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7",
+      "run_id": "run:thread:thread%3Aproject%3A56e5440c-c20b-4d6c-9668-96225853634b%3Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7:ordinal:1",
+      "parent_node_id": null,
+      "root_node_id": "node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root",
+      "kind": "root_turn",
+      "status": "completed",
+      "provider_thread_id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1",
+      "provider_turn_id": null,
+      "runtime_request_id": null,
+      "checkpoint_scope_id": null,
+      "started_at": "2026-10-22T00:46:07.825Z",
+      "completed_at": "2026-10-22T00:46:15.899Z",
+      "payload_json": "{\"id\": \"node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root\", \"threadId\": \"thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7\", \"runId\": \"run:thread:thread%3Aproject%3A56e5440c-c20b-4d6c-9668-96225853634b%3Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7:ordinal:1\", \"parentNodeId\": null, \"rootNodeId\": \"node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root\", \"kind\": \"root_turn\", \"status\": \"completed\", \"countsForRun\": true, \"providerThreadId\": \"provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1\", \"providerTurnId\": null, \"nativeItemRef\": null, \"runtimeRequestId\": null, \"checkpointScopeId\": null, \"startedAt\": \"2026-10-22T00:46:07.825Z\", \"completedAt\": \"2026-10-22T00:46:15.899Z\"}"
+    }
+  ],
+  "orchestration_v2_projection_messages": [
+    {
+      "message_id": "5dddd070-2ffb-4177-a9a2-5e227839f185",
+      "thread_id": "thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7",
+      "run_id": "run:thread:thread%3Aproject%3A56e5440c-c20b-4d6c-9668-96225853634b%3Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7:ordinal:1",
+      "node_id": "node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root",
+      "role": "user",
+      "streaming": 0,
+      "created_at": "2026-10-22T00:46:05.350Z",
+      "updated_at": "2026-10-22T00:46:05.350Z",
+      "payload_json": "{\"createdBy\": \"user\", \"creationSource\": \"web\", \"id\": \"5dddd070-2ffb-4177-a9a2-5e227839f185\", \"threadId\": \"thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7\", \"runId\": \"run:thread:thread%3Aproject%3A56e5440c-c20b-4d6c-9668-96225853634b%3Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7:ordinal:1\", \"nodeId\": \"node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root\", \"role\": \"user\", \"text\": \"1. test\\n5. test\\n8. test\\n15. test\", \"attachments\": [], \"streaming\": false, \"createdAt\": \"2026-10-22T00:46:05.350Z\", \"updatedAt\": \"2026-10-22T00:46:05.350Z\"}"
+    }
+  ],
+  "orchestration_v2_projection_turn_items": [
+    {
+      "turn_item_id": "turn-item:message:5dddd070-2ffb-4177-a9a2-5e227839f185",
+      "thread_id": "thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7",
+      "run_id": "run:thread:thread%3Aproject%3A56e5440c-c20b-4d6c-9668-96225853634b%3Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7:ordinal:1",
+      "node_id": "node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root",
+      "provider_thread_id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1",
+      "provider_turn_id": null,
+      "parent_item_id": null,
+      "ordinal": 1000001,
+      "type": "user_message",
+      "status": "completed",
+      "updated_at": "2026-10-22T00:46:05.350Z",
+      "payload_json": "{\"id\": \"turn-item:message:5dddd070-2ffb-4177-a9a2-5e227839f185\", \"threadId\": \"thread:project:56e5440c-c20b-4d6c-9668-96225853634b:d5b40030-e3dc-47ab-b46d-8a914a4de9c7\", \"runId\": \"run:thread:thread%3Aproject%3A56e5440c-c20b-4d6c-9668-96225853634b%3Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7:ordinal:1\", \"nodeId\": \"node:run:run%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1:root\", \"providerThreadId\": \"provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Aproject%253A56e5440c-c20b-4d6c-9668-96225853634b%253Ad5b40030-e3dc-47ab-b46d-8a914a4de9c7%3Aordinal%3A1\", \"providerTurnId\": null, \"nativeItemRef\": null, \"parentItemId\": null, \"ordinal\": 1000001, \"status\": \"completed\", \"title\": null, \"startedAt\": \"2026-10-22T00:46:05.350Z\", \"completedAt\": \"2026-10-22T00:46:05.350Z\", \"updatedAt\": \"2026-10-22T00:46:05.350Z\", \"createdBy\": \"user\", \"creationSource\": \"web\", \"type\": \"user_message\", \"messageId\": \"5dddd070-2ffb-4177-a9a2-5e227839f185\", \"inputIntent\": \"turn_start\", \"text\": \"1. test\\n5. test\\n8. test\\n15. test\", \"attachments\": []}"
+    }
+  ]
+}

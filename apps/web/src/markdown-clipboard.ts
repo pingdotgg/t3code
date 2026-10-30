@@ -131,10 +131,16 @@ function serializeListItem(item: Element, ordered: boolean, index: number): stri
 }
 
 function serializeList(list: Element, ordered: boolean): string {
-  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10) || 1;
+  let number = (Number.parseInt(list.getAttribute("start") ?? "1", 10) || 1) - 1;
   const items = [...list.children].filter((child) => child.tagName === "LI");
   if (items.length === 0) return "";
-  return `${items.map((item, index) => serializeListItem(item, ordered, start + index)).join("\n")}\n\n`;
+  return `${items
+    .map((item) => {
+      const value = Number.parseInt(item.getAttribute("value") ?? "", 10);
+      number = Number.isNaN(value) ? number + 1 : value;
+      return serializeListItem(item, ordered, number);
+    })
+    .join("\n")}\n\n`;
 }
 
 function serializeBlockquote(quote: Element): string {

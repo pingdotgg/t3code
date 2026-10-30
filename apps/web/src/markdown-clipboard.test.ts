@@ -186,6 +186,22 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\n```\npnpm test\n```");
   });
 
+  it("copies an item's explicit number and counts on from it for unnumbered items", () => {
+    const item = (text: string, value?: string) =>
+      new FakeElement("LI", [], value ? { value } : {}).append(new FakeText(text));
+    const container = new FakeElement("DIV").append(
+      new FakeElement("OL", [], { start: "3" }).append(
+        item("first"),
+        item("second", "8"),
+        item("third"),
+      ),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "3. first\n8. second\n9. third",
+    );
+  });
+
   it("omits fences when a selection past the last line drags in the whole code block", () => {
     const container = new FakeElement("DIV").append(
       renderedCodeBlock(["printf '%s' 'TOKEN' | gh secret set CLOUDFLARE_API_TOKEN"]),
