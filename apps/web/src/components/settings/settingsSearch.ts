@@ -846,6 +846,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow simulator emulator ios android drive tools sessions"],
   },
   {
+    id: "agent-browser-tabs",
+    title: "Agent browser tabs",
+    to: "/settings/devices",
+    targetId: "computer",
+    searchTerms: ["chrome devtools tabs sign-ins signed in browser remote debugging edge brave"],
+  },
+  {
     id: "cua-computer-use",
     title: "Computer use",
     to: "/settings/devices",

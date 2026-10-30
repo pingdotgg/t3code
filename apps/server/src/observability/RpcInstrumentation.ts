@@ -33,6 +33,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsMutate]: "orchestration",
   [WS_METHODS.serverProbe]: "server",
   [WS_METHODS.serverCheckComputerUse]: "server",
+  [WS_METHODS.serverCheckBrowserTabs]: "server",
+  [WS_METHODS.serverRunBrowserTabsAction]: "server",
   [WS_METHODS.serverGetConfig]: "server",
   [WS_METHODS.serverRefreshProviders]: "server",
   [WS_METHODS.serverUpdateProvider]: "server",

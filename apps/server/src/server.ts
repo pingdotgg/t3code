@@ -174,6 +174,7 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as CuaDriver from "./cua/CuaDriver.ts";
+import * as BrowserTabs from "./mcp/BrowserTabs.ts";
 import * as CuaWindowPreview from "./cua/CuaWindowPreview.ts";
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
@@ -657,6 +658,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       AntigravityInstallation.AntigravityInstallation.layer,
       CodexInstallation.CodexInstallation.layer,
       layerCuaDriver,
+      BrowserTabs.layer.pipe(Layer.provide(layerServerSettings)),
     ),
   ),
 );

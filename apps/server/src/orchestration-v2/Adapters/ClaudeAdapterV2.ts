@@ -1471,6 +1471,8 @@ export function makeClaudeQueryOptions(input: {
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
+  /** The browser `chrome-devtools` drives, for its prompt text. */
+  readonly browserTabs?: string;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -1592,6 +1594,7 @@ export function makeClaudeQueryOptions(input: {
         buildRuntimeInstructions({
           harness: "Claude Code",
           computerUse: input.mcpServers?.[McpProviderSession.CUA_MCP_SERVER_NAME] !== undefined,
+          browserTabs: input.browserTabs,
         }) +
           (input.mcpServers === undefined
             ? ""
@@ -1724,6 +1727,7 @@ export function claudeMcpQueryOverrides(input: {
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  readonly browserTabs?: string;
 } {
   const session = input.mcpSession;
   if (session === undefined) {
@@ -1743,8 +1747,9 @@ export function claudeMcpQueryOverrides(input: {
         },
         timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
       },
-      ...McpProviderSession.cuaStdioMcpServers(session),
+      ...McpProviderSession.localStdioMcpServers(session),
     },
+    ...(session.browserTabs ? { browserTabs: session.browserTabs.browserName } : {}),
   };
 }
 

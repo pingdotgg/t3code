@@ -553,6 +553,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Agent browser access"]
       : []),
     ...(settings.enableCua !== DEFAULT_UNIFIED_SETTINGS.enableCua ? ["Computer use"] : []),
+    ...(settings.enableAgentBrowserTabs !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserTabs
+      ? ["Agent browser tabs"]
+      : []),
   ];
 
   const restoreDefaults = async () => {
@@ -675,6 +678,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       pullRequestLinksOpenInApp: DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp,
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
       enableCua: DEFAULT_UNIFIED_SETTINGS.enableCua,
+      enableAgentBrowserTabs: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserTabs,
     });
     if (result.saved) onRestored?.();
   };

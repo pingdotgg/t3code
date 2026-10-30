@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -5,6 +6,7 @@ import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceSourcesSettings } from "./DeviceSourcesSettings";
 import { CuaSetupDialog } from "./CuaSetupDialog";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
+import { BrowserTabsSetupDialog, readyBrowser } from "./BrowserTabsSetupDialog";
 import {
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
@@ -1182,6 +1184,7 @@ function ComputerUseControls() {
           </>
         }
       />
+      <BrowserTabsSetting environmentId={environmentId} hostLabel={hostLabel} />
       {setupOpen && canConfigure && environmentId !== null ? (
         <CuaSetupDialog
           enabled={enabled}
@@ -1215,6 +1218,91 @@ function ComputerUseControls() {
                 );
               }
             }
+          }}
+          onClose={() => {
+            setSetupOpen(false);
+            refresh();
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Browser tab access: Chrome DevTools MCP on the user's running Chromium
+ * browser. Turning it on opens setup, whose Done installs the tool, so a
+ * session never starts with a switch that has nothing behind it.
+ */
+function BrowserTabsSetting({
+  environmentId,
+  hostLabel,
+}: {
+  readonly environmentId: EnvironmentId | null;
+  readonly hostLabel: string;
+}) {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const runAction = useAtomCommand(serverEnvironment.runBrowserTabsAction, "Browser tab access");
+  const canInstall = useAtomValue(
+    serverEnvironment.runBrowserTabsAction.permissionAtom(environmentId),
+  );
+  const [setupOpen, setSetupOpen] = useState(false);
+  const { data: status, refresh } = useEnvironmentQuery(
+    environmentId === null || (!settings.enableAgentBrowserTabs && !setupOpen)
+      ? null
+      : serverEnvironment.browserTabs({ environmentId, input: {} }),
+  );
+  const enabled = settings.enableAgentBrowserTabs;
+  const browser = readyBrowser(status);
+  const statusText = !enabled
+    ? null
+    : status === null
+      ? null
+      : !status.toolInstalled
+        ? "Needs setup"
+        : browser
+          ? `Using ${browser.name}`
+          : "Turn on remote debugging in your browser";
+
+  return (
+    <>
+      <SettingsRow
+        {...searchableSetting("agent-browser-tabs")}
+        serverScoped
+        settingKeys={["enableAgentBrowserTabs"]}
+        description={`Let agents use the open tabs and sign-ins in your browser on ${hostLabel} through Chrome DevTools MCP.`}
+        status={statusText}
+        control={
+          <>
+            {enabled && canInstall ? (
+              <Button size="xs" variant="outline" onClick={() => setSetupOpen(true)}>
+                Setup
+              </Button>
+            ) : null}
+            <ScopedSwitch
+              settingKeys={["enableAgentBrowserTabs"]}
+              checked={enabled || setupOpen}
+              disabled={environmentId === null || (!enabled && !canInstall)}
+              aria-label="Agent browser tabs"
+              onCheckedChange={(checked) => {
+                if (checked) setSetupOpen(true);
+                else void updateSettings({ enableAgentBrowserTabs: false });
+              }}
+            />
+          </>
+        }
+      />
+      {setupOpen && environmentId ? (
+        <BrowserTabsSetupDialog
+          hostLabel={hostLabel}
+          status={status}
+          onRefresh={refresh}
+          onFinish={async () => {
+            const result = await runAction({ environmentId, input: { action: "install-tool" } });
+            if (result._tag === "Failure") return false;
+            if (!enabled) await updateSettings({ enableAgentBrowserTabs: true });
+            return true;
           }}
           onClose={() => {
             setSetupOpen(false);
