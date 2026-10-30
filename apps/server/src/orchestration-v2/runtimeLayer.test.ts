@@ -3080,6 +3080,125 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each([true, false])(
+    "finishes failed checks on the next sweep with fingerprints: %s",
+    (fingerprinted) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make(`runtime-watch-finished-${fingerprinted}`);
+        const projectId = ProjectId.make(`watch-finished-project-${fingerprinted}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch finished",
+          workspaceRoot: "/workspace/watch-finished",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`watch-finished-create-${fingerprinted}`),
+          threadId,
+          projectId,
+          title: "Watch finished",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const watch = (id: string, watching = true) =>
+          orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`watch-finished-${id}-${fingerprinted}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 15,
+            watching,
+            link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+          });
+        yield* watch("start");
+        const link = Effect.map(
+          orchestrator.getThreadShell(threadId),
+          (thread) => thread?.pullRequests?.[0],
+        );
+        const started = DateTime.makeUnsafe((yield* link)!.watch!.startedAt);
+        let reads = 0;
+        // Fingerprints carry the review-thread count, not edits inside a thread.
+        const edited: PullRequestComment = {
+          id: "review-1",
+          kind: "review-comment",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "Edited after the failure.",
+          createdAt: DateTime.formatIso(DateTime.subtract(started, { minutes: 1 })),
+          editedAt: DateTime.formatIso(DateTime.add(started, { minutes: 1 })),
+          url: null,
+          path: "src/index.ts",
+          reviewState: null,
+        };
+        let comments: Array<PullRequestComment> = [];
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            watchFingerprint: () =>
+              Effect.succeed(fingerprinted ? { status: "unchanged", remarks: "unchanged" } : null),
+            invalidate: () => Effect.void,
+            detail: () =>
+              Effect.sync(() => {
+                reads += 1;
+                return watchedPullRequestDetail({
+                  projectId,
+                  number: 15,
+                  at: "2026-10-02T12:00:00.000Z",
+                });
+              }),
+            activity: () =>
+              Effect.sync(() => ({
+                comments,
+                commentCount: comments.length,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              })),
+          }),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        const summaries = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
+        );
+        yield* reactor.sweep;
+        yield* worker.drain();
+        assert.deepEqual(yield* summaries, ["#15: checks failed"]);
+        comments = [edited];
+        yield* TestClock.adjust("2 minutes");
+        yield* reactor.sweep;
+        yield* worker.drain();
+        assert.deepEqual(yield* summaries, [
+          "#15: checks failed",
+          "#15: checks finished, new comments, stopped watching",
+        ]);
+        assert.isUndefined((yield* link)?.watch);
+        assert.isTrue((yield* link)?.endedWatch?.finished);
+        assert.equal((yield* link)?.endedWatch?.remarksThrough, edited.editedAt);
+        assert.equal(reads, 2);
+        yield* TestClock.adjust("2 minutes");
+        yield* watch("again");
+        const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        yield* restarted.sweep;
+        yield* worker.drain();
+        yield* TestClock.adjust("2 minutes");
+        yield* restarted.sweep;
+        assert.lengthOf(yield* summaries, 2);
+        assert.isTrue((yield* link)?.watch?.finished);
+        assert.equal(reads, 3);
+        yield* watch("end", false);
+      }),
+  );
+
   it.effect("finishes owed checks once after pending sweeps, a restart, and a re-watch", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -3765,13 +3884,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           messages.map((message) => message.notification?.summary),
           ["#7: checks failed"],
         );
+        yield* TestClock.adjust("2 minutes");
+        yield* reactor.sweep;
+        assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
         yield* TestClock.adjust("1 millis");
         recovering = true;
       }
       yield* reactor.sweep;
       const pagesBefore = pagesRead;
+      yield* TestClock.adjust("2 minutes");
       yield* reactor.sweep;
-      assert.equal(pagesRead, pagesBefore);
+      // The final read pages every tail again; cached tails cannot show an edit.
+      assert.equal(pagesRead - pagesBefore, incomplete || mode === "single page" ? 0 : 2);
 
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(
@@ -3779,21 +3903,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           message.notification === undefined ? [] : [message.notification.summary],
         ),
         incomplete
-          ? ["#7: checks failed", "#7: new comments"]
-          : ["#7: checks failed, new comments"],
+          ? ["#7: checks failed", "#7: checks finished, new comments, stopped watching"]
+          : ["#7: checks failed, new comments", "#7: checks finished, stopped watching"],
       );
       if (mode !== "single page") {
-        const wake = messages.at(-1);
+        const wake = messages.find((message) => message.text.includes("3 new comments"));
         assert.include(wake?.text ?? "", "3 new comments");
         assert.include(wake?.text ?? "", "Eleventh reply.");
         assert.include(wake?.text ?? "", "Twelfth reply.");
       }
-      const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      const link = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0];
+      assert.isUndefined(link?.watch);
+      const watch = link?.endedWatch;
+      assert.isTrue(watch?.finished);
       assert.equal(watch?.remarksThrough, remark.createdAt);
       assert.deepEqual(watch?.remarkIds, [remark.id]);
       assert.deepEqual(
         { headSha: watch?.headSha, failedChecks: watch?.failedChecks, wakes: watch?.wakes },
-        { headSha: "abc1234def", failedChecks: ["lint"], wakes: incomplete ? 1 : 0 },
+        { headSha: "abc1234def", failedChecks: ["lint"], wakes: 0 },
       );
     }),
   );
