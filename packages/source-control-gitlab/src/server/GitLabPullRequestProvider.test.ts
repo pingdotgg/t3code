@@ -74,6 +74,7 @@ describe("getChangeRequest base freshness", () => {
           Effect.provide(
             Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
               getMergeRequestDetail: () => Effect.succeed(detail),
+              listMergeRequestStats: () => Effect.succeed([]),
             }),
           ),
         );
@@ -85,7 +86,11 @@ describe("getChangeRequest base freshness", () => {
       }),
   );
 
-  const readWith = (divergence: { readonly divergedCommits?: number }) =>
+  const readWith = (
+    divergence: { readonly divergedCommits?: number },
+    stats: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["listMergeRequestStats"] = () =>
+      Effect.succeed([]),
+  ) =>
     Effect.gen(function* () {
       const provider = yield* make;
       return yield* provider.getChangeRequest({
@@ -100,6 +105,7 @@ describe("getChangeRequest base freshness", () => {
           getMergeRequestDetail: () => Effect.succeed({ ...detail, ...divergence }),
           getProjectMergeCapabilities: () =>
             Effect.succeed({ merge: true, squash: true, rebase: true }),
+          listMergeRequestStats: stats,
         }),
       ),
     );
@@ -119,6 +125,62 @@ describe("getChangeRequest base freshness", () => {
 
       expect(changeRequest.baseComparison).toBe("unknown");
       expect(changeRequest.behindBy).toBeUndefined();
+    }),
+  );
+
+  it.effect("fills in the line counts the REST detail leaves out", () =>
+    Effect.gen(function* () {
+      const changeRequest = yield* readWith({}, () =>
+        Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
+      );
+
+      expect(changeRequest.additions).toBe(40);
+      expect(changeRequest.deletions).toBe(2);
+    }),
+  );
+
+  it.effect("reports an unauthenticated line count read instead of a detail without counts", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(
+        readWith({}, () =>
+          Effect.fail(
+            new GitLabCli.GitLabCliAuthenticationError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/w",
+              cause: null,
+            }),
+          ),
+        ),
+      );
+
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "PullRequestProviderError", reason: "unauthenticated" },
+      });
+    }),
+  );
+
+  it.effect("gives linked threads line counts without reading the merge settings", () =>
+    Effect.gen(function* () {
+      const summary = yield* Effect.gen(function* () {
+        const provider = yield* make;
+        const read = provider.getChangeRequestSummary;
+        if (read === undefined) return yield* Effect.die("summary read missing");
+        return yield* read({ cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 });
+      }).pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            getMergeRequestDetail: () => Effect.succeed(detail),
+            getProjectMergeCapabilities: () => Effect.die("linked threads skip merge settings"),
+            listMergeRequestStats: () =>
+              Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
+          }),
+        ),
+      );
+
+      expect(summary.additions).toBe(40);
+      expect(summary.deletions).toBe(2);
     }),
   );
 });
@@ -157,6 +219,7 @@ describe("merge request reads", () => {
     const provider = yield* make.pipe(
       Effect.provide(
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+          listMergeRequestStats: () => Effect.succeed([]),
           getMergeRequestDetail: (input) =>
             Effect.sync(() => {
               calls.detail += 1;
@@ -199,6 +262,11 @@ describe("merge request reads", () => {
       yield* checks(reference);
 
       expect(calls.detail).toBe(1);
+
+      const summary = provider.getChangeRequestSummary;
+      assert.isDefined(summary);
+      yield* summary(reference);
+      expect(calls.detail).toBe(2);
     }),
   );
 
