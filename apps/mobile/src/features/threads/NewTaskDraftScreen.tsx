@@ -34,6 +34,7 @@ import { KeyboardController } from "react-native-keyboard-controller";
 
 import {
   AuthOrchestrationOperateScope,
+  EnvironmentId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -84,14 +85,19 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
-import { resolveDraftProjectSelection } from "./new-task-project-selection";
+import {
+  resolveDraftProjectSelection,
+  routeProjectMissingReturnsToPicker,
+} from "./new-task-project-selection";
 import {
   resolveNewTaskBranchLabel,
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
-import { newTaskFlowKey } from "./new-task-flow-state";
+import { newTaskFlowKey, stampedEnvironmentProjectsLoading } from "./new-task-flow-state";
+import { useEnvironmentShellReadiness } from "../../state/shell";
+import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
 import { appAtomRegistry } from "../../state/atom-registry";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -396,6 +402,23 @@ export function NewTaskDraftScreen(props: {
 
   const lastInitialProjectRefRef = useRef(props.initialProjectRef);
   const initialPickerRef = useRef<"open" | "dismissed" | null>(null);
+  // See routeProjectMissingReturnsToPicker.
+  const routeEnvironmentId = props.initialProjectRef?.environmentId
+    ? EnvironmentId.make(props.initialProjectRef.environmentId)
+    : null;
+  const connectionsReady = useConnectionsReady();
+  const routeEnvironmentConnection =
+    useWorkspaceEnvironments().find(
+      (environment) => environment.environmentId === routeEnvironmentId,
+    )?.connectionState ?? null;
+  const routeEnvironmentShell = useEnvironmentShellReadiness(routeEnvironmentId);
+  const routeEnvironmentLoading = stampedEnvironmentProjectsLoading({
+    connectionsReady,
+    connectionState: routeEnvironmentConnection,
+    shellCacheRead: routeEnvironmentShell.cacheRead,
+    shellStatus: routeEnvironmentShell.status,
+    shellHasError: routeEnvironmentShell.hasError,
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the route or catalog project to the draft once projects load, or opens the picker in the navigator
   useEffect(() => {
@@ -451,7 +474,13 @@ export function NewTaskDraftScreen(props: {
         return;
       }
 
-      if (projects.length > 0) {
+      if (
+        routeProjectMissingReturnsToPicker({
+          hasIncomingShare: props.incomingShareId !== undefined,
+          projectCount: projects.length,
+          routeEnvironmentLoading,
+        })
+      ) {
         // oxlint-disable-next-line react/set-state-in-effect -- Route-driven project resolution starts the return-to-picker flow when no project matches.
         setIsReturningToProjectPicker(true);
       }
@@ -486,6 +515,7 @@ export function NewTaskDraftScreen(props: {
     isFocused,
     projectScopes,
     projects,
+    routeEnvironmentLoading,
     flow.draftKey,
     props.initialProjectRef,
     props.incomingShareId,

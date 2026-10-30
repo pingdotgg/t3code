@@ -8,6 +8,7 @@ import {
   newTaskDestination,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  routeProjectMissingReturnsToPicker,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -160,6 +161,45 @@ describe("resolveDraftProjectSelection", () => {
         pickerClosed: true,
       }),
     ).toEqual({ kind: "pick" });
+  });
+});
+
+describe("routeProjectMissingReturnsToPicker", () => {
+  it("keeps a share draft while its project's environment is loading", () => {
+    expect(
+      routeProjectMissingReturnsToPicker({
+        hasIncomingShare: true,
+        projectCount: 2,
+        routeEnvironmentLoading: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns a share draft to the picker once its environment settles, even with no projects", () => {
+    expect(
+      routeProjectMissingReturnsToPicker({
+        hasIncomingShare: true,
+        projectCount: 0,
+        routeEnvironmentLoading: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("returns other drafts once any project is listed", () => {
+    expect(
+      routeProjectMissingReturnsToPicker({
+        hasIncomingShare: false,
+        projectCount: 1,
+        routeEnvironmentLoading: true,
+      }),
+    ).toBe(true);
+    expect(
+      routeProjectMissingReturnsToPicker({
+        hasIncomingShare: false,
+        projectCount: 0,
+        routeEnvironmentLoading: false,
+      }),
+    ).toBe(false);
   });
 });
 

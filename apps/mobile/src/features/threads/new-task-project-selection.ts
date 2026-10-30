@@ -116,6 +116,19 @@ export function resolveDraftProjectSelection(
   return onlyScope ? { kind: "select", project: onlyScope.representative } : { kind: "pick" };
 }
 
+/**
+ * Whether a draft whose route project is not listed returns to the project picker. A share
+ * draft waits for that project's environment, since its reservation names the project and
+ * the pending share locks the fallback project; other drafts return once any is listed.
+ */
+export function routeProjectMissingReturnsToPicker(input: {
+  readonly hasIncomingShare: boolean;
+  readonly projectCount: number;
+  readonly routeEnvironmentLoading: boolean;
+}): boolean {
+  return input.hasIncomingShare ? !input.routeEnvironmentLoading : input.projectCount > 0;
+}
+
 type ProjectRef = { readonly environmentId: string; readonly projectId: string };
 
 export function newTaskDestination(options: {
