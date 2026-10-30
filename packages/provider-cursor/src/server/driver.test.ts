@@ -105,7 +105,13 @@ it.layer(layerTest)("CursorDriver", (it) => {
           instanceId: ProviderInstanceId.make("cursor-browser-persisted"),
           displayName: "Personal Cursor",
           enabled: true,
-          environment: [{ name: "CURSOR_API_KEY", value: "", sensitive: true }],
+          // Clear inherited Cursor settings so the fixture always takes the mocked Keychain path.
+          environment: [
+            { name: "CURSOR_API_KEY", value: "", sensitive: true },
+            { name: "CURSOR_AUTH_TOKEN", value: "", sensitive: true },
+            { name: "CURSOR_API_ENDPOINT", value: "", sensitive: false },
+            { name: "AGENT_CLI_CREDENTIAL_STORE", value: "default", sensitive: false },
+          ],
           config: CursorDriver.defaultConfig(),
         };
         const settingsControl = yield* TestProviderHost.TestProviderHostSettings;
