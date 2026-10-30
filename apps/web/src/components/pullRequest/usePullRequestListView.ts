@@ -35,7 +35,10 @@ import {
 } from "./pullRequestList.logic";
 import type { PullRequestExpectedHost } from "./PullRequestListFilters";
 import type { PullRequestListPreferences, PullRequestListSort } from "./pullRequestListPreferences";
-import { assignProjectsToEnvironments } from "./pullRequestProjectAssignment.logic";
+import {
+  pullRequestProjectQueries,
+  type PullRequestHostAvailability,
+} from "./pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
 
@@ -53,7 +56,10 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
 const SEARCH_DEBOUNCE_MS = 250;
 
 /** Which servers and projects the page reads, from the URL and what this client knows. */
-export function usePullRequestScope(search: PullRequestsSearch) {
+export function usePullRequestScope(
+  search: PullRequestsSearch,
+  hostAvailability: PullRequestHostAvailability,
+) {
   const { environments } = useEnvironments();
   const allProjects = useProjects();
   const projectsKnown = useAllEnvironmentShellsBootstrapped();
@@ -120,21 +126,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
   }> => {
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
     if (!projectsKnown || scopedProjectId !== undefined) return plain;
-    const assignment = assignProjectsToEnvironments(
-      projects,
-      queryEnvironmentIds,
-      queryEnvironmentIds[0],
-    );
-    const totals = new Map<EnvironmentId, number>();
-    for (const project of projects) {
-      totals.set(project.environmentId, (totals.get(project.environmentId) ?? 0) + 1);
-    }
-    return queryEnvironmentIds.flatMap((environmentId) => {
-      const projectIds = assignment.get(environmentId);
-      if (projectIds === undefined) return [];
-      if (projectIds.length === (totals.get(environmentId) ?? 0)) return [{ environmentId }];
-      return [{ environmentId, projectIds }];
-    });
+    return pullRequestProjectQueries(projects, queryEnvironmentIds, hostAvailability);
   })();
   const assignmentKey = environmentQueries
     .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)

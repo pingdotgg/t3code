@@ -7,7 +7,10 @@ import {
   AuthOrchestrationOperateScope,
   ProjectId,
   PullRequestOperationError,
+  PullRequestUnavailableError,
+  SourceControlProviderKind,
   WS_METHODS,
+  type PullRequestListResult,
   type AuthSessionState,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -601,6 +604,60 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
   );
   return { runtime, atoms, registry, environmentRegistry, supervisor, localSupervisor };
 });
+
+it.effect.each(["unavailable", "operation"] as const)(
+  "preserves a %s list failure with or without host metadata",
+  (kind) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const listResult: PullRequestListResult = {
+          viewers: {},
+          providers: [
+            {
+              host: "bitbucket.org",
+              kind: SourceControlProviderKind.make("bitbucket"),
+              searchesOnHost: false,
+              projectCount: 1,
+              projectIds: [ProjectId.make("project-1")],
+              configured: false,
+              detail: "Credentials rejected",
+            },
+          ],
+          entries: [],
+          errors: [
+            {
+              projectId: ProjectId.make("project-1"),
+              projectTitle: "Widget",
+              message: "Credentials rejected",
+            },
+          ],
+          truncated: false,
+          nextCursors: {},
+        };
+        for (const includeResult of [true, false]) {
+          const metadata = includeResult ? { listResult } : {};
+          const error =
+            kind === "unavailable"
+              ? new PullRequestUnavailableError({ reason: "cli-unauthenticated", ...metadata })
+              : new PullRequestOperationError({
+                  operation: "list",
+                  detail: "HTTP 403",
+                  ...metadata,
+                });
+          const client = {
+            [WS_METHODS.pullRequestsList]: () => Effect.fail(error),
+            [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
+          } as unknown as WsRpcProtocolClient;
+          const { atoms, registry } = yield* makeTestRuntime(client);
+          const atom = atoms.list({
+            environmentId: TARGET.environmentId,
+            input: { state: "open" },
+          });
+          expect(yield* AtomRegistry.getResult(registry, atom).pipe(Effect.flip)).toBe(error);
+        }
+      }),
+    ),
+);
 
 it.effect.each([
   "default",

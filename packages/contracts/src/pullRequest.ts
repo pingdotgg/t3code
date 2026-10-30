@@ -350,12 +350,16 @@ export const PullRequestListCursors = Schema.Record(
 );
 export type PullRequestListCursors = typeof PullRequestListCursors.Type;
 
+export const PULL_REQUEST_LIST_PROJECT_LIMIT = 100;
+
 export const PullRequestListInput = Schema.Struct({
   state: PullRequestListState,
   involvement: Schema.optional(PullRequestInvolvement),
   filters: Schema.optional(PullRequestListFilters),
   projectId: Schema.optional(ProjectId),
-  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  projectIds: Schema.optional(
+    Schema.Array(ProjectId).check(Schema.isMaxLength(PULL_REQUEST_LIST_PROJECT_LIMIT)),
+  ),
   host: Schema.optional(TrimmedNonEmptyString),
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 }))),
   cursors: Schema.optional(PullRequestListCursors),
@@ -369,6 +373,8 @@ export const PullRequestProviderSummary = Schema.Struct({
   searchesOnHost: Schema.Boolean,
   actions: Schema.optional(ForwardCompatibleArray(PullRequestAction)),
   projectCount: PositiveInt,
+  /** SSH checkouts can resolve to an HTTP authority different from their stored identity. */
+  projectIds: Schema.optional(Schema.Array(ProjectId)),
   configured: Schema.Boolean,
   detail: Schema.NullOr(TrimmedNonEmptyString),
 });
@@ -884,6 +890,7 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
   {
     reason: PullRequestUnavailableReason,
     provider: Schema.optional(SourceControlProviderKind),
+    listResult: Schema.optional(PullRequestListResult),
     /**
      * What the host needs on the server, in its own words. Absent from older servers, which
      * shipped no such field, and for a host that names nothing.
@@ -915,6 +922,7 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
     operation: Schema.String,
     detail: TrimmedNonEmptyString,
     reason: Schema.optional(Schema.Literal("not-found")),
+    listResult: Schema.optional(PullRequestListResult),
     cause: Schema.optional(Schema.Defect()),
   },
   { httpApiStatus: 502 },
