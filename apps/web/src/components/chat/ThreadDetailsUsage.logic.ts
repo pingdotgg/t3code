@@ -49,8 +49,8 @@ interface HubAccount {
 
 /**
  * The one usable hub account serving a driver, or null when none or several do.
- * Accounts are counted the way Usage → Limits counts them (driver + email, else credential), so one
- * login reported by two hubs is one account; its freshest snapshot wins.
+ * An account is its login (driver + email, else credential) and workspace, so one login reported by
+ * two hubs is one account and its freshest snapshot wins; two workspaces stay two accounts.
  */
 function onlyHubAccount(
   provider: ServerProvider,
@@ -73,8 +73,11 @@ function onlyHubAccount(
   return only && rest.length === 0 ? only : null;
 }
 
-const hubAccountKey = ({ source, account }: HubAccount) =>
-  accountKey(account.driver, account.email, account.usageLimits) ?? `${source.id}:${account.id}`;
+function hubAccountKey({ source, account }: HubAccount): string {
+  const login = accountKey(account.driver, account.email, account.usageLimits);
+  if (!login) return `${source.id}:${account.id}`;
+  return account.workspaceId ? `${login}:${account.workspaceId}` : login;
+}
 
 const checkedAtMs = ({ account }: HubAccount) => Date.parse(account.usageLimits.checkedAt);
 

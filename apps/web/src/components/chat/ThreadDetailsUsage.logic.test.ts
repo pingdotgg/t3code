@@ -56,6 +56,7 @@ function hub(
   accounts: ReadonlyArray<{
     id: string;
     email?: string;
+    workspaceId?: string;
     driver?: ProviderDriverKind;
     limits: ServerProviderUsageLimits;
   }>,
@@ -69,6 +70,7 @@ function hub(
       id: account.id,
       driver: account.driver ?? claude,
       ...(account.email ? { email: account.email } : {}),
+      ...(account.workspaceId ? { workspaceId: account.workspaceId } : {}),
       usageLimits: account.limits,
     })),
   };
@@ -129,6 +131,32 @@ describe("thread details limits", () => {
     );
 
     expect(resolved).toEqual({ limits: limitsAt(25), sourceLabel: "hub-b" });
+  });
+
+  it("keeps the instance's notice when one login is reported in two workspaces", () => {
+    const resolved = resolveThreadDetailsLimits(
+      instanceId,
+      [claudeInstance(unsupported)],
+      [
+        hub("hub", [
+          {
+            id: "claude-a.json",
+            email: "me@example.com",
+            workspaceId: "team-a",
+            limits: limitsAt(19),
+          },
+          {
+            id: "claude-b.json",
+            email: "me@example.com",
+            workspaceId: "team-b",
+            limits: limitsAt(25),
+          },
+        ]),
+      ],
+      now,
+    );
+
+    expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
   });
 
   it("falls back to the one hub account when a Codex instance's own probe failed", () => {
