@@ -609,6 +609,28 @@ describe("providerMaintenanceRunner", () => {
       4_096,
     );
     assert.strictEqual(ProviderMaintenanceRunner.toProgressLine("x".repeat(300))?.length, 200);
+
+    for (const redraw of [
+      "\r",
+      "\u001b[G",
+      "\u001b[0G",
+      "\u001b[1G",
+      "\u001b[01G",
+      "\u001b[999D",
+      "\u001b[999D\u001b[J",
+    ]) {
+      const output = `first${redraw}second${redraw}last`;
+      for (let boundary = 0; boundary <= output.length; boundary++) {
+        let partialLine = "";
+        for (const chunk of [output.slice(0, boundary), output.slice(boundary)]) {
+          partialLine = ProviderMaintenanceRunner.splitOutputLines(partialLine, chunk).partialLine;
+        }
+        assert.strictEqual(ProviderMaintenanceRunner.toProgressLine(partialLine), "last");
+      }
+    }
+    for (const incomplete of ["\u001b", "\u001b[", "\u001b[0", "\u001b[01"]) {
+      assert.strictEqual(ProviderMaintenanceRunner.toProgressLine(`progress${incomplete}`), null);
+    }
   });
 
   it.effect("aborts without running when the installation changed since the advisory", () => {

@@ -204,11 +204,14 @@ export function splitOutputLines(
   partialLine: string,
   text: string,
 ): { readonly lines: ReadonlyArray<string>; readonly partialLine: string } {
-  const parts = (partialLine + text).split(/\r\n|\r|\n/);
+  const parts = (partialLine + text).replace(/\x1b\[(?:0*1?G|999D)/g, "\r").split(/\r\n|\r|\n/);
   return { partialLine: (parts.pop() ?? "").slice(-UPDATE_PARTIAL_LINE_MAX_LENGTH), lines: parts };
 }
 
 export function toProgressLine(line: string): string | null {
+  if (/\x1b(?:\[[0-9]*)?$/.test(line)) {
+    return null;
+  }
   const text = NodeUtil.stripVTControlCharacters(line).replace(/\s+/g, " ").trim();
   if (text.length === 0) {
     return null;
