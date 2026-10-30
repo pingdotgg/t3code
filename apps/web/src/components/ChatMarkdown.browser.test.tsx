@@ -111,6 +111,7 @@ it("keeps compact audio playback loaded across signed URL renewals", async () =>
 });
 
 function setup() {
+  parsedSources.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
@@ -153,7 +154,6 @@ it("loads a host image through the page's own route when there is no environment
 
 it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
   setup();
-  parsedSources.length = 0;
   const message = (
     <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
   );

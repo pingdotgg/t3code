@@ -38,9 +38,9 @@ export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string 
     if (reveal.pendingKey !== rowKey && !mountRevealOwed.current) return;
     completeSidebarRouteReveal(reveal);
     mountRevealOwed.current = false;
-    // A row that holds focus was clicked or reached by keyboard, so it is already in view;
-    // scrolling it would force a layout in the middle of the thread switch's commit.
-    if (row.contains(row.ownerDocument.activeElement)) return;
+    // A row under the pointer was just clicked, so it is in view; scrolling it would force a
+    // layout mid-commit. Keyboard activation can come from a focused row scrolled out of view.
+    if (row.matches(":hover")) return;
     row.scrollIntoView({ block: "nearest" });
   };
 }

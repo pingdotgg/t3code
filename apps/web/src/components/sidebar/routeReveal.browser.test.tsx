@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { type SidebarRouteReveal, useActiveRowReveal } from "./routeReveal";
@@ -47,7 +48,7 @@ describe("useActiveRowReveal", () => {
     await expect.element(target).toBeInViewport();
   });
 
-  it("leaves the list where it is when the user opened the thread from its focused row", async () => {
+  it("leaves the list where it is when the user clicked the row that opened the thread", async () => {
     const reveal = newReveal();
     const keys = rowKeys(50);
     await using screen = await render(
@@ -55,14 +56,31 @@ describe("useActiveRowReveal", () => {
       // No router: the route arrives as the activeKey prop.
       { router: false },
     );
-    const list = screen.getByRole("list", { name: "Threads" }).element();
-    // thread-2 is half above the top edge, where a reveal would scroll it fully in.
-    list.scrollTop = 60;
-    screen.getByText("thread-2", { exact: true }).element().focus({ preventScroll: true });
+    await userEvent.hover(screen.getByText("thread-2", { exact: true }));
+    // Even a no-op scroll forces a layout of the thread being opened.
+    using scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
 
     await screen.rerender(<RevealList reveal={reveal} rowKeys={keys} activeKey="thread-2" />);
 
-    expect(list.scrollTop).toBe(60);
+    await vi.waitFor(() => expect(reveal.pendingKey).toBeNull());
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("reveals a focused row scrolled out of view when the keyboard opens its thread", async () => {
+    const reveal = newReveal();
+    const keys = rowKeys(50);
+    await using screen = await render(
+      <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-0" />,
+      // No router: the route arrives as the activeKey prop.
+      { router: false },
+    );
+    const target = screen.getByText("thread-40", { exact: true });
+    target.element().focus({ preventScroll: true });
+    await expect.element(target).not.toBeInViewport();
+
+    await screen.rerender(<RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />);
+
+    await expect.element(target).toBeInViewport();
   });
 
   it("reveals the active row when it mounts after the shells arrive", async () => {
