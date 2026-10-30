@@ -131,9 +131,9 @@ function gitHubProviderFailure(
 
 const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, string> = {
   settings:
-    "GitHub did not return it to the token saved in Settings, which overrides the server's environment token (such as GH_TOKEN) and the gh login. Give that token access to this repository, or change it in Settings → Source Control.",
-  env: "GitHub did not return it to the token in the server's environment, which overrides the gh login. Give that token access to this repository, or unset it.",
-  gh: "GitHub did not return it to the gh login. Check that its account can see this repository, or save a token that can in Settings → Source Control.",
+    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control.",
+  env: "The server's GitHub token (GH_TOKEN) can't see it. Give it access, or unset it.",
+  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source Control.",
 };
 
 function withAvatar(

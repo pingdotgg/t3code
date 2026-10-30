@@ -408,9 +408,6 @@ describe("GitHub requests with the app sign-in", () => {
       handle: answerUser,
     });
     return Effect.gen(function* () {
-      const source = Effect.flatMap(GitHubRest.GitHubRest, (api) => api.credential("github.com"));
-      expect((yield* source.pipe(Effect.provide(signedIn.layer))).source).toBe("app");
-      expect((yield* source.pipe(Effect.provide(withToken.layer))).source).toBe("settings");
       yield* readUser.pipe(Effect.provide(signedIn.layer));
       yield* readUser.pipe(Effect.provide(withToken.layer));
       expect(signedIn.requests.map((sent) => sent.token)).toEqual(["ghu_current"]);

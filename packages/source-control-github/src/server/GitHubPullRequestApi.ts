@@ -46,6 +46,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubAppAccess from "./GitHubAppAccess.ts";
+import type { GitHubCredentialSource } from "./GitHubCredentials.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
@@ -1861,10 +1862,36 @@ export const make = Effect.gen(function* () {
       // told which credential that was: a saved token quietly overrides GH_TOKEN and gh. The
       // listing is pinned to the credential it names, so a token changed mid-read is not blamed.
       const host = normalizeHost(input.host);
+      const named = (
+        error: GitHubRequestPolicy.GitHubApiNotFoundError,
+        credential: GitHubCredentialSource,
+      ) =>
+        new GitHubRequestPolicy.GitHubApiNotFoundError({
+          host: error.host,
+          operation: error.operation,
+          credential,
+        });
       return api.credential(host).pipe(
         Effect.flatMap(({ token, fingerprint, source }) => {
-          // App requests retain the policy's fallback to a personal credential.
-          if (source === undefined || source === "app") return listed;
+          if (source === undefined) return listed;
+          if (source === "app") {
+            // The policy hands what the app cannot see to GH_TOKEN or gh. A token saved in
+            // Settings mid-read may or may not have been the one asked, so it is not named.
+            return listed.pipe(
+              Effect.catchTags({
+                GitHubApiNotFoundError: (error) =>
+                  api.credential(host, { personal: true }).pipe(
+                    Effect.map((personal) =>
+                      personal.source === "env" || personal.source === "gh"
+                        ? named(error, personal.source)
+                        : error,
+                    ),
+                    Effect.orElseSucceed(() => error),
+                    Effect.flatMap(Effect.fail),
+                  ),
+              }),
+            );
+          }
           return listed.pipe(
             Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
               host,
@@ -1872,14 +1899,7 @@ export const make = Effect.gen(function* () {
               credentialFingerprint: fingerprint,
             }),
             Effect.catchTags({
-              GitHubApiNotFoundError: (error) =>
-                Effect.fail(
-                  new GitHubRequestPolicy.GitHubApiNotFoundError({
-                    host: error.host,
-                    operation: error.operation,
-                    credential: source,
-                  }),
-                ),
+              GitHubApiNotFoundError: (error) => Effect.fail(named(error, source)),
             }),
           );
         }),

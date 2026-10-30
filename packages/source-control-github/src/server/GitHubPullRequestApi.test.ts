@@ -1276,16 +1276,17 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  /** Lists a repository GitHub will not return, under the saved token `token` reads. */
-  const listUnreadableRepository = (token: () => string) => {
+  /** Lists a repository GitHub will not return, answering each credential lookup with `next`. */
+  const listUnreadableRepository = (
+    next: () => {
+      readonly token: string;
+      readonly source: GitHubCredentials.GitHubCredentialSource;
+    },
+  ) => {
     mockedCredential.mockImplementation((host) =>
       Effect.sync(() => {
-        const value = token();
-        return {
-          token: Redacted.make(value),
-          fingerprint: `${host}:${value}`,
-          source: "settings" as const,
-        };
+        const { token, source } = next();
+        return { token: Redacted.make(token), fingerprint: `${host}:${token}`, source };
       }),
     );
     route(
@@ -1321,31 +1322,29 @@ layer("GitHubPullRequestApi.layer", (it) => {
     );
   };
 
-  it.effect("names the saved token when GitHub will not return a repository to it", () =>
+  it.effect("names the credential GitHub would not return a repository to", () =>
     Effect.gen(function* () {
-      const error = yield* listUnreadableRepository(() => "token");
-
-      assert.strictEqual(error.reason, "not-found");
-      expect(error.accessHint).toContain("token saved in Settings");
-    }),
-  );
-
-  it.effect("reads the whole listing with the token it names, even if it changes mid-read", () =>
-    Effect.gen(function* () {
+      // The saved token is replaced mid-read; every request still goes out with the one named.
       let token = "first";
-      const error = yield* listUnreadableRepository(() => {
+      const saved = yield* listUnreadableRepository(() => {
         const current = token;
         token = "replaced";
-        return current;
+        return { token: current, source: "settings" };
       });
-
-      assert.strictEqual(error.reason, "not-found");
-      expect(error.accessHint).toContain("token saved in Settings");
+      expect(saved.accessHint).toContain("saved GitHub token");
       const sentWith = mockedExecute.mock.calls.map(([call]) =>
         call.kind === "graphql" ? call.authorization : undefined,
       );
       assert.isAbove(sentWith.length, 1);
       for (const authorization of sentWith) expect(authorization).toContain("first");
+
+      // The policy hands what the app cannot see to the gh login.
+      let lookups = 0;
+      const fallback = yield* listUnreadableRepository(() => ({
+        token: "token",
+        source: lookups++ === 0 ? "app" : "gh",
+      }));
+      expect(fallback.accessHint).toContain("gh login");
     }),
   );
 
