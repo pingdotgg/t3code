@@ -20,6 +20,7 @@ import { Input } from "../ui/input";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
 import { MultipleAccountsNote } from "./MultipleAccountsNote";
 import { SettingsRow } from "./settingsLayout";
+import { ProviderChatIsolationSetting } from "./ProviderChatIsolationSetting";
 
 const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -44,6 +45,7 @@ export function AddCodexAccountDialog({
   const displayName = `ChatGPT - ${name.trim()}`;
   const [instanceId, setInstanceId] = useState<ProviderInstanceId | null>(null);
   const [pending, setPending] = useState(false);
+  const [config, setConfig] = useState<Record<string, unknown> | undefined>();
   const provider = providers?.find((candidate) => candidate.instanceId === instanceId);
   // Closes itself once the new account connects; the owner unmounts it after
   // the close animation.
@@ -64,7 +66,7 @@ export function AddCodexAccountDialog({
               driver: CODEX_DRIVER_KIND,
               displayName,
               enabled: true,
-              config: { enabled: true, setupMode: "managed" },
+              config: { ...config, enabled: true, setupMode: "managed" },
             },
           },
         },
@@ -126,6 +128,13 @@ export function AddCodexAccountDialog({
                 }
               />
               <MultipleAccountsNote environmentId={environmentId} driver={CODEX_DRIVER_KIND} />
+              <fieldset disabled={pending}>
+                <ProviderChatIsolationSetting
+                  value={config}
+                  onChange={setConfig}
+                  idPrefix="add-codex-account"
+                />
+              </fieldset>
             </form>
           )}
         </WizardPanel>

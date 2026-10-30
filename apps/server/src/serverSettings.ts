@@ -1083,6 +1083,52 @@ const make = Effect.gen(function* () {
           });
         }
         const updated = yield* update(current);
+        const isolationEnabled = (config: unknown) =>
+          typeof config === "object" &&
+          config !== null &&
+          "isolateChats" in config &&
+          config.isolateChats === true;
+        for (const rawInstanceId of new Set([
+          ...Object.keys(current.providerInstances),
+          ...Object.keys(updated.providerInstances),
+        ])) {
+          const instanceId = ProviderInstanceId.make(rawInstanceId);
+          const instance =
+            updated.providerInstances[instanceId] ?? current.providerInstances[instanceId]!;
+          if (instance.driver !== "codex" && instance.driver !== "claudeAgent") continue;
+          if (
+            isolationEnabled(updated.providerInstances[instanceId]?.config) ===
+            isolationEnabled(current.providerInstances[instanceId]?.config)
+          )
+            continue;
+          const working = yield* sql`
+            SELECT 1 FROM orchestration_v2_projection_runs
+            WHERE provider_instance_id = ${instanceId}
+              AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+            UNION ALL
+            SELECT 1 FROM orchestration_v2_projection_provider_threads
+            WHERE provider_instance_id = ${instanceId}
+              AND json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+            LIMIT 1
+          `.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "read-provider-history",
+                  providerInstanceId: instanceId,
+                  cause,
+                }),
+            ),
+          );
+          if (working.length > 0) {
+            return yield* new ServerSettingsError({
+              settingsPath,
+              operation: "change-chat-isolation",
+              providerInstanceId: instanceId,
+            });
+          }
+        }
         const persisted = yield* persistSettingsSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materializedNext = yield* Effect.uninterruptibleMask(() =>

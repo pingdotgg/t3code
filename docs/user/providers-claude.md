@@ -6,6 +6,17 @@ shared provider settings.
 
 ## Separate accounts or configurations
 
+To keep T3 chats out of other Claude apps and CLIs, enable **Isolate chats from other
+apps** when adding the provider or in its **Runtime** settings. This uses a separate
+home per instance on the connected environment and starts with fresh configuration;
+you may need to sign in again. It leaves `HOME` and the system keychain location intact.
+
+Existing history and your custom config-directory setting are preserved. Stop running
+agents and background tasks before switching. Turn the option off to use the previous
+home again. The isolated history remains on disk. The option is off by default.
+Start new chats after switching homes, or switch back to continue native sessions
+from the previous home.
+
 Use a separate Claude config directory for each account. This also works for named
 presets that need different Claude settings or a router connection.
 

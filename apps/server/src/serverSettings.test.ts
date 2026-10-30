@@ -97,6 +97,48 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect(
+    "rejects chat isolation changes during active runs and allows them after completion",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const sql = yield* SqlClient.SqlClient;
+        const instanceId = ProviderInstanceId.make("codex");
+        yield* sql`INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, provider_instance_id, status, requested_at, payload_json)
+        VALUES ('isolation-run', 'isolation-thread', 1, 'codex', 'codex', 'running', '2026-10-30T00:00:00Z', '{}')`;
+        const mutation = {
+          operation: "upsert" as const,
+          instanceId,
+          instance: { driver: ProviderDriverKind.make("codex"), config: { isolateChats: true } },
+        };
+        const rejected = yield* service.updateProviderInstance(mutation).pipe(Effect.result);
+        assert.strictEqual(rejected._tag, "Failure");
+        assert.notProperty(
+          (yield* service.getSettings).providerInstances[instanceId]?.config ?? {},
+          "isolateChats",
+        );
+        yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE run_id = 'isolation-run'`;
+        const saved = yield* service.updateProviderInstance(mutation);
+        assert.deepInclude(saved.providerInstances[instanceId]?.config, { isolateChats: true });
+        yield* sql`INSERT INTO orchestration_v2_projection_provider_threads
+        (provider_thread_id, thread_id, provider, provider_instance_id, status, updated_at, payload_json)
+        VALUES ('background-thread', 'isolation-thread', 'codex', 'codex', 'ready', '2026-10-30T00:00:00Z', '{"pendingBackgroundTasks":[{"id":"task"}]}')`;
+        const reversePatch = {
+          providerInstances: {
+            ...saved.providerInstances,
+            [instanceId]: { ...mutation.instance, config: { isolateChats: false } },
+          },
+        };
+        const backgroundRejected = yield* service.updateSettings(reversePatch).pipe(Effect.result);
+        assert.strictEqual(backgroundRejected._tag, "Failure");
+        yield* sql`UPDATE orchestration_v2_projection_provider_threads SET payload_json = '{}' WHERE provider_thread_id = 'background-thread'`;
+        assert.deepInclude(
+          (yield* service.updateSettings(reversePatch)).providerInstances[instanceId]?.config,
+          { isolateChats: false },
+        );
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -1651,6 +1693,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       const environment = yield* resolveProviderInstanceTerminalEnvironment({
+        stateDir: serverConfig.stateDir,
         serverSettings,
         path,
         rawProviderInstanceId: instanceId,

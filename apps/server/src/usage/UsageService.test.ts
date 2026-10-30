@@ -1238,84 +1238,91 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("reads shared managed default and disabled extra account history once", () =>
-    Effect.gen(function* () {
-      const { home, settings } = yield* setup;
-      const summary = yield* Effect.gen(function* () {
-        for (const [id, output] of [
-          ["codex", 17],
-          ["codex-personal", 23],
-        ] as const) {
-          const sessions = NodePath.join(home, "shared-codex", "sessions");
-          yield* Effect.promise(async () => {
-            await NodeFSP.mkdir(sessions, { recursive: true });
-            await NodeFSP.writeFile(
-              NodePath.join(sessions, `${id}-rollout.jsonl`),
-              [
-                { type: "session_meta", payload: { id } },
-                { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
-                {
-                  type: "event_msg",
-                  timestamp: "2026-08-01T10:00:00Z",
-                  payload: {
-                    type: "token_count",
-                    info: { last_token_usage: { input_tokens: 10, output_tokens: output } },
-                  },
-                },
-              ]
-                .map((line) => encodeUnknownJsonString(line))
-                .join("\n") + "\n",
-            );
-          });
-        }
-        const service = yield* UsageService.make;
-        return yield* service.readSummary(WINDOW);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          layerService({
-            prefix: "usage-managed-accounts",
-            home,
-            settings: {
-              ...settings,
-              providerInstances: {
-                ...settings.providerInstances,
-                [ProviderInstanceId.make("codex")]: {
-                  driver: ProviderDriverKind.make("codex"),
-                  config: {
-                    setupMode: "managed",
-                    homePath: NodePath.join(home, "shared-codex"),
-                  },
-                },
-                [ProviderInstanceId.make("codex-personal")]: {
-                  driver: ProviderDriverKind.make("codex"),
-                  enabled: false,
-                  config: {
-                    setupMode: "managed",
-                    homePath: NodePath.join(home, "shared-codex"),
-                    shadowHomePath: NodePath.join(home, "personal-shadow"),
-                  },
-                  environment: [
-                    {
-                      name: "CODEX_HOME",
-                      value: NodePath.join(home, "ignored-environment"),
-                      sensitive: false,
+  it.live.each([false, true])(
+    "reads managed default and disabled account history with isolation=%s",
+    (isolateChats) =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const summary = yield* Effect.gen(function* () {
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          for (const [id, output] of [
+            ["codex", 17],
+            ["codex-personal", 23],
+          ] as const) {
+            const sessions = isolateChats
+              ? NodePath.join(stateDir, "providers", "codex", id, "isolated-home", "sessions")
+              : NodePath.join(home, "shared-codex", "sessions");
+            yield* Effect.promise(async () => {
+              await NodeFSP.mkdir(sessions, { recursive: true });
+              await NodeFSP.writeFile(
+                NodePath.join(sessions, `${id}-rollout.jsonl`),
+                [
+                  { type: "session_meta", payload: { id } },
+                  { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+                  {
+                    type: "event_msg",
+                    timestamp: "2026-08-01T10:00:00Z",
+                    payload: {
+                      type: "token_count",
+                      info: { last_token_usage: { input_tokens: 10, output_tokens: output } },
                     },
-                  ],
+                  },
+                ]
+                  .map((line) => encodeUnknownJsonString(line))
+                  .join("\n") + "\n",
+              );
+            });
+          }
+          const service = yield* UsageService.make;
+          return yield* service.readSummary(WINDOW);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-managed-accounts",
+              home,
+              settings: {
+                ...settings,
+                providerInstances: {
+                  ...settings.providerInstances,
+                  [ProviderInstanceId.make("codex")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    config: {
+                      setupMode: "managed",
+                      isolateChats,
+                      homePath: NodePath.join(home, "shared-codex"),
+                    },
+                  },
+                  [ProviderInstanceId.make("codex-personal")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    enabled: false,
+                    config: {
+                      setupMode: "managed",
+                      isolateChats,
+                      homePath: NodePath.join(home, "shared-codex"),
+                      shadowHomePath: NodePath.join(home, "personal-shadow"),
+                    },
+                    environment: [
+                      {
+                        name: "CODEX_HOME",
+                        value: NodePath.join(home, "ignored-environment"),
+                        sensitive: false,
+                      },
+                    ],
+                  },
                 },
               },
-            },
-          }),
-        ),
-      );
-      assert.strictEqual(totalOutputTokens(summary), 40);
-      assert.strictEqual(
-        summary.sources.filter(
-          (source) => source.fingerprint.provider === "codex" && source.status === "ok",
-        ).length,
-        1,
-      );
-    }).pipe(Effect.scoped),
+            }),
+          ),
+        );
+        assert.strictEqual(totalOutputTokens(summary), 40);
+        assert.strictEqual(
+          summary.sources.filter(
+            (source) => source.fingerprint.provider === "codex" && source.status === "ok",
+          ).length,
+          isolateChats ? 2 : 1,
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.live("keeps Cursor credential errors visible when a saved login cannot be read", () =>

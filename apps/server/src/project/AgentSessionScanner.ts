@@ -30,6 +30,7 @@ import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 import * as ServerConfig from "../config.ts";
+import { resolveChatIsolationConfig } from "../provider/chatIsolation.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -1119,12 +1120,19 @@ export const make = Effect.gen(function* () {
           typeof configuredHome === "string" ? configuredHome : hostEnvironment[homeVariable];
 
         let homePath: string;
+        const effectiveConfig = resolveChatIsolationConfig(
+          instance.config ?? {},
+          source,
+          instanceId,
+          serverConfig.stateDir,
+          path,
+        );
         if (source === "claudeAgent") {
-          const config = decodeClaudeSettings(instance.config ?? {});
+          const config = decodeClaudeSettings(effectiveConfig);
           if (Option.isNone(config)) continue;
           homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
         } else {
-          const config = decodeCodexSettings(instance.config ?? {});
+          const config = decodeCodexSettings(effectiveConfig);
           if (Option.isNone(config)) continue;
           const codexSettings =
             config.value.homePath.trim().length === 0 &&

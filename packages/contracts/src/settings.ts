@@ -624,6 +624,15 @@ export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fi
   );
 }
 
+const IsolateProviderChats = Schema.optionalKey(Schema.Boolean).pipe(
+  Schema.annotateKey({
+    title: "Isolate chats from other apps",
+    description:
+      "Use a separate home for this T3 instance. Chats and configuration stay separate from other apps and CLIs. You may need to sign in again. Existing history is not moved. Stop running agents before switching, then start new chats. Turn this off to continue chats from the previous home.",
+    providerSettingsForm: { control: "switch" },
+  }),
+);
+
 export const CodexSettings = makeProviderSettingsSchema(
   {
     setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
@@ -640,6 +649,7 @@ export const CodexSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "codex", clearWhenEmpty: "omit" },
       }),
     ),
+    isolateChats: IsolateProviderChats,
     homePath: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
@@ -676,7 +686,7 @@ export const CodexSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: ["binaryPath", "isolateChats", "homePath", "shadowHomePath", "launchArgs"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;
@@ -716,6 +726,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "claude", clearWhenEmpty: "omit" },
       }),
     ),
+    isolateChats: IsolateProviderChats,
     homePath: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
@@ -769,7 +780,14 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+    order: [
+      "binaryPath",
+      "isolateChats",
+      "homePath",
+      "autoCompactWindow",
+      "idleCompaction",
+      "launchArgs",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -1470,6 +1488,7 @@ export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
   "create-provider-instance",
+  "change-chat-isolation",
   "read-file",
   "read-provider-history",
   "read-project-settings",
@@ -1494,6 +1513,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
   },
 ) {
   override get message(): string {
+    if (this.operation === "change-chat-isolation") {
+      return `Stop running agents and background tasks for provider ${this.providerInstanceId} before changing chat isolation.`;
+    }
     const provider =
       this.providerInstanceId === undefined ? "" : ` for provider ${this.providerInstanceId}`;
     const variable =
