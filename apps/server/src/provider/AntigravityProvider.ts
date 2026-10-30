@@ -430,7 +430,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             ...state.draft,
             auth: {
               status: "unauthenticated",
-              ...(usesCredentials ? { type: options.auth.type } : {}),
+              ...(usesCredentials ? options.auth : {}),
             },
             status: "warning",
             message: signInMessage,
