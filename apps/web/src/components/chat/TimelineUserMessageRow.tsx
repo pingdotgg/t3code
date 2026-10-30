@@ -88,7 +88,13 @@ const MEDIA_EDGE_CLASS_NAME =
 const BUBBLE_CHIP_CLASS_NAME =
   "[&_[data-slot=context-chip]]:[--context-chip-ink:var(--context-chip-message,var(--context-chip-accent))]";
 
-function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
+function UserVideoAttachment({
+  file,
+  standalone = false,
+}: {
+  readonly file: ChatFileAttachment;
+  readonly standalone?: boolean;
+}) {
   const ctx = use(TimelineRowCtx);
   // Row updates rebuild attachment objects, so the asset follows only the
   // fields it reads.
@@ -105,13 +111,20 @@ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
 
   if (asset === null && src === null) {
     return (
-      <div className="flex aspect-[4/3] w-full items-center justify-center rounded-lg border border-border/80 bg-black px-2 py-3 text-center text-2xs text-white/70">
+      <div
+        className={cn(
+          "flex aspect-[4/3] w-full items-center justify-center bg-black px-2 py-3 text-center text-2xs text-white/70",
+          standalone
+            ? cn(MEDIA_EDGE_CLASS_NAME, "rounded-2xl")
+            : "rounded-lg border border-border/80",
+        )}
+      >
         {file.name}
       </div>
     );
   }
 
-  return (
+  const player = (
     <MediaVideoPlayer
       src={src}
       sourceFailed={
@@ -124,11 +137,22 @@ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
         if (preview) ctx.onImageExpand(preview);
       }}
       className="block aspect-[4/3] w-full"
-      videoClassName="aspect-auto size-full rounded-lg border border-border/80"
-      stateClassName="aspect-auto min-h-full rounded-lg border border-border/80 bg-black text-white"
+      videoClassName={cn(
+        "aspect-auto size-full",
+        !standalone && "rounded-lg border border-border/80",
+      )}
+      stateClassName={cn(
+        "aspect-auto min-h-full bg-black text-white",
+        !standalone && "rounded-lg border border-border/80",
+      )}
       onRetry={asset ? refreshAssetUrl : undefined}
       actionsSource={asset ? { kind: "video", name: file.name, src, asset } : undefined}
     />
+  );
+  return standalone ? (
+    <div className={cn(MEDIA_EDGE_CLASS_NAME, "overflow-hidden rounded-2xl")}>{player}</div>
+  ) : (
+    player
   );
 }
 
@@ -351,15 +375,22 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     unchippedFiles.length === 0 &&
     unknownAttachments.length === 0 &&
     regularImages.length + userVideos.length > 0;
+  // Media sent with words sits above the bubble as its own shape, like a chat app.
+  const mediaAboveText =
+    !folded &&
+    userMessage.attribution !== "guest" &&
+    !mediaOnly &&
+    regularImages.length + userVideos.length > 0;
+  const standaloneMedia = mediaOnly || mediaAboveText;
   // A lone image keeps its own shape; a 4:3 crop hides most of a wide screenshot.
   const loneImage =
-    mediaOnly &&
+    standaloneMedia &&
     userVideos.length === 0 &&
     regularImages.length === 1 &&
     regularImages[0]!.source?.kind !== "snap-shot";
-  // Several images sent without words share one rounded shape, split by hairlines.
+  // Several images share one rounded shape, split by hairlines.
   const collage =
-    mediaOnly &&
+    standaloneMedia &&
     userVideos.length === 0 &&
     regularImages.length > 1 &&
     regularImages.every((image) => image.source?.kind !== "snap-shot");
@@ -465,6 +496,107 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     );
   };
 
+  const mediaBlock =
+    regularImages.length > 0 || userVideos.length > 0 ? (
+      <div
+        className={cn(
+          "grid",
+          !standaloneMedia
+            ? "mb-2 max-w-[210px] grid-cols-2 gap-2"
+            : loneImage
+              ? "max-w-full"
+              : collage
+                ? cn(
+                    MEDIA_EDGE_CLASS_NAME,
+                    "w-80 max-w-full gap-px overflow-hidden rounded-2xl bg-black/9 dark:bg-white/12",
+                    regularImages.length === 2
+                      ? "auto-rows-[12rem] grid-cols-2"
+                      : regularImages.length === 3
+                        ? "auto-rows-[calc(6rem-0.5px)] grid-cols-[3fr_2fr]"
+                        : "auto-rows-[6rem] grid-cols-2",
+                  )
+                : regularImages.length + userVideos.length === 1
+                  ? "w-80 max-w-full"
+                  : "w-80 max-w-full grid-cols-2 gap-2",
+        )}
+      >
+        {regularImages.map((image, index) => (
+          <div
+            key={image.id}
+            className={cn(
+              "bg-background/70",
+              image.source?.kind === "snap-shot" && image.previewUrl
+                ? cn(
+                    SNAP_SHOT_ATTACHMENT_FRAME_CLASS,
+                    "col-span-2",
+                    standaloneMedia && "justify-self-end",
+                  )
+                : loneImage
+                  ? cn(MEDIA_EDGE_CLASS_NAME, "overflow-hidden rounded-2xl")
+                  : collage
+                    ? cn(
+                        "overflow-hidden bg-background",
+                        regularImages.length === 3 && index === 0 && "row-span-2",
+                        regularImages.length > 3 &&
+                          regularImages.length % 2 === 1 &&
+                          index === regularImages.length - 1 &&
+                          "col-span-2",
+                      )
+                    : standaloneMedia
+                      ? cn(MEDIA_EDGE_CLASS_NAME, "aspect-[4/3] overflow-hidden rounded-2xl")
+                      : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+            )}
+          >
+            {image.previewUrl ? (
+              <button
+                type="button"
+                className="block h-full w-full cursor-zoom-in"
+                aria-label={`Preview ${image.name}`}
+                onClick={() => {
+                  const preview = buildExpandedImagePreview(regularImages, image.id);
+                  if (!preview) return;
+                  ctx.onImageExpand(preview);
+                }}
+              >
+                {/* Isolate the thumbnail raster from nearby activity repaints in Chromium. */}
+                <AttachmentImage
+                  name={image.name}
+                  mimeType={image.mimeType}
+                  src={image.previewUrl}
+                  alt={image.name}
+                  decoding="async"
+                  loading="lazy"
+                  className={cn(
+                    "block transform-gpu",
+                    // A fixed height keeps the row from growing when the image loads.
+                    loneImage
+                      ? "h-48 w-auto min-w-24 max-w-full object-cover"
+                      : "size-full object-cover",
+                  )}
+                />
+              </button>
+            ) : (
+              <div
+                className={cn(
+                  "flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground/70",
+                  loneImage && "h-48 w-64 max-w-full",
+                  collage && "h-full",
+                )}
+              >
+                {image.name}
+              </div>
+            )}
+            {image.previewUrl && image.source?.kind === "snap-shot" ? (
+              <SnapShotAttachmentDetails source={image.source} />
+            ) : null}
+          </div>
+        ))}
+        {userVideos.map((file) => (
+          <UserVideoAttachment key={file.id} file={file} standalone={standaloneMedia} />
+        ))}
+      </div>
+    ) : null;
+
   return (
     <div
       className="group flex flex-col items-end gap-1"
@@ -489,9 +621,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       !row.continuesSteer ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
+      {mediaAboveText ? (
+        <div className="flex max-w-[80%] justify-end">
+          {/* The heading leads the media so screen readers reach it before the images. */}
+          <MessageAuthorHeading>You</MessageAuthorHeading>
+          {mediaBlock}
+        </div>
+      ) : null}
       <div
         className={cn(
           "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
+          mediaAboveText && "rounded-tr-md",
           BUBBLE_CHIP_CLASS_NAME,
           userMessage.attribution === "guest"
             ? guestBubbleClassName(false)
@@ -501,13 +641,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         )}
       >
         {/* Outside the fold so a collapsed message still has a heading to navigate to. */}
-        <MessageAuthorHeading>
-          {folded
-            ? senderLabel
-            : userMessage.guestName === undefined
-              ? "You"
-              : `${userMessage.guestName} (guest)`}
-        </MessageAuthorHeading>
+        {mediaAboveText ? null : (
+          <MessageAuthorHeading>
+            {folded
+              ? senderLabel
+              : userMessage.guestName === undefined
+                ? "You"
+                : `${userMessage.guestName} (guest)`}
+          </MessageAuthorHeading>
+        )}
         {folded ? (
           <FoldedMessageHeader
             icon={MessagesSquareIcon}
@@ -527,97 +669,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               folded && !ctx.findActive && "max-h-96 overflow-auto",
             )}
           >
-            {(regularImages.length > 0 || userVideos.length > 0) && (
-              <div
-                className={cn(
-                  "grid",
-                  !mediaOnly
-                    ? "mb-2 max-w-[210px] grid-cols-2 gap-2"
-                    : loneImage
-                      ? "max-w-full"
-                      : collage
-                        ? cn(
-                            MEDIA_EDGE_CLASS_NAME,
-                            "w-80 max-w-full gap-px overflow-hidden rounded-2xl bg-black/9 dark:bg-white/12",
-                            regularImages.length === 2
-                              ? "auto-rows-[12rem] grid-cols-2"
-                              : regularImages.length === 3
-                                ? "auto-rows-[calc(6rem-0.5px)] grid-cols-[3fr_2fr]"
-                                : "auto-rows-[6rem] grid-cols-2",
-                          )
-                        : "w-80 max-w-full grid-cols-2 gap-2",
-                )}
-              >
-                {regularImages.map((image, index) => (
-                  <div
-                    key={image.id}
-                    className={cn(
-                      "bg-background/70",
-                      image.source?.kind === "snap-shot" && image.previewUrl
-                        ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
-                        : loneImage
-                          ? cn(MEDIA_EDGE_CLASS_NAME, "overflow-hidden rounded-2xl")
-                          : collage
-                            ? cn(
-                                "overflow-hidden bg-background",
-                                regularImages.length === 3 && index === 0 && "row-span-2",
-                                regularImages.length > 3 &&
-                                  regularImages.length % 2 === 1 &&
-                                  index === regularImages.length - 1 &&
-                                  "col-span-2",
-                              )
-                            : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
-                    )}
-                  >
-                    {image.previewUrl ? (
-                      <button
-                        type="button"
-                        className="block h-full w-full cursor-zoom-in"
-                        aria-label={`Preview ${image.name}`}
-                        onClick={() => {
-                          const preview = buildExpandedImagePreview(regularImages, image.id);
-                          if (!preview) return;
-                          ctx.onImageExpand(preview);
-                        }}
-                      >
-                        {/* Isolate the thumbnail raster from nearby activity repaints in Chromium. */}
-                        <AttachmentImage
-                          name={image.name}
-                          mimeType={image.mimeType}
-                          src={image.previewUrl}
-                          alt={image.name}
-                          decoding="async"
-                          loading="lazy"
-                          className={cn(
-                            "block transform-gpu",
-                            // A fixed height keeps the row from growing when the image loads.
-                            loneImage
-                              ? "h-48 w-auto min-w-24 max-w-full object-cover"
-                              : "size-full object-cover",
-                          )}
-                        />
-                      </button>
-                    ) : (
-                      <div
-                        className={cn(
-                          "flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground/70",
-                          loneImage && "h-48 w-64 max-w-full",
-                          collage && "h-full",
-                        )}
-                      >
-                        {image.name}
-                      </div>
-                    )}
-                    {image.previewUrl && image.source?.kind === "snap-shot" ? (
-                      <SnapShotAttachmentDetails source={image.source} />
-                    ) : null}
-                  </div>
-                ))}
-                {userVideos.map((file) => (
-                  <UserVideoAttachment key={file.id} file={file} />
-                ))}
-              </div>
-            )}
+            {!mediaAboveText && mediaBlock}
             {userAudio.length > 0 ? (
               <div className="mb-2 flex max-w-full flex-col gap-1">
                 {userAudio.map((file) => (
