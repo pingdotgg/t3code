@@ -112,7 +112,9 @@ function PendingSecretRequestForm(props: {
         <label htmlFor={inputId} className="text-sm font-medium text-foreground">
           {item.label}
         </label>
-        {item.reason.trim() ? <p className="text-sm text-muted-foreground">{item.reason}</p> : null}
+        {item.reason.trim() ? (
+          <p className="text-sm wrap-anywhere text-muted-foreground">{item.reason}</p>
+        ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-2">
         <div className="min-w-0 flex-1">
