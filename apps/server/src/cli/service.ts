@@ -379,6 +379,14 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     );
     return "skipped" as const;
   }
+  // Both streams must be terminals: with stdout redirected the prompt is
+  // invisible and the command would hang waiting on it.
+  if (!(process.stdin.isTTY && process.stdout.isTTY)) {
+    yield* Console.log(
+      "Not a terminal, so background setup was skipped. Run `t3 service install` to set it up.",
+    );
+    return "skipped" as const;
+  }
   const platform = yield* HostProcess.Platform;
   const wanted = yield* Prompt.run(
     Prompt.Confirm({
