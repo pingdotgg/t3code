@@ -84,6 +84,7 @@ function isClaudeNativeCommandPath(commandPath: string): boolean {
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@anthropic-ai/claude-code",
+  mise: { tool: "claude" },
   nativeUpdate: {
     args: ["update"],
     isCommandPath: isClaudeNativeCommandPath,

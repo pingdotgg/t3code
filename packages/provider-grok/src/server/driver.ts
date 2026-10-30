@@ -37,6 +37,7 @@ import {
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
   resolveHomebrewProviderMaintenance,
+  resolveMiseProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
@@ -50,6 +51,7 @@ const DRIVER_KIND = ProviderDriverKind.make("grok");
 // npm latest matches the stable channel installed by grok update.
 const GROK_NPM_PACKAGE = "@xai-official/grok";
 // `grok update` installs under `GROK_HOME`; use the resolved executable and instance environment.
+// A mise install upgrades through mise instead.
 // Homebrew casks need brew upgrades; `grok update` would install a second copy.
 // Keep casks manual when their brew cannot vouch for them.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
@@ -60,6 +62,12 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
         packageName: GROK_NPM_PACKAGE,
       });
     }
+    const mise = yield* resolveMiseProviderMaintenance(
+      { provider: DRIVER_KIND, packageName: GROK_NPM_PACKAGE },
+      { tool: "grok" },
+      context,
+    );
+    if (mise) return mise;
     const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
     // Only a cask is Grok's: a formula keg such as `node` holding an npm global is not.
     if (homebrew?.kind === "cask") {
