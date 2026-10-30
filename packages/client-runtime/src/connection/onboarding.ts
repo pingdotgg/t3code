@@ -263,7 +263,9 @@ export const prepareSshRegistration = Effect.fn(
 )(function* (input: SshConnectionInput) {
   const gateway = yield* ClientCapabilities.SshEnvironmentGateway;
   const provisioned = yield* gateway.provision(input.target, input.expectedEnvironmentId);
-  const connectionId = `ssh:${provisioned.environmentId}:${sshTargetKey(provisioned.bootstrap.target)}`;
+  // Save the target as entered: reconnect re-resolves ssh config, so persisting the
+  // resolved host/port would pin values the user never chose.
+  const connectionId = `ssh:${provisioned.environmentId}:${sshTargetKey(input.target)}`;
   const label = input.label?.trim() || provisioned.label || provisioned.bootstrap.target.alias;
 
   return new SshConnectionRegistration({
@@ -276,7 +278,7 @@ export const prepareSshRegistration = Effect.fn(
       connectionId,
       environmentId: provisioned.environmentId,
       label,
-      target: provisioned.bootstrap.target,
+      target: input.target,
     }),
     credential: new BearerConnectionCredential({ token: provisioned.bearerToken }),
   });
