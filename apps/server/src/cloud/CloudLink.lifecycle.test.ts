@@ -75,13 +75,14 @@ const decodeManagedTunnelRecoveryRegistration = Schema.decodeUnknownEffect(
 
 function makeSecretStore(
   create: ServerSecretStore.ServerSecretStore["Service"]["create"],
+  remove: ServerSecretStore.ServerSecretStore["Service"]["remove"] = unusedSecretStoreOperation,
 ): ServerSecretStore.ServerSecretStore["Service"] {
   return {
     get: unusedSecretStoreOperation,
     set: unusedSecretStoreOperation,
     create,
     getOrCreateRandom: unusedSecretStoreOperation,
-    remove: unusedSecretStoreOperation,
+    remove,
   };
 }
 
@@ -95,6 +96,59 @@ describe("consumeCloudReplayGuards", () => {
       });
 
       expect(consumed).toBe(false);
+    }),
+  );
+
+  it.effect("rolls back guards created in a partial consume", () =>
+    Effect.gen(function* () {
+      const created = new Set<string>();
+      const removed: string[] = [];
+      const consumed = yield* consumeCloudReplayGuards({
+        secrets: makeSecretStore(
+          (name) =>
+            name === "cloud-nonce"
+              ? Effect.fail(storeFailure("AlreadyExists"))
+              : Effect.sync(() => {
+                  created.add(name);
+                }),
+          (name) =>
+            Effect.sync(() => {
+              removed.push(name);
+              created.delete(name);
+            }),
+        ),
+        names: ["cloud-jti", "cloud-nonce"],
+        value: new Uint8Array([1]),
+      });
+
+      expect(consumed).toBe(false);
+      expect([...created]).toEqual([]);
+      expect(removed).toEqual(["cloud-jti"]);
+    }),
+  );
+
+  it.effect("keeps every guard when the whole pair is created", () =>
+    Effect.gen(function* () {
+      const created: string[] = [];
+      const removed: string[] = [];
+      const consumed = yield* consumeCloudReplayGuards({
+        secrets: makeSecretStore(
+          (name) =>
+            Effect.sync(() => {
+              created.push(name);
+            }),
+          (name) =>
+            Effect.sync(() => {
+              removed.push(name);
+            }),
+        ),
+        names: ["cloud-jti", "cloud-nonce"],
+        value: new Uint8Array([1]),
+      });
+
+      expect(consumed).toBe(true);
+      expect(created.sort()).toEqual(["cloud-jti", "cloud-nonce"]);
+      expect(removed).toEqual([]);
     }),
   );
 });

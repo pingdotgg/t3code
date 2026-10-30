@@ -322,15 +322,29 @@ export function consumeCloudReplayGuards(input: {
     input.names,
     (name) =>
       input.secrets.create(name, input.value).pipe(
-        Effect.as(true),
+        Effect.as({ name, created: true as const }),
         Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
           ServerSecretStore.isSecretAlreadyExistsError(error)
-            ? Effect.succeed(false)
+            ? Effect.succeed({ name, created: false as const })
             : Effect.fail(error),
         ),
       ),
     { concurrency: input.names.length },
-  ).pipe(Effect.map((created) => created.every(Boolean)));
+  ).pipe(
+    Effect.flatMap((results) => {
+      if (results.every((result) => result.created)) {
+        return Effect.succeed(true);
+      }
+      // A partial create leaves half a jti/nonce pair behind and poisons later
+      // attempts with the same proof. Roll back whatever this call created.
+      const createdNames = results.flatMap((result) => (result.created ? [result.name] : []));
+      return Effect.forEach(
+        createdNames,
+        (name) => input.secrets.remove(name).pipe(Effect.ignore),
+        { concurrency: Math.max(createdNames.length, 1) },
+      ).pipe(Effect.as(false));
+    }),
+  );
 }
 
 function validateCloudMintPublicKey(
