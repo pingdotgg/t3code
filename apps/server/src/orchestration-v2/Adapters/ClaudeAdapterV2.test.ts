@@ -40,7 +40,7 @@ import {
   OrchestrationV2ProviderThread,
   ProjectId,
   ProviderInstanceId,
-  type ProviderInstanceEnvironment,
+  type ResolvedProviderInstanceEnvironment,
   ProviderDriverKind,
   type ProviderReplayTranscript,
   type ProviderApprovalDecision,
@@ -236,6 +236,21 @@ function makeClaudeTestTurnInput(input: {
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
   it.each([
+    "-- --thinking-display omitted",
+    "--thinking-display summarized -- --thinking-display omitted",
+  ])("does not treat operands after -- as SDK flags: %s", (launchArgs) => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "thinking-thread",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+    });
+    assert.deepEqual(options.thinking, { type: "adaptive", display: "summarized" });
+    assert.equal(options.extraArgs?.["thinking-display"], "summarized");
+  });
+
+  it.each([
     ["--permission-mode acceptEdits", "acceptEdits"],
     ["--dangerously-skip-permissions", "bypassPermissions"],
     ["--dangerously-skip-permissions --permission-mode plan", "plan"],
@@ -251,6 +266,28 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.equal(options.permissionMode, expected);
     assert.isUndefined(options.extraArgs?.["permission-mode"]);
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
+  });
+
+  it("passes every --add-dir launch directory to Claude", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-add-dir",
+      resume: false,
+      cwd: "/workspace",
+      attachmentsDir: "/attachments",
+      settings: {
+        ...AUTO_COMPACT_CLAUDE_SETTINGS,
+        launchArgs: "--add-dir ../apps ../lib --verbose --add-dir=/shared",
+      },
+    });
+    assert.deepEqual(options.additionalDirectories, [
+      "/workspace",
+      "/attachments",
+      "../apps",
+      "../lib",
+      "/shared",
+    ]);
+    assert.isUndefined(options.extraArgs?.["add-dir"]);
   });
 
   it("gives delegated children Claude's subagent prompt cache TTL", () => {
@@ -1152,7 +1189,7 @@ describe("ClaudeAdapterV2 approval cancellation", () => {
 
 const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(function* (
   binaryPath: string,
-  environment: ProviderInstanceEnvironment = [],
+  environment: ResolvedProviderInstanceEnvironment = [],
 ) {
   const executablePaths: Array<string | undefined> = [];
   const taskToolEnvironment: Array<string | undefined> = [];
@@ -8740,6 +8777,152 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each([
+    {
+      case: "an Edit",
+      toolName: "Edit",
+      toolInput: {
+        file_path: "/workspace/src/math.ts",
+        old_string: "  return a - b;",
+        new_string: "  return a + b;",
+      },
+      toolUseResult: {
+        filePath: "/workspace/src/math.ts",
+        oldString: "  return a - b;",
+        newString: "  return a + b;",
+        originalFile: "export function add(a: number, b: number) {\n  return a - b;\n}\n",
+        structuredPatch: [
+          {
+            oldStart: 1,
+            oldLines: 3,
+            newStart: 1,
+            newLines: 3,
+            lines: [
+              " export function add(a: number, b: number) {",
+              "-  return a - b;",
+              "+  return a + b;",
+              " }",
+            ],
+          },
+        ],
+        userModified: false,
+        replaceAll: false,
+      },
+      diffStr:
+        "--- /workspace/src/math.ts\n+++ /workspace/src/math.ts\n@@ -1,3 +1,3 @@\n export function add(a: number, b: number) {\n-  return a - b;\n+  return a + b;\n }\n",
+    },
+    {
+      case: "a Write that creates a file",
+      toolName: "Write",
+      toolInput: { file_path: "/workspace/notes.md", content: "# Notes\n\nShip it.\n" },
+      toolUseResult: {
+        type: "create",
+        filePath: "/workspace/notes.md",
+        content: "# Notes\n\nShip it.\n",
+        structuredPatch: [],
+        originalFile: null,
+        userModified: false,
+      },
+      diffStr: "--- /dev/null\n+++ /workspace/notes.md\n@@ -0,0 +1,3 @@\n+# Notes\n+\n+Ship it.\n",
+    },
+    {
+      case: "a Write that creates an empty file",
+      toolName: "Write",
+      toolInput: { file_path: "/workspace/.keep", content: "" },
+      toolUseResult: {
+        type: "create",
+        filePath: "/workspace/.keep",
+        content: "",
+        structuredPatch: [],
+        originalFile: null,
+        userModified: false,
+      },
+      diffStr: undefined,
+    },
+  ])("stores the diff panel patch for $case", (testCase) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const toolUseId = `toolu_01${testCase.toolName}Patch`;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-claude-${testCase.toolName}-patch`),
+            text: "Change it.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: `msg_${testCase.toolName}_patch`,
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: toolUseId,
+                  name: testCase.toolName,
+                  input: testCase.toolInput,
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000793",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: toolUseId,
+                  content: `The file ${testCase.toolInput.file_path} has been updated successfully.`,
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000794",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: testCase.toolUseResult,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000795", result: "Done." }),
+        );
+        yield* harness.awaitTerminal(1);
+
+        const fileChange = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === toolUseId,
+        );
+        assert.deepEqual(
+          fileChange?.type === "turn_item.updated" && fileChange.turnItem.type === "file_change"
+            ? { diffStr: fileChange.turnItem.diffStr }
+            : undefined,
+          { diffStr: testCase.diffStr },
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("answers an approval a held wake turn raises without waiting for the echo", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -8968,6 +9151,172 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.threadDisposition, "reusable");
         assert.include(terminal.failure.message, "never started a turn");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // regression: #17531 a mod that holds a tool behind a focused pane must fail the turn, not hang it
+  it.effect.each([
+    { case: "fails a turn whose mod requests focus for a pane T3 cannot show", focus: true },
+    { case: "keeps a turn running beside a passive mod pane", focus: false },
+  ] as const)("$case", ({ focus }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const closed = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: () => Deferred.succeed(closed, undefined),
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-mod-pane-focus"),
+            text: "Run rm -r build",
+            attachments: [],
+          }),
+        );
+        // Captured from Claude 2.1.303 with the blast-radius mod holding a Bash
+        // call: the mod waits for keyboard input in its pane and nothing else
+        // arrives until it gives up.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "ui_panes",
+            panes: [
+              { id: "blast-radius", title: "Blast Radius", plugin: "blast-radius", rows: 10 },
+            ],
+            shown_id: "blast-radius",
+            focused_id: null,
+            focus_requested_id: focus ? "blast-radius" : null,
+            uuid: "00000000-0000-4000-8000-000000000795",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "ui_invalidate",
+            event: "ui.render",
+            uuid: "00000000-0000-4000-8000-000000000796",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        // Frames are handled in order, so a later notice proves the pane frame
+        // was handled without the turn ending.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "informational",
+            content: "Processing barrier.",
+            level: "warning",
+            uuid: "00000000-0000-4000-8000-000000000797",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.until(
+          () =>
+            harness.terminalEvents().length > 0 ||
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+            ),
+        );
+        const [terminal] = harness.terminalEvents();
+        if (!focus) {
+          assert.equal(terminal, undefined);
+          return;
+        }
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.include(terminal.failure.message, "blast-radius");
+        // The held tool call is abandoned by closing the query, never answered.
+        yield* Deferred.await(closed);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // regression: #17531 a follow-up sent while the failed mod turn's process closes gets a new process
+  it.effect("runs a follow-up in a fresh query while the mod-blocked query is closing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const releaseClose = yield* Deferred.make<void>();
+        const replacementClosedOld = yield* Deferred.make<void>();
+        let oldCloses = 0;
+        const harness = yield* makeWakeHarnessWithOptions({
+          // The held CLI never answers an interrupt; closure must not need one.
+          interrupt: Effect.never,
+          close: (sdkMessages) =>
+            Effect.suspend(() =>
+              ++oldCloses === 2 ? Deferred.succeed(replacementClosedOld, undefined) : Effect.void,
+            ).pipe(
+              Effect.andThen(Deferred.await(releaseClose)),
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+          freshQueueOnReopen: true,
+        });
+        // Added after the harness so it runs first: a failed assertion must not
+        // leave teardown waiting on the held close.
+        yield* Effect.addFinalizer(() => Deferred.succeed(releaseClose, undefined));
+        const now = yield* DateTime.now;
+        const turnInput = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-mod-pane-blocked"),
+          text: "Run rm -r build",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(turnInput);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "ui_panes",
+            panes: [
+              { id: "blast-radius", title: "Blast Radius", plugin: "blast-radius", rows: 10 },
+            ],
+            shown_id: "blast-radius",
+            focused_id: null,
+            focus_requested_id: "blast-radius",
+            uuid: "00000000-0000-4000-8000-000000000798",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+
+        const followUp = yield* harness.runtime
+          .startTurn({
+            ...turnInput,
+            attemptId: RunAttemptId.make("attempt-claude-after-mod-pane"),
+            providerTurnOrdinal: 2,
+          })
+          .pipe(Effect.forkScoped);
+        // Reusing the closing process would offer the prompt to it instead.
+        yield* Effect.raceFirst(
+          Deferred.await(replacementClosedOld),
+          harness.until(() => harness.offeredMessages.length >= 2),
+        );
+        assert.isTrue(yield* Deferred.isDone(replacementClosedOld));
+        yield* Deferred.succeed(releaseClose, undefined);
+        yield* Fiber.join(followUp);
+        assert.equal(harness.processQueues.length, 2);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "after-mod-pane-result", result: "Done." }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

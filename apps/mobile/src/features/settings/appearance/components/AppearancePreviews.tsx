@@ -44,7 +44,7 @@ export function TerminalAppearancePreview(props: { readonly fontSize: number }) 
   const theme = getMobileTerminalTheme(themeId, scheme);
   const lineHeight = Math.round(props.fontSize * 1.6);
   const lineStyle = {
-    fontFamily: "Menlo",
+    fontFamily: Platform.OS === "android" ? "monospace" : "Menlo",
     fontSize: props.fontSize,
     lineHeight,
   } as const;

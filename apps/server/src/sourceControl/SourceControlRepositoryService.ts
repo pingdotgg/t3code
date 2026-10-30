@@ -110,7 +110,7 @@ function toRepositoryInfo(
   };
 }
 
-// Redact credentials from client clone snapshots; git still receives the original URL.
+// Redact credentials from client clone snapshots; git still receives the credentials.
 function redactRemoteUrl(remoteUrl: string): string {
   try {
     const url = new URL(remoteUrl);
@@ -128,10 +128,16 @@ function redactRemoteUrl(remoteUrl: string): string {
 }
 
 // Userinfo can contain @; remove through the last one before the host boundary.
-const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/]+@/gi;
+const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi;
+// Git leaves quotes inside query tokens unescaped; consume through the closing quote.
+const QUOTED_URL_QUERY = /(['"])([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?.*\1(?=[\s:]|$)/gi;
+const URL_QUERY = /\b([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?[^\s]*/gi;
 
 function redactUrlCredentials(text: string): string {
-  return text.replace(URL_WITH_USERINFO, "$1");
+  return text
+    .replace(QUOTED_URL_QUERY, "$1$2$1")
+    .replace(URL_QUERY, "$1")
+    .replace(URL_WITH_USERINFO, "$1");
 }
 
 // The remote already exists after push failure; advise fixing access and pushing.
@@ -340,11 +346,13 @@ export const make = Effect.gen(function* () {
         if (stderrTail.length > 4) stderrTail.shift();
       });
     };
+    // Git misreads @ in a pathless URL's query as userinfo and echoes its suffix as the host.
+    const normalizedCloneUrl = cloneUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#]+)\?/i, "$1/?");
     yield* git
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(destinationPath),
-        args: ["clone", "--progress", "--", cloneUrl, path.basename(destinationPath)],
+        args: ["clone", "--progress", "--", normalizedCloneUrl, path.basename(destinationPath)],
         timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
         // Buffered output is unused and progress can be huge; cap it while retaining line callbacks.
         maxOutputBytes: 256 * 1024,

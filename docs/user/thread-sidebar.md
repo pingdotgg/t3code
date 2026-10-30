@@ -37,6 +37,12 @@ folder, so the files the agent wrote stay until you delete them. Branch, worktre
 these folders are not Git repositories. This is unavailable when the data
 directory itself sits inside a Git checkout.
 
+When the work grows into something real, pick **Turn into project** from the
+thread's menu. The thread's folder becomes a project where it is, so nothing
+moves and the agent keeps working in the same place. Other threads in that folder
+move with it. Rename the project in its settings, and use **Initialize Git** to
+get branch and diff controls.
+
 ### Start in the background
 
 In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`
@@ -270,6 +276,11 @@ agent started stays listed after the agent's turn ends.
 Select a server to open it in the browser panel. **Stop** ends the server's job
 and keeps the agent, the terminal, and T3 Code running. Stop needs terminal
 access to the environment and is not available on Windows.
+
+To choose what the thread details card shows, right-click the card or open
+**Settings → Appearance → Thread details**. Hidden rows keep their keyboard
+shortcuts, such as Open in editor and project scripts. **Reset to default** brings
+back the standard rows.
 
 ## Snooze until later
 

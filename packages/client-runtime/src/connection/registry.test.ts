@@ -431,7 +431,11 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         ),
       ),
     preflight: (_entry, route) =>
-      checkRoute(route).pipe(Effect.map((check) => check === "answered")),
+      checkRoute(route).pipe(
+        Effect.map((check): ConnectionDriver.RoutePreflight =>
+          check === "answered" ? "ready" : check,
+        ),
+      ),
     checkHost: () => Effect.succeed<ConnectionDriver.RouteCheck>("unchecked"),
   });
 

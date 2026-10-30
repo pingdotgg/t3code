@@ -241,7 +241,7 @@ import {
   type ThreadShell,
 } from "../../types";
 import { type ComposerPromptHistoryPosition } from "./composerPromptHistory";
-import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
+import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import type {
   LatestProposedPlanState,
   PendingApproval,

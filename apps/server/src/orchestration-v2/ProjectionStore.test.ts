@@ -26,6 +26,7 @@ import {
   ThreadId,
   TurnItemId,
   type ThreadPullRequestLink,
+  isLiveSubagentShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -75,6 +76,33 @@ const traceSqlStatements = () => {
   });
   return { statements, tracer };
 };
+
+/** The shell index flags every live shell and matches its shells on the fields subscriber trims read. */
+const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const shells = (yield* store.getShellSnapshot({ location: "active" })).threads;
+  const index = yield* store.listActiveShellIndex();
+  const iso = (value: DateTime.Utc | null | undefined) =>
+    value == null ? null : DateTime.formatIso(value);
+  const trimmed = (
+    row: Pick<
+      ProjectionStore.ActiveShellIndexEntry,
+      "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pinnedAt" | "snoozedUntil"
+    >,
+  ) => ({
+    id: row.id,
+    projectId: row.projectId,
+    lineage: row.lineage,
+    settledOverride: row.settledOverride,
+    settledAt: iso(row.settledAt),
+    pinnedAt: iso(row.pinnedAt),
+    snoozedUntil: iso(row.snoozedUntil),
+  });
+  assert.deepEqual(index.map(trimmed), shells.map(trimmed));
+  shells.forEach((shell, position) => {
+    if (isLiveSubagentShell(shell)) assert.isTrue(index[position]?.mayBeLive, shell.id);
+  });
+});
 
 const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate")(function* (
   suffix: string,
@@ -272,6 +300,7 @@ it.effect("SQL shells flag only an active turn blocked solely on T3 thread waits
         assert.equal(shell?.status, "running");
         assert.equal(shell?.blockedOnThreadWait ?? false, expected);
       }
+      yield* assertShellIndexCoversShells();
     });
     const wait = {
       ...itemBase,
@@ -531,6 +560,7 @@ it.effect("SQL shells use the latest subagent owner for duplicate provider-threa
       const listed = (yield* store.getShellSnapshot()).threads.find(
         (thread) => thread.id === targetThreadId,
       );
+      yield* assertShellIndexCoversShells();
       for (const shell of [yield* store.getThreadShell(targetThreadId), listed]) {
         assert.equal(shell?.providerInstanceId, otherInstanceId);
         assert.equal(shell?.activeRunId, null);
@@ -1336,6 +1366,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
     const next = yield* list({ settledAt: DateTime.formatIso(at(4)), threadId: id("b") }, 10);
     assert.deepEqual(next.threadIds, [id("c"), id("d"), id("snoozed")]);
     assert.deepEqual(yield* list(before, 25, []), { threadIds: [], counts: [] });
+    yield* assertShellIndexCoversShells();
     const scoped = yield* list(before, 0, [ProjectId.make("project:b")]);
     assert.deepEqual(scoped, {
       threadIds: [],
@@ -1371,6 +1402,70 @@ it.effect("lists only active subagent IDs without loading shell data", () =>
       [...(yield* store.listActiveSubagentThreadIds())],
       [ThreadId.make("active-subagent")],
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+// regression: #25621 SQLite rejects statements binding more than 32,766 variables
+it.effect("lists every thread in the shell snapshot past SQLite's bound variable limit", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const templateId = ThreadId.make("thread:many:00000");
+    yield* store.apply({
+      id: EventId.make(`event:${templateId}:created`),
+      type: "thread.created",
+      threadId: templateId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: templateId,
+        projectId: ProjectId.make("project:many"),
+        title: "Many",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: templateId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    const threadCount = 32_767;
+    yield* sql`
+      CREATE TEMP TABLE many_threads AS
+      WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${threadCount - 1})
+      SELECT t.*, n.i AS clone_index FROM orchestration_v2_projection_threads t, n
+      WHERE t.thread_id = ${templateId}
+    `;
+    yield* sql`
+      UPDATE many_threads SET
+        thread_id = printf('thread:many:%05d', clone_index),
+        payload_json = json_set(
+          payload_json,
+          '$.id', printf('thread:many:%05d', clone_index),
+          '$.lineage.rootThreadId', printf('thread:many:%05d', clone_index)
+        )
+    `;
+    yield* sql`ALTER TABLE many_threads DROP COLUMN clone_index`;
+    yield* sql`INSERT INTO orchestration_v2_projection_threads SELECT * FROM many_threads`;
+
+    const [unscoped, active] = yield* Effect.all([
+      store.getShellSnapshot(),
+      store.getShellSnapshot({ location: "active" }),
+    ]);
+    assert.strictEqual(unscoped.threads.length, threadCount);
+    assert.strictEqual(active.threads.length, threadCount);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -3734,6 +3829,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
           (row) => row.id === threadId,
         )!;
+        yield* assertShellIndexCoversShells();
         for (const questionShell of [
           sqlShell,
           ProjectionStore.threadShellFromProjection(projection),
@@ -4796,6 +4892,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         SET status = 'running', payload_json = json_set(payload_json, '$.status', 'running')
         WHERE run_id = ${runId}
       `;
+      yield* assertShellIndexCoversShells();
       const secretOnlyShell = (yield* projectionStore.getShellSnapshot()).threads.find(
         (thread) => thread.id === threadId,
       );
@@ -6402,6 +6499,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (candidate) => candidate.id === threadId,
         );
         assert.deepEqual(listed?.pendingBackgroundTasks, shell?.pendingBackgroundTasks);
+        yield* assertShellIndexCoversShells();
         return shell && projectThreadAwarenessV2({ environmentId, project, thread: shell })?.phase;
       });
 
@@ -6576,10 +6674,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           completedAt: releasedAt,
         },
       });
+      const { statements, tracer } = traceSqlStatements();
       assert.deepEqual(
-        (yield* store.getRuntimeRecoveryProjection(threadId)).runs.map((run) => run.id),
+        (yield* store
+          .getRuntimeRecoveryProjection(threadId)
+          .pipe(Effect.withTracer(tracer))).runs.map((run) => run.id),
         [runId, newerRunId],
       );
+      // Live-item filters must hit the active partial indexes, not walk the thread's history.
+      const sql = yield* SqlClient.SqlClient;
+      for (const statement of statements.filter((query) => query.includes("turn_items"))) {
+        const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+          `EXPLAIN QUERY PLAN ${statement}`,
+        )).map((row) => row.detail);
+        for (const detail of plan) {
+          assert.notMatch(detail, /turn_items_(thread_ordinal|thread_run)_idx \(thread_id=\?\)$/);
+        }
+      }
     }),
   );
 });

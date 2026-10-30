@@ -24,6 +24,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -32,6 +33,7 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
+import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -126,8 +128,65 @@ const layerSession = Layer.mergeAll(
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
 
+describe("AntigravityAdapterV2 session open", () => {
+  it.effect.each([
+    {
+      name: "browser sign-in",
+      cause: new EffectAcpErrors.AcpTransportError({
+        detail: ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
+        cause: undefined,
+      }),
+      requiresSignIn: true,
+    },
+    {
+      name: "ACP authentication required",
+      cause: EffectAcpErrors.AcpRequestError.authRequired(),
+      requiresSignIn: true,
+    },
+    {
+      name: "transport failure",
+      cause: new EffectAcpErrors.AcpTransportError({
+        detail: "Connection closed",
+        cause: undefined,
+      }),
+      requiresSignIn: undefined,
+    },
+  ] as const)("classifies $name during session open", ({ cause, requiresSignIn }) =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("antigravity-sign-in-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: () => Effect.fail(cause),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const threadId = ThreadId.make("thread-antigravity-sign-in");
+      const error = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-sign-in"),
+          modelSelection: { instanceId, model: "gemini-test-low" },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "ProviderAdapterOpenSessionError");
+      assert.equal(
+        error._tag === "ProviderAdapterOpenSessionError" && error.requiresSignIn,
+        requiresSignIn,
+      );
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
+
 describe("AntigravityAdapterV2 client file system", () => {
-  it.effect("confines agent file requests to the workspace under full access", () =>
+  it.effect("serves confined reads and leaves edits to the agent's diff tools", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -140,6 +199,8 @@ describe("AntigravityAdapterV2 client file system", () => {
       // effect-acp keeps the last handler registered per method; so does this.
       let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
       let writeTextFile: Parameters<RuntimeService["handleWriteTextFile"]>[0] | undefined;
+      const logs = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-log-" });
+      const requestLog = path.join(logs, "requests.ndjson");
       const crypto = yield* Crypto.Crypto;
       const instanceId = ProviderInstanceId.make("antigravity-containment-test");
       const adapter = yield* makeAntigravityAdapterV2({
@@ -153,7 +214,7 @@ describe("AntigravityAdapterV2 client file system", () => {
               command: process.execPath,
               args: [mockAgentPath],
               cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
+              env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_REQUEST_LOG_PATH: requestLog },
             },
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),
@@ -198,17 +259,31 @@ describe("AntigravityAdapterV2 client file system", () => {
         runtimePolicy,
       });
       yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
-      if (readTextFile === undefined || writeTextFile === undefined) {
-        return yield* Effect.die("Antigravity sessions must serve client file requests");
+      const initialize = (yield* fileSystem.readFileString(requestLog))
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              method?: string;
+              params?: { clientCapabilities?: { fs?: unknown }; clientInfo?: { name?: string } };
+            },
+        )
+        .find((request) => request.method === "initialize");
+      assert.deepEqual(initialize?.params?.clientCapabilities?.fs, {
+        readTextFile: true,
+        writeTextFile: false,
+      });
+      assert.equal(initialize?.params?.clientInfo?.name, "zed");
+      assert.isUndefined(writeTextFile);
+      if (readTextFile === undefined) {
+        return yield* Effect.die("Antigravity sessions must serve client file reads");
       }
       const context = (method: string) => ({ requestId: `test-${method}`, method });
 
       const insidePath = path.join(workspace, "src", "inside.ts");
-      yield* writeTextFile(
-        { sessionId: "mock-session-1", path: insidePath, content: "inside" },
-        context("fs/write_text_file"),
-      );
-      assert.equal(yield* fileSystem.readFileString(insidePath), "inside");
+      yield* fileSystem.makeDirectory(path.dirname(insidePath), { recursive: true });
+      yield* fileSystem.writeFileString(insidePath, "inside");
       const pasted = yield* readTextFile(
         { sessionId: "mock-session-1", path: attachment },
         context("fs/read_text_file"),
@@ -220,13 +295,6 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(outsideRead));
-      const outsideWrite = yield* writeTextFile(
-        { sessionId: "mock-session-1", path: path.join(outside, "planted.txt"), content: "x" },
-        context("fs/write_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(outsideWrite));
-      assert.isFalse(yield* fileSystem.exists(path.join(outside, "planted.txt")));
-
       const linkPath = path.join(workspace, "linked-secret.txt");
       yield* fileSystem.symlink(outsideFile, linkPath);
       const linkedRead = yield* readTextFile(
@@ -234,45 +302,6 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(linkedRead), "a read through an escaping symlink is denied");
-      const linkedWrite = yield* writeTextFile(
-        { sessionId: "mock-session-1", path: linkPath, content: "overwritten" },
-        context("fs/write_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(linkedWrite), "a write through an escaping symlink is denied");
-      assert.equal(yield* fileSystem.readFileString(outsideFile), "secret");
-      const plantedTarget = path.join(outside, "created-through-link.txt");
-      const danglingLink = path.join(workspace, "dangling.txt");
-      yield* fileSystem.symlink(plantedTarget, danglingLink);
-      const danglingWrite = yield* writeTextFile(
-        { sessionId: "mock-session-1", path: danglingLink, content: "planted" },
-        context("fs/write_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(danglingWrite), "a write through a dangling symlink is denied");
-      assert.isFalse(yield* fileSystem.exists(plantedTarget));
-      yield* fileSystem.symlink(outside, path.join(workspace, "linked-dir"));
-      const linkedDirWrite = yield* writeTextFile(
-        {
-          sessionId: "mock-session-1",
-          path: path.join(workspace, "linked-dir", "new.txt"),
-          content: "planted",
-        },
-        context("fs/write_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(linkedDirWrite), "a write under an escaping directory link");
-      assert.isFalse(yield* fileSystem.exists(path.join(outside, "new.txt")));
-      const nestedLinkedDirWrite = yield* writeTextFile(
-        {
-          sessionId: "mock-session-1",
-          path: path.join(workspace, "linked-dir", "a", "b", "file.txt"),
-          content: "planted",
-        },
-        context("fs/write_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(
-        Exit.isFailure(nestedLinkedDirWrite),
-        "a write to missing directories under an escaping directory link",
-      );
-      assert.isFalse(yield* fileSystem.exists(path.join(outside, "a")));
       const insideLink = path.join(workspace, "inside-link.ts");
       yield* fileSystem.symlink(insidePath, insideLink);
       const viaInsideLink = yield* readTextFile(
@@ -734,6 +763,215 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, report), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, failed), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, errored), undefined);
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
+
+describe("AntigravityAdapterV2 subagent reads", () => {
+  it.effect("completes a read T3 served when the agent later fails it with a step error", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-reads-",
+      });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-reads-outside-",
+      });
+      const served = path.join(workspace, "served.ts");
+      yield* fileSystem.writeFileString(served, "export {};");
+      const denied = path.join(outside, "secret.txt");
+      yield* fileSystem.writeFileString(denied, "secret");
+      const unseen = path.join(workspace, "unseen.ts");
+      const retried = path.join(workspace, "retried.ts");
+      const stepError = 'Model produced invalid output. ("model output error")';
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("antigravity-subagent-reads-test");
+      const threadId = ThreadId.make("thread-antigravity-subagent-reads");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdate = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              handleReadTextFile: (handler) =>
+                Effect.sync(() => {
+                  readTextFile = handler;
+                }).pipe(Effect.andThen(runtime.handleReadTextFile(handler))),
+              // agy_acp_server announces a subagent's client_view_file on the parent session,
+              // never completes it, then fails every open call with the next step error.
+              prompt: () =>
+                Effect.gen(function* () {
+                  if (sessionUpdate === undefined || readTextFile === undefined) {
+                    return yield* Effect.die("the adapter must handle updates and reads");
+                  }
+                  const send = sessionUpdate;
+                  const handleRead = readTextFile;
+                  const update = (update: EffectAcpSchema.SessionUpdate) =>
+                    send(
+                      normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }),
+                    );
+                  // The agent's own view_file never reaches T3, so it must not take a served read.
+                  const reads = [
+                    ["call_native", served, "Running view_file"],
+                    ["call_served", served, "Running client_view_file"],
+                    ["call_missing", retried, "Running client_view_file"],
+                    ["call_retried", retried, "Running client_view_file"],
+                    ["call_denied", denied, "Running client_view_file"],
+                    ["call_unseen", unseen, "Running client_view_file"],
+                  ] as const;
+                  for (const [toolCallId, target, title] of reads) {
+                    yield* update({
+                      sessionUpdate: "tool_call",
+                      toolCallId,
+                      title,
+                      kind: "read",
+                      status: "in_progress",
+                      rawInput: { absolute_path: target },
+                      locations: [{ path: target }],
+                    });
+                  }
+                  const serve = (target: string) =>
+                    handleRead(
+                      { sessionId: "subagent-conversation", path: target },
+                      { requestId: `read-${target}`, method: "fs/read_text_file" },
+                    ).pipe(Effect.exit);
+                  yield* serve(served);
+                  yield* serve(retried);
+                  yield* fileSystem.writeFileString(retried, "export {};").pipe(Effect.orDie);
+                  yield* serve(retried);
+                  yield* serve(denied);
+                  for (const [toolCallId] of reads) {
+                    yield* update({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId,
+                      status: "failed",
+                      rawOutput: stepError,
+                    });
+                  }
+                  return { stopReason: "end_turn" as const };
+                }),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-subagent-reads"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* session.startTurn({
+        appThread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project-antigravity-subagent-reads"),
+          title: "Antigravity subagent reads",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspace,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        threadId,
+        runId: RunId.make("run-antigravity-subagent-reads"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("attempt-antigravity-subagent-reads"),
+        rootNodeId: NodeId.make("node-antigravity-subagent-reads"),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message-antigravity-subagent-reads"),
+          text: "review the codebase",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = Array.from(
+        yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const read = (nativeId: string) => {
+        const event = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId,
+        );
+        return event?.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? { status: event.turnItem.status, output: event.turnItem.output }
+          : undefined;
+      };
+
+      const firstEvent = (nativeId: string, status: string) =>
+        events.findIndex(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId &&
+            event.turnItem.status === status,
+        );
+      // T3 completes a served read itself instead of leaving it running until the flush.
+      assert.isAbove(firstEvent("call_served", "completed"), -1);
+      assert.isBelow(firstEvent("call_served", "completed"), firstEvent("call_native", "failed"));
+      const failed = { status: "failed" as const, output: stepError };
+      assert.deepEqual(read("call_served"), { status: "completed", output: undefined });
+      assert.deepEqual(read("call_retried"), { status: "completed", output: undefined });
+      assert.deepEqual(read("call_native"), failed);
+      assert.deepEqual(read("call_missing"), failed);
+      assert.deepEqual(read("call_denied"), failed);
+      assert.deepEqual(read("call_unseen"), failed);
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });

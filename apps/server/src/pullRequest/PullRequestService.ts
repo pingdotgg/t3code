@@ -528,6 +528,9 @@ function withRateLimitBackoff(
           listChangeRequestStats: wrap("listChangeRequestStats", api.listChangeRequestStats),
         }),
     getChangeRequest: wrap("getChangeRequest", api.getChangeRequest),
+    ...(api.forgetChangeRequestReads === undefined
+      ? {}
+      : { forgetChangeRequestReads: api.forgetChangeRequestReads }),
     ...(api.getChangeRequestPreview === undefined
       ? {}
       : { getChangeRequestPreview: wrap("getChangeRequestPreview", api.getChangeRequestPreview) }),
@@ -1356,19 +1359,24 @@ export const make = Effect.gen(function* () {
                     : null,
               };
             }),
-            Effect.orElseSucceed((): RepositoryBatch => ({
-              key,
-              entries: [],
-              errors: [
-                {
-                  projectId: project.project.id,
-                  projectTitle: project.project.title,
-                  message: `${project.repository} could not be read.`,
-                },
-              ],
-              truncated: false,
-              nextCursor: null,
-            })),
+            Effect.catch((error): Effect.Effect<RepositoryBatch> =>
+              Effect.succeed({
+                key,
+                entries: [],
+                errors: [
+                  {
+                    projectId: project.project.id,
+                    projectTitle: project.project.title,
+                    message:
+                      error.accessHint === undefined
+                        ? `${project.repository} could not be read.`
+                        : `${project.repository} could not be read. ${error.accessHint}`,
+                  },
+                ],
+                truncated: false,
+                nextCursor: null,
+              }),
+            ),
           );
       }
     };
@@ -3423,6 +3431,13 @@ export const make = Effect.gen(function* () {
     return { stats: [...held, ...result.stats] };
   });
 
+  const forgetProviderReads = (scope?: { readonly repository: string; readonly number?: number }) =>
+    Effect.forEach(
+      registry.kinds,
+      (kind) => registry.get(kind)?.forgetChangeRequestReads?.(scope) ?? Effect.void,
+      { discard: true },
+    );
+
   const invalidate: PullRequestService["Service"]["invalidate"] = Effect.fn(
     "PullRequestService.invalidate",
   )(function* (input, options) {
@@ -3438,13 +3453,15 @@ export const make = Effect.gen(function* () {
     if (reference !== undefined) {
       yield* canonicalRef(reference).pipe(
         Effect.flatMap((ref) =>
-          readCache
-            .invalidate(refScope(ref))
-            .pipe(Effect.andThen(Effect.sync(() => bumpRefEpoch(ref)))),
+          forgetProviderReads({ repository: ref.repository, number: ref.number }).pipe(
+            Effect.andThen(readCache.invalidate(refScope(ref))),
+            Effect.andThen(Effect.sync(() => bumpRefEpoch(ref))),
+          ),
         ),
         Effect.ignore,
       );
     } else {
+      yield* forgetProviderReads();
       listingsEpoch = ++epochCounter;
       everyFileRevisionEpoch = ++epochCounter;
       viewersByHost.clear();
@@ -3455,22 +3472,27 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = (projectId) =>
-    Effect.suspend(() => {
-      listingsEpoch = ++epochCounter;
-      projectEpochs.delete(projectId);
-      if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
-        const oldest = projectEpochs.keys().next().value;
-        if (oldest !== undefined) {
-          projectEpochFloor = projectEpochs.get(oldest)!;
-          projectEpochs.delete(oldest);
-        }
+  const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = Effect.fn(
+    "PullRequestService.refreshAfterTurn",
+  )(function* (projectId) {
+    // Everything the provider holds, not just the project's repository: a turn can touch a
+    // change request reached through another repository, and no epoch may move until those
+    // reads are gone, or a reader in between keeps the old one under the new epoch.
+    yield* forgetProviderReads();
+    listingsEpoch = ++epochCounter;
+    projectEpochs.delete(projectId);
+    if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
+      const oldest = projectEpochs.keys().next().value;
+      if (oldest !== undefined) {
+        projectEpochFloor = projectEpochs.get(oldest)!;
+        projectEpochs.delete(oldest);
       }
-      projectEpochs.set(projectId, listingsEpoch);
-      return readCache
-        .invalidate(`project:${projectId}`)
-        .pipe(Effect.andThen(SubscriptionRef.set(pullRequestRefreshes, listingsEpoch)));
-    });
+    }
+    projectEpochs.set(projectId, listingsEpoch);
+    const epoch = listingsEpoch;
+    yield* readCache.invalidate(`project:${projectId}`);
+    yield* SubscriptionRef.set(pullRequestRefreshes, epoch);
+  });
 
   const invalidatedByMutation =
     <I extends PullRequestRef>(

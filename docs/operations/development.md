@@ -163,13 +163,19 @@ for the security model.
 
 `vp run check:changed` runs CI's fast checks for your branch's changes: format and lint of the
 changed files, `knip:check` when code or a manifest changes, the generated GraphQL checks, typecheck
-of the affected packages and their dependents, and the test files beside the changed files. It maps
+of the affected packages and their dependents, and the test files beside the changed files. It also
+runs the checks that read other files: the agent context budget when the server is affected, and
+React Compiler coverage for only the changed web and mobile files. It maps
 files to packages with [ci-changes.cjs](../../.github/scripts/ci-changes.cjs), as CI does. It
 compares against the merge base with `origin/main`, or with a ref you pass. CI still runs the full
 test suites and the jobs the summary lists, so a local pass does not promise a green CI run.
 
-The steps run side by side, so a run takes about as long as its slowest step, usually knip's
-exports pass at about 10 s. When the files are exactly those of the last passing run, it prints that
+The steps run side by side, as many at once as the machine allows: one per two cores and per 6 GiB
+of available memory. On a large machine a run takes about as long as its slowest step, usually
+knip's exports pass at about 10 s. Pass `--concurrency <n>` or set `CHECK_CHANGED_CONCURRENCY` to
+change the limit (`1` runs the steps one by one). A step that runs past `--timeout <seconds>` or
+`CHECK_CHANGED_TIMEOUT` (default 900) is killed with every process it started and reported as
+`TIMEOUT`, not as a failing check. When the files are exactly those of the last passing run, it prints that
 run's summary instead of running again. Any change to a file, the install, or a generated file runs
 the checks again.
 

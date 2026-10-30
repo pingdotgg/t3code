@@ -7,6 +7,7 @@ import {
   GuestShareId,
   type GuestStreamEvent,
   MessageId,
+  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderDriverKind,
@@ -411,7 +412,6 @@ it.effect("serves no render for an item outside the shared thread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-/** A message from the owner, which opens a run for the command below. */
 const ownerRun = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   yield* orchestrator.dispatch({
@@ -430,12 +430,17 @@ const ownerRun = Effect.gen(function* () {
   return runs[0]!.id;
 });
 
-const writeCommand = (
+const writeItem = (
   id: string,
-  fields: Pick<
-    Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
-    "status" | "output"
-  >,
+  fields:
+    | Pick<
+        Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
+        "type" | "status" | "input" | "output"
+      >
+    | Pick<
+        Extract<OrchestrationV2TurnItem, { type: "file_change" }>,
+        "type" | "status" | "fileName" | "diffStr" | "oldStr" | "newStr"
+      >,
 ) =>
   Effect.gen(function* () {
     const runId = yield* ownerRun;
@@ -464,8 +469,6 @@ const writeCommand = (
             startedAt: now,
             completedAt: fields.status === "running" ? null : now,
             updatedAt: now,
-            type: "command_execution",
-            input: "ls /work/src",
             ...fields,
           },
         },
@@ -474,17 +477,40 @@ const writeCommand = (
     return TurnItemId.make(id);
   });
 
-it.effect("gives the guest a command's detail and output, as the owner's row loads them", () =>
+it.effect("gives the guest a command's detail and output, but no file diffs", () =>
   Effect.gen(function* () {
     const { guestShares, credential } = yield* shareThread;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
-    const command = yield* writeCommand("item:command", {
+    const command = yield* writeItem("item:command", {
+      type: "command_execution",
       status: "completed",
+      input: "ls /work/src",
       output: "/work/src/auth.ts\n",
     });
 
     const detail = (yield* guestShares.item(session, command)).item;
     assert.deepInclude(detail, { input: "ls /work/src", output: "/work/src/auth.ts\n" });
+    const edit = yield* writeItem("item:edit", {
+      type: "file_change",
+      status: "completed",
+      fileName: "src/auth.ts",
+      diffStr: "-const token = 1;\n+const token = 2;\n",
+    });
+    const write = yield* writeItem("item:write", {
+      type: "file_change",
+      status: "completed",
+      fileName: "src/config.ts",
+      oldStr: "",
+      newStr: "export const key = 1;\n",
+    });
+    for (const [id, fileName] of [
+      [edit, "src/auth.ts"],
+      [write, "src/config.ts"],
+    ] as const) {
+      const change = (yield* guestShares.item(session, id)).item;
+      assert.deepInclude(change, { type: "file_change", fileName });
+      assert.doesNotHaveAnyKeys(change, ["diffStr", "oldStr", "newStr"]);
+    }
     const frames = Array.from(
       yield* Stream.runCollect(yield* guestShares.commandOutput(session, command)),
     );
@@ -504,11 +530,99 @@ it.effect("gives the guest a command's detail and output, as the owner's row loa
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("pages the guest back through turns older than the stream's snapshot", () =>
+  Effect.gen(function* () {
+    const { guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const runId = yield* ownerRun;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped();
+    const shot = `${directory}/old.png`;
+    yield* fileSystem.writeFile(shot, PNG);
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const base = { threadId, runId, nodeId: null, providerThreadId: null, providerTurnId: null };
+    const turnItem = (id: string, ordinal: number, payload: object) => ({
+      id: EventId.make(`event:${id}`),
+      type: "turn-item.updated" as const,
+      threadId,
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: instanceId,
+      occurredAt: now,
+      payload: {
+        ...base,
+        id: TurnItemId.make(id),
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        title: null,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        messageId: MessageId.make(id),
+        ...payload,
+      } as OrchestrationV2TurnItem,
+    });
+    yield* eventSink.write({
+      events: [
+        turnItem("item:old-image", 1, {
+          type: "assistant_message",
+          text: `![Old](${shot})`,
+          streaming: false,
+        }),
+        ...Array.from({ length: 30 }, (_, index) =>
+          turnItem(`item:ask-${index}`, index + 2, {
+            type: "user_message",
+            text: `Ask ${index}`,
+            createdBy: "user",
+            creationSource: "web",
+            inputIntent: "turn_start",
+            attachments: [],
+          }),
+        ),
+      ],
+    });
+
+    const [, opening] = Array.from(
+      yield* Stream.runCollect(Stream.take(yield* guestShares.stream(session), 2)),
+    );
+    if (opening?.type !== "thread" || opening.item.kind !== "snapshot") {
+      return assert.fail("Expected the thread snapshot second.");
+    }
+    const ids = (rows: ReadonlyArray<{ readonly sourceItemId: string }>) =>
+      rows.map((row) => row.sourceItemId);
+    assert.notInclude(ids(opening.item.projection.visibleTurnItems), "item:old-image");
+    let cursor = opening.item.historyCursor ?? null;
+    assert.isNotNull(cursor);
+    // The page has not shown the old reply yet, so its image does not load.
+    assert.equal((yield* Effect.flip(guestShares.media(session, shot))).reason, "unavailable");
+    // Only a session pages.
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(guestShares.history(credential, cursor!))));
+
+    const older: Array<string> = [];
+    while (cursor !== null) {
+      const page: OrchestrationV2ThreadHistoryPage = yield* guestShares.history(session, cursor);
+      older.push(...ids(page.items));
+      cursor = page.hasMoreHistory ? page.nextCursor : null;
+    }
+    assert.include(older, "item:old-image");
+    assert.deepStrictEqual(yield* guestShares.media(session, shot), {
+      path: shot,
+      mimeType: "image/png",
+    });
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
 it.effect("ends a running command's output once the owner stops sharing", () =>
   Effect.gen(function* () {
     const { orchestrator, guestShares, credential } = yield* shareThread;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
-    const command = yield* writeCommand("item:running", { status: "running" });
+    const command = yield* writeItem("item:running", {
+      type: "command_execution",
+      status: "running",
+      input: "ls /work/src",
+    });
     const collecting = yield* Stream.runCollect(
       yield* guestShares.commandOutput(session, command),
     ).pipe(Effect.forkChild);

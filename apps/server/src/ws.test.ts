@@ -49,6 +49,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -411,12 +412,23 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
         Effect.flatMap((stream) => stream.pipe(Stream.take(1), Stream.runCollect)),
         Effect.map(([item]) => (item?.kind === "snapshot" ? item.snapshot : null)),
         Effect.provideService(ThreadManagement.ThreadManagementService, {
-          readShellSnapshot: () =>
+          listActiveShellIndex: () =>
+            Effect.succeed(
+              threads.map((thread) => ({
+                ...thread,
+                pinnedAt: null,
+                snoozedUntil: null,
+                mayBeLive: thread.activityRunStatus !== null,
+              })),
+            ),
+          readShellSnapshot: (options?: { readonly threadIds?: ReadonlyArray<string> }) =>
             Effect.succeed(
               Effect.succeed({
                 schemaVersion: 1,
                 snapshotSequence: 0,
-                threads,
+                threads: threads.filter(
+                  (thread) => options?.threadIds?.includes(thread.id) ?? true,
+                ),
                 archivedThreads: [],
               }),
             ),
@@ -593,6 +605,7 @@ it.effect(
           scratchRoot: Effect.succeedNone,
           namedProjectsRoot: process.cwd(),
         }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getDescriptor: Effect.succeed({
             environmentId: EnvironmentId.make("config-test"),
@@ -769,6 +782,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         scratchRoot: Effect.succeedNone,
         namedProjectsRoot: process.cwd(),
       }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getDescriptor: Effect.succeed({
           environmentId: EnvironmentId.make("config-test"),

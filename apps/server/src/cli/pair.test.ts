@@ -488,3 +488,63 @@ describe("auth scope options", () => {
     }),
   );
 });
+
+describe("auth pairing create --base-url", () => {
+  it.effect.each(["192.168.1.5:3773", "localhost:3773", "ftp://localhost:3773"])(
+    "rejects %s before issuing a token",
+    (baseUrl) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-base-url-test-"));
+        const error = yield* runCli([
+          "auth",
+          "pairing",
+          "create",
+          "--base-dir",
+          baseDir,
+          "--base-url",
+          baseUrl,
+        ]).pipe(Effect.provide(layerCliRuntime), Effect.flip);
+
+        if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
+          assert.fail(`Expected ShowHelp, got ${String(error)}`);
+        }
+        const flagError = error.errors[0];
+        if (flagError?._tag !== "InvalidValue") {
+          assert.fail(`Expected InvalidValue, got ${String(flagError?._tag)}`);
+        }
+        assert.equal(flagError.option, "base-url");
+        assert.equal(flagError.value, baseUrl);
+
+        const listOutput = yield* captureStdout(
+          runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
+        );
+        assert.deepEqual(JSON.parse(listOutput), []);
+      }),
+  );
+
+  it.effect.each(["http://192.168.1.5:3773", "https://example.com", "http:localhost:3773"])(
+    "prints a pair URL for %s",
+    (baseUrl) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-base-url-test-"));
+        const output = yield* captureStdout(
+          runCli([
+            "auth",
+            "pairing",
+            "create",
+            "--base-dir",
+            baseDir,
+            "--base-url",
+            baseUrl,
+            "--json",
+          ]),
+        );
+        const issued = JSON.parse(output) as {
+          readonly credential: string;
+          readonly pairUrl: string;
+        };
+
+        assert.equal(issued.pairUrl, `${new URL(baseUrl).origin}/pair#token=${issued.credential}`);
+      }),
+  );
+});
