@@ -655,20 +655,28 @@ describe("resolveShortcutCommand", () => {
       resolveShortcutCommand(forward, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux" }),
       "navigation.forward",
     );
-    assert.strictEqual(
-      resolveShortcutCommand(back, DEFAULT_RESOLVED_KEYBINDINGS, {
-        platform: "MacIntel",
-        context: { terminalFocus: true },
-      }),
-      "terminal.previous",
-    );
-    assert.strictEqual(
-      resolveShortcutCommand(forward, DEFAULT_RESOLVED_KEYBINDINGS, {
-        platform: "Linux",
-        context: { terminalFocus: true },
-      }),
-      "terminal.next",
-    );
+    for (const platform of ["MacIntel", "Win32", "Linux"]) {
+      const mac = platform === "MacIntel";
+      for (const [key, command] of [
+        ["[", "terminal.previous"],
+        ["]", "terminal.next"],
+      ] as const) {
+        assert.strictEqual(
+          resolveShortcutCommand(
+            event({ key, metaKey: mac, ctrlKey: !mac, altKey: !mac }),
+            DEFAULT_RESOLVED_KEYBINDINGS,
+            { platform, context: { terminalFocus: true } },
+          ),
+          command,
+        );
+      }
+      assert.isNull(
+        resolveShortcutCommand(event({ key: "[", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: true },
+        }),
+      );
+    }
   });
 
   it("matches punctuation shortcuts by physical key across keyboard layouts", () => {

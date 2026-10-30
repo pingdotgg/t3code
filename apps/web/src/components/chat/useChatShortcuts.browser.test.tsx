@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import type { KeybindingCommand } from "@t3tools/contracts";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -132,3 +134,49 @@ it.each([
   expect(composerKeys).toEqual(composer);
   expect(received).toEqual(launcher);
 });
+
+function UnavailableTerminalCommand({ command }: { command: KeybindingCommand }) {
+  useChatShortcuts({
+    enabled: true,
+    keybindings: compileResolvedKeybindingsConfig([
+      { key: "cmd+[", command, when: "terminalFocus" },
+    ]),
+    scriptKeybindings: [],
+    getShortcutContext: () => ({ ...shortcutContext, terminalFocus: true }),
+    threadFindActive: false,
+    composerRef: { current: null },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: { [command]: () => false },
+    fallback: () => undefined,
+  });
+  return (
+    <div data-terminal-owner="drawer">
+      <input ref={focusOnMount} />
+    </div>
+  );
+}
+
+it.each([
+  ["terminal.previous", true],
+  ["terminal.next", true],
+  ["terminal.new", false],
+] as const)(
+  "handles unavailable %s without changing unrelated shortcut fallthrough",
+  async (command, prevented) => {
+    await using screen = await render(<UnavailableTerminalCommand command={command} />, options);
+    const input = screen.container.querySelector("input")!;
+    const received: string[] = [];
+    input.addEventListener("keydown", (event) => received.push(event.key));
+    const event = new KeyboardEvent("keydown", {
+      key: "[",
+      code: "BracketLeft",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(prevented);
+    expect(received).toEqual(prevented ? [] : ["["]);
+  },
+);

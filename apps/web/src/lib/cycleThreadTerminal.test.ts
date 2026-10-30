@@ -19,12 +19,14 @@ function setup() {
 it("cycles drawer tabs and split panes in display order, wraps both ways, and focuses the target", () => {
   const ref = setup();
   const drawer = useTerminalUiStateStore.getState();
-  drawer.newTerminal(ref, "a");
   drawer.newTerminal(ref, "b");
+  drawer.newTerminal(ref, "a");
   drawer.setActiveTerminal(ref, "a");
   drawer.splitTerminal(ref, "c");
+  drawer.newTerminal(ref, "z");
+  drawer.reconcileTerminalIds(ref, ["a", "b", "c", "z"]);
   let focused: string | null = null;
-  const unregister = ["a", "c", "b"].map((terminalId) =>
+  const unregister = ["a", "c", "b", "z"].map((terminalId) =>
     registerTerminalFocusTarget({
       threadRef: ref,
       terminalId,
@@ -36,7 +38,7 @@ it("cycles drawer tabs and split panes in display order, wraps both ways, and fo
   );
   try {
     drawer.setActiveTerminal(ref, "a");
-    for (const expected of ["c", "b", "a"]) {
+    for (const expected of ["c", "b", "z", "a"]) {
       expect(cycleThreadTerminal(ref, "drawer", "next")).toBe(true);
       expect(
         selectThreadTerminalUiState(
@@ -47,7 +49,7 @@ it("cycles drawer tabs and split panes in display order, wraps both ways, and fo
       expect(focused).toBe(expected);
     }
     cycleThreadTerminal(ref, "drawer", "previous");
-    expect(focused).toBe("b");
+    expect(focused).toBe("z");
     const remoteRef = scopeThreadRef(EnvironmentId.make("remote"), ref.threadId);
     expect(cycleThreadTerminal(remoteRef, "drawer", "next")).toBe(false);
     drawer.setTerminalOpen(ref, false);

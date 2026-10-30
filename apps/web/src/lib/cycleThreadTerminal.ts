@@ -16,9 +16,14 @@ export function cycleThreadTerminal(
   const activeSurface = panelState.surfaces.find(
     (surface) => surface.id === panelState.activeSurfaceId,
   );
+  const terminalOrder = new Map(drawerState.terminalIds.map((id, index) => [id, index]));
+  const groupRank = (ids: readonly string[]) =>
+    Math.min(...ids.map((id) => terminalOrder.get(id) ?? Number.POSITIVE_INFINITY));
   const terminalIds =
     owner === "drawer"
-      ? drawerState.terminalGroups.flatMap((group) => group.terminalIds)
+      ? drawerState.terminalGroups
+          .toSorted((left, right) => groupRank(left.terminalIds) - groupRank(right.terminalIds))
+          .flatMap((group) => group.terminalIds)
       : panelState.surfaces.flatMap((surface) =>
           surface.kind === "terminal" ? surface.terminalIds : [],
         );
