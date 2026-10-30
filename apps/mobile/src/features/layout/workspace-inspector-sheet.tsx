@@ -8,6 +8,7 @@ import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderE
 import { PaneContext } from "../../components/ui/Pane";
 import { RoutedFormSheetContext } from "../../components/ui/RoutedFormSheetContext";
 import { formSheetDetents } from "../../native/sheet-surface";
+import { InspectorBar } from "./inspector-bar";
 
 /**
  * Closes the inspector sheet around the inspector, then runs `then` once it is gone: a route
@@ -82,7 +83,7 @@ export function WorkspaceInspectorSheet(props: {
                     <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
                   )}
                 >
-                  {props.children}
+                  <InspectorBar onClose={() => close()}>{props.children}</InspectorBar>
                 </RenderErrorBoundary>
                 {Platform.OS === "android" ? (
                   <View

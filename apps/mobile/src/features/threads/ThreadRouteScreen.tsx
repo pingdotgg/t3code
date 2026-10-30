@@ -31,7 +31,6 @@ import {
 } from "@t3tools/shared/projectScripts";
 import { Platform } from "react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConnectionsReady } from "../../state/workspace";
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
@@ -159,7 +158,7 @@ type ThreadRouteScreenRouteProps = StaticScreenProps<{
 interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
   readonly inspectorPresentation?: ThreadInspectorPresentation;
   readonly onReturnToThread?: () => void;
-  readonly renderInspector?: (headerInset: number) => ReactNode;
+  readonly renderInspector?: () => ReactNode;
 }
 
 function ThreadUnavailableScreen(props: {
@@ -563,34 +562,20 @@ function ThreadRouteContent(
     navigation.navigate("ThreadFile", params);
   };
   const renderGitInspector = () => (
-    <InspectorHeaderInset>
-      {(headerInset) => (
-        <GitOverviewSheet
-          headerInset={headerInset}
-          presentation="inspector"
-          route={{ params: { environmentId: environmentId!, threadId: threadId! } }}
-        />
-      )}
-    </InspectorHeaderInset>
+    <GitOverviewSheet
+      presentation="inspector"
+      route={{ params: { environmentId: environmentId!, threadId: threadId! } }}
+    />
   );
   const renderFilesInspector = () =>
     selectedThread !== null && selectedThreadCwd !== null ? (
-      <InspectorHeaderInset>
-        {(headerInset) => (
-          <ThreadFileNavigatorPane
-            cwd={selectedThreadCwd}
-            environmentId={selectedThread.environmentId}
-            headerInset={headerInset}
-            projectName={selectedThreadProject?.title ?? "Files"}
-            selectedPath={null}
-            onSelectFile={handleSelectInspectorFile}
-          />
-        )}
-      </InspectorHeaderInset>
-    ) : null;
-  const renderRouteInspector = () =>
-    props.renderInspector ? (
-      <InspectorHeaderInset>{props.renderInspector}</InspectorHeaderInset>
+      <ThreadFileNavigatorPane
+        cwd={selectedThreadCwd}
+        environmentId={selectedThread.environmentId}
+        projectName={selectedThreadProject?.title ?? "Files"}
+        selectedPath={null}
+        onSelectFile={handleSelectInspectorFile}
+      />
     ) : null;
   const renderPreviewInspector = () =>
     previewTarget && panes.auxiliaryPaneVisible ? (
@@ -619,7 +604,7 @@ function ThreadRouteContent(
         renderGit={renderGitInspector}
         mode={inspectorMode}
         resetKeys={[routeThreadIdentity, selectedThreadCwd]}
-        renderRoute={props.renderInspector ? renderRouteInspector : undefined}
+        renderRoute={props.renderInspector}
       />
     );
   const showsInspector = !props.inspectorPresentation && inspectorMode !== null;
@@ -1066,12 +1051,6 @@ function ThreadRouteContent(
       {renderThreadRouteBody()}
     </>
   );
-}
-
-/** The inspector's top inset where it renders: under an Android column's status bar, not a sheet's. */
-function InspectorHeaderInset(props: { readonly children: (headerInset: number) => ReactNode }) {
-  const insets = useSafeAreaInsets();
-  return props.children(Platform.OS === "ios" ? 0 : insets.top);
 }
 
 export function FullscreenThreadRouteScreen(

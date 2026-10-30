@@ -1,22 +1,11 @@
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { useState, type ComponentProps } from "react";
-import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
-import {
-  Screen,
-  ScreenStack,
-  ScreenStackHeaderConfig,
-  ScreenStackHeaderSearchBarView,
-  SearchBar,
-} from "react-native-screens";
+import { useState } from "react";
+import { View } from "react-native";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
-import { FilesHeader } from "./FilesHeader";
-import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -24,23 +13,16 @@ import { FileTreeBrowser } from "./FileTreeBrowser";
 import { NativeInspectorContent } from "../../native/NativeInspectorContent";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
 export function ThreadFileNavigatorPane(props: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
-  readonly headerInset: number;
   readonly projectName: string;
   readonly selectedPath: string | null;
   readonly onSelectFile: (path: string) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const theme = useUniwindTheme();
-  const foregroundColor = theme["--color-foreground"];
-  const sheetColor = theme["--color-sheet"];
-  const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
   const fileAccessSession = useEnvironmentQuery(
     environmentSession.sessionStateAtom(props.environmentId),
   );
@@ -65,18 +47,6 @@ export function ThreadFileNavigatorPane(props: {
       theme: highlightTheme,
     });
   };
-  const nativeHeaderRightBarButtonItems = [
-    {
-      accessibilityLabel: "Close files",
-      icon: { name: "xmark", type: "sfSymbol" as const },
-      identifier: "thread-file-navigator-close",
-      onPress: toggleAuxiliaryPane,
-      sharesBackground: false,
-      tintColor: foregroundColor,
-      type: "button" as const,
-    },
-  ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"];
-
   const fileTree = (
     <FileTreeBrowser
       key={JSON.stringify([props.environmentId, props.cwd])}
@@ -108,123 +78,23 @@ export function ThreadFileNavigatorPane(props: {
     />
   );
 
-  if (Platform.OS === "ios") {
-    return (
-      <View className="flex-1 border-l border-border bg-sheet">
-        <ScreenStack style={{ flex: 1 }}>
-          <Screen
-            activityState={2}
-            enabled
-            isNativeStack
-            screenId="thread-file-navigator-native"
-            scrollEdgeEffects={headerScrollEdgeEffects}
-            style={{ backgroundColor: sheetColor, flex: 1 }}
-          >
-            <NativeInspectorContent>{fileTree}</NativeInspectorContent>
-            <ScreenStackHeaderConfig
-              backgroundColor="rgba(0,0,0,0)"
-              color={foregroundColor}
-              headerRightBarButtonItems={nativeHeaderRightBarButtonItems}
-              hideBackButton
-              hideShadow={false}
-              navigationItemStyle="editor"
-              subtitle={props.projectName}
-              title="Files"
-              titleColor={foregroundColor}
-              titleFontSize={17}
-              titleFontWeight="700"
-              translucent
-            >
-              <ScreenStackHeaderSearchBarView>
-                <SearchBar
-                  allowToolbarIntegration
-                  autoCapitalize="none"
-                  barTintColor={sheetColor}
-                  hideNavigationBar={false}
-                  hideWhenScrolling={false}
-                  obscureBackground={false}
-                  onCancelButtonPress={() => {
-                    setSearchQuery("");
-                  }}
-                  onChangeText={(event: NativeSyntheticEvent<{ readonly text?: string }>) => {
-                    setSearchQuery(event.nativeEvent.text ?? "");
-                  }}
-                  placement="integratedButton"
-                  placeholder="Search files"
-                  textColor={foregroundColor}
-                  tintColor={foregroundColor}
-                />
-              </ScreenStackHeaderSearchBarView>
-            </ScreenStackHeaderConfig>
-          </Screen>
-        </ScreenStack>
-      </View>
-    );
-  }
-
   return (
-    <View
-      className={
-        Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 border-l border-border bg-sheet"
-      }
-    >
-      <View
-        className="ios:border-b ios:border-border android:bg-header"
-        style={{ paddingTop: Platform.OS === "android" ? 0 : props.headerInset }}
-      >
-        {Platform.OS === "android" ? (
-          <FilesHeader
-            projectName={props.projectName}
-            searchQuery={searchQuery}
-            onSearchQueryChange={setSearchQuery}
-            onRefresh={entriesQuery.refresh}
-          />
-        ) : (
-          <View className="h-12 flex-row items-center gap-2 px-3">
-            <View className="min-w-0 flex-1">
-              <Text className="text-sm font-t3-bold text-foreground">Files</Text>
-              <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-                {props.projectName}
-              </Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Refresh files"
-              hitSlop={8}
-              className="h-8 w-8 items-center justify-center rounded-full active:bg-subtle"
-              onPress={entriesQuery.refresh}
-            >
-              <SymbolView
-                name="arrow.clockwise"
-                size={14}
-                tintColorClassName="accent-icon-muted"
-                type="monochrome"
-              />
-            </Pressable>
-          </View>
-        )}
-        {Platform.OS !== "android" ? (
-          <View className="flex-row items-center gap-2 border-t border-border px-3 py-2">
-            <SymbolView
-              name="magnifyingglass"
-              size={15}
-              tintColorClassName="accent-icon-muted"
-              type="monochrome"
-            />
-            <TextInput
-              accessibilityLabel="Search files"
-              autoCapitalize="none"
-              autoCorrect={false}
-              clearButtonMode="while-editing"
-              className="min-h-10 flex-1 rounded-xl py-2 text-sm"
-              placeholder="Search files"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-          </View>
-        ) : null}
-      </View>
-      <ScreenContent insetHorizontal>{fileTree}</ScreenContent>
+    <View className="flex-1 ios:bg-sheet android:bg-header">
+      <AppBar
+        title="Files"
+        subtitle={props.projectName}
+        search={{
+          value: searchQuery,
+          onChangeText: setSearchQuery,
+          placeholder: "Search files",
+          onRefresh: entriesQuery.refresh,
+          refreshAccessibilityLabel: "Refresh files",
+          refreshInToolbar: true,
+        }}
+      />
+      <ScreenContent insetHorizontal>
+        <NativeInspectorContent>{fileTree}</NativeInspectorContent>
+      </ScreenContent>
     </View>
   );
 }
