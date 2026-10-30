@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { render } from "../../../test/render";
-import { type SidebarRouteReveal, useActiveRowReveal } from "./routeReveal";
+import { PERSISTED_STATE_KEY, useUiStateStore } from "../../uiStateStore";
+import {
+  type SidebarRouteReveal,
+  useActiveRowReveal,
+  useSidebarScopeRoutePersistence,
+} from "./routeReveal";
 
 const ROW_HEIGHT_PX = 24;
 
@@ -28,6 +33,34 @@ function RevealList(props: {
 
 const rowKeys = (count: number) => Array.from({ length: count }, (_, index) => `thread-${index}`);
 const newReveal = (): SidebarRouteReveal => ({ observedKey: null, pendingKey: null });
+
+function PersistScopeRoute({ routeKey }: { readonly routeKey: string }) {
+  useSidebarScopeRoutePersistence({ routeKey, widensScope: false });
+  return null;
+}
+
+it("releases the persisted group hold after navigation leaves its thread", async () => {
+  const previous = useUiStateStore.getState();
+  const persisted = localStorage.getItem(PERSISTED_STATE_KEY);
+  using _state = {
+    [Symbol.dispose]() {
+      useUiStateStore.setState(previous);
+      if (persisted === null) localStorage.removeItem(PERSISTED_STATE_KEY);
+      else localStorage.setItem(PERSISTED_STATE_KEY, persisted);
+    },
+  };
+  useUiStateStore.setState({ projectCollections: [{ id: "group", name: "Group", members: [] }] });
+  useUiStateStore.getState().selectProjectCollection("group", "env:t");
+  // The route is supplied as a prop to exercise the persistence hook without a router shell.
+  await using screen = await render(<PersistScopeRoute routeKey="env:t" />, { router: false });
+  expect(useUiStateStore.getState().sidebarScopeRouteKey).toBe("env:t");
+  await screen.rerender(<PersistScopeRoute routeKey="env:u" />);
+  expect(useUiStateStore.getState().sidebarScopeRouteKey).toBeNull();
+  expect(JSON.parse(localStorage.getItem(PERSISTED_STATE_KEY) ?? "{}")).toMatchObject({
+    sidebarScopeRouteKey: null,
+  });
+  expect(useUiStateStore.getState().activeProjectCollectionId).toBe("group");
+});
 
 describe("useActiveRowReveal", () => {
   it("scrolls an off-screen row into view when the route opens its thread", async () => {

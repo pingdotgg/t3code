@@ -1,4 +1,6 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
+import { useThreadSelectionStore } from "../../threadSelectionStore";
+import { useUiStateStore } from "../../uiStateStore";
 
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 
@@ -48,6 +50,36 @@ export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string 
 }
 
 type RevealableThread = Parameters<typeof filterSidebarV2VisibleThreads>[0][number];
+
+export function useSidebarScopeRoutePersistence(input: {
+  readonly widensScope: boolean;
+  readonly routeKey: string | null;
+}) {
+  const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
+  const selectCollection = useUiStateStore((state) => state.selectProjectCollection);
+  const heldRouteKey = useUiStateStore((state) => state.sidebarScopeRouteKey);
+  const holdScopeRoute = useUiStateStore((state) => state.holdSidebarScopeRoute);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists route-driven scope changes and releases saved holds when navigation leaves their thread
+  useEffect(() => {
+    if (input.widensScope) {
+      clearSelection();
+      selectCollection(null, null);
+    } else if (
+      input.routeKey !== null &&
+      heldRouteKey !== null &&
+      input.routeKey !== heldRouteKey
+    ) {
+      holdScopeRoute(null);
+    }
+  }, [
+    clearSelection,
+    input.widensScope,
+    selectCollection,
+    input.routeKey,
+    heldRouteKey,
+    holdScopeRoute,
+  ]);
+}
 
 // Render records the route before deciding, so the first render of a new route
 // already widens the scope. Only a route reveal widens: the once-per-mount

@@ -231,6 +231,7 @@ import {
   resolveSidebarRouteReveal,
   type SidebarRouteReveal,
   useActiveRowReveal,
+  useSidebarScopeRoutePersistence,
 } from "./sidebar/routeReveal";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
@@ -1150,12 +1151,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // scope. Route changes arrive from history, links and the palette, and only this
   // component holds the project groups that decide a widening, so no single
   // navigation handler can make the write.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes a route reveal's widened project scope back to the persisted sidebar scope and clears selection
-  useEffect(() => {
-    if (!revealWidensScope) return;
-    clearSelection();
-    selectCollection(null, null);
-  }, [clearSelection, revealWidensScope, selectCollection]);
+  useSidebarScopeRoutePersistence({ widensScope: revealWidensScope, routeKey: routeThreadKey });
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
