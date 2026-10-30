@@ -42,7 +42,8 @@ import {
   handoffBudget,
   attachmentTokenAllowance,
   contextUsageForHandoff,
-  historicalMessage,
+  historicalText,
+  isHistoricalItem,
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
@@ -970,16 +971,12 @@ export const layer: Layer.Layer<
                       !legacyRecoveredRunIds.has(item.runId)));
                 if (item.runId === run.id || (!acceptedNatively && !deliveredItemIds.has(item.id)))
                   return sum;
-                const historical = historicalMessage(item);
+                const text = historicalText(item);
                 const nativeAttachments =
                   item.type === "user_message" && acceptedNatively
                     ? attachmentTokenAllowance(item.attachments)
                     : 0;
-                return (
-                  sum +
-                  (historical === null ? 0 : Buffer.byteLength(historical.text)) +
-                  nativeAttachments
-                );
+                return sum + (text === null ? 0 : Buffer.byteLength(text)) + nativeAttachments;
               }, 0)
             : 0;
         });
@@ -1039,7 +1036,7 @@ export const layer: Layer.Layer<
                     item.runId !== null &&
                     missedRunIds.has(item.runId) &&
                     !coveredItemIds.has(item.id) &&
-                    historicalMessage(item) !== null,
+                    isHistoricalItem(item),
                 );
           const retryHandoff =
             missedItems.length === 0
@@ -1074,6 +1071,11 @@ export const layer: Layer.Layer<
             type: "provider_resume_fallback",
           });
           const createdAt = yield* DateTime.now;
+          const earlierRunIds = new Set(
+            projection.runs
+              .filter((source) => source.ordinal < run.ordinal)
+              .map((source) => source.id),
+          );
           const handoff = yield* contextHandoffService.prepareProviderHandoff({
             threadId: projection.thread.id,
             targetRunId: run.id,
@@ -1086,11 +1088,7 @@ export const layer: Layer.Layer<
             strategy: "full_thread_summary",
             runs: projection.runs,
             items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
-              (item) =>
-                item.runId === null ||
-                projection.runs.some(
-                  (source) => source.id === item.runId && source.ordinal < run.ordinal,
-                ),
+              (item) => item.runId === null || earlierRunIds.has(item.runId),
             ),
             createdAt,
           });
