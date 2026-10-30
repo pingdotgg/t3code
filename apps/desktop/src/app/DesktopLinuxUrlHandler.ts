@@ -290,7 +290,10 @@ export const make = Effect.gen(function* () {
       return;
     }
     yield* writeDesktopEntry;
-    if (!environment.isPackaged) return;
+    // Linux distro packages run a shared (unpackaged) Electron but provide a
+    // stable executable for OAuth callbacks. Only leave registration to the
+    // developer when neither a packaged app nor a distro launcher is present.
+    if (!environment.isPackaged && Option.isNone(environment.desktopLauncherPath)) return;
 
     yield* Effect.gen(function* () {
       const { png } = yield* assets.iconPaths;
