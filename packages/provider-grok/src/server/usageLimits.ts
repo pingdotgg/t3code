@@ -15,12 +15,12 @@ import {
 } from "@t3tools/provider-core/server/usageLimits";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-const GrokCredentials = Schema.Record(
+export const GrokCredentials = Schema.Record(
   Schema.String,
   Schema.Struct({
     key: Schema.optional(Schema.String),
     auth_mode: Schema.optional(Schema.String),
-    email: Schema.optional(Schema.String),
+    email: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 );
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(GrokCredentials));
