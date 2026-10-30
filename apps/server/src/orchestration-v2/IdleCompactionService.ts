@@ -13,22 +13,23 @@ import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Stream from "effect/Stream";
 
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { idleCompactionWindow } from "./IdleCompaction.ts";
+import { idleCompactionAction, idleCompactionWindow } from "./IdleCompaction.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 /**
- * Beta: when a run completes on a Claude instance set to compact before the
- * cache expires, waits until shortly before its prompt cache expires and sends
- * `/compact` as a visible T3 Code turn. Timers live in
- * memory, so a server restart skips compactions that were still waiting.
+ * Beta: sends `/compact` shortly before a completed Claude run's prompt cache
+ * expires, or at once with `compactBeforeUsageLimit` when a nearly spent usage
+ * limit outlasts the cache. Timers live in memory; a restart skips waiting ones.
  */
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
     function* (threadId: ThreadId, runId: RunId) {
@@ -39,9 +40,11 @@ export const make = Effect.gen(function* () {
         const claudeInstance = Object.hasOwn(current.providerInstances, thread.providerInstanceId)
           ? current.providerInstances[thread.providerInstanceId]?.driver === "claudeAgent"
           : thread.providerInstanceId === "claudeAgent";
+        const mode = resolveIdleCompaction(current, thread.providerInstanceId);
         if (
           !claudeInstance ||
-          resolveIdleCompaction(current, thread.providerInstanceId) !== "beforeCacheExpires" ||
+          mode === "off" ||
+          (mode !== "beforeCacheExpires" && !current.compactBeforeUsageLimit) ||
           !resolveProjectProviderInstanceEnabled(
             current,
             thread.projectId,
@@ -62,20 +65,26 @@ export const make = Effect.gen(function* () {
           ],
           { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
         );
-        if (
-          resolveIdleCompaction(current, records.thread.providerInstanceId) !==
-            "beforeCacheExpires" ||
-          !resolveProjectProviderInstanceEnabled(
-            current,
-            records.thread.projectId,
-            records.thread.providerInstanceId,
-          )
-        )
-          return;
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         const window = idleCompactionWindow(records, nowMs);
         if (window?.runId !== runId) return;
-        if (nowMs < window.startMs) {
+        // The instance snapshot, not the registry list: the registry applies the
+        // run's last usage update asynchronously and can still be behind here.
+        const instance = current.compactBeforeUsageLimit
+          ? yield* providerInstances.getInstance(thread.providerInstanceId)
+          : undefined;
+        const action = idleCompactionAction({
+          mode,
+          compactBeforeUsageLimit: current.compactBeforeUsageLimit,
+          window,
+          usageWindows:
+            instance === undefined
+              ? []
+              : ((yield* instance.snapshot.getSnapshot).usageLimits?.windows ?? []),
+          nowMs,
+        });
+        if (action === "skip") return;
+        if (action === "wait") {
           yield* Effect.sleep(Duration.millis(window.startMs - nowMs));
           continue;
         }
