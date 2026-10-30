@@ -133,9 +133,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           Effect.mapError(unavailable),
           Effect.map(Option.getOrUndefined),
         );
-        // A retry of an accepted launch replays it: it keeps the model it started
-        // with and skips the checks only a new launch needs, which the project
-        // may no longer pass, such as a base branch deleted since.
+        // A retry of an accepted launch replays it: without a modelSelection it keeps
+        // the launched model, and it skips the checks only a new launch needs, which
+        // the project may no longer pass, such as a base branch deleted since.
         const launched =
           input.clientRequestId === undefined
             ? null
@@ -210,7 +210,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
-        if (!replaying && input.modelSelection !== undefined)
+        // A retry's selection still reaches a new run, so replays are checked too.
+        if (input.modelSelection !== undefined)
           yield* resolveCyberAccessProgram(
             caller?.modelSelection,
             input.modelSelection.options ?? [],

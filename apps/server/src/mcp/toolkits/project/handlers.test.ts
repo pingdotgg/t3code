@@ -404,6 +404,23 @@ it.effect("a launch retried with the same clientRequestId replays the first one"
     expect(ids[2]).not.toEqual(ids[0]);
     // Without a key every launch is new.
     expect(ids[3]).not.toEqual(ids[4]);
+
+    // A retry still cannot choose a cyber access program.
+    const retried = yield* toolkit
+      .handle("t3_thread_launch", {
+        title: "Fix",
+        projectId,
+        message: "Fix the bug",
+        clientRequestId: "fix-1",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6-sol",
+          options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+        },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(retried.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(launched).toHaveLength(5);
   }),
 );
 
