@@ -20,9 +20,9 @@ import * as ProcessRunner from "../processRunner.ts";
 import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
 import {
   requestServiceLauncherStop,
-  SERVICE_TASK_NAME,
   serviceControlPipePath,
   serviceLauncherIsRunning,
+  serviceTaskName,
 } from "../serviceLauncher.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -57,7 +57,6 @@ export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
-const BOOT_SERVICE_TASK_NAME = SERVICE_TASK_NAME;
 /** Task Scheduler keeps its own copy; this one lets status and repair read the task back. */
 const BOOT_SERVICE_TASK_FILE = `${BOOT_SERVICE_NAME}-task.xml`;
 
@@ -420,6 +419,7 @@ export interface WindowsSession {
   readonly localAppData: string;
   /** `DOMAIN\user`, the account whose logon starts the task. */
   readonly userId: string;
+  readonly taskName: string;
   readonly systemRoot: string;
 }
 
@@ -431,7 +431,7 @@ function schtasksManager(input: {
   readonly stopLauncher: Effect.Effect<void, BootServiceCommandError>;
 }): BootServiceManager {
   const unitPath = input.path.join(input.session.localAppData, "t3code", BOOT_SERVICE_TASK_FILE);
-  const task = ["/TN", BOOT_SERVICE_TASK_NAME];
+  const task = ["/TN", input.session.taskName];
   const register = {
     step: "registering the scheduled task",
     command: "schtasks",
@@ -824,6 +824,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const windowsSession: WindowsSession = {
     localAppData: yield* windowsVariable("LOCALAPPDATA"),
     userId: `${yield* windowsVariable("USERDOMAIN")}\\${yield* windowsVariable("USERNAME")}`,
+    taskName: serviceTaskName(yield* windowsVariable("USERNAME")),
     systemRoot: (yield* windowsVariable("SystemRoot")) || "C:\\Windows",
   };
   // The unit is per user, so the launcher to stop is the one serving the installed unit's home.
@@ -840,7 +841,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     });
     // Agents the server left behind keep its console host, and so the task, running.
     yield* runner
-      .run({ command: "schtasks", args: ["/End", "/TN", BOOT_SERVICE_TASK_NAME] })
+      .run({ command: "schtasks", args: ["/End", "/TN", windowsSession.taskName] })
       .pipe(Effect.ignore);
   });
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
@@ -1052,10 +1053,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   ) {
     const [task, running] = yield* Effect.all(
       [
-        probe("schtasks", ["/Query", "/TN", BOOT_SERVICE_TASK_NAME, "/XML"]),
-        Effect.promise(() =>
-          serviceLauncherIsRunning(launcherControlPath(unit)).catch(() => false),
-        ),
+        probe("schtasks", ["/Query", "/TN", windowsSession.taskName, "/XML"]),
+        Effect.promise(() => serviceLauncherIsRunning(launcherControlPath(unit))),
       ],
       { concurrency: "unbounded" },
     );

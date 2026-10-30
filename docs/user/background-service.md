@@ -93,9 +93,11 @@ nobody is logged in at the Mac's screen can fail at the final start step; the
 service is still installed and will start at the next login.
 
 Windows starts the service when you log in and stops it when you sign out. It
-runs without a window as the `t3code` task in Task Scheduler, and Task
+runs without a window as the `t3code-<your user name>` task in Task Scheduler, and Task
 Scheduler starts it again within a minute if it exits. Lock the screen instead
-of signing out, and keep the PC awake, for unattended remote access.
+of signing out, and keep the PC awake, for unattended remote access. Installing
+over SSH while nobody is signed in at the PC can fail at the final start step;
+the service is still installed and will start at the next sign-in.
 
 `t3 up` installs the service when you set up T3 Connect, but the two are managed
 separately. Signing out of T3 Connect does not stop or uninstall the service.

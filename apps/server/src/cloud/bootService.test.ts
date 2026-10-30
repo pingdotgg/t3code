@@ -1264,8 +1264,8 @@ process.disconnect();
         activeVersion: "1.2.3",
       });
       expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual([
-        `schtasks /Create /XML ${plan.unitPath} /TN t3code /F`,
-        "schtasks /Run /TN t3code",
+        `schtasks /Create /XML ${plan.unitPath} /TN t3code-theo /F`,
+        "schtasks /Run /TN t3code-theo",
       ]);
       // No launcher answers the control pipe here.
       expect(yield* service.status).toMatchObject({
@@ -1277,9 +1277,9 @@ process.disconnect();
       commands.length = 0;
       expect(yield* service.uninstall).toBe(true);
       expect(commands).toEqual([
-        "schtasks /Change /TN t3code /DISABLE",
-        "schtasks /End /TN t3code",
-        "schtasks /Delete /TN t3code /F",
+        "schtasks /Change /TN t3code-theo /DISABLE",
+        "schtasks /End /TN t3code-theo",
+        "schtasks /Delete /TN t3code-theo /F",
       ]);
       expect((yield* service.status).installed).toBe(false);
     }),
@@ -1291,9 +1291,9 @@ process.disconnect();
       const plan = yield* service.install();
       const inside = yield* makeService(undefined, "1.2.4", undefined, true);
       const handoff = [
-        `schtasks /Create /XML ${plan.unitPath} /TN t3code /F`,
-        "schtasks /End /TN t3code",
-        "schtasks /Run /TN t3code",
+        `schtasks /Create /XML ${plan.unitPath} /TN t3code-theo /F`,
+        "schtasks /End /TN t3code-theo",
+        "schtasks /Run /TN t3code-theo",
       ];
       commands.length = 0;
 

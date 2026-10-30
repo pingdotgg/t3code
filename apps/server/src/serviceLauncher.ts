@@ -613,10 +613,10 @@ async function terminateChild(
   }
 }
 
-/** Keyed by T3 home, so only the launcher serving that home can answer. */
-/** The Windows scheduled task that runs the launcher. */
-export const SERVICE_TASK_NAME = "t3code";
+/** Task Scheduler names are machine-wide, so each Windows account runs its own task. */
+export const serviceTaskName = (userName: string) => `t3code-${userName}`;
 
+/** Keyed by T3 home, so only the launcher serving that home can answer. */
 export const serviceControlPipePath = (baseDir: string) =>
   `\\\\.\\pipe\\t3code-service-${NodeCrypto.createHash("sha256")
     .update(NodePath.resolve(baseDir).toLowerCase())
@@ -648,15 +648,13 @@ export function requestServiceLauncherStop(controlPath: string): Promise<boolean
 }
 
 export function serviceLauncherIsRunning(controlPath: string): Promise<boolean> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const socket = NodeNet.connect(controlPath, () => {
       socket.destroy();
       resolve(true);
     });
-    socket.once("error", (error) => {
-      if (isMissingControl(error)) resolve(false);
-      else reject(error);
-    });
+    // Any error but a missing pipe, such as a busy one, means a launcher holds it.
+    socket.once("error", (error) => resolve(!isMissingControl(error)));
   });
 }
 
@@ -1278,7 +1276,8 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     // Agents the server left behind keep the console host, and so the task, running; ending it
     // lets the next repeating trigger start the service again.
     if (windows && options.serviceUnit !== undefined) {
-      NodeChildProcess.spawnSync("schtasks", ["/End", "/TN", SERVICE_TASK_NAME], {
+      const taskName = serviceTaskName(process.env.USERNAME ?? "");
+      NodeChildProcess.spawnSync("schtasks", ["/End", "/TN", taskName], {
         stdio: "ignore",
         windowsHide: true,
       });
