@@ -4007,6 +4007,161 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
   });
 
+  describe("Full access safety checks", () => {
+    // Before 0.3.288 the SDK dropped decisionReasonType; rule, hook and plugin asks look the same.
+    const legacyShape = {
+      decisionReason: "Dangerous rm operation not ruled out",
+      suppressAlwaysAllowRule: true,
+    };
+    const safetyCheck = { ...legacyShape, decisionReasonType: "safetyCheck" };
+    const bypass = "bypassPermissions";
+
+    it.effect.each([
+      {
+        name: "approves a safety check",
+        approve: true,
+        check: safetyCheck,
+        cliMode: bypass,
+        asks: false,
+      },
+      {
+        name: "asks for a safety check",
+        approve: false,
+        check: safetyCheck,
+        cliMode: bypass,
+        asks: true,
+      },
+      {
+        name: "asks for a safety check an ask rule matched",
+        approve: true,
+        check: {
+          ...safetyCheck,
+          matchedAskRule: { source: "userSettings", toolName: "Bash", ruleContent: "rm:*" },
+        },
+        cliMode: bypass,
+        asks: true,
+      },
+      {
+        name: "asks without a decision type",
+        approve: true,
+        check: legacyShape,
+        cliMode: bypass,
+        asks: true,
+      },
+      {
+        name: "asks for a rule ask",
+        approve: true,
+        check: { ...legacyShape, decisionReasonType: "rule" },
+        cliMode: bypass,
+        asks: true,
+      },
+      {
+        name: "asks for a hook ask",
+        approve: true,
+        check: { ...legacyShape, decisionReasonType: "hook" },
+        cliMode: bypass,
+        asks: true,
+      },
+      {
+        name: "asks for an ask of another type",
+        approve: true,
+        check: { ...legacyShape, decisionReasonType: "other" },
+        cliMode: bypass,
+        asks: true,
+      },
+      {
+        name: "asks for a safety check only a person may answer",
+        approve: true,
+        check: { ...safetyCheck, requiresUserInteraction: true },
+        cliMode: bypass,
+        asks: true,
+      },
+      {
+        name: "asks after the CLI leaves bypass",
+        approve: true,
+        check: safetyCheck,
+        cliMode: "default",
+        asks: true,
+      },
+      {
+        name: "asks before the CLI reports its mode",
+        approve: true,
+        check: safetyCheck,
+        cliMode: null,
+        asks: true,
+      },
+      {
+        name: "asks for a subagent safety check",
+        approve: true,
+        check: { ...safetyCheck, agentID: "child-worker" },
+        cliMode: bypass,
+        asks: true,
+      },
+    ] as const)("$name when the setting is $approve", ({ approve, check, cliMode, asks }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, approveSafetyChecksInFullAccess: approve },
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-safety-check"),
+            text: "Clean the build output.",
+            attachments: [],
+          }),
+        );
+        assert.equal(harness.getOpenedOptions()?.permissionMode, "bypassPermissions");
+        if (cliMode !== null) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "init",
+              permissionMode: cliMode,
+              uuid: "safety-check-cli-init",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        const toolInput = { command: 'rm -rf "$OUT"/build' };
+        const decision = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!("Bash", toolInput, {
+            signal: new AbortController().signal,
+            toolUseID: "safety-check",
+            requestId: "request-safety-check",
+            ...check,
+          }),
+        ).pipe(Effect.forkScoped);
+        const first = yield* Effect.raceFirst(
+          Queue.take(harness.runtimeRequestReceipts).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(decision).pipe(
+            Effect.map((result) => ({ type: "decision", result }) as const),
+          ),
+        );
+        if (asks) {
+          assert.equal(first.type, "request", "the request was approved without asking");
+          return;
+        }
+        assert.equal(first.type, "decision", "the safety check still asked");
+        if (first.type === "decision") {
+          assert.deepEqual(first.result, {
+            behavior: "allow",
+            updatedInput: toolInput,
+            toolUseID: "safety-check",
+          });
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+  });
+
   describe("Plan-mode tool approval", () => {
     const openPlanTurn = Effect.fn("openPlanTurn")(function* (
       runtimeMode: "auto" | "full-access",

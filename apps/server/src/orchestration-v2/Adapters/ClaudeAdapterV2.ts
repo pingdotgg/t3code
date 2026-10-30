@@ -3371,6 +3371,16 @@ export function claudeApprovalPresentation(input: {
   };
 }
 
+// The SDK forwards the CLI's decision_reason_type and requires_user_interaction (since 0.3.288)
+// without declaring them. Rule, hook, plugin and compound-command asks carry other types.
+function isClaudeSafetyCheckAsk(options: Parameters<CanUseTool>[2]): boolean {
+  return (
+    "decisionReasonType" in options &&
+    options.decisionReasonType === "safetyCheck" &&
+    !("requiresUserInteraction" in options && options.requiresUserInteraction === true)
+  );
+}
+
 export function permissionResultFromDecision(input: {
   readonly toolName: string;
   readonly decision: ProviderApprovalDecision;
@@ -9644,17 +9654,35 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             callbackOptions.description ??
             callbackOptions.decisionReason ??
             summarizeClaudeToolRequest(toolName, nativeToolInput);
+          const presentation = claudeApprovalPresentation({
+            permissionMode: context.queryPolicy.permissionMode,
+            prompt,
+            callbackOptions,
+          });
+          const liveQuery = yield* Ref.get(queryContext);
+          if (
+            adapterOptions.settings.approveSafetyChecksInFullAccess &&
+            presentation.fullAccessOverride === "provider_check" &&
+            isClaudeSafetyCheckAsk(callbackOptions) &&
+            // A subagent can run in its own permission mode, which the parent cannot see.
+            callbackOptions.agentID === undefined &&
+            // The CLI's mode frames can trail its asks, so require the bypass it confirmed.
+            liveQuery?.receivedInit === true &&
+            liveQuery.permissionMode === "bypassPermissions"
+          ) {
+            return {
+              behavior: "allow",
+              updatedInput: toolInput,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
           const artifacts = yield* buildApprovalRequestArtifacts({
             context,
             nativeItemId: nativeRequestId,
             nativeRequestId,
             requestKind,
             prompt,
-            presentation: claudeApprovalPresentation({
-              permissionMode: context.queryPolicy.permissionMode,
-              prompt,
-              callbackOptions,
-            }),
+            presentation,
           });
           const decision = yield* Deferred.make<ClaudeApprovalResponse, never>();
           yield* Ref.update(pendingRuntimeRequests, (current) => {

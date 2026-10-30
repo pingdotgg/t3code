@@ -104,6 +104,7 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
   launchArgs: "",
   autoCompactWindow: "",
   idleCompaction: "default",
+  approveSafetyChecksInFullAccess: false,
   ...overrides,
 });
 
