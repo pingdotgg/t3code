@@ -103,6 +103,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadForceStop: Schema.optionalKey(Schema.Boolean),
   /** Sends `memoryPressureUpdated` to config subscribers that ask for it. */
   memoryPressure: Schema.optionalKey(Schema.Boolean),
+  /** Sends `quietRunsUpdated` to config subscribers that ask for it. */
+  quietRuns: Schema.optionalKey(Schema.Boolean),
   /** Every protocol-2 server sends this; older mobile builds still read it. */
   environmentThemes: Schema.optionalKey(Schema.Boolean),
   usageLimitSources: Schema.optionalKey(Schema.Boolean),

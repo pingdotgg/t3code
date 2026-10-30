@@ -13,6 +13,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  RunId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -607,6 +608,15 @@ export const ServerEventLoopStall = Schema.Struct({
 });
 export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
 
+/** A running turn whose provider has sent nothing since `quietSince`. */
+export const ServerQuietRun = Schema.Struct({
+  threadId: ThreadId,
+  /** The quiet run itself, so Stop and Force stop cannot reach a newer one. */
+  runId: RunId,
+  quietSince: Schema.DateTimeUtc,
+});
+export type ServerQuietRun = typeof ServerQuietRun.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -661,6 +671,8 @@ export const ServerConfig = Schema.Struct({
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
   /** Stream-only and opt-in, like `usageLimitSources`; absent while there is none. */
   memoryPressure: Schema.optional(HostMemoryPressure),
+  /** Stream-only and opt-in; turns quiet for ten minutes or more. */
+  quietRuns: Schema.optional(Schema.Array(ServerQuietRun)),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -790,6 +802,14 @@ export const ServerConfigStreamMemoryPressureUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamMemoryPressureUpdatedEvent =
   typeof ServerConfigStreamMemoryPressureUpdatedEvent.Type;
 
+export const ServerConfigStreamQuietRunsUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("quietRunsUpdated"),
+  payload: Schema.Struct({ runs: Schema.Array(ServerQuietRun) }),
+});
+export type ServerConfigStreamQuietRunsUpdatedEvent =
+  typeof ServerConfigStreamQuietRunsUpdatedEvent.Type;
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
@@ -798,6 +818,7 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
   ServerConfigStreamMemoryPressureUpdatedEvent,
+  ServerConfigStreamQuietRunsUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

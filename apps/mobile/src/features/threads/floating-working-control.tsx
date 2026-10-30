@@ -85,7 +85,8 @@ export function FloatingWorkingControl(props: {
   const action =
     props.status?.kind === "background" ||
     props.status?.kind === "lifecycle" ||
-    props.status?.kind === "stop"
+    props.status?.kind === "stop" ||
+    props.status?.kind === "quiet"
       ? props.status.action
       : null;
   const [agentsWidth, setAgentsWidth] = useState(0);
@@ -179,7 +180,9 @@ export function FloatingWorkingControl(props: {
         >
           <FloatingStatusLabel
             key={
-              props.status.kind === "working" || props.status.kind === "compacting"
+              props.status.kind === "working" ||
+              props.status.kind === "compacting" ||
+              props.status.kind === "quiet"
                 ? props.status.kind
                 : `${props.status.kind}:${props.status.label}`
             }
@@ -473,6 +476,24 @@ function FloatingStatusLabel(props: {
       </StatusLabelRow>
     );
   }
+  if (props.status.kind === "quiet") {
+    return (
+      <StatusLabelRow
+        key="quiet"
+        accessibilityLabel="No activity from the agent"
+        className="gap-2"
+        onLayout={props.onLayout}
+      >
+        <SymbolView
+          name="timer"
+          size={13}
+          tintColorClassName="accent-warning-foreground"
+          type="monochrome"
+        />
+        <WorkingTimer startedAt={props.status.quietSince} prefix="No activity for" />
+      </StatusLabelRow>
+    );
+  }
   if (props.status.kind === "stop") {
     return (
       <StatusLabelRow
@@ -588,7 +609,7 @@ function WorkingDuration(props: {
   );
 }
 
-function WorkingTimer(props: { readonly startedAt: string }) {
+function WorkingTimer(props: { readonly startedAt: string; readonly prefix?: string }) {
   const nowMs = useVisibleSecondClock(true);
   return (
     <SystemText
@@ -596,7 +617,7 @@ function WorkingTimer(props: { readonly startedAt: string }) {
       numberOfLines={1}
       style={{ fontVariant: ["tabular-nums"], fontWeight: "500" }}
     >
-      Working {formatWorkingDuration(props.startedAt, nowMs)}
+      {props.prefix ?? "Working"} {formatWorkingDuration(props.startedAt, nowMs)}
     </SystemText>
   );
 }

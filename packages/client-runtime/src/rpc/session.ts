@@ -62,6 +62,7 @@ export interface RpcSessionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly memoryPressure?: boolean;
+  readonly quietRuns?: boolean;
   readonly usageLimitsCommand?: boolean;
 }
 
@@ -100,6 +101,10 @@ type MemoryPressureUpdatedEvent = Extract<
   ServerConfigStreamEvent,
   { readonly type: "memoryPressureUpdated" }
 >;
+type QuietRunsUpdatedEvent = Extract<
+  ServerConfigStreamEvent,
+  { readonly type: "quietRunsUpdated" }
+>;
 
 interface ServerConfigReplayState {
   readonly projection: ServerConfigProjection;
@@ -107,6 +112,7 @@ interface ServerConfigReplayState {
   readonly themesEvent: EnvironmentThemesUpdatedEvent | undefined;
   readonly sourcesEvent: UsageLimitSourcesUpdatedEvent | undefined;
   readonly pressureEvent: MemoryPressureUpdatedEvent | undefined;
+  readonly quietRunsEvent: QuietRunsUpdatedEvent | undefined;
 }
 
 interface BufferedServerConfigEvent {
@@ -128,6 +134,7 @@ function serverConfigReplayEvents(
     ...(state.themesEvent === undefined ? [] : [state.themesEvent]),
     ...(state.sourcesEvent === undefined ? [] : [state.sourcesEvent]),
     ...(state.pressureEvent === undefined ? [] : [state.pressureEvent]),
+    ...(state.quietRunsEvent === undefined ? [] : [state.quietRunsEvent]),
   ];
 }
 
@@ -178,6 +185,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
     ...(options.memoryPressure === true ? { memoryPressure: true } : {}),
+    ...(options.quietRuns === true ? { quietRuns: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
   };
   // Config state merges the snapshots it fetches back in, so no subscriber needs them broadcast.
@@ -305,6 +313,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
                 event.type === "memoryPressureUpdated"
                   ? event
                   : Option.getOrUndefined(current)?.pressureEvent,
+              quietRunsEvent:
+                event.type === "quietRunsUpdated"
+                  ? event
+                  : Option.getOrUndefined(current)?.quietRunsEvent,
             } satisfies ServerConfigReplayState;
             return [
               Option.some({ event, replay: next, revision: next.revision }),

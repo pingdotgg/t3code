@@ -288,6 +288,7 @@ it.effect(
           detach: () => Effect.void,
           otherWorkingThreads: () => Effect.succeed([]),
           releaseUnlessBusy: () => Effect.succeed(true),
+          quietRuns: Stream.empty,
         }),
       );
       const layerControl = ProviderTurnControlService.layer.pipe(

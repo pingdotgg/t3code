@@ -2,7 +2,9 @@ import {
   EnvironmentId,
   ServerSelfUpdateError,
   ProviderInstanceId,
+  RunId,
   ServerObservability,
+  ThreadId,
   EnvironmentThemeId,
   UsageLimitSourceId,
   type ServerConfig,
@@ -13,6 +15,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1294,6 +1297,13 @@ describe("server state projection", () => {
                 level: "severe",
                 heaviestAgents: [],
               },
+              quietRuns: [
+                {
+                  threadId: ThreadId.make("thread-quiet"),
+                  runId: RunId.make("run-quiet"),
+                  quietSince: DateTime.makeUnsafe(0),
+                },
+              ],
             },
           });
           const projected = yield* SubscriptionRef.changes(state).pipe(
@@ -1316,6 +1326,7 @@ describe("server state projection", () => {
       expect(saved).not.toHaveProperty("lastEventLoopStall");
       // Never read back, and changes every sample while memory is short.
       expect(saved).not.toHaveProperty("memoryPressure");
+      expect(saved).not.toHaveProperty("quietRuns");
     }),
   );
 });

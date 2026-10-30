@@ -12,6 +12,8 @@ import {
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
+  type RunId,
+  type ServerConfig,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
@@ -341,6 +343,52 @@ export function presentRunStop(
     requestedAt: DateTime.formatIso(request.startedAt ?? request.updatedAt),
     background: active === null,
   };
+}
+
+// The set refreshes every 30 s, so a follow-up can start before it drops a finished run.
+export interface QuietRunThread {
+  readonly id: ThreadId;
+  readonly runtime: Pick<ThreadRuntimeSummary, "activeRunId"> | null;
+  readonly hasPendingApprovals: boolean;
+  readonly hasPendingUserInput: boolean;
+  readonly pendingSubagentRequest?: unknown;
+  readonly blockedOnThreadWait?: boolean | undefined;
+}
+
+// A run waiting on the user or another thread is silent by design, not stuck.
+const activeQuietRun = (
+  config: Pick<ServerConfig, "quietRuns"> | null | undefined,
+  thread: QuietRunThread,
+) => {
+  const activeRunId = thread.runtime?.activeRunId;
+  if (
+    activeRunId == null ||
+    thread.hasPendingApprovals ||
+    thread.hasPendingUserInput ||
+    thread.pendingSubagentRequest != null ||
+    thread.blockedOnThreadWait === true
+  )
+    return undefined;
+  return config?.quietRuns?.find(
+    (candidate) => candidate.threadId === thread.id && candidate.runId === activeRunId,
+  );
+};
+
+/** The quiet run itself, so Stop and Force stop cannot reach a newer one. */
+export function quietRunId(
+  config: Pick<ServerConfig, "quietRuns"> | null | undefined,
+  thread: QuietRunThread,
+): RunId | null {
+  return activeQuietRun(config, thread)?.runId ?? null;
+}
+
+/** When the active run last heard from its provider, once that is long enough ago to flag. */
+export function quietRunSince(
+  config: Pick<ServerConfig, "quietRuns"> | null | undefined,
+  thread: QuietRunThread,
+): string | null {
+  const run = activeQuietRun(config, thread);
+  return run === undefined ? null : DateTime.formatIso(run.quietSince);
 }
 
 export interface PendingBackgroundWorkItem {

@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  PlanId,
   type Project,
   ProjectId,
   ProviderDriverKind,
@@ -433,6 +434,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
           startTurn: () => options.startTurn ?? Effect.void,
+          compactThread: () => Effect.void,
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -1407,6 +1409,223 @@ it.effect("ProviderSessionManagerV2 gives up on a provider that never confirms a
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, interruptTurn: Effect.never })),
     );
   }),
+);
+
+it.effect.each(["startTurn", "compactThread"] as const)(
+  "ProviderSessionManagerV2 flags a quiet %s, despite an older run's late terminal, until the provider speaks",
+  (start) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-quiet-run");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const quiet = yield* manager.quietRuns.pipe(
+          Stream.map((runs) => runs.map((run) => [run.threadId, run.runId])),
+          Stream.take(3),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        const startRun = Effect.fnUntraced(function* (ordinal: number) {
+          const runId = idAllocator.derive.run({ threadId, ordinal });
+          yield* runtime[start]!({
+            appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal }),
+              text: "turn",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          });
+        });
+        const publish = Effect.fnUntraced(function* (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+        ) {
+          // Each read ends its subscription, so every event needs its own.
+          const subscription = yield* runtime.subscribeEvents!;
+          yield* Queue.offer(
+            (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!,
+            event,
+          );
+          // Observing the event ensures the manager handled it first.
+          yield* subscription.events.pipe(Stream.runHead);
+        });
+        yield* startRun(1);
+        yield* startRun(2);
+        // Late enough that refreshing run 2 would push its flag past the threshold.
+        yield* TestClock.adjust(ProviderSessionManager.QUIET_RUN_AFTER_MS - 60_000);
+        yield* publish({
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-stopped-run",
+          }),
+          runOrdinal: 1,
+          status: "interrupted",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* TestClock.adjust(60_000);
+
+        yield* publish({ type: "provider_thread.updated", driver: CODEX_DRIVER, providerThread });
+        yield* TestClock.adjust("30 seconds");
+        assert.deepEqual(yield* Fiber.join(quiet), [
+          [],
+          [[threadId, idAllocator.derive.run({ threadId, ordinal: 2 })]],
+          [],
+        ]);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60 * 60_000 })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a quiet thread flagged while a sibling in its shared session works",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const quietThread = ThreadId.make("thread-provider-session-manager-quiet-sibling-a");
+        const busyThread = ThreadId.make("thread-provider-session-manager-quiet-sibling-b");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: quietThread, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: busyThread, now }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId: quietThread,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId: busyThread,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThreadOf = (threadId: ThreadId) =>
+          makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: `native-${threadId}`,
+          });
+        const quiet = yield* manager.quietRuns.pipe(
+          Stream.map((runs) => runs.map((run) => run.threadId)),
+          Stream.take(4),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        for (const threadId of [quietThread, busyThread]) {
+          const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+          yield* runtime.startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread: providerThreadOf(threadId),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+              text: "turn",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          });
+        }
+        yield* TestClock.adjust(ProviderSessionManager.QUIET_RUN_AFTER_MS);
+
+        const busyRunId = idAllocator.derive.run({ threadId: busyThread, ordinal: 1 });
+        for (const event of [
+          {
+            type: "provider_thread.updated",
+            driver: CODEX_DRIVER,
+            providerThread: providerThreadOf(busyThread),
+          },
+          // Session-level events that still name the sibling they belong to.
+          {
+            type: "plan.updated",
+            driver: CODEX_DRIVER,
+            plan: {
+              id: PlanId.make("plan-quiet-sibling"),
+              threadId: busyThread,
+              runId: busyRunId,
+              nodeId: idAllocator.derive.rootNode({ runId: busyRunId }),
+              status: "active",
+              kind: "todo_list",
+              steps: [],
+            },
+          },
+        ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) {
+          // Each read ends its subscription, so every event needs its own.
+          const subscription = yield* runtime.subscribeEvents!;
+          yield* Queue.offer(
+            (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!,
+            event,
+          );
+          yield* subscription.events.pipe(Stream.runHead);
+        }
+        yield* TestClock.adjust("30 seconds");
+        // Force stop detaches a thread from a shared session; no terminal ever arrives for it.
+        yield* manager.detach({ providerSessionId, threadId: quietThread });
+        yield* TestClock.adjust("30 seconds");
+        assert.deepEqual(yield* Fiber.join(quiet), [
+          [],
+          [quietThread, busyThread].toSorted(),
+          [quietThread],
+          [],
+        ]);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60 * 60_000 })));
+    }),
 );
 
 it.effect(
