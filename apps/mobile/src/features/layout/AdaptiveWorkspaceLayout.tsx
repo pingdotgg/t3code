@@ -7,10 +7,6 @@ import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area
 import { AdaptiveWorkspaceContext, useAdaptiveWorkspaceLayout } from "./adaptive-workspace-context";
 import { threadSelectionDeferral } from "./deferred-navigation";
 import { uuidv4 } from "../../lib/uuid";
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
@@ -44,7 +40,6 @@ import {
   isPrimarySidebarPinned,
   isWorkspaceListPath,
 } from "../../lib/layout";
-import { scopedThreadKey } from "../../lib/scopedEntities";
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
@@ -61,13 +56,11 @@ import {
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useEnabledNavigationTabs } from "../workspace/navigation-tabs";
 import { FLOATING_TABS, floatingTabsMetrics } from "../workspace/floating-workspace-tabs";
-import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
 import {
   AndroidWorkspaceNavigation,
   FloatingWorkspaceTabs,
   ANDROID_WORKSPACE_RAIL_WIDTH,
 } from "../workspace/AndroidWorkspaceNavigation";
-import { AndroidWorkspaceSidebar } from "../workspace/AndroidWorkspaceSidebar";
 import {
   selectWorkspaceDetail,
   type WorkspaceDetail,
@@ -77,9 +70,6 @@ import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { newTaskDestination } from "../threads/new-task-project-selection";
-import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
-import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
-import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { PaneContext } from "../../components/ui/Pane";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
@@ -97,7 +87,6 @@ import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { AndroidHingeObserver } from "../../native/AndroidHingeObserver";
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { useAndroidWorkspaceRoot } from "../workspace/AndroidWorkspaceTabsProvider";
-import { openSettings } from "../settings/settings-navigation";
 import { dispatchRootStackReset, rootStackState } from "../../lib/root-stack-reset";
 import {
   currentWorkspaceSelections,
@@ -110,6 +99,7 @@ import {
 import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
+import { WorkspaceThreadSidebar } from "../workspace/WorkspaceThreadSidebar";
 
 export { useAdaptiveWorkspaceLayout };
 
@@ -187,7 +177,6 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly pathname: string;
   readonly workspaceRouteKey: string | undefined;
   readonly workspaceRouteName: string | undefined;
-  readonly selectedPullRequestKey?: string | null;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   if (!AsyncResult.isSuccess(preferencesResult)) {
@@ -214,7 +203,6 @@ function AdaptiveWorkspaceLayoutContent(
     readonly pathname: string;
     readonly workspaceRouteKey: string | undefined;
     readonly workspaceRouteName: string | undefined;
-    readonly selectedPullRequestKey?: string | null;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
     readonly savedThreadListFilters?: ThreadListFilters | undefined;
@@ -375,26 +363,6 @@ function AdaptiveWorkspaceLayoutContent(
       workspacePage,
     ],
   );
-  const activeThread = parseActiveThreadPath(pathname);
-  const environmentId = activeThread?.environmentId ?? null;
-  const threadId = activeThread?.threadId ?? null;
-  const selectedThreadRef = (() => {
-    if (environmentId === null || threadId === null) {
-      return null;
-    }
-    try {
-      return {
-        environmentId: EnvironmentId.make(environmentId),
-        threadId: ThreadId.make(threadId),
-      };
-    } catch {
-      return null;
-    }
-  })();
-  const selectedThreadKey =
-    selectedThreadRef === null
-      ? null
-      : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
   // Routes still on the stack remember their reveal, so going back to one keeps the user's choice.
   const revealedInspectors = useRef<ReadonlyMap<string, string>>(new Map());
   const workspaceInspectorOwner = useRef<symbol | null>(null);
@@ -570,38 +538,6 @@ function AdaptiveWorkspaceLayoutContent(
     return true;
   });
 
-  // Create at root: the iOS sidebar renders in an independent navigation tree.
-  const handleOpenEnvironmentSettings = () => {
-    openSettings(navigation, "SettingsEnvironments");
-  };
-
-  const handleOpenThreadPullRequests = useOpenThreadPullRequests();
-  const { openPendingTask: handleOpenPendingTask } =
-    usePendingTaskListActions(handleSelectThreadRoute);
-
-  const handleNewThreadOnBranch = (thread: EnvironmentThreadShell) => {
-    handleSelectThreadRoute({
-      draft: {
-        requestId: uuidv4(),
-        environmentId: String(thread.environmentId),
-        projectId: String(thread.projectId),
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-      },
-    });
-  };
-
-  const handleNewThreadInProject = (project: EnvironmentProject) => {
-    handleSelectThreadRoute({
-      draft: {
-        requestId: uuidv4(),
-        environmentId: String(project.environmentId),
-        projectId: String(project.id),
-        title: project.title,
-      },
-    });
-  };
-
   const inspectorColumnTargetWidth = panes.auxiliaryPaneVisible
     ? (panes.auxiliaryPaneWidth ?? 0)
     : 0;
@@ -764,13 +700,6 @@ function AdaptiveWorkspaceLayoutContent(
     ),
   );
 
-  const handleSelectThread = (thread: EnvironmentThreadShell) => {
-    handleSelectThreadRoute({
-      environmentId: String(thread.environmentId),
-      threadId: String(thread.id),
-    });
-  };
-
   // Rotating flips the overlay; until the new size reaches JS, predict the reset above.
   const sidebarOverRotates =
     nativeWorkspace && nativeMetrics?.hasHinge === true && layout.usesSplitView;
@@ -802,6 +731,7 @@ function AdaptiveWorkspaceLayoutContent(
     toggleAuxiliaryPane,
     sidebarToggleable: layout.usesSplitView && !primarySidebarPinned && !workspacePage,
     togglePrimarySidebar,
+    revealPrimarySidebar,
     setPrimarySidebarVisible,
     openWorkspaceTab,
     setAuxiliaryPaneWidth: setFileInspectorPreferredWidth,
@@ -826,7 +756,7 @@ function AdaptiveWorkspaceLayoutContent(
       </HomeListOptionsProvider>
     );
   }
-  const renderColumns = (children: ReactNode) => (
+  const renderColumns = (children: ReactNode, sidebar?: ReactNode) => (
     <View
       testID="adaptive-workspace-layout"
       className={Platform.OS === "android" ? "flex-1 flex-row bg-header" : "flex-1 flex-row"}
@@ -863,33 +793,8 @@ function AdaptiveWorkspaceLayoutContent(
                   />
                 )}
               >
-                <AndroidWorkspaceSidebar
-                  onRequestVisibility={revealPrimarySidebar}
-                  selectedPullRequestKey={props.selectedPullRequestKey ?? null}
-                >
-                  <AndroidHomeFabLayout
-                    sidebar
-                    disabled={workspacePage}
-                    paneWidth={layout.listPaneWidth}
-                    onStartNewTask={handleStartNewTask}
-                  >
-                    <ThreadNavigationSidebar
-                      width={layout.listPaneWidth}
-                      visible={panes.primarySidebarVisible}
-                      onRequestVisibility={revealPrimarySidebar}
-                      selectedThreadKey={selectedThreadKey}
-                      onOpenSettings={handleOpenSettings}
-                      onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
-                      onNewThreadInProject={handleNewThreadInProject}
-                      onNewThreadOnBranch={handleNewThreadOnBranch}
-                      onOpenPendingTask={handleOpenPendingTask}
-                      onSelectThread={handleSelectThread}
-                      onOpenThreadPullRequests={handleOpenThreadPullRequests}
-                      onSearchQueryChange={setPrimarySidebarSearchQuery}
-                      searchQuery={primarySidebarSearchQuery}
-                    />
-                  </AndroidHomeFabLayout>
-                </AndroidWorkspaceSidebar>
+                {/* Without a sidebar route (iPadOS before 26) the columns draw the thread list. */}
+                {sidebar ?? <WorkspaceThreadSidebar />}
               </RenderErrorBoundary>
             </PaneContext>
             {/* Keep the pill under the content throughout the sidebar's clipping animation. */}
