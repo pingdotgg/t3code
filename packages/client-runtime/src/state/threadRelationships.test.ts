@@ -4,10 +4,13 @@ import * as DateTime from "effect/DateTime";
 
 import {
   deriveThreadRelationshipGraph,
+  groupWebThreadLineageRows,
   immediateThreadRelationships,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
   threadRelationshipRowStatus,
+  type RemoteSubagent,
+  type ThreadRelationshipWalkRow,
 } from "./threadRelationships.ts";
 
 describe("thread relationships", () => {
@@ -403,5 +406,41 @@ describe("web thread lineage ordering", () => {
         },
       }),
     ).toEqual([dated, missingTransfer, undated]);
+  });
+});
+
+describe("web thread lineage grouping", () => {
+  it("moves finished subagents into previous, including ones in a linked environment", () => {
+    const row = (threadId: string, kind: "fork" | "subagent", status: string) =>
+      ({
+        threadId: ThreadId.make(threadId),
+        fromThreadId: current,
+        depth: 1,
+        edge: { sourceThreadId: current, targetThreadId: ThreadId.make(threadId), kind, status },
+      }) satisfies ThreadRelationshipWalkRow;
+    const remote = (id: string, status: string) =>
+      ({
+        id,
+        status,
+        childThreadId: null,
+        remoteChild: { label: "box" },
+      }) as never as RemoteSubagent;
+    const fork = row("thread-fork", "fork", "completed");
+    const localRunning = row("thread-local-running", "subagent", "running");
+    const localDone = row("thread-local-done", "subagent", "completed");
+    const remoteRunning = remote("remote-running", "running");
+    const remoteDone = remote("remote-done", "completed");
+
+    expect(
+      groupWebThreadLineageRows({
+        rows: [fork, localRunning, localDone],
+        remoteSubagents: [remoteRunning, remoteDone],
+        currentThreadId: current,
+      }),
+    ).toEqual({
+      related: [fork],
+      active: [localRunning, remoteRunning],
+      previous: [localDone, remoteDone],
+    });
   });
 });

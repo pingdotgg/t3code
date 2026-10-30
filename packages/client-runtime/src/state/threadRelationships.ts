@@ -1,5 +1,7 @@
 import {
   isOrchestrationV2WorkActive,
+  type OrchestrationV2RemoteTaskChild,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type ThreadId,
@@ -199,4 +201,48 @@ export function orderWebThreadLineageRows(input: {
     }
     return left.threadId < right.threadId ? -1 : left.threadId > right.threadId ? 1 : 0;
   });
+}
+
+const PREVIOUS_SUBAGENT_STATUSES: ReadonlySet<string | null> = new Set([
+  "completed",
+  "failed",
+  "error",
+  "cancelled",
+  "interrupted",
+  "idle",
+]);
+
+/** A task delegated to a linked environment. It has no thread here. */
+export type RemoteSubagent = OrchestrationV2Subagent & {
+  readonly remoteChild: OrchestrationV2RemoteTaskChild;
+};
+
+export type WebThreadLineageRow = ThreadRelationshipWalkRow | RemoteSubagent;
+
+export function webThreadLineageRowStatus(row: WebThreadLineageRow): string | null {
+  return "remoteChild" in row ? row.status : row.edge.status;
+}
+
+/** Remote subagents share the active and previous groups with local ones. */
+export function groupWebThreadLineageRows(input: {
+  readonly rows: ReadonlyArray<ThreadRelationshipWalkRow>;
+  readonly remoteSubagents: ReadonlyArray<RemoteSubagent>;
+  readonly currentThreadId: ThreadId;
+}) {
+  const related: ThreadRelationshipWalkRow[] = [];
+  const active: WebThreadLineageRow[] = [];
+  const previous: WebThreadLineageRow[] = [];
+  for (const row of [...input.rows, ...input.remoteSubagents]) {
+    if (
+      !("remoteChild" in row) &&
+      (row.edge.kind !== "subagent" || isParentThreadRelationship(row.edge, input.currentThreadId))
+    ) {
+      related.push(row);
+    } else if (PREVIOUS_SUBAGENT_STATUSES.has(webThreadLineageRowStatus(row))) {
+      previous.push(row);
+    } else {
+      active.push(row);
+    }
+  }
+  return { related, active, previous };
 }
