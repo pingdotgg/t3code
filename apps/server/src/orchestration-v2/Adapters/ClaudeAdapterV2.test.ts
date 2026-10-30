@@ -40,7 +40,7 @@ import {
   OrchestrationV2ProviderThread,
   ProjectId,
   ProviderInstanceId,
-  type ProviderInstanceEnvironment,
+  type ResolvedProviderInstanceEnvironment,
   ProviderDriverKind,
   type ProviderReplayTranscript,
   type ProviderApprovalDecision,
@@ -1189,7 +1189,7 @@ describe("ClaudeAdapterV2 approval cancellation", () => {
 
 const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(function* (
   binaryPath: string,
-  environment: ProviderInstanceEnvironment = [],
+  environment: ResolvedProviderInstanceEnvironment = [],
 ) {
   const executablePaths: Array<string | undefined> = [];
   const taskToolEnvironment: Array<string | undefined> = [];
@@ -9151,6 +9151,172 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.threadDisposition, "reusable");
         assert.include(terminal.failure.message, "never started a turn");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // regression: #17531 a mod that holds a tool behind a focused pane must fail the turn, not hang it
+  it.effect.each([
+    { case: "fails a turn whose mod requests focus for a pane T3 cannot show", focus: true },
+    { case: "keeps a turn running beside a passive mod pane", focus: false },
+  ] as const)("$case", ({ focus }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const closed = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: () => Deferred.succeed(closed, undefined),
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-mod-pane-focus"),
+            text: "Run rm -r build",
+            attachments: [],
+          }),
+        );
+        // Captured from Claude 2.1.303 with the blast-radius mod holding a Bash
+        // call: the mod waits for keyboard input in its pane and nothing else
+        // arrives until it gives up.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "ui_panes",
+            panes: [
+              { id: "blast-radius", title: "Blast Radius", plugin: "blast-radius", rows: 10 },
+            ],
+            shown_id: "blast-radius",
+            focused_id: null,
+            focus_requested_id: focus ? "blast-radius" : null,
+            uuid: "00000000-0000-4000-8000-000000000795",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "ui_invalidate",
+            event: "ui.render",
+            uuid: "00000000-0000-4000-8000-000000000796",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        // Frames are handled in order, so a later notice proves the pane frame
+        // was handled without the turn ending.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "informational",
+            content: "Processing barrier.",
+            level: "warning",
+            uuid: "00000000-0000-4000-8000-000000000797",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.until(
+          () =>
+            harness.terminalEvents().length > 0 ||
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+            ),
+        );
+        const [terminal] = harness.terminalEvents();
+        if (!focus) {
+          assert.equal(terminal, undefined);
+          return;
+        }
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.include(terminal.failure.message, "blast-radius");
+        // The held tool call is abandoned by closing the query, never answered.
+        yield* Deferred.await(closed);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // regression: #17531 a follow-up sent while the failed mod turn's process closes gets a new process
+  it.effect("runs a follow-up in a fresh query while the mod-blocked query is closing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const releaseClose = yield* Deferred.make<void>();
+        const replacementClosedOld = yield* Deferred.make<void>();
+        let oldCloses = 0;
+        const harness = yield* makeWakeHarnessWithOptions({
+          // The held CLI never answers an interrupt; closure must not need one.
+          interrupt: Effect.never,
+          close: (sdkMessages) =>
+            Effect.suspend(() =>
+              ++oldCloses === 2 ? Deferred.succeed(replacementClosedOld, undefined) : Effect.void,
+            ).pipe(
+              Effect.andThen(Deferred.await(releaseClose)),
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+          freshQueueOnReopen: true,
+        });
+        // Added after the harness so it runs first: a failed assertion must not
+        // leave teardown waiting on the held close.
+        yield* Effect.addFinalizer(() => Deferred.succeed(releaseClose, undefined));
+        const now = yield* DateTime.now;
+        const turnInput = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-mod-pane-blocked"),
+          text: "Run rm -r build",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(turnInput);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "ui_panes",
+            panes: [
+              { id: "blast-radius", title: "Blast Radius", plugin: "blast-radius", rows: 10 },
+            ],
+            shown_id: "blast-radius",
+            focused_id: null,
+            focus_requested_id: "blast-radius",
+            uuid: "00000000-0000-4000-8000-000000000798",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+
+        const followUp = yield* harness.runtime
+          .startTurn({
+            ...turnInput,
+            attemptId: RunAttemptId.make("attempt-claude-after-mod-pane"),
+            providerTurnOrdinal: 2,
+          })
+          .pipe(Effect.forkScoped);
+        // Reusing the closing process would offer the prompt to it instead.
+        yield* Effect.raceFirst(
+          Deferred.await(replacementClosedOld),
+          harness.until(() => harness.offeredMessages.length >= 2),
+        );
+        assert.isTrue(yield* Deferred.isDone(replacementClosedOld));
+        yield* Deferred.succeed(releaseClose, undefined);
+        yield* Fiber.join(followUp);
+        assert.equal(harness.processQueues.length, 2);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "after-mod-pane-result", result: "Done." }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

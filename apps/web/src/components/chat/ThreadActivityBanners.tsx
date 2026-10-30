@@ -7,17 +7,20 @@ import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-ru
 import {
   presentPendingBackgroundWork,
   presentProviderGoal,
+  type RunStopPresentation,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 import {
   CircleDashedIcon,
+  CircleStopIcon,
   GitBranchIcon,
   MessageCircleIcon,
   ShieldQuestionIcon,
   TargetIcon,
   TerminalIcon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import { Fragment } from "react";
 import { tickTextContent } from "~/lib/tickTextContent";
@@ -100,6 +103,46 @@ export function goalNowItem(input: {
         >
           Clear
         </InlineButton>
+      </>
+    ),
+  };
+}
+
+/** A Stop the provider has not finished; Force stop once it stops answering. */
+export function runStopNowItem(input: {
+  readonly threadId: ThreadId;
+  readonly stop: RunStopPresentation;
+  readonly canForceStop: boolean;
+  readonly forceStopping: boolean;
+  readonly onForceStop: () => void;
+}): ThreadNowItem {
+  const unresponsive = input.stop.state === "unresponsive";
+  const requestedAtMs = Date.parse(input.stop.requestedAt);
+  return {
+    id: `run-stop:${input.threadId}`,
+    icon: unresponsive ? (
+      <TriangleAlertIcon className="text-warning-foreground" />
+    ) : (
+      <CircleStopIcon />
+    ),
+    title: unresponsive ? "Agent not responding to Stop" : "Stopping",
+    description: unresponsive
+      ? "It may be short on memory. Force stop kills its processes."
+      : undefined,
+    actions: (
+      <>
+        <span
+          ref={tickTextContent(
+            (nowMs) => formatDuration(Math.max(1_000, nowMs - requestedAtMs)),
+            true,
+          )}
+          className="tabular-nums"
+        />
+        {unresponsive && input.canForceStop ? (
+          <InlineButton disabled={input.forceStopping} onClick={input.onForceStop}>
+            {input.forceStopping ? "Force stopping..." : "Force stop"}
+          </InlineButton>
+        ) : null}
       </>
     ),
   };

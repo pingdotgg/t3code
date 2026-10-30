@@ -353,6 +353,16 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
 
+  /**
+   * For a provider that holds change request reads of its own: called when the service drops its
+   * reads, so a refresh or a finished turn reaches the host. No scope forgets everything; a scope
+   * without a number forgets the repository's change requests.
+   */
+  readonly forgetChangeRequestReads?: (scope?: {
+    readonly repository: string;
+    readonly number?: number;
+  }) => Effect.Effect<void>;
+
   readonly getChangeRequestPreview?: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<

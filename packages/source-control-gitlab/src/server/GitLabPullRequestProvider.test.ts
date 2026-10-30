@@ -1,6 +1,7 @@
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
@@ -118,6 +119,157 @@ describe("getChangeRequest base freshness", () => {
 
       expect(changeRequest.baseComparison).toBe("unknown");
       expect(changeRequest.behindBy).toBeUndefined();
+    }),
+  );
+});
+
+describe("merge request reads", () => {
+  const reference = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+  const detail = {
+    number: 7,
+    title: "Merge request 7",
+    url: "https://gitlab.com/acme/web/-/merge_requests/7",
+    author: null,
+    headBranch: "feat/page",
+    baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    additions: 0,
+    deletions: 0,
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+    reviewRequestLogins: [],
+    labels: [],
+    body: "",
+    changedFiles: 1,
+    mergedAt: null,
+    closedAt: null,
+    reviewers: [],
+    checks: [],
+    viewerCanMerge: true,
+    reviewerIds: [],
+  };
+
+  const countingProvider = Effect.gen(function* () {
+    const calls = { detail: 0, mergeCapabilities: 0 };
+    const host = { viewerCanMerge: true };
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+          getMergeRequestDetail: (input) =>
+            Effect.sync(() => {
+              calls.detail += 1;
+              return { ...detail, number: input.number, viewerCanMerge: host.viewerCanMerge };
+            }),
+          getProjectMergeCapabilities: () =>
+            Effect.sync(() => {
+              calls.mergeCapabilities += 1;
+              return { merge: true, squash: true, rebase: true };
+            }),
+          runMergeRequestAction: () => Effect.void,
+        }),
+      ),
+    );
+    const checks = provider.getChangeRequestChecks;
+    const forget = provider.forgetChangeRequestReads;
+    if (checks === undefined || forget === undefined) {
+      return yield* Effect.die("GitLab answers checks and forgets its reads");
+    }
+    return { provider, checks, forget, calls, host };
+  });
+
+  it.effect("asks for a project's merge methods once across its merge requests", () =>
+    Effect.gen(function* () {
+      const { provider, calls } = yield* countingProvider;
+
+      yield* provider.getChangeRequest(reference);
+      yield* provider.getChangeRequest(reference);
+      yield* provider.getChangeRequest({ ...reference, number: 8 });
+
+      expect(calls.mergeCapabilities).toBe(1);
+    }),
+  );
+
+  it.effect("answers checks from the merge request the detail just read", () =>
+    Effect.gen(function* () {
+      const { provider, checks, calls } = yield* countingProvider;
+
+      yield* provider.getChangeRequest(reference);
+      yield* checks(reference);
+
+      expect(calls.detail).toBe(1);
+    }),
+  );
+
+  it.effect("reads a merge request again after a write to it", () =>
+    Effect.gen(function* () {
+      const { provider, checks, calls } = yield* countingProvider;
+
+      yield* provider.getChangeRequest(reference);
+      yield* provider.runAction({ ...reference, action: "ready" });
+      yield* checks(reference);
+
+      expect(calls.detail).toBe(2);
+    }),
+  );
+
+  it.effect("does not share reads between checkouts", () =>
+    Effect.gen(function* () {
+      const { provider, calls } = yield* countingProvider;
+
+      yield* provider.getChangeRequest(reference);
+      yield* provider.getChangeRequest({ ...reference, cwd: "/other" });
+
+      expect(calls).toEqual({ detail: 2, mergeCapabilities: 2 });
+    }),
+  );
+
+  it.effect("reads a merge request again once a minute has passed", () =>
+    Effect.gen(function* () {
+      const { provider, calls } = yield* countingProvider;
+
+      yield* provider.getChangeRequest(reference);
+      yield* TestClock.adjust("61 seconds");
+      yield* provider.getChangeRequest(reference);
+
+      expect(calls.detail).toBe(2);
+    }),
+  );
+
+  it.effect("answers viewer permissions from the host, not the page's read", () =>
+    Effect.gen(function* () {
+      const { provider, host } = yield* countingProvider;
+
+      host.viewerCanMerge = false;
+      yield* provider.getChangeRequest(reference);
+      host.viewerCanMerge = true;
+      const granted = yield* provider.getViewerPermissions(reference);
+      host.viewerCanMerge = false;
+      const revoked = yield* provider.getViewerPermissions(reference);
+
+      expect(granted.actions).toContain("merge");
+      expect(revoked.actions).not.toContain("merge");
+    }),
+  );
+
+  it.effect("reads a merge request again once its reads are forgotten", () =>
+    Effect.gen(function* () {
+      const { provider, checks, forget, calls } = yield* countingProvider;
+      const other = { ...reference, repository: "acme/api" };
+
+      yield* provider.getChangeRequest(reference);
+      yield* provider.getChangeRequest(other);
+      yield* forget({ repository: "ACME/web", number: 7 });
+      yield* checks(reference);
+      yield* checks(other);
+      expect(calls.detail).toBe(3);
+
+      yield* forget({ repository: "acme/web" });
+      yield* checks(reference);
+      yield* forget();
+      yield* checks(other);
+      expect(calls.detail).toBe(5);
     }),
   );
 });
