@@ -131,7 +131,7 @@ function makeSession(
         return { result: { value } };
       }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 9)
-        return { result: { value: { ...viewport } } };
+        return desktopSizeAnswer?.() ?? { result: { value: { ...viewport } } };
       return { result: { value: "evaluated" } };
     }),
   };
@@ -285,6 +285,8 @@ let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
 let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
+/** Replaces the answer to the desktop page's size reads. */
+let desktopSizeAnswer: (() => Promise<Record<string, unknown>>) | null = null;
 const desktopDetaches = new NodeEvents.EventEmitter();
 let desktopDetachReady = Promise.withResolvers<void>();
 let desktopReleased = Promise.withResolvers<void>();
@@ -415,9 +417,6 @@ const openDesktopViewer = Effect.gen(function* () {
     Object.assign(context.cssViewport, { width, height });
     return Effect.promise(() => cdp.emitAsync("Page.frameResized"));
   };
-  // Ready once the size measured on attach and on a first resize both reached the viewer.
-  yield* resize(1920, 1080);
-  expect(viewportSizes(yield* Queue.takeAll(viewer.output))).toEqual(["1920x1080", "1920x1080"]);
   return { tabId, viewer, context, cdp, resize };
 });
 
@@ -433,6 +432,7 @@ beforeEach(() => {
   focusedFrame = null;
   desktopTabs.clear();
   desktopRendersNext = false;
+  desktopSizeAnswer = null;
   desktopDetachReady = Promise.withResolvers<void>();
   desktopReleased = Promise.withResolvers<void>();
   releasedDesktopTabs.length = 0;
@@ -1204,21 +1204,41 @@ it.effect(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { viewer, cdp } = yield* openDesktopViewer;
         // Each page size read waits here for its answer.
         const reads = yield* Queue.unbounded<PromiseWithResolvers<Record<string, unknown>>>();
-        const send = cdp.send.getMockImplementation()!;
-        cdp.send.mockImplementation((method, input) => {
-          if (method !== "Runtime.evaluate" || (input as { contextId?: number }).contextId !== 9)
-            return send(method, input);
-          const read = Promise.withResolvers<Record<string, unknown>>();
-          Queue.offerUnsafe(reads, read);
-          return read.promise;
-        });
+        const deferReads = () => {
+          desktopSizeAnswer = () => {
+            const read = Promise.withResolvers<Record<string, unknown>>();
+            Queue.offerUnsafe(reads, read);
+            return read.promise;
+          };
+        };
+        deferReads();
+        const { viewer, cdp } = yield* openDesktopViewer;
         const answer = (width: number, height: number) => ({
           result: { value: { width, height } },
         });
         const resized = () => cdp.emitAsync("Page.frameResized");
+        // An alert open on attach blocks the first read, which gives up with no size to send.
+        const blocked = yield* Queue.take(reads);
+        yield* TestClock.adjust("1 second");
+        // Closing it resizes nothing, so the close itself remeasures.
+        desktopSizeAnswer = null;
+        yield* Effect.promise(() => cdp.emitAsync("Page.javascriptDialogClosed"));
+        expect(viewportSizes(yield* Queue.takeAll(viewer.output))).toEqual(["1920x1080"]);
+        // The late answer, a read a navigation breaks and a hidden webview keep the last size.
+        blocked.resolve(answer(100, 100));
+        deferReads();
+        const navigated = resized();
+        (yield* Queue.take(reads)).reject(new Error("Cannot find context with specified id"));
+        yield* Effect.promise(() => navigated);
+        const hidden = resized();
+        (yield* Queue.take(reads)).resolve(answer(0, 0));
+        yield* Effect.promise(() => hidden);
+        expect(viewportSizes(yield* Queue.takeAll(viewer.output))).toEqual([
+          "1920x1080",
+          "1920x1080",
+        ]);
         // Resizes during a read share one more read, so the newest size arrives last.
         const first = resized();
         const firstRead = yield* Queue.take(reads);
@@ -1232,24 +1252,6 @@ it.effect(
           "1000x600",
           "1000x600",
         ]);
-        // A dialog blocks page script, so a read that never answers gives up.
-        const blocked = resized();
-        const stuck = yield* Queue.take(reads);
-        yield* TestClock.adjust("1 second");
-        yield* Effect.promise(() => blocked);
-        // Its late answer, a read a navigation breaks and a hidden webview keep the last size.
-        stuck.resolve(answer(100, 100));
-        const navigated = resized();
-        (yield* Queue.take(reads)).reject(new Error("Cannot find context with specified id"));
-        yield* Effect.promise(() => navigated);
-        const hidden = resized();
-        (yield* Queue.take(reads)).resolve(answer(0, 0));
-        yield* Effect.promise(() => hidden);
-        expect(viewportSizes(yield* Queue.takeAll(viewer.output))).toEqual([
-          "1000x600",
-          "1000x600",
-          "1000x600",
-        ]);
       }),
     ).pipe(Effect.provide(layer)),
 );
@@ -1258,6 +1260,14 @@ it.effect("a stalled desktop viewer still gets its size, control and reconnect",
   Effect.scoped(
     Effect.gen(function* () {
       const { tabId, viewer, context, resize } = yield* openDesktopViewer;
+      const output =
+        viewer.output as unknown as Queue.Queue<ServerBrowser.ServerBrowserViewerOutput>;
+      // Ready once the sizes measured on attach and on a first resize both arrived.
+      yield* resize(1920, 1080);
+      expect(viewportSizes(yield* Queue.takeAll(viewer.output))).toEqual([
+        "1920x1080",
+        "1920x1080",
+      ]);
       yield* Effect.promise(() => desktopDetachReady.promise);
       yield* viewer.input({ type: "takeControl" });
       context.page.emit("filechooser", {
@@ -1268,18 +1278,26 @@ it.effect("a stalled desktop viewer still gets its size, control and reconnect",
       let chooser = yield* Queue.take(viewer.output);
       while (chooser._tag !== "fileChooser") chooser = yield* Queue.take(viewer.output);
       yield* Queue.clear(viewer.output);
-      const control = expect.objectContaining({ _tag: "control", controller: "you" });
-      // A resize replaces a full backlog but keeps control and the controller's open picker.
+      // A resize compacts a full backlog but keeps control, the open picker and
+      // one-time notifications in order.
       yield* viewer.input({ type: "takeControl" });
+      const notifications: Array<ServerBrowser.ServerBrowserViewerOutput> = [
+        { _tag: "fileChooserClosed", id: "chooser-0" },
+        { _tag: "popup", tabId: "popup-1" },
+        { _tag: "download", id: "download-1", fileName: "report.csv", sizeBytes: 3 },
+        { _tag: "clipboard", text: "copied" },
+      ];
+      for (const item of notifications) Queue.offerUnsafe(output, item);
       let acked = stallViewer(viewer);
       yield* resize(1000, 600);
       expect(yield* Queue.takeAll(viewer.output)).toEqual([
-        { _tag: "viewport", width: 1000, height: 600 },
-        control,
         chooser,
+        ...notifications,
+        expect.objectContaining({ _tag: "control", controller: "you" }),
+        { _tag: "viewport", width: 1000, height: 600 },
       ]);
       yield* acked;
-      // A control change keeps the newest size.
+      // A control change keeps only the newest size.
       yield* resize(900, 500);
       yield* resize(1200, 700);
       acked = stallViewer(viewer);
@@ -1289,6 +1307,13 @@ it.effect("a stalled desktop viewer still gets its size, control and reconnect",
         { _tag: "viewport", width: 1200, height: 700 },
       ]);
       yield* acked;
+      // Notifications that no longer fit go oldest first, never the size.
+      let copies = 0;
+      while (Queue.offerUnsafe(output, { _tag: "clipboard", text: `copy ${copies}` })) copies++;
+      yield* resize(1000, 600);
+      const compacted = yield* Queue.takeAll(viewer.output);
+      expect(compacted.at(0)).toEqual({ _tag: "clipboard", text: "copy 1" });
+      expect(compacted.at(-1)).toEqual({ _tag: "viewport", width: 1000, height: 600 });
       // The desktop takes the page back; a resize after it cannot bury the reconnect.
       acked = stallViewer(viewer);
       desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId });

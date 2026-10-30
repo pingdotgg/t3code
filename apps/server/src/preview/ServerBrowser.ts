@@ -853,9 +853,12 @@ const make = Effect.gen(function* () {
     await applyRendering(tab, snapshot);
     if (desktop) {
       // The desktop resizes and zooms its webview itself; viewers map input with the new size.
-      cdp.on("Page.frameResized", () => {
+      const remeasure = () => {
         if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
-      });
+      };
+      cdp.on("Page.frameResized", remeasure);
+      // A dialog blocks size reads, and closing one resizes nothing.
+      cdp.on("Page.javascriptDialogClosed", remeasure);
       await cdp.send("Page.enable");
     }
     const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>
@@ -2368,22 +2371,22 @@ const make = Effect.gen(function* () {
         // Dropped frames must still release Chromium.
         if (Queue.offerUnsafe(output, next)) return;
         if (next._tag === "frame") runFork(next.ack);
-        // State a stalled viewer cannot miss replaces its backlog. It runs
-        // synchronously so an older replacement can never land after a newer one.
+        // State a stalled viewer cannot miss compacts its backlog. It runs
+        // synchronously so an older compaction can never land after a newer one.
         else if (["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)) {
           const dropped = Effect.runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
-          Queue.offerUnsafe(output, next);
-          // Without its latest size the viewer cannot map input at all.
-          for (const tag of ["control", "viewport"] as const) {
-            if (next._tag === tag) continue;
-            const retained = dropped.value.findLast((item) => item._tag === tag);
-            if (retained) Queue.offerUnsafe(output, retained);
-          }
-          // The controller's open picker may have been in the dropped backlog.
-          const chooser =
-            next._tag === "control" || next._tag === "viewport" ? fileChooserMessage(tab) : null;
-          if (chooser && tab.control.controller === viewer.id) Queue.offerUnsafe(output, chooser);
+          const items = [...dropped.value, next];
+          // Without its latest size and control the viewer cannot map input at all.
+          const state = (["control", "viewport"] as const).flatMap(
+            (tag) => items.findLast((item) => item._tag === tag) ?? [],
+          );
+          // Everything else is one-time; if it no longer fits, the oldest goes first.
+          const rest = items.filter(
+            (item) => item._tag !== "frame" && item._tag !== "control" && item._tag !== "viewport",
+          );
+          for (const item of [...rest.slice(state.length - VIEWER_OUTPUT_LIMIT), ...state])
+            Queue.offerUnsafe(output, item);
           for (const item of dropped.value) if (item._tag === "frame") runFork(item.ack);
         }
       },
