@@ -1555,6 +1555,20 @@ it.layer(
       expectedHome: "/configured/codex",
     },
     {
+      name: "isolated Codex home",
+      driver: "codex",
+      variable: "CODEX_HOME",
+      config: { isolateChats: true, homePath: "/shared/codex", shadowHomePath: "/shared/shadow" },
+      expectedHome: "/t3-state/providers/codex/configured_home/isolated-home",
+    },
+    {
+      name: "isolated Claude home",
+      driver: "claudeAgent",
+      variable: "CLAUDE_CONFIG_DIR",
+      config: { isolateChats: true, homePath: "/shared/claude" },
+      expectedHome: "/t3-state/providers/claudeAgent/configured_home/isolated-home",
+    },
+    {
       name: "Codex shadow home",
       driver: "codex",
       variable: "CODEX_HOME",
@@ -1573,6 +1587,7 @@ it.layer(
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        stateDir: path.resolve("/t3-state"),
         serverSettings,
         path,
         rawProviderInstanceId: "configured_home",

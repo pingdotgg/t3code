@@ -65,6 +65,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { resolveChatIsolationConfig } from "../provider/chatIsolation.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1468,6 +1469,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   readonly path: Path.Path;
   readonly rawProviderInstanceId: string;
   readonly env: Record<string, string> | undefined;
+  readonly stateDir: string;
 }) {
   const providerInstanceId = ProviderInstanceId.make(input.rawProviderInstanceId);
   const settings = yield* input.serverSettings.getSettings.pipe(
@@ -1480,7 +1482,15 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 
   let resolved = yield* mergeProviderInstanceEnvironment(instance.environment, input.env ?? {});
   if (instance.driver === "codex") {
-    const config = decodeCodexSettings(instance.config ?? {});
+    const config = decodeCodexSettings(
+      resolveChatIsolationConfig(
+        instance.config ?? {},
+        instance.driver,
+        providerInstanceId,
+        input.stateDir,
+        input.path,
+      ),
+    );
     if (Option.isSome(config)) {
       const layout = yield* resolveCodexHomeLayout(config.value).pipe(
         Effect.provideService(Path.Path, input.path),
@@ -1489,7 +1499,15 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
         resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
     }
   } else if (instance.driver === "claudeAgent") {
-    const config = decodeClaudeSettings(instance.config ?? {});
+    const config = decodeClaudeSettings(
+      resolveChatIsolationConfig(
+        instance.config ?? {},
+        instance.driver,
+        providerInstanceId,
+        input.stateDir,
+        input.path,
+      ),
+    );
     if (Option.isSome(config)) {
       resolved = yield* makeClaudeEnvironment(config.value, resolved).pipe(
         Effect.provideService(Path.Path, input.path),
@@ -1504,7 +1522,8 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 
 /** @public */
 export const make = Effect.fn("TerminalManager.make")(function* () {
-  const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
+  const { terminalLogsDir, providerStatusCacheDir, baseDir, stateDir } =
+    yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
@@ -1518,6 +1537,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
       path,
       rawProviderInstanceId,
       env,
+      stateDir,
     }),
   );
   return yield* makeWithOptions({

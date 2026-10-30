@@ -1,4 +1,5 @@
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { resolveChatIsolationConfig } from "../chatIsolation.ts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
@@ -127,6 +128,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // The server cwd is $HOME in packaged desktop builds, and `claude`
     // wrappers that scope themselves to their cwd refuse to run there.
     const { stateDir } = yield* ServerConfig.ServerConfig;
+    config = resolveChatIsolationConfig(config, DRIVER_KIND, instanceId, stateDir, path);
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;

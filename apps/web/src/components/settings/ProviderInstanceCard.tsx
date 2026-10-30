@@ -67,6 +67,7 @@ import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayo
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
+import { ProviderChatIsolationSetting } from "./ProviderChatIsolationSetting";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -1282,6 +1283,11 @@ export function ProviderInstanceCard({
             title="Runtime"
             headerPlacement="outside"
           >
+            <ProviderChatIsolationSetting
+              value={instance.config}
+              onChange={updateConfig}
+              idPrefix={`provider-instance-${instanceId}-isolation`}
+            />
             {runtime ?? runtimeFields}
           </FoldedSettingsSection>
         </div>

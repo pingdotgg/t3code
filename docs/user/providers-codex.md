@@ -25,6 +25,21 @@ T3 Code can use your installed Codex and its existing login. Run `codex login`
 on the environment's machine to sign in. [Provider setup](./install.md#providers)
 covers installation and custom configuration.
 
+## Keep T3 chats separate
+
+Enable **Isolate chats from other apps** during Codex setup or under the provider's
+**Runtime** settings. Each instance gets its own home on the connected environment,
+so new T3 chats do not appear in apps or CLIs using the usual Codex home. The option
+is off by default and works with managed Codex and an existing CLI.
+
+The separate home starts with fresh configuration. Managed Codex keeps its ChatGPT
+connection; an existing CLI may need another sign-in. Custom home and shadow-home
+settings are retained but unused while isolation is on. Existing chats are not moved
+or deleted. Stop running agents and background tasks before switching. Turn isolation
+off to use the previous home again; the isolated history remains on disk.
+Start new chats after switching homes, or switch back to continue native sessions
+from the previous home.
+
 ## Use multiple accounts
 
 Add another ChatGPT account in **Settings → Providers**, then select the account

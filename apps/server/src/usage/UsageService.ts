@@ -11,6 +11,7 @@ import {
   UsageReadError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveChatIsolationConfig } from "../provider/chatIsolation.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -313,7 +314,17 @@ export const make = Effect.gen(function* () {
       Effect.fnUntraced(function* ([instanceId, instance, configured]) {
         const instanceConfig: ProviderUsageInstance<Config> = {
           instanceId,
-          config: Option.getOrUndefined(decodeConfig(instance.config ?? {})),
+          config: Option.getOrUndefined(
+            decodeConfig(
+              resolveChatIsolationConfig(
+                instance.config ?? {},
+                driver.driverKind,
+                instanceId,
+                config.stateDir,
+                path,
+              ),
+            ),
+          ),
           environment: yield* mergeProviderInstanceEnvironment(
             instance.environment,
             hostEnvironment,

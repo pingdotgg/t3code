@@ -51,6 +51,7 @@ import {
 } from "./CodexHomeLayout.ts";
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
 import { codexUsageReader } from "./codexUsage.ts";
+import { resolveChatIsolationConfig } from "../chatIsolation.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -150,6 +151,8 @@ export const CodexDriver: ProviderDriver<
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
+    const { stateDir } = yield* ServerConfig.ServerConfig;
+    config = resolveChatIsolationConfig(config, DRIVER_KIND, instanceId, stateDir, pathService);
     const homeLayout = yield* resolveCodexHomeLayout(config);
     const continuationIdentity = codexContinuationIdentity(homeLayout);
     const stampIdentity = withInstanceIdentity({

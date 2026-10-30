@@ -107,6 +107,15 @@ export function deriveProviderSettingsFields(
       const fieldSchema = definition.settingsSchema.fields[key]!;
       const formAnnotation = readProviderSettingsFormAnnotation(fieldSchema);
       if (formAnnotation.hidden) return [];
+      if (
+        (key === "homePath" || key === "shadowHomePath") &&
+        (definition.driverKind === "codex" || definition.driverKind === "claudeAgent") &&
+        typeof value === "object" &&
+        value !== null &&
+        "isolateChats" in value &&
+        value.isolateChats === true
+      )
+        return [];
       if (isLocalAcp && key !== "source" && key !== "commandPath") return [];
 
       const annotatedTitle = readFieldAnnotationString(fieldSchema, "title");

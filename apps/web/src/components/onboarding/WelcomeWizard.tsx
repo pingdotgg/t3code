@@ -15,6 +15,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthProvidersManageScope,
   AuthTerminalOperateScope,
   CommandId,
   defaultInstanceIdForDriver,
@@ -79,7 +80,7 @@ import { providerClients } from "../settings/providerDriverMeta";
 import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
-import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
+import { ProviderChatIsolationSetting } from "../settings/ProviderChatIsolationSetting";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { presentSavedCloudEnvironmentConnection } from "../cloud/cloudEnvironmentConnectionPresentation";
@@ -886,6 +887,8 @@ function OnboardingCodexSetup({
 }) {
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const [saving, setSaving] = useState(false);
   const instanceId =
     createdAccount?.instanceId ??
     provider?.instanceId ??
@@ -902,49 +905,66 @@ function OnboardingCodexSetup({
     typeof instance.config === "object" &&
     "setupMode" in instance.config &&
     instance.config.setupMode === "existing";
-  const changeMode = (setupMode: "managed" | "existing") => {
+  const saveInstance = (nextInstance: typeof instance) => {
+    if (saving || !canManageProviders) return;
+    setSaving(true);
     void update({
       environmentId,
       input: {
-        patch: buildProviderInstanceUpdatePatch({
-          settings,
+        patch: {},
+        providerInstanceMutation: {
+          operation: "upsert",
           instanceId,
-          instance: {
-            ...instance,
-            enabled: true,
-            config: {
-              ...(instance.config !== null && typeof instance.config === "object"
-                ? instance.config
-                : {}),
-              enabled: true,
-              setupMode,
-            },
-          },
-        }),
+          instance: nextInstance,
+        },
+      },
+    }).finally(() => setSaving(false));
+  };
+  const changeMode = (setupMode: "managed" | "existing") => {
+    saveInstance({
+      ...instance,
+      enabled: true,
+      config: {
+        ...(instance.config !== null && typeof instance.config === "object" ? instance.config : {}),
+        enabled: true,
+        setupMode,
       },
     });
   };
-  return existingChosen ? (
-    <AgentCard
-      driver="codex"
-      provider={provider}
-      terminalOpen={terminalOpen}
-      terminalAvailable={canOperateTerminal}
-      onOpenTerminal={onOpenTerminal}
+  const isolationSetting = (
+    <ProviderChatIsolationSetting
+      value={instance.config}
+      idPrefix={`welcome-${instanceId}`}
+      onChange={(config) => saveInstance({ ...instance, config })}
     />
-  ) : (
-    <CodexSetupSection
-      presentation="onboarding"
-      autoStart={createdAccount?.autoStart === true}
-      displayName={createdAccount?.displayName}
-      onAutoStartConsumed={onAutoStartConsumed}
-      environmentId={environmentId}
-      instanceId={instanceId}
-      provider={provider}
-      mode={mode}
-      enabled={provider?.enabled ?? true}
-      onModeChange={changeMode}
-    />
+  );
+  return (
+    <>
+      <fieldset disabled={!canManageProviders || saving}>{isolationSetting}</fieldset>
+      {existingChosen ? (
+        <AgentCard
+          driver="codex"
+          provider={provider}
+          terminalOpen={terminalOpen}
+          terminalAvailable={canOperateTerminal && !saving}
+          onOpenTerminal={onOpenTerminal}
+        />
+      ) : (
+        <CodexSetupSection
+          presentation="onboarding"
+          autoStart={createdAccount?.autoStart === true}
+          displayName={createdAccount?.displayName}
+          onAutoStartConsumed={onAutoStartConsumed}
+          environmentId={environmentId}
+          instanceId={instanceId}
+          provider={provider}
+          mode={mode}
+          enabled={provider?.enabled ?? true}
+          readOnly={!canManageProviders || saving}
+          onModeChange={changeMode}
+        />
+      )}
+    </>
   );
 }
 

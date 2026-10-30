@@ -33,6 +33,7 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 export function SettingsProviderAccountsRouteScreen() {
@@ -94,7 +95,10 @@ export function SettingsProviderAccountsRouteScreen() {
 
 function canManageProvider(provider: ServerProvider) {
   return Boolean(
-    provider.setup?.canAuthenticate || (provider.driver === "acpRegistry" && provider.installed),
+    provider.driver === "codex" ||
+    provider.driver === "claudeAgent" ||
+    provider.setup?.canAuthenticate ||
+    (provider.driver === "acpRegistry" && provider.installed),
   );
 }
 
@@ -117,6 +121,12 @@ function ProviderAccount({
   const complete = useAtomCommand(serverEnvironment.completeProviderAuth, options);
   const cancel = useAtomCommand(serverEnvironment.cancelProviderAuth, options);
   const logout = useAtomCommand(serverEnvironment.logoutProviderAuth, options);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, options);
+  const settings = useAtomValue(serverEnvironment.configValueAtom(environmentId))?.settings;
+  const instance = settings?.providerInstances[instanceId] ?? { driver: provider.driver };
+  const instanceConfig =
+    typeof instance.config === "object" && instance.config !== null ? instance.config : {};
+  const isolateChats = "isolateChats" in instanceConfig && instanceConfig.isolateChats === true;
   // Matches ListRowLayout: large text stacks the action below instead of squeezing the status.
   const stacked = useWindowDimensions().fontScale >= 1.5;
   const [pending, setPending] = useState(false);
@@ -346,6 +356,29 @@ function ProviderAccount({
         <ProviderAccountSummary key={email} name={name} status={status} email={email} />
         {trailing}
       </View>
+      {provider.driver === "codex" || provider.driver === "claudeAgent" ? (
+        <SettingsSwitchRow
+          label="Isolate chats from other apps"
+          subtitle="Use a separate T3 home for chats and configuration. You may need to sign in again. Existing history stays in place. Stop running agents before switching, then start new chats. Turn this off to continue chats from the previous home."
+          value={isolateChats}
+          disabled={pending || active || settings === undefined}
+          onValueChange={(value) => {
+            void run(() =>
+              updateSettings({
+                environmentId,
+                input: {
+                  patch: {},
+                  providerInstanceMutation: {
+                    operation: "upsert",
+                    instanceId,
+                    instance: { ...instance, config: { ...instanceConfig, isolateChats: value } },
+                  },
+                },
+              }),
+            );
+          }}
+        />
+      ) : null}
       {interaction?.type === "deviceCode" ||
       interaction?.type === "terminal" ||
       interaction?.type === "credentials" ||

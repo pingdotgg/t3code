@@ -101,6 +101,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveChatIsolationConfig } from "../../provider/chatIsolation.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { buildCodexAdditionalContext } from "../../provider/CodexDeveloperInstructions.ts";
 import {
@@ -1557,6 +1558,13 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const hostEnvironment = yield* HostProcess.Environment;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
+  config = resolveChatIsolationConfig(
+    config,
+    "codex",
+    instanceId,
+    serverConfig.stateDir,
+    yield* Path.Path,
+  );
   const homeLayout = yield* resolveCodexHomeLayout(config);
 
   yield* materializeCodexShadowHome(homeLayout).pipe(
