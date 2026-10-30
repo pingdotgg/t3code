@@ -15,6 +15,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { threadListEnvironmentsAtom } from "../../state/presentation";
 import { environmentThreadShells } from "../../state/threads";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
@@ -164,6 +165,7 @@ function DragHandle(props: {
 function ThreadArrangementSheet(props: { onClose: () => void }) {
   const threads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
+  const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
   const dropBusy = useAtomValue(threadDropBusyAtom);
@@ -214,12 +216,15 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
         ordered: sections[section],
         allThreads: threads,
         section,
-        reorderableEnvironmentIds: new Set(
-          section === "pinned" || !workingShelfEnabled ? configs.keys() : [],
-        ),
+        reorderableEnvironmentIds:
+          section === "pinned"
+            ? listEnvironments.pinReorderEnvironmentIds
+            : workingShelfEnabled
+              ? new Set()
+              : listEnvironments.activeReorderEnvironmentIds,
       });
     return { pinned: planner("pinned"), active: planner("active") };
-  }, [sections, threads, configs, workingShelfEnabled]);
+  }, [sections, threads, listEnvironments, workingShelfEnabled]);
   const rows = useMemo(() => {
     const result: Row[] = [];
     let offset = 0;
@@ -468,7 +473,12 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                               disabled={
                                 dropBusy ||
                                 pendingOrder !== null ||
-                                !configs.has(thread.environmentId)
+                                (!listEnvironments.pinReorderEnvironmentIds.has(
+                                  thread.environmentId,
+                                ) &&
+                                  !listEnvironments.activeReorderEnvironmentIds.has(
+                                    thread.environmentId,
+                                  ))
                               }
                               sectionActions={sectionActions}
                               onSectionMove={(section) => {
