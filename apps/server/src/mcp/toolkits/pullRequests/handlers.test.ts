@@ -671,12 +671,33 @@ describe("pull request guide tools", () => {
           }),
           id: ProjectId.make("project-web"),
         };
-        const harness = yield* makeHarness({ projects: [makeProject(), other] });
+        const bitbucketProjects = [8443, 9443].map((port) => ({
+          ...makeProject({
+            canonicalKey: "code.example.com/proj/web",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "ssh://git@code.example.com:7999/PROJ/web.git",
+            },
+            provider: SourceControlProviderKind.make("bitbucket-server"),
+            displayName: "PROJ/web",
+            webUrl: `https://code.example.com:${port}/stash/projects/PROJ/repos/web`,
+          }),
+          id: ProjectId.make(`project-bitbucket-${port}`),
+        }));
+        const harness = yield* makeHarness({
+          projects: [makeProject(), other, ...bitbucketProjects],
+        });
         const result = yield* harness.call("write_pull_request_guides", {
           pullRequests: [
             { url: "https://github.com/acme/web/pull/7" },
             { repository: "t3tools/t3code", number: 12 },
             { url: "https://github.com/someone/else/pull/1" },
+            { url: "https://code.example.com:8443/stash/projects/PROJ/repos/web/pull-requests/8" },
+            { host: "code.example.com:9443", repository: "PROJ/web", number: 9 },
+            {
+              url: "https://code.example.com:10443/stash/projects/PROJ/repos/web/pull-requests/10",
+            },
           ],
         });
         expect(
@@ -685,6 +706,9 @@ describe("pull request guide tools", () => {
           ["acme/web", 7, "started"],
           ["t3tools/t3code", 12, "started"],
           ["someone/else", 1, "failed"],
+          ["proj/web", 8, "started"],
+          ["proj/web", 9, "started"],
+          ["proj/web", 10, "failed"],
         ]);
         expect(result.guides[2]?.detail).toContain("No project in this environment");
         expect(
@@ -692,6 +716,8 @@ describe("pull request guide tools", () => {
         ).toEqual([
           ["project-web", 7],
           [PROJECT_ID, 12],
+          ["project-bitbucket-8443", 8],
+          ["project-bitbucket-9443", 9],
         ]);
       }),
   );

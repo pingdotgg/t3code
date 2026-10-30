@@ -43,12 +43,41 @@ describe("Data Center URLs", () => {
         definition.changeRequestUrl({ ...input, ...(remoteUrl ? { remoteUrl } : {}) }),
       ).toBeNull();
     }
-    expect(
-      definition.changeRequestUrl({
-        ...input,
-        remoteUrl: "https://code.example.com:8443/stash/scm/PROJ/web.git",
-      }),
-    ).toBe("https://code.example.com:8443/stash/projects/PROJ/repos/web/pull-requests/43");
+    const remoteUrl = "https://code.example.com:8443/stash/scm/PROJ/web.git";
+    for (const host of ["code.example.com", "CODE.EXAMPLE.COM:8443"]) {
+      expect(definition.changeRequestUrl({ ...input, host, remoteUrl })).toBe(
+        "https://code.example.com:8443/stash/projects/PROJ/repos/web/pull-requests/43",
+      );
+    }
+    for (const host of ["other.example.com", "code.example.com:9443"]) {
+      expect(definition.changeRequestUrl({ ...input, host, remoteUrl })).toBeNull();
+    }
+  });
+
+  it("matches repositories and read access against the configured web authority", () => {
+    for (const authority of ["code.example.com:8443", "code.example.com"]) {
+      const identity = {
+        canonicalKey: "ssh.example.com/proj/web",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "ssh://git@ssh.example.com:7999/PROJ/web.git",
+        },
+        displayName: "PROJ/web",
+        webUrl: `https://${authority}/stash/projects/PROJ/repos/web`,
+      };
+      const own = { host: authority, repository: "proj/web", number: 42 };
+      expect(definition.isChangeRequestInRepository(identity, own)).toBe(true);
+      expect(definition.canReadChangeRequestOnHost(identity, own)).toBe(true);
+      const otherRepository = { ...own, repository: "proj/other" };
+      expect(definition.isChangeRequestInRepository(identity, otherRepository)).toBe(false);
+      expect(definition.canReadChangeRequestOnHost(identity, otherRepository)).toBe(true);
+      for (const host of ["other.example.com", "code.example.com:9443"]) {
+        const otherHost = { ...own, host: "code.example.com", authority: host };
+        expect(definition.isChangeRequestInRepository(identity, otherHost)).toBe(false);
+        expect(definition.canReadChangeRequestOnHost(identity, otherHost)).toBe(false);
+      }
+    }
   });
 
   it.each([

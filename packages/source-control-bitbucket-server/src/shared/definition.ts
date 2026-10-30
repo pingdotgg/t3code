@@ -9,8 +9,9 @@ import * as Schema from "effect/Schema";
 import {
   defineSourceControl,
   isChangeRequestInProjectRepository,
-  isChangeRequestOnProjectHost,
   projectChangeRequestHost,
+  type ChangeRequestHostIdentity,
+  type ChangeRequestLink,
   type ParsedChangeRequestUrl,
 } from "@t3tools/source-control-core/shared/definition";
 
@@ -36,6 +37,21 @@ function parseChangeRequestUrl(url: URL): ParsedChangeRequestUrl | null {
     number: Number(match[5]),
     repositoryUrl: `${url.origin}${match[1]}/${match[2]}/${match[3]}/repos/${match[4]}`,
   };
+}
+
+function changeRequestHost(identity: ChangeRequestHostIdentity): string {
+  for (const value of [identity?.webUrl, identity?.locator?.remoteUrl]) {
+    const url = URL.parse(value ?? "");
+    if (url && /^https?:$/u.test(url.protocol)) return url.host.toLowerCase();
+  }
+  return projectChangeRequestHost(identity, KIND);
+}
+
+function canReadChangeRequestOnHost(
+  identity: ChangeRequestHostIdentity,
+  link: Pick<ChangeRequestLink, "host" | "authority">,
+) {
+  return changeRequestHost(identity) === (link.authority ?? link.host).toLowerCase();
 }
 
 export const settings = makeProviderSettingsSchema(
@@ -79,12 +95,17 @@ export const definition = defineSourceControl({
   publishHost: (signedInHost) => signedInHost ?? "your server",
   newRepositoryOwner: () => null,
   defaultCloneTransport: "https",
-  changeRequestUrl: ({ repository, number, remoteUrl, webUrl }) => {
+  changeRequestUrl: ({ host, repository, number, remoteUrl, webUrl }) => {
     if (webUrl) return `${webUrl.replace(/\/(browse)?$/u, "")}/pull-requests/${number}`;
     const [project, slug, ...rest] = repository.split("/");
     if (!project || !slug || rest.length > 0) return null;
     const remote = URL.parse(remoteUrl ?? "");
     if (!remote || !/^https?:$/u.test(remote.protocol)) return null;
+    if (
+      remote.hostname.toLowerCase() !== host.toLowerCase() &&
+      remote.host.toLowerCase() !== host.toLowerCase()
+    )
+      return null;
     const root = `${remote.origin}${/^(.*?)\/scm\//u.exec(remote.pathname)?.[1] ?? ""}`;
     return `${root}/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(slug)}/pull-requests/${number}`;
   },
@@ -116,9 +137,10 @@ export const definition = defineSourceControl({
         }
       : null;
   },
+  changeRequestHost,
   isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
-  canReadChangeRequestOnHost: (identity, link) =>
-    isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
+    canReadChangeRequestOnHost(identity, link) &&
+    isChangeRequestInProjectRepository(changeRequestHost(identity), identity, link),
+  canReadChangeRequestOnHost,
   settings,
 });
