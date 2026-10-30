@@ -21,7 +21,7 @@ import type {
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive, latestProviderTurnForAttempt } from "@t3tools/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
@@ -168,8 +168,35 @@ export function makeSubagentConversationArtifacts(input: {
   return { message, turnItem };
 }
 
+function substitutedModelNote(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "turnItems">,
+  run: OrchestrationV2Run,
+): string | undefined {
+  const executedModel = latestProviderTurnForAttempt(
+    projection.providerTurns,
+    run.activeAttemptId,
+  )?.model;
+  if (executedModel === undefined || executedModel === run.modelSelection.model) return undefined;
+  const notices = projection.turnItems
+    .filter(
+      (item): item is Extract<OrchestrationV2TurnItem, { readonly type: "system_notice" }> =>
+        item.type === "system_notice" &&
+        item.runId === run.id &&
+        item.nodeId === run.rootNodeId &&
+        item.parentItemId === null &&
+        // T3's own notices, such as usage limits, carry weak refs.
+        item.nativeItemRef?.strength === "strong",
+    )
+    .toSorted((left, right) => left.ordinal - right.ordinal)
+    .map((item) => `Provider notice: ${item.message}`);
+  return [
+    `Requested model ${run.modelSelection.model}, but the provider ran ${executedModel}.`,
+    ...notices,
+  ].join("\n");
+}
+
 export function subagentResultForRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
+  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
   run: OrchestrationV2Run,
 ): {
   readonly text: string;
@@ -208,15 +235,16 @@ export function subagentResultForRun(
           .filter((item) => item.runId === run.id && item.type === "error")
           .toSorted((left, right) => right.ordinal - left.ordinal)[0]
       : undefined;
-  const text =
+  const result =
     (failure?.type === "error" ? failure.failure.message : undefined) ??
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
       ? "Child task completed without an assistant result."
       : `Child task ended with status ${run.status}.`);
+  const note = substitutedModelNote(projection, run);
   return {
-    text,
+    text: note === undefined ? result : `${note}\n\n${result}`,
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
     turnItemId: failure?.id ?? turnItem?.id ?? null,
   };
