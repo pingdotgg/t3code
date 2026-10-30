@@ -59,7 +59,6 @@ import {
 } from "../home/WorkspaceConnectionTitle";
 import { SidebarHeaderActions } from "./sidebar-header-actions";
 import { ThreadListToolbar } from "../home/ThreadListToolbar";
-import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 import { useFabScroll } from "../home/FabScrollContext";
 import { SidebarFilterButton } from "./sidebar-filter-button";
 import { createSidebarHeaderItems } from "./sidebar-native-header-items";
@@ -413,12 +412,7 @@ function ThreadNavigationSidebarPane(
   };
 
   const [measuredHeaderHeight, setMeasuredHeaderHeight] = useState<number | null>(null);
-  const { height, paddingTop, paddingBottom } = useToolbarLayout();
-  const stickyHeaderHeight =
-    measuredHeaderHeight ??
-    (Platform.OS === "android"
-      ? paddingTop + height + paddingBottom
-      : insets.top + SIDEBAR_STICKY_HEADER_HEIGHT);
+  const stickyHeaderHeight = measuredHeaderHeight ?? insets.top + SIDEBAR_STICKY_HEADER_HEIGHT;
   const topListInset = stickyHeaderHeight + 6;
   const handleStickyHeaderLayout = (event: LayoutChangeEvent) => {
     const nextHeight = event.nativeEvent.layout.height;
@@ -788,7 +782,6 @@ function ThreadNavigationSidebarPane(
         style={
           Platform.OS === "android"
             ? {
-                marginTop: stickyHeaderHeight,
                 marginHorizontal: 4,
                 paddingBottom: insets.bottom,
                 backgroundColor: drawerColor,
@@ -846,13 +839,11 @@ function ThreadNavigationSidebarPane(
 
       {Platform.OS === "android" ? (
         <ThreadListToolbar
-          sidebar
-          onLayout={handleStickyHeaderLayout}
           searchQuery={props.searchQuery}
           onSearchQueryChange={props.onSearchQueryChange}
           filterActions={listMenuActions}
           filterCustomized={filterCustomized}
-          onFilterAction={handleListMenuAction}
+          onFilterSelect={(event) => handleListMenuAction({ nativeEvent: { event } })}
           onOpenEnvironments={props.onOpenEnvironmentSettings}
           onRequestVisibility={props.onRequestVisibility}
         />

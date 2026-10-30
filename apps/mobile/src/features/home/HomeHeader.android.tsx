@@ -90,7 +90,7 @@ export function HomeHeader(props: HomeHeaderProps) {
         onSearchQueryChange={props.onSearchQueryChange}
         filterActions={menuActions}
         filterCustomized={hasCustomListOptions}
-        onFilterAction={handleMenuAction}
+        onFilterSelect={(event) => handleMenuAction({ nativeEvent: { event } })}
         onOpenEnvironments={props.onOpenEnvironments}
       />
     </>

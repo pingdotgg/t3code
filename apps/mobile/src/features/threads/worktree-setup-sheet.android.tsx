@@ -1,7 +1,7 @@
 import { Host, ModalBottomSheet, RNHostView } from "@expo/ui/jetpack-compose";
 import { View, useWindowDimensions } from "react-native";
 import { withUniwind } from "uniwind";
-import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import type { WorktreeSetupSheetProps } from "./worktree-setup-sheet";
 
 const NativeBottomSheet = withUniwind(ModalBottomSheet, {
@@ -24,7 +24,9 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
               height: Math.min((height || 360) + 64, window.height * 0.85),
             }}
           >
-            <AndroidSheetHeader
+            <AppBar
+              sheet
+              sidebar={false}
               title="Worktree setup"
               actions={[
                 { accessibilityLabel: "Close setup details", icon: "xmark", onPress: onClose },

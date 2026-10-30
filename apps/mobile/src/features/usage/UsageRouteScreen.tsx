@@ -29,7 +29,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useRef, useState, type ReactNode } from "react";
-import { Platform, Pressable, RefreshControl, View } from "react-native";
+import { Platform, RefreshControl, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -47,8 +47,6 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
-import { Menu } from "../../components/ui/Menu";
-import { SymbolView } from "../../components/ui/AppSymbol";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { UsageChartMetric } from "./usageChartData";
@@ -237,30 +235,27 @@ function UsageScreen(props: {
     const id = EnvironmentId.make(value);
     setSelectedEnvironmentIds((selected) => toggleUsageEnvironment(selected, environments, id));
   };
-  const environmentFilter = showEnvironmentFilter ? (
-    <Menu
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel="Filter usage environments"
-      title="Environments"
-      actions={environmentActions}
-      onPressAction={({ nativeEvent }) => selectEnvironment(nativeEvent.event)}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Filter usage environments"
-        className={cn(
-          "items-center justify-center rounded-full",
-          Platform.OS === "ios" ? "size-[28px]" : "size-[44px]",
-        )}
-      >
-        <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />
-      </Pressable>
-    </Menu>
-  ) : null;
+  const environmentMenu = {
+    title: "Filter usage environments",
+    icon:
+      selectedEnvironmentIds === null
+        ? ("line.3.horizontal.decrease.circle" as const)
+        : ("line.3.horizontal.decrease.circle.fill" as const),
+    items: environmentActions.map((action) => ({
+      id: action.id,
+      title: action.title,
+      subtitle: action.subtitle,
+      selected: action.state === "on",
+      onPress: () => selectEnvironment(action.id),
+    })),
+  };
 
   return (
-    <SettingsScreen title="Usage" trailing={environmentFilter} workspaceRoot={props.workspace}>
+    <SettingsScreen
+      title="Usage"
+      menus={showEnvironmentFilter ? [environmentMenu] : undefined}
+      workspaceRoot={props.workspace}
+    >
       {Platform.OS === "ios" ? (
         <NativeStackScreenOptions
           optionsVersion={JSON.stringify({ showEnvironmentFilter, filterIcon, environmentActions })}

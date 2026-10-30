@@ -6,7 +6,7 @@ import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { useWindowDimensions, View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
@@ -18,6 +18,7 @@ import { AndroidWorkspaceNavigation, FloatingWorkspaceTabs } from "./AndroidWork
 import { FLOATING_TABS, floatingTabsMetrics } from "./floating-workspace-tabs";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
+import { WorkspaceAppBarScope } from "../../components/ui/WorkspaceAppBar.android";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
 const TABS: readonly WorkspaceTab[] = NAVIGATION_TAB_ORDER;
@@ -73,38 +74,40 @@ export function WorkspaceRootScreen() {
               <WorkspaceNoTabs />
             )
           ) : (
-            <WorkspaceTabPanes
-              tabs={TABS}
-              selected={tab}
-              renderTab={(tab) =>
-                tab === "threads" ? (
-                  <HomeRouteScreen />
-                ) : tab !== "pullRequests" ? (
-                  <WorkspaceExtraTab tab={tab} />
-                ) : layout.usesSplitView ? (
-                  <>
-                    <NativeStackScreenOptions options={{ headerShown: false }} />
-                    <AndroidScreenHeader title="Pull requests" />
-                    <View className="flex-1 items-center justify-center px-10">
-                      <EmptyState
-                        title="Select a pull request"
-                        detail="Choose a pull request from the sidebar to review it."
-                        variant="plain"
-                      />
-                    </View>
-                  </>
-                ) : (
-                  <PullRequestsScreen
-                    renderFrame={(filters, list) => (
-                      <>
-                        <PullRequestToolbar filters={filters} />
-                        <ScreenContent>{list}</ScreenContent>
-                      </>
-                    )}
-                  />
-                )
-              }
-            />
+            <WorkspaceAppBarScope enabled={!layout.usesSplitView}>
+              <WorkspaceTabPanes
+                tabs={TABS}
+                selected={tab}
+                renderTab={(tab) =>
+                  tab === "threads" ? (
+                    <HomeRouteScreen />
+                  ) : tab !== "pullRequests" ? (
+                    <WorkspaceExtraTab tab={tab} />
+                  ) : layout.usesSplitView ? (
+                    <>
+                      <NativeStackScreenOptions options={{ headerShown: false }} />
+                      <AppBar embedded sidebar={false} title="Pull requests" />
+                      <View className="flex-1 items-center justify-center px-10">
+                        <EmptyState
+                          title="Select a pull request"
+                          detail="Choose a pull request from the sidebar to review it."
+                          variant="plain"
+                        />
+                      </View>
+                    </>
+                  ) : (
+                    <PullRequestsScreen
+                      renderFrame={(filters, list) => (
+                        <>
+                          <PullRequestToolbar filters={filters} />
+                          <ScreenContent>{list}</ScreenContent>
+                        </>
+                      )}
+                    />
+                  )
+                }
+              />
+            </WorkspaceAppBarScope>
           )}
         </SafeAreaInsetsContext>
         {layout.usesSplitView ? null : floatingTabsEnabled ? (
