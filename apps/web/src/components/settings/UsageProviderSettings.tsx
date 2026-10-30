@@ -107,6 +107,7 @@ export function UsageProviderSettings({
                   !readOnly ? (
                     <RemoveUsageProviderButton
                       label={label}
+                      kind={source.kind}
                       onConfirm={() => updateSettings({ usageLimitSources: { [id]: null } })}
                     />
                   ) : null
@@ -131,11 +132,14 @@ export function UsageProviderSettings({
 
 function RemoveUsageProviderButton({
   label,
+  kind,
   onConfirm,
 }: {
   readonly label: string;
+  readonly kind: "cliproxy" | "credits";
   readonly onConfirm: () => void;
 }) {
+  const credits = kind === "credits";
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -147,9 +151,9 @@ function RemoveUsageProviderButton({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The hub's management key is deleted from this server. Its accounts leave the Limits
-              view; the hub itself is untouched. Add it again with the URL and key to bring them
-              back.
+              {credits
+                ? "The endpoint's credential is deleted from this server and its balances leave the Limits view. Add it again with the URL and credential to bring them back."
+                : "The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -161,7 +165,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              Remove hub
+              {credits ? "Remove endpoint" : "Remove hub"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
