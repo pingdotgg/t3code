@@ -54,6 +54,7 @@ import {
   timingSafeEqualBase64Url,
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -375,11 +376,14 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
       ),
     );
+    const isServerInternalPath = yield* makeIsServerInternalPath;
     // The workspace caller pins its containment-checked path; never follow a
     // replacement symlink to a different file during this second resolution.
     if (
       !canonicalFile ||
-      (input.expectedCanonicalPath !== undefined && canonicalFile !== input.expectedCanonicalPath)
+      (input.expectedCanonicalPath !== undefined &&
+        canonicalFile !== input.expectedCanonicalPath) ||
+      (yield* isServerInternalPath(canonicalFile))
     ) {
       return yield* new AssetWorkspaceAssetNotFoundError({
         resource: input.resource,
@@ -479,7 +483,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           }),
       ),
     );
-    if (!canonicalFile) {
+    const isServerInternalPath = yield* makeIsServerInternalPath;
+    if (!canonicalFile || (yield* isServerInternalPath(canonicalFile))) {
       return yield* new AssetWorkspaceAssetNotFoundError({
         resource: input.resource,
       });

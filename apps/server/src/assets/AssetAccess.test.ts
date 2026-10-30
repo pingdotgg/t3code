@@ -644,6 +644,37 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)("does not issue URLs for server state files", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const stateFile = path.join(config.secretsDir, "example.bin");
+      yield* fs.makeDirectory(config.secretsDir, { recursive: true });
+      yield* fs.writeFile(stateFile, new Uint8Array(32).fill(7));
+      yield* fs.writeFileString(config.dbPath, "SQLite format 3");
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-state-" });
+      const alias = path.join(root, "alias");
+      yield* fs.symlink(stateFile, alias);
+      const threadId = ThreadId.make("thread-1");
+      for (const resource of [
+        { _tag: "media-file", threadId, path: stateFile, disposition: "attachment" },
+        { _tag: "media-file", threadId, path: alias, disposition: "attachment" },
+        {
+          _tag: "media-file",
+          threadId,
+          path: path.join(config.secretsDir, "..", "secrets", "example.bin"),
+          disposition: "attachment",
+        },
+        { _tag: "media-file", threadId, path: config.dbPath },
+        { _tag: "draft-workspace-file", cwd: config.stateDir, path: "statev2.sqlite" },
+      ] as const) {
+        const error = yield* issueAssetUrl({ resource }).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.skipIf(!symlinksSupported)(
     "binds media URLs to the canonical target and rejects symlink substitution",
     () =>
