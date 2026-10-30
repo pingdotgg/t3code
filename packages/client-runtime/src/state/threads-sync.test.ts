@@ -114,6 +114,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly latestLocalTurnOrdinal?: number | null;
   };
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
+  readonly loadSnapshot?: () => Effect.Effect<ThreadSnapshotLoadResult>;
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
   readonly loadCached?: ReturnType<Persistence.EnvironmentCacheStore["Service"]["loadThread"]>;
@@ -176,11 +177,15 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
       Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
-          threadId === THREAD_ID
-            ? (options?.httpSnapshot ??
-                ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
-            : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
+        Effect.andThen(
+          options?.loadSnapshot ??
+            (() =>
+              Effect.succeed(
+                threadId === THREAD_ID
+                  ? (options?.httpSnapshot ??
+                      ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
+                  : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
+              )),
         ),
       ),
   });
@@ -605,6 +610,75 @@ describe("EnvironmentThreads", () => {
 
       expect(resumeCache.snapshot?.sequence).toBe(9);
       expect(yield* Ref.get(old.removedThreads)).toEqual([]);
+    }),
+  );
+
+  it.effect("recovers when the first snapshot precedes thread creation", () =>
+    Effect.gen(function* () {
+      const attempts = yield* Queue.unbounded<void>();
+      let created = false;
+      const harness = yield* makeHarness({
+        loadSnapshot: () =>
+          Queue.offer(attempts, undefined).pipe(
+            Effect.as(
+              created
+                ? {
+                    _tag: "present" as const,
+                    snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION },
+                  }
+                : { _tag: "missing" as const },
+            ),
+          ),
+      });
+      yield* Queue.take(attempts);
+      created = true;
+      yield* TestClock.adjust("500 millis");
+      yield* Queue.take(attempts);
+      yield* awaitThreadState(harness.observed, (state) => state.status === "live");
+      yield* Queue.offer(harness.inputs, titleUpdated("Response arrived", 8));
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.getOrNull(value.data)?.thread.title === "Response arrived",
+      );
+      expect(state.status).toBe("live");
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([]);
+    }),
+  );
+
+  it.effect("bounds missing snapshot retries and recovers on foreground", () =>
+    Effect.gen(function* () {
+      const attempts = yield* Queue.unbounded<void>();
+      let created = false;
+      const harness = yield* makeHarness({
+        loadSnapshot: () =>
+          Queue.offer(attempts, undefined).pipe(
+            Effect.as(
+              created
+                ? {
+                    _tag: "present" as const,
+                    snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION },
+                  }
+                : { _tag: "missing" as const },
+            ),
+          ),
+      });
+      yield* Queue.take(attempts);
+      for (const delay of [500, 1_000, 2_000, 4_000, 8_000, 16_000]) {
+        yield* TestClock.adjust(delay);
+        yield* Queue.take(attempts);
+      }
+      const missing = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.error),
+      );
+      expect(missing.status).not.toBe("deleted");
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(7);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(0);
+      created = true;
+      yield* Queue.offer(harness.wakeups, "application-active");
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(8);
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([]);
     }),
   );
 

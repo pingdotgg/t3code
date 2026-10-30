@@ -874,7 +874,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
         let current = yield* SubscriptionRef.get(state);
-        // A prior definitive miss (or delete event) already cleared this thread.
+        // An explicit delete event already cleared this thread.
         // Park the subscription attempt without opening the socket so we do not
         // retry forever against a known-missing id.
         if (current.status === "deleted") {
@@ -904,8 +904,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
+          let httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
             yield* snapshotLoader.load(prepared, threadId);
+          // Navigation can precede thread creation; an HTTP miss is not a deletion event.
+          for (const delay of [500, 1_000, 2_000, 4_000, 8_000, 16_000]) {
+            if (httpResult._tag !== "missing") break;
+            yield* Effect.sleep(delay);
+            httpResult = yield* snapshotLoader.load(prepared, threadId);
+          }
           switch (httpResult._tag) {
             case "present": {
               if (canLoadHistory && httpResult.history !== undefined) {
@@ -936,7 +942,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
             case "missing": {
-              yield* setDeleted();
+              yield* setStreamError("Thread not found. Reopen the thread to try again.");
               return yield* Effect.never;
             }
             case "unavailable": {
