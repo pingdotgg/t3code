@@ -248,8 +248,8 @@ const make = Effect.gen(function* () {
         const cwd = path.resolve(terminal.cwd);
         return (
           (terminal.worktreePath !== null &&
-            path.resolve(terminal.worktreePath) === worktreePath) ||
-          cwd === worktreePath ||
+            pathKey(terminal.worktreePath) === pathKey(worktreePath)) ||
+          pathKey(cwd) === pathKey(worktreePath) ||
           inside(worktreePath, cwd)
         );
       });
@@ -987,7 +987,7 @@ const make = Effect.gen(function* () {
           for (const session of sessions) {
             const cwd = path.resolve(session.cwd);
             if (
-              (cwd === worktreePath || inside(worktreePath, cwd)) &&
+              (pathKey(cwd) === pathKey(worktreePath) || inside(worktreePath, cwd)) &&
               (yield* providerSessions.isLive(session.id))
             )
               return waitForStop("provider session is still open");

@@ -461,6 +461,22 @@ const cleanupFixture = (
       setOpenSessionCwd: (cwd: string | null) => {
         openSessionCwd = cwd;
       },
+      openTerminal: (paths: { cwd: string; worktreePath: string | null }) =>
+        terminalListener?.({
+          type: "upsert",
+          terminal: {
+            threadId: "thread-1",
+            terminalId: "terminal-1",
+            status: "running",
+            pid: 1,
+            exitCode: null,
+            exitSignal: null,
+            hasRunningSubprocess: false,
+            label: "Terminal",
+            updatedAt: "2026-06-10T12:00:00.000Z",
+            ...paths,
+          },
+        }) ?? Effect.void,
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
@@ -1590,6 +1606,54 @@ describe("orphan worktree reports", () => {
           const report = yield* fixture.service.runNow;
           expect(report.entries.map((entry) => entry.path).sort()).toEqual(
             platform === "win32" ? [] : [referenced],
+          );
+        }),
+      ),
+  );
+
+  it.live.each([
+    ["win32", "cwd"],
+    ["win32", "worktreePath"],
+    ["linux", "cwd"],
+    ["linux", "worktreePath"],
+  ] as const)(
+    "matches a terminal at the worktree root with host casing rules (%s, %s)",
+    ([platform, field]) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(HostProcess.Platform, platform),
+          );
+          const upper = fixture.worktree.toUpperCase();
+          yield* fixture.openTerminal(
+            field === "cwd"
+              ? { cwd: upper, worktreePath: null }
+              : { cwd: fixture.repo, worktreePath: upper },
+          );
+          const report = yield* fixture.service.runNow;
+          expect(report.entries[0]).toMatchObject(
+            platform === "win32"
+              ? { outcome: "kept", reason: "Open terminal" }
+              : { outcome: "removed" },
+          );
+        }),
+      ),
+  );
+
+  it.live.each(["win32", "linux"] as const)(
+    "matches a provider session at the worktree root with host casing rules (%s)",
+    (platform) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(HostProcess.Platform, platform),
+          );
+          fixture.setOpenSessionCwd(fixture.worktree.toUpperCase());
+          const report = yield* fixture.service.runNow;
+          expect(report.entries[0]).toMatchObject(
+            platform === "win32"
+              ? { outcome: "kept", reason: "Provider session is still open" }
+              : { outcome: "removed" },
           );
         }),
       ),
