@@ -174,7 +174,7 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
-## Voice input on iPhone and Mac
+## Voice input on Mac
 
 On supported Macs running macOS 26 or later, use the desktop composer's microphone
 to dictate into your draft. Finish to insert the transcript at the selection where
@@ -184,6 +184,8 @@ Audio and transcription stay on your Mac, including when the agent runs remotely
 The first use may download an Apple speech model; later transcription works offline.
 Microphone permission can be changed in System Settings → Privacy & Security → Microphone.
 Web, Windows, and Linux clients do not offer built-in voice input.
+
+## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
 then confirm to transcribe. Text is inserted where your selection was when
