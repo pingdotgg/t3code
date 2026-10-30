@@ -814,9 +814,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       origin: running.hub.origin,
       http: httpClient,
       run,
-      androidAvailable: platformAvailability("android").pipe(
-        Effect.map((availability) => availability.available),
-      ),
+      availablePlatforms: Effect.all({
+        android: platformAvailability("android").pipe(Effect.map((value) => value.available)),
+        ios: platformAvailability("ios").pipe(Effect.map((value) => value.available)),
+      }),
     }),
     nodePath: running.hub.nodePath,
     run,

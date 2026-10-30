@@ -316,8 +316,15 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         origin: hubOrigin,
         http,
         run,
-        androidAvailable: platformAvailability("android").pipe(
-          Effect.map((availability) => availability.available),
+        availablePlatforms: provide(probe(config, owner)).pipe(
+          Effect.map((value) => {
+            summary = { ...summary, platforms: value.platforms };
+            return {
+              ios: value.platforms.some((p) => p.platform === "ios" && p.available),
+              android: value.platforms.some((p) => p.platform === "android" && p.available),
+            };
+          }),
+          Effect.orElseSucceed(() => ({ ios: false, android: false, probeFailed: true })),
         ),
       }),
       ...(remote.daemonPort !== undefined &&

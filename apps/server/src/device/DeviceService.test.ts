@@ -42,6 +42,101 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
+it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
+  "discovers never-booted iOS simulators on %s without losing hub devices",
+  (hostId) =>
+    Effect.gen(function* () {
+      const existing = {
+        id: "used-phone",
+        name: "iPhone",
+        version: "iOS 26.3",
+        platform: "ios" as const,
+        booted: true,
+        physical: false,
+      };
+      const http = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ simulators: [existing], emulators: [] }),
+          ),
+        ),
+      );
+      const devices = makeDeviceHubOperations({
+        hostId,
+        origin: "http://device.test",
+        http,
+        availablePlatforms: Effect.succeed({ android: false, ios: true }),
+        run: (command, args) => {
+          expect([command, ...args]).toEqual(["xcrun", "simctl", "list", "devices", "--json"]);
+          return Effect.succeed({
+            code: 0,
+            stderr: "",
+            stdout: JSON.stringify({
+              devices: {
+                "com.apple.CoreSimulator.SimRuntime.iOS-26-3": [
+                  { udid: "used-phone", name: "iPhone", isAvailable: true, state: "Booted" },
+                  { udid: "new-ipad", name: "iPad", isAvailable: true, state: "Shutdown" },
+                  { udid: "unavailable", name: "Old phone", isAvailable: false, state: "Shutdown" },
+                ],
+                "com.apple.CoreSimulator.SimRuntime.tvOS-26-3": [
+                  { udid: "tv", name: "Apple TV", isAvailable: true, state: "Shutdown" },
+                ],
+              },
+            }),
+          });
+        },
+      });
+      expect((yield* devices.list).devices).toEqual([
+        existing,
+        {
+          id: "new-ipad",
+          name: "iPad",
+          version: "iOS 26.3",
+          platform: "ios",
+          booted: false,
+          physical: false,
+        },
+      ]);
+    }),
+);
+
+it.effect.each([
+  { code: 1, stdout: "private command output", stderr: "private error" },
+  { code: 0, stdout: "{invalid json", stderr: "" },
+  { code: 0, stdout: "{}", stderr: "" },
+])("keeps discovered iOS devices when simctl enumeration fails: %j", (enumeration) =>
+  Effect.gen(function* () {
+    const device = {
+      id: "phone",
+      name: "iPhone",
+      version: "iOS 26.3",
+      platform: "ios",
+      booted: true,
+      physical: false,
+    };
+    const operations = makeDeviceHubOperations({
+      hostId: LOCAL_DEVICE_HOST_ID,
+      origin: "http://device.test",
+      http: HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ simulators: [device], emulators: [] }),
+          ),
+        ),
+      ),
+      run: () => Effect.succeed(enumeration),
+      availablePlatforms: Effect.succeed({ android: false, ios: true }),
+    });
+    const listed = yield* operations.list;
+    expect(listed.devices).toEqual([device]);
+    expect(listed.detail).toBe(
+      "Could not list all iOS simulators (xcrun simctl list devices --json). Discovered devices remain available.",
+    );
+  }),
+);
+
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string | { error?: string; errors?: Array<{ message: string; error?: string }> },
@@ -131,7 +226,9 @@ const fixture = Effect.fn("fixture")(function* (
         origin: "http://device.test",
         http,
         run,
-        androidAvailable: Ref.get(androidAvailable),
+        availablePlatforms: Ref.get(androidAvailable).pipe(
+          Effect.map((android) => ({ android, ios: false })),
+        ),
       }),
       ...(options.endsDevices ? { endsDevices: true } : {}),
     },
@@ -684,7 +781,7 @@ it.effect.each(["shutdown", "close"] as const)(
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          availablePlatforms: Effect.succeed({ android: true, ios: false }),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -968,7 +1065,7 @@ it.effect.each([
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          availablePlatforms: Effect.succeed({ android: true, ios: false }),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -1040,7 +1137,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          availablePlatforms: Effect.succeed({ android: true, ios: false }),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
