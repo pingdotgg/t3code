@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunAttemptId,
   RunId,
   ScheduledTaskId,
   SECRET_REQUEST_UNSAVED_NOTE,
@@ -48,6 +49,7 @@ const childThreadId = ThreadId.make("thread-mcp-orchestrator-child");
 const activeRunId = RunId.make("run-mcp-active");
 const cancelledRunId = RunId.make("run-mcp-cancelled");
 const childRunId = RunId.make("run-mcp-child");
+const activeAttemptId = RunAttemptId.make("attempt-mcp-active");
 const taskId = NodeId.make("node-mcp-task-1");
 const now = DateTime.makeUnsafe("2026-08-04T12:00:00.000Z");
 const codexDriver = ProviderDriverKind.make("codex");
@@ -132,9 +134,10 @@ it("readThread preserves caller access errors and prefers activity-run status ov
       model: "gpt-5.4",
     }),
     runs: [
-      makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
+      { ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), activeAttemptId },
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
     ],
+    providerTurns: [{ runAttemptId: activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" }],
     visibleTurnItems: [],
     runtimeRequests: [],
     messages: [],
@@ -167,9 +170,13 @@ it("readThread preserves caller access errors and prefers activity-run status ov
                     ? (projection.thread as unknown as OrchestrationV2ThreadShell)
                     : null,
                 ),
-          getProjectThreadRecords: (input) =>
+          getProjectThreadRecords: (input, fields) =>
             input.threadId === parentThreadId
-              ? Effect.succeed(projection)
+              ? Effect.succeed(
+                  fields?.some((field) => field === "providerTurns")
+                    ? projection
+                    : { ...projection, providerTurns: [] },
+                )
               : Effect.die(`unexpected thread ${input.threadId}`),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         ServerSettings.layerTest(),
@@ -196,6 +203,12 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+    expect(
+      result.recentRuns.map(({ runId, model, executedModel }) => ({ runId, model, executedModel })),
+    ).toEqual([
+      { runId: cancelledRunId, model: "gpt-5.4", executedModel: null },
+      { runId: activeRunId, model: "gpt-5.4", executedModel: "gpt-5.4-mini" },
+    ]);
 
     callerUnavailable = true;
     const denied = yield* service
@@ -377,6 +390,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     ],
     subagents: [],
     providerThreads: [],
+    providerTurns: [],
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
