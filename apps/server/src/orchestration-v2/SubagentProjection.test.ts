@@ -158,6 +158,21 @@ it.effect.each([
       const savedParent = yield* store.getThread(parentThreadId);
       assert.deepEqual(savedParent.pinnedAt, parentCreatedAt);
       assert.equal(savedParent.pinOrderKey, "a0");
+      // A subagent child waits for its parent, so settle the pinned parent first.
+      assert.deepEqual(yield* store.getSettlementCandidates(), []);
+      yield* store.apply({
+        id: EventId.make(`event:${parentThreadId}:settled`),
+        type: "thread.settled",
+        threadId: parentThreadId,
+        occurredAt: childCreatedAt,
+        payload: {
+          ...savedParent,
+          settledOverride: "settled",
+          settledAt: childCreatedAt,
+          pinnedAt: null,
+          pinOrderKey: null,
+        },
+      });
       const candidates = yield* store.getSettlementCandidates();
       assert.deepEqual(
         candidates.map((candidate) => candidate.id),
