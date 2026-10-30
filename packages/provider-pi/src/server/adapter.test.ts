@@ -2488,6 +2488,403 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("advertises native todo projection through the public session", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      assert.isTrue(runtime.providerSession.capabilities.planning.emitsTodoList);
+      assert.isTrue(runtime.providerSession.capabilities.planning.emitsPlanUpdated);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      extension: "rpiv-todo",
+      initial: {
+        action: "list",
+        tasks: [
+          { id: 1, subject: " Research ", status: "in_progress" },
+          { id: 2, subject: "Verify", status: "pending" },
+          { id: 3, subject: "Removed", status: "deleted" },
+        ],
+        nextId: 4,
+      },
+      completed: {
+        action: "update",
+        tasks: [
+          { id: 1, subject: "Research", status: "completed" },
+          { id: 2, subject: "Verify", status: "completed" },
+        ],
+        nextId: 4,
+      },
+      empty: {
+        action: "delete",
+        tasks: [{ id: 2, subject: "Verify", status: "deleted" }],
+        nextId: 4,
+      },
+      cleared: { action: "clear", tasks: [], nextId: 1 },
+      updateArgs: { action: "update", id: 2, status: "completed" },
+      initialStatuses: ["running", "pending"],
+    },
+    {
+      extension: "Pi bundled todo example",
+      initial: {
+        action: "list",
+        todos: [
+          { id: 1, text: " Research ", done: false },
+          { id: 2, text: "Verify", done: false },
+        ],
+        nextId: 3,
+      },
+      completed: {
+        action: "toggle",
+        todos: [
+          { id: 1, text: "Research", done: true },
+          { id: 2, text: "Verify", done: true },
+        ],
+        nextId: 3,
+      },
+      empty: { action: "clear", todos: [], nextId: 1 },
+      cleared: { action: "clear", todos: [], nextId: 1 },
+      updateArgs: { action: "toggle", id: 2 },
+      initialStatuses: ["pending", "pending"],
+    },
+  ])("projects authoritative native snapshots from $extension", (fixture) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const calls = [
+        { id: "list", args: { action: "list" }, details: fixture.initial, isError: false },
+        { id: "failed", args: fixture.updateArgs, details: fixture.completed, isError: true },
+        {
+          id: "rejected",
+          args: fixture.updateArgs,
+          details: { ...fixture.completed, error: "Invalid transition" },
+          isError: false,
+        },
+        { id: "update", args: fixture.updateArgs, details: fixture.completed, isError: false },
+        {
+          id: "remove",
+          args: { action: fixture.empty.action, id: 2 },
+          details: fixture.empty,
+          isError: false,
+        },
+        {
+          id: "clear",
+          args: {
+            action: "clear",
+            subject: "Stale argument",
+            todos: [{ content: "Stale argument" }],
+          },
+          details: fixture.cleared,
+          isError: false,
+        },
+        {
+          id: "missing-result",
+          args: {
+            action: "clear",
+            subject: "Stale argument",
+            todos: [{ content: "Stale argument" }],
+          },
+          details: undefined,
+          isError: false,
+        },
+      ];
+      for (const call of calls) {
+        yield* fake.emit({
+          type: "tool_execution_start",
+          toolCallId: call.id,
+          toolName: "todo",
+          args: call.args,
+        });
+        yield* fake.emit({
+          type: "tool_execution_update",
+          toolCallId: call.id,
+          toolName: "todo",
+          partialResult: { details: fixture.empty },
+        });
+        yield* fake.emit({
+          type: "tool_execution_end",
+          toolCallId: call.id,
+          toolName: "todo",
+          isError: call.isError,
+          result: { content: [{ type: "text", text: call.id }], details: call.details },
+        });
+      }
+      yield* fake.emit({ type: "agent_settled" });
+      const events: ProviderAdapter.ProviderAdapterV2Event[] = [];
+      yield* takeEvent((event) => {
+        events.push(event);
+        return event.type === "turn.terminal";
+      });
+      const plans = events.flatMap((event) =>
+        event.type === "plan.updated" && event.plan.kind === "todo_list" ? [event.plan] : [],
+      );
+      assert.equal(plans.length, 4);
+      assert.deepEqual(
+        plans.map((plan) => plan.steps.map((step) => step.text)),
+        [["Research", "Verify"], ["Research", "Verify"], [], []],
+      );
+      assert.deepEqual(
+        plans[0]!.steps.map((step) => step.status),
+        fixture.initialStatuses,
+      );
+      assert.deepEqual(
+        plans[0]!.steps.map((step) => step.id),
+        ["1", "2"],
+      );
+      assert.deepEqual(
+        plans.map((plan) => plan.status),
+        ["active", "completed", "active", "active"],
+      );
+      assert.isTrue(plans.every((plan) => plan.id === plans[0]!.id));
+      const items = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "todo_list"
+          ? [event.turnItem]
+          : [],
+      );
+      const running = items.filter((item) => item.status === "running");
+      assert.isAbove(running.length, 0);
+      assert.isTrue(
+        running
+          .filter(
+            (item) =>
+              item.nativeItemRef?.nativeId !== "missing-result" &&
+              item.nativeItemRef?.nativeId !== "clear",
+          )
+          .every((item) => item.steps.length === 2),
+      );
+      assert.isTrue(
+        items
+          .filter(
+            (item) =>
+              item.nativeItemRef?.nativeId === "missing-result" ||
+              item.nativeItemRef?.nativeId === "clear",
+          )
+          .every((item) => item.steps.length === 0),
+      );
+      const failures = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "dynamic_tool" &&
+        event.turnItem.status === "failed"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        failures.map((item) => item.output),
+        ["failed", "rejected"],
+      );
+      assert.isTrue(items.every((item) => item.planId === plans[0]!.id));
+      const completedItem = items.find((item) => item.nativeItemRef?.nativeId === "list");
+      assert.equal(completedItem?.nodeId, plans[0]!.nodeId);
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "node.updated" &&
+            event.node.id === completedItem?.nodeId &&
+            event.node.kind === "todo_list",
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("owns todo snapshots per turn and ignores stale or cancelled completions", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const firstDetails = { tasks: [{ id: 1, subject: "First turn", status: "pending" }] };
+      const events: ProviderAdapter.ProviderAdapterV2Event[] = [];
+      const collect = (event: ProviderAdapter.ProviderAdapterV2Event) => {
+        events.push(event);
+        return event.type === "turn.terminal";
+      };
+      for (const runOrdinal of [1, 2]) {
+        yield* startTurn(
+          runtime,
+          providerThread,
+          "default",
+          [],
+          "Track work",
+          undefined,
+          runOrdinal,
+        );
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        if (runOrdinal === 2) {
+          yield* fake.emit({
+            type: "tool_execution_end",
+            toolCallId: "first",
+            toolName: "todo",
+            isError: false,
+            result: { details: firstDetails },
+          });
+          yield* fake.emit({
+            type: "tool_execution_start",
+            toolCallId: "no-snapshot",
+            toolName: "todo",
+            args: { action: "update", id: 1 },
+          });
+          yield* fake.emit({
+            type: "tool_execution_end",
+            toolCallId: "no-snapshot",
+            toolName: "todo",
+            isError: false,
+            result: {},
+          });
+        }
+        const toolCallId = runOrdinal === 1 ? "first" : "second";
+        yield* fake.emit({
+          type: "tool_execution_start",
+          toolCallId,
+          toolName: "todo",
+          args: { action: "list" },
+        });
+        yield* fake.emit({
+          type: "tool_execution_end",
+          toolCallId,
+          toolName: "todo",
+          isError: false,
+          result: {
+            details:
+              runOrdinal === 1
+                ? firstDetails
+                : { tasks: [{ id: " ", subject: "Second turn", status: "in_progress" }] },
+          },
+        });
+        if (runOrdinal === 2) {
+          yield* fake.emit({
+            type: "tool_execution_start",
+            toolCallId: "cancelled",
+            toolName: "todo",
+            args: { action: "clear" },
+          });
+          const started = yield* takeEvent((event) => {
+            events.push(event);
+            return (
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "cancelled"
+            );
+          });
+          assert.isTrue(
+            started.type === "turn_item.updated" && started.turnItem.type === "todo_list",
+          );
+          const providerTurnId =
+            started.type === "turn_item.updated" ? started.turnItem.providerTurnId : null;
+          assert.isNotNull(providerTurnId);
+          yield* runtime.interruptTurn({ providerThread, providerTurnId: providerTurnId! });
+          yield* fake.emit({
+            type: "tool_execution_end",
+            toolCallId: "cancelled",
+            toolName: "todo",
+            isError: false,
+            result: { details: { tasks: [] } },
+          });
+        }
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent(collect);
+      }
+      const plans = events.flatMap((event) =>
+        event.type === "plan.updated" && event.plan.kind === "todo_list" ? [event.plan] : [],
+      );
+      assert.equal(plans.length, 2);
+      assert.notEqual(plans[0]!.id, plans[1]!.id);
+      assert.notEqual(plans[0]!.runId, plans[1]!.runId);
+      assert.deepEqual(
+        plans.map((plan) => plan.steps.map((step) => step.text)),
+        [["First turn"], ["Second turn"]],
+      );
+      assert.equal(plans[1]!.steps[0]!.id, "todo-1");
+      const cancelled = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "todo_list" &&
+        event.turnItem.status === "interrupted"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.equal(cancelled.length, 1);
+      assert.deepEqual(cancelled[0]!.steps, plans[1]!.steps);
+      assert.isFalse(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.runId === plans[1]!.runId &&
+            event.turnItem.nativeItemRef?.nativeId === "first",
+        ),
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "no-snapshot" &&
+            event.turnItem.type === "dynamic_tool",
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps unrelated and malformed todo results as ordinary tools", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      for (const [index, result] of [
+        {
+          content: [{ type: "text", text: "Third-party mutation" }],
+          structuredContent: { todos: [{ content: "Unverified", status: "pending" }] },
+        },
+        { details: { tasks: [{ id: 1, subject: "Broken", status: "unknown" }] } },
+        { details: { todos: [{ id: 1, text: "Broken", done: "false" }] } },
+        { details: { tasks: [{ id: 1, subject: " ", status: "pending" }] } },
+      ].entries()) {
+        yield* fake.emit({
+          type: "tool_execution_start",
+          toolCallId: `other-${index}`,
+          toolName: "todo",
+          args: { subject: "Not a snapshot" },
+        });
+        yield* fake.emit({
+          type: "tool_execution_end",
+          toolCallId: `other-${index}`,
+          toolName: "todo",
+          isError: false,
+          result,
+        });
+      }
+      yield* fake.emit({ type: "agent_settled" });
+      const events: ProviderAdapter.ProviderAdapterV2Event[] = [];
+      yield* takeEvent((event) => {
+        events.push(event);
+        return event.type === "turn.terminal";
+      });
+      assert.isFalse(events.some((event) => event.type === "plan.updated"));
+      const items = events.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      assert.equal(items.length, 8);
+      assert.isTrue(items.every((item) => item.type === "dynamic_tool"));
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true])("follows an extension rewind with summarize=%s", (summarize) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

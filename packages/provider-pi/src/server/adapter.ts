@@ -5,9 +5,11 @@ import { readToolOutputImage } from "@t3tools/shared/toolOutput";
 import * as Predicate from "effect/Predicate";
 import {
   ProviderDriverKind,
+  TrimmedNonEmptyString,
   type ChatAttachment,
   type ModelSelection,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRef,
@@ -21,6 +23,7 @@ import {
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type OrchestrationV2ProviderTurnTokenUsage,
+  type PlanId,
 } from "@t3tools/contracts";
 import { PiSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
@@ -141,8 +144,8 @@ const PiProviderCapabilitiesV2 = {
     approvalsCanOriginateFromSubagents: false,
   },
   planning: {
-    emitsPlanUpdated: false,
-    emitsTodoList: false,
+    emitsPlanUpdated: true,
+    emitsTodoList: true,
     emitsProposedPlan: false,
     supportsStructuredQuestions: true,
     planDeltasHaveItemIds: false,
@@ -205,6 +208,55 @@ function contentText(content: unknown): string {
 }
 
 const MAX_STRUCTURED_TOOL_OUTPUT_BYTES = 64 * 1024;
+
+const decodePiTodoSnapshot = Schema.decodeUnknownOption(
+  Schema.Union([
+    Schema.Struct({
+      tasks: Schema.Array(
+        Schema.Struct({
+          id: Schema.Union([Schema.Number, Schema.String]),
+          subject: TrimmedNonEmptyString,
+          status: Schema.Literals(["pending", "in_progress", "completed", "deleted"]),
+        }),
+      ),
+    }),
+    Schema.Struct({
+      todos: Schema.Array(
+        Schema.Struct({
+          id: Schema.Union([Schema.Number, Schema.String]),
+          text: TrimmedNonEmptyString,
+          done: Schema.Boolean,
+        }),
+      ),
+    }),
+  ]),
+);
+
+function piTodoSteps(result: unknown): ReadonlyArray<OrchestrationV2PlanStep> | undefined {
+  // rpiv-todo's details.tasks and Pi's bundled todo example's details.todos
+  // are full branch snapshots. Arguments and partial results are not snapshots.
+  const snapshot = decodePiTodoSnapshot(recordField(result, "details"));
+  if (Option.isNone(snapshot)) return undefined;
+  if ("tasks" in snapshot.value) {
+    return snapshot.value.tasks
+      .filter((task) => task.status !== "deleted")
+      .map((task, index) => ({
+        id: String(task.id).trim() || `todo-${index + 1}`,
+        text: task.subject,
+        status:
+          task.status === "in_progress"
+            ? "running"
+            : task.status === "completed"
+              ? "completed"
+              : "pending",
+      }));
+  }
+  return snapshot.value.todos.map((todo, index) => ({
+    id: String(todo.id).trim() || `todo-${index + 1}`,
+    text: todo.text,
+    status: todo.done ? "completed" : "pending",
+  }));
+}
 
 function isBoundedStructuredToolValue(value: unknown): boolean {
   let bytes = MAX_STRUCTURED_TOOL_OUTPUT_BYTES;
@@ -352,6 +404,8 @@ interface ActivePiTurn {
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
+  /** Native snapshots persist in Pi; only this turn's projection is cached here. */
+  todoPlan: { readonly id: PlanId; readonly steps: ReadonlyArray<OrchestrationV2PlanStep> } | null;
   interrupted: boolean;
   nativeAborted: boolean;
   sawAgentActivity: boolean;
@@ -984,26 +1038,50 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (phase === "start") {
           turn.toolArgs.set(toolCallId, event["args"]);
         }
+        // Pi tool IDs belong to the turn that started them. A late completion
+        // must not publish a snapshot into a replacement turn.
+        if (toolName === "todo" && !turn.toolArgs.has(toolCallId)) return;
         const args = event["args"] ?? turn.toolArgs.get(toolCallId);
         const emittedAt = yield* DateTime.now;
         const startedAt = turn.toolStartedAt.get(toolCallId) ?? emittedAt;
         turn.toolStartedAt.set(toolCallId, startedAt);
         const completed = phase === "end";
-        const isError = event["isError"] === true;
         const resultRecord = completed ? event["result"] : event["partialResult"];
+        const isError =
+          event["isError"] === true ||
+          (toolName === "todo" &&
+            recordString(recordField(resultRecord, "details"), "error") !== undefined);
+        const interrupted = toolName === "todo" && (turn.interrupted || turn.nativeAborted);
         const outputText = contentText(recordField(resultRecord, "content"));
-        const status = completed
-          ? isError
-            ? turn.interrupted
-              ? "interrupted"
-              : "failed"
-            : "completed"
-          : "running";
+        const status = !completed
+          ? "running"
+          : interrupted || (isError && turn.interrupted)
+            ? "interrupted"
+            : isError
+              ? "failed"
+              : "completed";
+        const steps =
+          toolName === "todo" && completed && !isError && !interrupted
+            ? piTodoSteps(resultRecord)
+            : undefined;
+        if (toolName === "todo" && completed) turn.toolArgs.delete(toolCallId);
+        if (steps !== undefined) {
+          const id =
+            turn.todoPlan?.id ??
+            (yield* idAllocator.allocate.plan({
+              threadId: turn.turnInput.threadId,
+              runId: turn.turnInput.runId,
+              driver: PI_PROVIDER,
+            }));
+          turn.todoPlan = { id, steps };
+        }
+        // Todo items have no output field; failed calls keep their native error text.
+        const todoPlan = toolName === "todo" && !isError ? turn.todoPlan : null;
         const base = baseItemFields(turn, toolCallId, startedAt, emittedAt);
         yield* emitItemNode(
           turn,
           toolCallId,
-          "tool_call",
+          todoPlan === null ? "tool_call" : "todo_list",
           status,
           startedAt,
           completed ? emittedAt : null,
@@ -1013,6 +1091,38 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           status,
           completedAt: completed ? emittedAt : null,
         } as const;
+        if (todoPlan !== null) {
+          if (steps !== undefined) {
+            yield* emit({
+              type: "plan.updated",
+              driver: PI_PROVIDER,
+              plan: {
+                id: todoPlan.id,
+                threadId: turn.turnInput.threadId,
+                runId: turn.turnInput.runId,
+                nodeId: base.nodeId,
+                kind: "todo_list",
+                status:
+                  steps.length > 0 && steps.every((step) => step.status === "completed")
+                    ? "completed"
+                    : "active",
+                steps: [...steps],
+              },
+            });
+          }
+          yield* emit({
+            type: "turn_item.updated",
+            driver: PI_PROVIDER,
+            turnItem: {
+              ...shared,
+              title: "Todo list",
+              type: "todo_list",
+              planId: todoPlan.id,
+              steps: [...todoPlan.steps],
+            },
+          });
+          return;
+        }
         if (toolName === "bash" || toolName === "powershell") {
           const exitCode =
             recordNumber(recordField(resultRecord, "structuredContent"), "exit_code") ??
@@ -2453,6 +2563,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               streamItems: new Map(),
               toolArgs: new Map(),
               toolStartedAt: new Map(),
+              todoPlan: null,
               interrupted: false,
               nativeAborted: false,
               sawAgentActivity: false,
