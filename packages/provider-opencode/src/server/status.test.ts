@@ -226,6 +226,75 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("prefers the selected stored Go key over the auth.json key OpenCode 2 imported", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dataHome = yield* fs.makeTempDirectoryScoped();
+    yield* fs.makeDirectory(`${dataHome}/opencode`);
+    yield* fs.writeFileString(
+      `${dataHome}/opencode/auth.json`,
+      JSON.stringify({ "opencode-go": { type: "api", key: "imported-key" } }),
+    );
+    const database = yield* Effect.acquireRelease(
+      Effect.sync(() => new NodeSqlite.DatabaseSync(`${dataHome}/opencode/opencode.db`)),
+      (database) => Effect.sync(() => database.close()),
+    );
+    database.exec(
+      "CREATE TABLE credential (id text PRIMARY KEY, integration_id text, value text, active integer, time_created integer, time_updated integer)",
+    );
+    const insert = database.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?)");
+    insert.run(
+      "cred_imported",
+      "opencode-go",
+      JSON.stringify({ type: "key", key: "imported-key" }),
+      0,
+      1,
+      2,
+    );
+    insert.run(
+      "cred_replaced",
+      "opencode-go",
+      JSON.stringify({ type: "key", key: "replaced-key" }),
+      1,
+      2,
+      2,
+    );
+    const window = { percent: 1, resetsAt: "2026-09-17T12:00:00.000Z" };
+    for (const { replacedStatus, requested } of [
+      { replacedStatus: 200, requested: ["replaced-key"] },
+      { replacedStatus: 401, requested: ["replaced-key", "imported-key"] },
+    ]) {
+      const authorizations: string[] = [];
+      const limits = yield* readOpenCodeGoUsageLimits({
+        enabled: true,
+        serverUrl: "",
+        environment: { XDG_DATA_HOME: dataHome },
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const key = (request.headers.authorization ?? "").replace("Bearer ", "");
+            authorizations.push(key);
+            const status = key === "replaced-key" ? replacedStatus : 200;
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  { usage: { rolling: window, weekly: window, monthly: window } },
+                  { status },
+                ),
+              ),
+            );
+          }),
+        ),
+      );
+      NodeAssert.deepEqual(authorizations, requested);
+      NodeAssert.equal(limits.unavailable, undefined);
+      NodeAssert.equal(limits.windows.length, 3);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("does not read local credentials for external or disabled OpenCode instances", () =>
   Effect.gen(function* () {
     for (const settings of [
