@@ -476,12 +476,12 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
 
 const isApprovalRequestKind = Schema.is(ProviderRequestKind);
 
-function pendingTaskApproval(
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
+function activeTaskRunIds(
+  child: Pick<OrchestrationV2ThreadProjection, "runs">,
   taskId: NodeId,
   originalRun: OrchestrationV2Run | undefined,
 ) {
-  const taskRunIds = new Set(
+  return new Set(
     child.runs
       .filter(
         (run) =>
@@ -492,6 +492,12 @@ function pendingTaskApproval(
       )
       .map((run) => run.id),
   );
+}
+
+function pendingTaskApproval(
+  child: Pick<OrchestrationV2ThreadProjection, "nodes" | "runtimeRequests">,
+  taskRunIds: ReadonlySet<RunId>,
+) {
   let approval: OrchestratorMcpDelegateTaskResult["pendingApproval"] = null;
   let oldestCreatedAt = Infinity;
   for (const request of child.runtimeRequests) {
@@ -1451,8 +1457,13 @@ const make = Effect.gen(function* () {
           "providerThreads",
           "runtimeRequests",
           "nodes",
+          "turnItems",
         ],
-        { messageRoles: ["user"], omitSettledLeafNodes: true },
+        {
+          messageRoles: ["user"],
+          omitSettledLeafNodes: true,
+          turnItemTypes: ["secret_request"],
+        },
       )
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
@@ -1545,6 +1556,7 @@ const make = Effect.gen(function* () {
         instanceId: task.providerInstanceId,
         model: task.model,
       };
+    const taskRunIds = activeTaskRunIds(childControls, task.id, childRun);
     const result = {
       taskId: task.id,
       childThreadId: task.childThreadId,
@@ -1572,16 +1584,30 @@ const make = Effect.gen(function* () {
           : latestTerminalResultContextTransferId,
       hasPendingQuestion:
         !isTerminalTaskStatus(status) &&
-        childControls.runtimeRequests.some(
-          (request) =>
-            request.kind === "user_input" &&
-            request.status === "pending" &&
-            request.responseCapability.type === "live",
-        ),
+        (childControls.turnItems.some(
+          (item) =>
+            item.type === "secret_request" &&
+            item.status === "waiting" &&
+            item.nodeId !== null &&
+            item.runId !== null &&
+            taskRunIds.has(item.runId),
+        ) ||
+          childControls.runtimeRequests.some((request) => {
+            const requestRunId = childControls.nodes.find(
+              (node) => node.id === request.nodeId,
+            )?.runId;
+            return (
+              request.kind === "user_input" &&
+              request.status === "pending" &&
+              request.responseCapability.type === "live" &&
+              requestRunId != null &&
+              taskRunIds.has(requestRunId)
+            );
+          })),
       pendingApproval:
         isTerminalTaskStatus(status) || task.completionDelivery?.state === "disposed"
           ? null
-          : pendingTaskApproval(childControls, task.id, childRun),
+          : pendingTaskApproval(childControls, taskRunIds),
       waitTimedOut,
     } satisfies OrchestratorMcpDelegateTaskResult;
     const response: OrchestratorMcpDelegateTaskResult =
@@ -1754,17 +1780,32 @@ const make = Effect.gen(function* () {
         childThreadId === null
           ? TASK_WAKE_EVENTS.filter(({ thread }) => thread === "parent")
           : TASK_WAKE_EVENTS;
-      return yield* Stream.mergeAll(
-        wakeEvents.map(({ thread, eventType }) =>
-          threadManagement.streamStoredEventsFrom({
-            threadId:
-              thread === "parent" || childThreadId === null ? scope.thread.threadId : childThreadId,
-            afterSequence,
-            eventType,
-          }),
-        ),
-        { concurrency: "unbounded" },
-      ).pipe(
+      const streams = wakeEvents.map(({ thread, eventType }) =>
+        threadManagement.streamStoredEventsFrom({
+          threadId:
+            thread === "parent" || childThreadId === null ? scope.thread.threadId : childThreadId,
+          afterSequence,
+          eventType,
+        }),
+      );
+      if (childThreadId !== null) {
+        streams.push(
+          threadManagement
+            .streamStoredEventsFrom({
+              threadId: childThreadId,
+              afterSequence,
+              eventType: "turn-item.updated",
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "turn-item.updated" &&
+                  stored.event.payload.type === "secret_request",
+              ),
+            ),
+        );
+      }
+      return yield* Stream.mergeAll(streams, { concurrency: "unbounded" }).pipe(
         Stream.mapError(streamError),
         Stream.mapEffect(() => readTask(scope, taskId, false, true)),
         Stream.filter(endsTaskWait),
@@ -3038,6 +3079,8 @@ const make = Effect.gen(function* () {
         runId: result.run?.id ?? null,
         status,
         timedOut: result.timedOut,
+        hasPendingQuestion: result.hasPendingQuestion,
+        pendingApproval: result.pendingApproval,
         ...(wakesCaller ? { next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } : {}),
         ...(result.resultRun === undefined
           ? {}

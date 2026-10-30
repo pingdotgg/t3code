@@ -442,8 +442,12 @@ idempotent retries.
 
 Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
-time; an idle thread returns immediately. A timeout reports the latest durable
-status and does not cancel work.
+time; an idle thread returns immediately. A pending live question or approval on
+the selected run, or an earlier unfinished run blocking it, also returns with
+`timedOut: false` and `hasPendingQuestion` or `pendingApproval`. The run's status
+does not change. Message-based asynchronous questions do not end the wait.
+Read the fresh request before responding; the result grants no approval authority.
+A timeout reports the latest durable status and does not cancel work.
 
 ### `t3_thread_interrupt`
 

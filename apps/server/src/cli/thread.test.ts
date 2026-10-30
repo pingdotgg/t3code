@@ -23,10 +23,23 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
     const continuation = RunId.make("run-2");
     const { tools, calls } = scriptedTools({
       t3_thread_wait: [
-        { threadId, runId, status: "running", timedOut: true },
-        { threadId, runId: continuation, status: "failed", timedOut: false },
+        {
+          threadId,
+          runId,
+          status: "running",
+          timedOut: true,
+          hasPendingQuestion: false,
+          pendingApproval: null,
+        },
+        {
+          threadId,
+          runId: continuation,
+          status: "failed",
+          timedOut: false,
+          hasPendingQuestion: false,
+          pendingApproval: null,
+        },
       ],
-      t3_thread_read: [{ thread: { pendingRequestCount: 0 } }],
     });
 
     const outcome = yield* waitForRun(tools, threadId, runId);
@@ -44,15 +57,24 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
 
 it.effect("--wait stops when the thread waits for an answer instead of polling forever", () =>
   Effect.gen(function* () {
-    const { tools } = scriptedTools({
+    const { tools, calls } = scriptedTools({
       t3_thread_wait: [
-        { threadId, runId, status: "queued", timedOut: true },
-        { threadId, runId, status: "queued", timedOut: true },
+        {
+          threadId,
+          runId,
+          status: "queued",
+          timedOut: false,
+          hasPendingQuestion: true,
+          pendingApproval: null,
+        },
       ],
-      t3_thread_read: [{ thread: { pendingRequestCount: 1 } }],
     });
 
     assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId), { type: "needs_input" });
+    assert.deepStrictEqual(
+      calls.map((call) => call.tool),
+      ["t3_thread_wait"],
+    );
   }),
 );
 
@@ -60,10 +82,23 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
   Effect.gen(function* () {
     const { tools } = scriptedTools({
       t3_thread_wait: [
-        { threadId, runId, status: "running", timedOut: true },
-        { threadId, runId, status: "completed", timedOut: false },
+        {
+          threadId,
+          runId,
+          status: "running",
+          timedOut: true,
+          hasPendingQuestion: false,
+          pendingApproval: null,
+        },
+        {
+          threadId,
+          runId,
+          status: "completed",
+          timedOut: false,
+          hasPendingQuestion: false,
+          pendingApproval: null,
+        },
       ],
-      t3_thread_read: [{ thread: { pendingRequestCount: 1 } }],
     });
 
     assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId), {

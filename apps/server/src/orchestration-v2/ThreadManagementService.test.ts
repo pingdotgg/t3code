@@ -198,6 +198,264 @@ it.effect(
   },
 );
 
+it.effect.each([
+  {
+    kind: "user_input",
+    capability: "live",
+    requestOrdinal: 1,
+    selectedStatus: "running",
+    blocks: true,
+  },
+  {
+    kind: "command",
+    capability: "live",
+    requestOrdinal: 1,
+    selectedStatus: "running",
+    blocks: true,
+  },
+  {
+    kind: "user_input",
+    capability: "live",
+    requestOrdinal: 0,
+    selectedStatus: "queued",
+    blocks: true,
+  },
+  {
+    kind: "user_input",
+    capability: "live",
+    requestOrdinal: 2,
+    selectedStatus: "queued",
+    blocks: true,
+  },
+  {
+    kind: "user_input",
+    capability: "message",
+    requestOrdinal: 1,
+    selectedStatus: "running",
+    blocks: false,
+  },
+  {
+    kind: "user_input",
+    capability: "live",
+    requestOrdinal: 2,
+    selectedStatus: "running",
+    blocks: false,
+  },
+  {
+    kind: "user_input",
+    capability: "live",
+    requestOrdinal: 1,
+    selectedStatus: "completed",
+    blocks: false,
+  },
+] as const)("waitForThread scopes pending input to unfinished work: %j", (scenario) =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:wait-input");
+    const threadId = ThreadId.make("thread:wait-input");
+    const runId = RunId.make("run:wait-input");
+    const requestRunId = scenario.requestOrdinal === 1 ? runId : RunId.make("run:other");
+    const projection = {
+      thread: { id: threadId, projectId, deletedAt: null },
+      runs: [
+        { id: runId, ordinal: 1, status: scenario.selectedStatus },
+        ...(requestRunId === runId
+          ? []
+          : [{ id: requestRunId, ordinal: scenario.requestOrdinal, status: "running" }]),
+      ],
+      nodes: [{ id: "node:request", runId: requestRunId }],
+      turnItems: [],
+      runtimeRequests: [
+        {
+          id: "request:input",
+          nodeId: "node:request",
+          kind: scenario.kind,
+          status: "pending",
+          responseCapability: { type: scenario.capability },
+          createdAt: yield* DateTime.now,
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          getThreadRecords: () => Effect.succeed(projection),
+          restartContinuationPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: () => Stream.never,
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000 })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 minute");
+    const result = yield* Fiber.join(fiber);
+    expect(result).toMatchObject({
+      run: { id: runId, status: scenario.selectedStatus },
+      timedOut: !scenario.blocks && scenario.selectedStatus !== "completed",
+      hasPendingQuestion: scenario.blocks && scenario.kind === "user_input",
+      pendingApproval:
+        scenario.blocks && scenario.kind === "command"
+          ? { requestId: "request:input", kind: "command", runId: requestRunId }
+          : null,
+    });
+  }),
+);
+
+it.effect.each([
+  { selected: "running", owner: "running", ordinal: 1, status: "waiting", blocks: true },
+  { selected: "queued", owner: "running", ordinal: 0, status: "waiting", blocks: true },
+  { selected: "queued", owner: "running", ordinal: 2, status: "waiting", blocks: true },
+  { selected: "running", owner: "running", ordinal: 2, status: "waiting", blocks: false },
+  { selected: "running", owner: "completed", ordinal: 0, status: "waiting", blocks: false },
+  { selected: "running", owner: "running", ordinal: 1, status: "completed", blocks: false },
+  { selected: "completed", owner: "completed", ordinal: 1, status: "waiting", blocks: false },
+] as const)("waitForThread scopes secret input to unfinished work: %j", (scenario) =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:wait-secret");
+    const threadId = ThreadId.make("thread:wait-secret");
+    const runId = RunId.make("run:wait-secret");
+    const ownerId = scenario.ordinal === 1 ? runId : RunId.make("run:secret-owner");
+    const projection = {
+      thread: { id: threadId, projectId, deletedAt: null },
+      runs: [
+        { id: runId, ordinal: 1, status: scenario.selected },
+        ...(ownerId === runId
+          ? []
+          : [{ id: ownerId, ordinal: scenario.ordinal, status: scenario.owner }]),
+      ],
+      nodes: [],
+      runtimeRequests: [],
+      turnItems: [
+        { type: "secret_request", runId: ownerId, nodeId: "node:secret", status: scenario.status },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          getThreadRecords: () => Effect.succeed(projection),
+          restartContinuationPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: () => Stream.never,
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000 })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 minute");
+    expect(yield* Fiber.join(fiber)).toMatchObject({
+      run: { id: runId, status: scenario.selected },
+      timedOut: !scenario.blocks && scenario.selected !== "completed",
+      hasPendingQuestion: scenario.blocks,
+      pendingApproval: null,
+    });
+  }),
+);
+
+it.effect.each(["command", "user_input", "secret_request"] as const)(
+  "waitForThread wakes on a new %s while terminal-only callers keep waiting",
+  (kind) =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:wait-event");
+      const threadId = ThreadId.make("thread:wait-event");
+      const runId = RunId.make("run:wait-event");
+      const subscribed = yield* Deferred.make<void>();
+      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const now = yield* DateTime.now;
+      let requests: OrchestrationV2ThreadProjection["runtimeRequests"] = [];
+      let turnItems: OrchestrationV2ThreadProjection["turnItems"] = [];
+      let reads = 0;
+      const eventType = kind === "secret_request" ? "turn-item.updated" : "runtime-request.updated";
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadEventSequence: () => Effect.succeed(7),
+            getThreadRecords: () =>
+              Effect.sync(() => {
+                reads += 1;
+                return {
+                  thread: { id: threadId, projectId, deletedAt: null },
+                  runs: [{ id: runId, ordinal: 1, status: "running" }],
+                  nodes: [{ id: "node:request", runId }],
+                  runtimeRequests: requests,
+                  turnItems,
+                } as unknown as OrchestrationV2ThreadProjection;
+              }),
+            streamStoredEventsFrom: (input) =>
+              input?.eventType === eventType
+                ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                    Stream.drain,
+                    Stream.concat(Stream.fromQueue(events)),
+                  )
+                : Stream.never,
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(layerTest),
+      );
+      const fiber = yield* service
+        .waitForThread({ projectId, threadId, runId, timeoutMs: 600_000 })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(subscribed);
+      if (kind === "secret_request") {
+        turnItems = [
+          { type: kind, runId, nodeId: "node:secret", status: "waiting" },
+        ] as unknown as OrchestrationV2ThreadProjection["turnItems"];
+        yield* Queue.offer(events, {
+          sequence: 8,
+          event: { type: eventType, threadId, payload: { type: "assistant_message" } },
+        } as unknown as OrchestrationV2StoredEvent);
+      } else {
+        requests = [
+          {
+            id: "request:approval",
+            nodeId: "node:request",
+            kind,
+            status: "pending",
+            responseCapability: { type: "live" },
+            createdAt: now,
+          },
+        ] as unknown as OrchestrationV2ThreadProjection["runtimeRequests"];
+      }
+      yield* Queue.offer(events, {
+        sequence: 9,
+        event: { type: eventType, threadId, payload: turnItems[0] ?? requests[0] },
+      } as unknown as OrchestrationV2StoredEvent);
+      expect(yield* Fiber.join(fiber)).toMatchObject({
+        timedOut: false,
+        hasPendingQuestion: kind !== "command",
+        pendingApproval: kind === "command" ? { requestId: "request:approval", kind, runId } : null,
+      });
+      expect(reads).toBe(2);
+      const terminalWait = yield* service
+        .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000, terminalOnly: true })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Fiber.join(terminalWait)).toMatchObject({
+        timedOut: true,
+        hasPendingQuestion: false,
+        pendingApproval: null,
+      });
+    }),
+);
+
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-restart");
@@ -234,6 +492,9 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
                 ({
                   thread: { id: threadId, projectId, deletedAt: null },
                   runs,
+                  nodes: [],
+                  runtimeRequests: [],
+                  turnItems: [],
                 }) as unknown as OrchestrationV2ThreadProjection,
             ),
         }),
@@ -269,92 +530,113 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
   }),
 );
 
-it.effect("waitForThread can wait past an ended run for the thread's delegated work", () =>
-  Effect.gen(function* () {
-    const projectId = ProjectId.make("project:thread-management:wait-delegated");
-    const threadId = ThreadId.make("thread:thread-management:wait-delegated");
-    const runId = RunId.make("run:thread-management:wait-delegated");
-    const wakeRunId = RunId.make("run:thread-management:wait-delegated:wake");
-    const subscribed = yield* Deferred.make<void>();
-    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
-    const at = (seconds: number) => DateTime.makeUnsafe(seconds * 1_000);
-    const run = (id: RunId, ordinal: number, status: OrchestrationV2Run["status"], end: number) =>
-      ({
-        id,
-        ordinal,
-        status,
-        startedAt: at(end - 1),
-        completedAt: status === "running" ? null : at(end),
-      }) as unknown as OrchestrationV2Run;
-    // The run ended, but a task it delegated still runs and will wake the thread.
-    let runs = [run(runId, 1, "completed", 1)];
-    let subagents = [{ status: "running" }];
-    const stored = (sequence: number, event: object) =>
-      ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
-    const layerTest = ThreadManagementService.layer.pipe(
-      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
-      Layer.provide(
-        Layer.mock(Orchestrator.OrchestratorV2)({
-          getThreadEventSequence: () => Effect.succeed(0),
-          restartContinuationPending: () => Effect.succeed(false),
-          delegatedTaskResultPending: () => Effect.succeed(false),
-          streamStoredEventsFrom: (input) =>
-            input?.eventType === "subagent.updated"
-              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
-                  Stream.drain,
-                  Stream.concat(Stream.fromQueue(events)),
-                )
-              : Stream.never,
-          getThreadRecords: () =>
-            Effect.sync(
-              () =>
-                ({
-                  thread: { id: threadId, projectId, deletedAt: null },
-                  runs,
-                  messages: [],
-                  subagents,
-                  providerThreads: [],
-                }) as unknown as OrchestrationV2ThreadProjection,
-            ),
-        }),
-      ),
-      Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(layerReceiptsTest),
-    );
-    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
-      Effect.provide(layerTest),
-    );
-    // Without the option, the ended run is the answer, as before.
-    expect(
-      yield* service.waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 }),
-    ).toMatchObject({ timedOut: false, run: { id: runId } });
-    expect(
-      yield* service.waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 }),
-    ).not.toHaveProperty("resultRun");
+it.effect.each(["completion", "secret_request"] as const)(
+  "waitForThread follows delegated work until %s",
+  (ending) =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:thread-management:wait-delegated");
+      const threadId = ThreadId.make("thread:thread-management:wait-delegated");
+      const runId = RunId.make("run:thread-management:wait-delegated");
+      const wakeRunId = RunId.make("run:thread-management:wait-delegated:wake");
+      const subscribed = yield* Deferred.make<void>();
+      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const at = (seconds: number) => DateTime.makeUnsafe(seconds * 1_000);
+      const run = (id: RunId, ordinal: number, status: OrchestrationV2Run["status"], end: number) =>
+        ({
+          id,
+          ordinal,
+          status,
+          startedAt: at(end - 1),
+          completedAt: status === "running" ? null : at(end),
+        }) as unknown as OrchestrationV2Run;
+      // The run ended, but a task it delegated still runs and will wake the thread.
+      let runs = [run(runId, 1, "completed", 1)];
+      let subagents = [{ status: "running" }];
+      let turnItems: OrchestrationV2ThreadProjection["turnItems"] = [];
+      const eventType = ending === "completion" ? "subagent.updated" : "turn-item.updated";
+      const stored = (sequence: number, event: object) =>
+        ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadEventSequence: () => Effect.succeed(0),
+            restartContinuationPending: () => Effect.succeed(false),
+            delegatedTaskResultPending: () => Effect.succeed(false),
+            streamStoredEventsFrom: (input) =>
+              input?.eventType === eventType
+                ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                    Stream.drain,
+                    Stream.concat(Stream.fromQueue(events)),
+                  )
+                : Stream.never,
+            getThreadRecords: () =>
+              Effect.sync(
+                () =>
+                  ({
+                    thread: { id: threadId, projectId, deletedAt: null },
+                    runs,
+                    messages: [],
+                    subagents,
+                    providerThreads: [],
+                    nodes: [],
+                    runtimeRequests: [],
+                    turnItems,
+                  }) as unknown as OrchestrationV2ThreadProjection,
+              ),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(layerTest),
+      );
+      // Without the option, the ended run is the answer, as before.
+      expect(
+        yield* service.waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 }),
+      ).toMatchObject({ timedOut: false, run: { id: runId } });
+      expect(
+        yield* service.waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 }),
+      ).not.toHaveProperty("resultRun");
 
-    const fiber = yield* service
-      .waitForThread({
-        projectId,
-        threadId,
-        runId,
-        timeoutMs: 60 * 60 * 1_000,
-        untilDelegatedWorkSettled: true,
-      })
-      .pipe(Effect.forkChild);
-    // A wait that returns early fails below instead of hanging here.
-    yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
-    // The task finishes; its delivery wakes the thread, whose next run answers.
-    subagents = [{ status: "completed" }];
-    runs = [...runs, run(wakeRunId, 2, "completed", 3)];
-    yield* Queue.offer(events, stored(1, { type: "subagent.updated", payload: {} }));
-    const result = yield* Fiber.join(fiber);
+      const fiber = yield* service
+        .waitForThread({
+          projectId,
+          threadId,
+          runId,
+          timeoutMs: 60 * 60 * 1_000,
+          untilDelegatedWorkSettled: true,
+        })
+        .pipe(Effect.forkChild);
+      // A wait that returns early fails below instead of hanging here.
+      yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
+      // The task finishes; its delivery wakes the thread, whose next run answers.
+      subagents = [{ status: "completed" }];
+      runs = [...runs, run(wakeRunId, 2, ending === "completion" ? "completed" : "running", 3)];
+      turnItems =
+        ending === "completion"
+          ? []
+          : ([
+              {
+                type: "secret_request",
+                runId: wakeRunId,
+                nodeId: "node:wake-secret",
+                status: "waiting",
+              },
+            ] as unknown as OrchestrationV2ThreadProjection["turnItems"]);
+      yield* Queue.offer(events, stored(1, { type: eventType, payload: turnItems[0] ?? {} }));
+      const result = yield* Fiber.join(fiber);
 
-    expect(result).toMatchObject({
-      timedOut: false,
-      run: { id: runId, status: "completed" },
-      resultRun: { id: wakeRunId, status: "completed" },
-    });
-  }),
+      expect(result).toMatchObject({
+        timedOut: false,
+        run: { id: runId, status: "completed" },
+        hasPendingQuestion: ending === "secret_request",
+      });
+      if (ending === "completion")
+        expect(result.resultRun).toMatchObject({ id: wakeRunId, status: "completed" });
+      else expect(result).not.toHaveProperty("resultRun");
+    }),
 );
 
 it.effect("waitForThread settles delegated work on a thread rolled back past its only run", () =>
@@ -381,6 +663,9 @@ it.effect("waitForThread settles delegated work on a thread rolled back past its
             Effect.succeed({
               thread: { id: threadId, projectId, deletedAt: null },
               runs: [rolledBack],
+              nodes: [],
+              runtimeRequests: [],
+              turnItems: [],
               messages: [],
               subagents: [],
               providerThreads: [],

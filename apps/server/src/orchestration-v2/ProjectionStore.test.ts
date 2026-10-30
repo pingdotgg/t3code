@@ -806,6 +806,8 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     ["settled-subagent", settledRun, "subagent", "completed"],
     ["settled-run-live-tool", settledRun, "tool_call", "running"],
     ["active-run-done-tool", activeRun, "tool_call", "completed"],
+    ["active-approval", activeRun, "approval_request", "waiting"],
+    ["active-question", activeRun, "user_input_request", "waiting"],
   ] as const;
   for (const [name, run, kind, status] of nodes) {
     const id = NodeId.make(`node:settled-leaf-nodes:${name}`);
@@ -844,7 +846,14 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
 
   assert.deepEqual(
     nodeNames(yield* store.getThreadRecords(threadId, ["nodes"], { omitSettledLeafNodes: true })),
-    ["active-run-done-tool", "settled-root", "settled-run-live-tool", "settled-subagent"],
+    [
+      "active-approval",
+      "active-question",
+      "active-run-done-tool",
+      "settled-root",
+      "settled-run-live-tool",
+      "settled-subagent",
+    ],
   );
   assert.deepEqual(
     nodeNames(yield* store.getThreadRecords(threadId, ["nodes"])),
