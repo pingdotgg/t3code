@@ -1,3 +1,4 @@
+import { useUiStateStore } from "../uiStateStore";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -406,6 +407,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,
+    restoredRouteKey: useUiStateStore.getState().sidebarScopeRouteKey,
   }));
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();

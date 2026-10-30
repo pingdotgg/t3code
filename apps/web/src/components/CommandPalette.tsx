@@ -1,3 +1,6 @@
+import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
+import { useUiStateStore } from "../uiStateStore";
+import { resolveProjectCollectionScope } from "../projectCollections";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -87,7 +90,7 @@ import { useAtomValue } from "@effect/atom-react";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
-import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { resolveDefaultProjectRef, useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import {
@@ -122,7 +125,11 @@ import {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
-import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import {
+  restrictNewThreadContext,
+  resolveThreadActionProjectRef,
+  startNewThreadFromContext,
+} from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -492,6 +499,30 @@ function OpenCommandPaletteDialog(props: {
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const { environmentLabelById, projectEnvironmentLocationById } = useEnvironmentLookups();
   const projectGroups = useSortedProjectGroups(environmentLabelById);
+  const collections = useUiStateStore((state) => state.projectCollections);
+  const activeCollectionId = useUiStateStore((state) => state.activeProjectCollectionId);
+  const projectOrder = useUiStateStore((state) => state.projectOrder);
+  const collectionCatalog = useSidebarProjectGroups();
+  const tabScope = resolveProjectCollectionScope({
+    collections,
+    activeCollectionId,
+    catalog: collectionCatalog,
+    settings: clientSettings,
+    adHocProjectKeys: [],
+  });
+  const creationContext = restrictNewThreadContext(
+    {
+      activeDraftThread,
+      activeThread: activeThread ?? undefined,
+      defaultProjectRef,
+      handleNewThread,
+    },
+    tabScope.projectKeys,
+    resolveDefaultProjectRef(
+      tabScope.catalog.flatMap((row) => row.memberProjects),
+      projectOrder,
+    ),
+  );
   const contextualProjectRef = resolveThreadActionProjectRef({
     activeDraftThread,
     activeThread: activeThread ?? undefined,
@@ -611,7 +642,7 @@ function OpenCommandPaletteDialog(props: {
     return ensureBrowseDirectoryPath(baseDirectory);
   };
 
-  const { projectCwdById, projectByKey, projectTitleById } = useProjectLookups();
+  const { projectCwdById, projectByKey } = useProjectLookups();
 
   const activeThreadKey = activeThread
     ? scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id))
@@ -758,34 +789,54 @@ function OpenCommandPaletteDialog(props: {
     runProject: openProjectFromSearch,
   });
 
+  const creationProjectRef = resolveThreadActionProjectRef(creationContext);
+  const creationPickerEntries = buildSidebarProjectPickerEntries({
+    groups: tabScope.catalog,
+    preferredProjectRef: creationProjectRef,
+  });
+  const creationProjects = creationPickerEntries.map(({ group, targetProject }) => ({
+    ...targetProject,
+    displayName: group.displayName,
+  }));
+  const creationGroupByTargetKey = new Map(
+    creationPickerEntries.map(({ group, targetProject }) => [
+      `${targetProject.environmentId}:${targetProject.id}`,
+      group,
+    ]),
+  );
   const projectThreadItems = (() => {
     const isScratch = (project: CommandPaletteProject) =>
       isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
     const projectItems = enumerateCommandPaletteItems(
       buildNewThreadInProjectItems({
-        projects: pickerProjects.filter((project) => !isScratch(project)),
-        projectGroupByTargetKey,
+        projects: creationProjects.filter((project) => !isScratch(project)),
+        projectGroupByTargetKey: creationGroupByTargetKey,
         locationByEnvironmentId: projectEnvironmentLocationById,
         runProject: async (project) => {
-          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          const group = creationGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
           const contextualRefBelongsToGroup =
-            contextualProjectRef !== null &&
+            creationProjectRef !== null &&
             group?.memberProjectRefs.some(
               (projectRef) =>
-                projectRef.environmentId === contextualProjectRef.environmentId &&
-                projectRef.projectId === contextualProjectRef.projectId,
+                projectRef.environmentId === creationProjectRef.environmentId &&
+                projectRef.projectId === creationProjectRef.projectId,
             );
           await handleNewThread(
             contextualRefBelongsToGroup
-              ? contextualProjectRef
+              ? creationProjectRef
               : scopeProjectRef(project.environmentId, project.id),
           );
         },
       }),
     );
-    if (scratchTargetEnvironmentId === null) return projectItems;
+    if (
+      scratchTargetEnvironmentId === null ||
+      (activeCollectionId !== null && !tabScope.catalog.some((row) => row.isScratch))
+    )
+      return projectItems;
 
-    const noProjectIndex = pickerProjects[0] !== undefined && isScratch(pickerProjects[0]) ? 0 : 1;
+    const noProjectIndex =
+      creationProjects[0] !== undefined && isScratch(creationProjects[0]) ? 0 : 1;
     return [
       ...projectItems.slice(0, noProjectIndex),
       {
@@ -1152,10 +1203,10 @@ function OpenCommandPaletteDialog(props: {
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
-  if (projects.length > 0) {
+  if (tabScope.catalog.length > 0) {
     const activeProjectTitle =
-      projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
-      (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null);
+      creationPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
+      creationProjects[0]?.displayName;
 
     if (activeProjectTitle) {
       actionItems.push({
@@ -1171,12 +1222,7 @@ function OpenCommandPaletteDialog(props: {
         icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.newLocal",
         run: async () => {
-          await startNewThreadFromContext({
-            activeDraftThread,
-            activeThread: activeThread ?? undefined,
-            defaultProjectRef,
-            handleNewThread,
-          });
+          await startNewThreadFromContext(creationContext);
         },
       });
     }
@@ -1200,7 +1246,10 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread without a project",
       icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "chat.newWithoutProject",
-      run: () => startScratchThread(scratchTargetEnvironmentId),
+      run: () => {
+        useUiStateStore.getState().selectProjectCollection(null, null);
+        return startScratchThread(scratchTargetEnvironmentId);
+      },
     });
   }
 

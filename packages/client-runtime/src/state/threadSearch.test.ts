@@ -63,9 +63,13 @@ it("ignores invalid search keys", () => {
   try {
     const state = registry.get(searchAtom(makeThreadSearchKey([envA], "a".repeat(201))));
     const malformedState = registry.get(searchAtom("not json{{"));
+    const emptyScope = registry.get(
+      searchAtom(makeThreadSearchKey([], "needle", { projectIds: [] })),
+    );
 
     expect(state).toEqual({ matches: [], isLoading: false, rows: [] });
     expect(malformedState).toEqual({ matches: [], isLoading: false, rows: [] });
+    expect(emptyScope).toEqual({ matches: [], isLoading: false, rows: [] });
     expect(searchCount).toBe(0);
   } finally {
     registry.dispose();

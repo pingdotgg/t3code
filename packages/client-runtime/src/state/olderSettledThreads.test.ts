@@ -181,6 +181,7 @@ it("counts older threads the client does not hold, once", () => {
       threads: local,
     }),
   ).toBe(0);
+  expect(unloadedOlderSettledCount({ olderSettled, scopes: [], threads: local })).toBe(0);
   // Two projects in one environment: each subtracts only its own loaded rows.
   const other = ProjectId.make("project-b");
   const twoProjects = (): OlderSettled => ({

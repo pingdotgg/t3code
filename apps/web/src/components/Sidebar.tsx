@@ -1,3 +1,9 @@
+import { resolveProjectCollectionScope } from "../projectCollections";
+import {
+  ProjectCollectionDialog,
+  SidebarProjectCollectionTabs,
+  SidebarCollectionProjects,
+} from "./sidebar/SidebarProjectCollections";
 import { attachSidebarTree, SIDEBAR_TREE_PROPS } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
@@ -120,12 +126,12 @@ import {
   useAcknowledgeThreadWoke,
   useThreadActions,
 } from "../hooks/useThreadActions";
-import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { resolveDefaultProjectRef, useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { restrictNewThreadContext, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useBoringSidebarEnabled, useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -221,6 +227,7 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
 import {
+  completeSidebarRouteReveal,
   resolveSidebarRouteReveal,
   type SidebarRouteReveal,
   useActiveRowReveal,
@@ -805,10 +812,6 @@ function useSidebarLookups() {
   const projectGroupByScopeKey = new Map(
     projectGroups.map((project) => [project.projectKey, project] as const),
   );
-  const projectScopeItems = [
-    { value: "all", label: "All projects" },
-    ...projectGroups.map((project) => ({ value: project.projectKey, label: project.displayName })),
-  ];
   return {
     projects,
     serverConfigs,
@@ -818,7 +821,6 @@ function useSidebarLookups() {
     projectByKey,
     projectDisplayNameByKey,
     projectGroupByScopeKey,
-    projectScopeItems,
   };
 }
 
@@ -882,7 +884,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectByKey,
     projectDisplayNameByKey,
     projectGroupByScopeKey,
-    projectScopeItems,
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
@@ -985,6 +986,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectGroupsRef = useRef(projectGroups);
   const persistedProjectScopeKeys = useUiStateStore((store) => store.sidebarProjectScopeKeys);
   const setPersistedProjectScopeKeys = useUiStateStore((store) => store.setSidebarProjectScopeKeys);
+  const collections = useUiStateStore((store) => store.projectCollections);
+  const activeCollectionId = useUiStateStore((store) => store.activeProjectCollectionId);
+  const selectCollection = useUiStateStore((store) => store.selectProjectCollection);
+  const holdScopeRoute = useUiStateStore((store) => store.holdSidebarScopeRoute);
+  const learnCollectionAliases = useUiStateStore((store) => store.learnProjectCollectionAliases);
+  const deleteCollection = useUiStateStore((store) => store.deleteProjectCollection);
+  const [collectionEditor, setCollectionEditor] = useState<{ id: string | null } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- learns authoritative repository identities from arriving environment snapshots in persisted membership
+  useEffect(() => {
+    learnCollectionAliases(projectGroups);
+  }, [learnCollectionAliases, projectGroups]);
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarProjectScopeMenuState,
     { open: false, query: "" },
@@ -1043,9 +1055,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
 
+  const holdCurrentRoute = () => {
+    completeSidebarRouteReveal(routeReveal, routeThreadKey);
+    holdScopeRoute(routeThreadKey);
+  };
+  const switchCollection = (id: string | null) => {
+    completeSidebarRouteReveal(routeReveal, routeThreadKey);
+    clearSelection();
+    selectCollection(id, routeThreadKey);
+  };
   // A selection made under one scope can hold threads the next scope hides.
   const setProjectScopeKeys = (keys: readonly string[]) => {
     clearSelection();
+    holdCurrentRoute();
     setPersistedProjectScopeKeys(keys);
   };
   // A scope whose project is gone reads as all projects once every snapshot has
@@ -1056,19 +1078,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     settings: projectGroupingSettings,
     canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
   });
-  const chosenProjectGroups = projectGroups.filter((project) =>
-    chosenProjectScopeKeys.includes(project.projectKey),
-  );
-  const chosenScopeProjectKeys =
-    chosenProjectGroups.length === 0
-      ? null
-      : new Set(
-          chosenProjectGroups.flatMap((project) =>
-            project.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
-        );
+  const chosenScope = resolveProjectCollectionScope({
+    collections,
+    activeCollectionId,
+    catalog: projectGroups,
+    settings: projectGroupingSettings,
+    adHocProjectKeys: chosenProjectScopeKeys,
+  });
   const threads = useQuietThreadShells();
   const routeRowThreadKey =
     routeThreadRef === null
@@ -1092,13 +1108,38 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const { widensScope: revealWidensScope } = resolveSidebarRouteReveal({
     reveal: routeReveal,
     routeKey: routeRowThreadKey,
+    rawRouteKey: routeThreadKey,
     isSearching: isSearchingThreads,
-    scopedProjectKeys: chosenScopeProjectKeys,
+    scopedProjectKeys: chosenScope.projectKeys,
     delegatedUnderParent,
-    findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
+    findThread: (key) =>
+      threads.find(
+        (candidate) =>
+          threadShellKey(candidate) === key &&
+          projectByKey.has(`${candidate.environmentId}:${candidate.projectId}`),
+      ),
   });
+  const scope = revealWidensScope
+    ? resolveProjectCollectionScope({
+        collections,
+        activeCollectionId: null,
+        catalog: projectGroups,
+        settings: projectGroupingSettings,
+        adHocProjectKeys: [],
+      })
+    : chosenScope;
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
-  const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
+  const projectScopeKey = scope.key;
+  const projectScopeItems = [
+    {
+      value: "all",
+      label:
+        activeCollectionId !== null && !revealWidensScope
+          ? "All projects in group"
+          : "All projects",
+    },
+    ...scope.catalog.map((project) => ({ value: project.projectKey, label: project.displayName })),
+  ];
   const toggleProjectScopeKey = (key: string) =>
     setProjectScopeKeys(
       projectScopeKeys.includes(key)
@@ -1113,8 +1154,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   useEffect(() => {
     if (!revealWidensScope) return;
     clearSelection();
-    setPersistedProjectScopeKeys([]);
-  }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
+    selectCollection(null, null);
+  }, [clearSelection, revealWidensScope, selectCollection]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
@@ -1141,13 +1182,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     matches: (item, query) =>
       projectScopeFilter.contains(item, query, (candidate) => candidate.label),
   });
-  const scopedProjectGroups = revealWidensScope ? [] : chosenProjectGroups;
+  const scopedProjectGroups = scope.groups ?? [];
   const scopedProjectRefs = scopedProjectGroups.flatMap((project) => project.memberProjectRefs);
-  const scopedProjectKeys = revealWidensScope ? null : chosenScopeProjectKeys;
+  const scopedProjectKeys = scope.projectKeys;
   const threadSearch = useThreadSearch(
-    searchEnvironmentIds,
+    scope.projectKeys === null
+      ? searchEnvironmentIds
+      : searchEnvironmentIds.filter((id) =>
+          scopedProjectRefs.some((ref) => ref.environmentId === id),
+        ),
     threadSearchQuery,
-    scopedProjectGroups.length === 0
+    scope.groups === null
       ? {}
       : { projectIds: scopedProjectRefs.map((projectRef) => projectRef.projectId) },
   );
@@ -1281,12 +1326,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threads,
     delegatedUnderParent,
     routeRowThreadKey,
-    folderGroups: boringSidebarEnabled
-      ? scopedProjectGroups.length === 0
-        ? projectGroups
-        : scopedProjectGroups
-      : null,
-    keepEmptyFolders: scopedProjectGroups.length > 0,
+    folderGroups: boringSidebarEnabled ? (scope.groups ?? projectGroups) : null,
+    keepEmptyFolders: scope.groups !== null,
   });
 
   // Ranked across environments as the palette ranks them, so one
@@ -2868,17 +2909,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const showJumpHints = useThreadJumpHintsVisible(shouldShowJumpHintsNow);
 
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
+    if (scope.catalog.length === 0) return;
     if (
       boringSidebarEnabled ||
-      shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)
+      shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, scope.catalog.length)
     ) {
       if (isMobile) setOpenMobile(false);
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread,
-      });
+      const tabProjects = scope.catalog.flatMap((row) => row.memberProjects);
+      void startNewThreadFromContext(
+        restrictNewThreadContext(
+          { ...newThreadContext, activeThread: newThreadContext.activeThread ?? undefined },
+          new Set(
+            scope.catalog.flatMap((row) =>
+              row.memberProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`),
+            ),
+          ),
+          resolveDefaultProjectRef(tabProjects, useUiStateStore.getState().projectOrder),
+        ),
+      );
       return;
     }
     if (isMobile) setOpenMobile(false);
@@ -2887,7 +2935,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
-    (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
+    (scope.catalog.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <>
@@ -3063,15 +3111,40 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         );
                       }}
                     </ComboboxList>
+                    <div className="border-t border-border p-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          dispatchProjectScopeMenu({ type: "open-changed", open: false });
+                          setCollectionEditor({ id: null });
+                        }}
+                      >
+                        <PlusIcon />
+                        New group
+                      </Button>
+                      {activeCollectionId !== null ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            dispatchProjectScopeMenu({ type: "open-changed", open: false });
+                            setCollectionEditor({ id: activeCollectionId });
+                          }}
+                        >
+                          Edit group
+                        </Button>
+                      ) : null}
+                    </div>
                   </ComboboxPopup>
                 </Combobox>
               }
               onNewProject={openAddProjectCommandPalette}
               onNewThread={handleNewThreadClick}
-              newThreadDisabled={projects.length === 0}
+              newThreadDisabled={scope.catalog.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
-              showNewThreadInProjectHint={!boringSidebarEnabled && projectGroups.length > 1}
+              showNewThreadInProjectHint={!boringSidebarEnabled && scope.catalog.length > 1}
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}
               onSearchQueryChange={(value) => {
@@ -3083,6 +3156,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               searchResultCount={threadSearchResults.length}
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
+            />
+            <SidebarProjectCollectionTabs
+              collections={collections}
+              activeId={revealWidensScope ? null : activeCollectionId}
+              onSelect={switchCollection}
+              onEdit={(id) => setCollectionEditor({ id })}
             />
           </SidebarGroup>
         }
@@ -3490,6 +3569,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               </DndContext>
             </TooltipProvider>
           ) : null}
+          {!isSearchingThreads && !boringSidebarEnabled && collections.length > 0 ? (
+            <SidebarCollectionProjects
+              catalog={scope.catalog}
+              selectedKeys={projectScopeKeys}
+              onNarrow={toggleProjectScopeKey}
+              onNewThread={startThreadInProjectFolder}
+              onSettings={openProjectSettings}
+              onContextMenu={handleProjectFolderContextMenu}
+              onEdit={
+                activeCollectionId === null
+                  ? null
+                  : () => setCollectionEditor({ id: activeCollectionId })
+              }
+            />
+          ) : null}
           {!isSearchingThreads &&
           !hasProjectFolders &&
           visibleDraftSessionCount === 0 &&
@@ -3500,7 +3594,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             settledCount ===
             0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
+              {activeCollectionId !== null && scope.catalog.length === 0 ? (
+                <>
+                  <span>No projects in this group</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCollectionEditor({ id: activeCollectionId })}
+                  >
+                    Edit group
+                  </Button>
+                </>
+              ) : projects.length === 0 ? (
                 <>
                   <span>No projects yet</span>
                   <button
@@ -3524,6 +3629,25 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         </SidebarGroup>
       </SidebarContent>
       <SidebarChromeFooter />
+      {collectionEditor !== null ? (
+        <ProjectCollectionDialog
+          key={collectionEditor.id ?? "new"}
+          collection={collections.find((group) => group.id === collectionEditor.id) ?? null}
+          catalog={projectGroups}
+          settings={projectGroupingSettings}
+          onClose={() => setCollectionEditor(null)}
+          onSaved={(id) => {
+            switchCollection(id);
+            setCollectionEditor(null);
+          }}
+          onDelete={(id) => {
+            clearSelection();
+            holdCurrentRoute();
+            deleteCollection(id, routeThreadKey);
+            setCollectionEditor(null);
+          }}
+        />
+      ) : null}
     </>
   );
 }

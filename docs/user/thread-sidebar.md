@@ -55,6 +55,23 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+## Organize projects into groups
+
+On web and desktop, open the sidebar's project filter and choose **New group**.
+Name the group and select its projects. A project can belong to several groups.
+Selecting a group filters both its inbox and project list. The project filter
+can narrow that group further. Choose **All** to return to every project.
+
+Use **Edit group** to rename it, change membership, or delete it. Empty groups
+stay empty until you add projects. Unavailable projects keep their membership
+and can be removed in the editor. Groups are saved on this browser or desktop
+installation and do not sync to other devices or the native mobile app.
+
+New-thread choices follow the selected group. An empty group cannot start a
+thread. The **New thread without a project** command returns to **All**. Opening an
+excluded thread through history, a link, or the command palette also reveals
+**All** without changing group membership.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

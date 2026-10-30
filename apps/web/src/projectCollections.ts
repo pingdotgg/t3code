@@ -132,7 +132,6 @@ export function collectionMemberMatchesRow(
   settings: ProjectGroupingSettings,
 ): boolean {
   if (member.kind === "scratch") return row.isScratch === true;
-  if (row.isScratch) return false;
   return row.memberProjects.some((project) => {
     if (project.physicalProjectKey === member.physicalKey) return true;
     const mode = resolveProjectGroupingMode(project, settings);
@@ -249,9 +248,11 @@ export function resolveProjectCollectionScope(input: {
     groups === null
       ? null
       : new Set(
-          groups.flatMap((row) =>
-            row.memberProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`),
-          ),
+          groups
+            .flatMap((row) =>
+              row.memberProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`),
+            )
+            .sort(),
         );
   return {
     catalog,

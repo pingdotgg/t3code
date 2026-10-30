@@ -1,3 +1,4 @@
+import { resolveProjectCollectionScope } from "../projectCollections";
 import { AuthPreviewOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 
@@ -10,7 +11,7 @@ import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { createNewThreadHandler, resolveDefaultProjectRef } from "../hooks/useHandleNewThread";
 import { createScratchProjectActions } from "../hooks/useScratchProject";
 import { getClientSettings } from "../hooks/useSettings";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { restrictNewThreadContext, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -57,6 +58,24 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       ? selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, threadRef) === "preview"
       : false;
   };
+  const readCollectionScope = () => {
+    const state = useUiStateStore.getState();
+    const settings = selectProjectGroupingSettings(getClientSettings());
+    const catalog = buildSidebarProjectSnapshots({
+      projects: readProjects(),
+      settings,
+      groupScratchProjects: true,
+      primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
+      resolveEnvironmentLabel: () => null,
+    });
+    return resolveProjectCollectionScope({
+      collections: state.projectCollections,
+      activeCollectionId: state.activeProjectCollectionId,
+      catalog,
+      settings,
+      adHocProjectKeys: [],
+    });
+  };
   const readThreadContext = () => {
     const target = readRouteTarget();
     const drafts = useComposerDraftStore.getState();
@@ -66,23 +85,23 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         ? drafts.getDraftThread(target.threadRef)
         : drafts.getDraftSession(target.draftId)
       : null;
-    return {
-      activeDraftThread,
-      activeThread: activeThread ?? undefined,
-      defaultProjectRef: resolveDefaultProjectRef(
-        readProjects(),
-        useUiStateStore.getState().projectOrder,
-      ),
-      handleNewThread,
-    };
+    const scope = readCollectionScope();
+    const defaultProjectRef = resolveDefaultProjectRef(
+      scope.catalog.flatMap((row) => row.memberProjects),
+      useUiStateStore.getState().projectOrder,
+    );
+    return restrictNewThreadContext(
+      {
+        activeDraftThread,
+        activeThread: activeThread ?? undefined,
+        defaultProjectRef,
+        handleNewThread,
+      },
+      scope.projectKeys,
+      defaultProjectRef,
+    );
   };
-  const readProjectGroupCount = () =>
-    buildSidebarProjectSnapshots({
-      projects: readProjects(),
-      settings: selectProjectGroupingSettings(getClientSettings()),
-      primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
-      resolveEnvironmentLabel: () => null,
-    }).length;
+  const readProjectGroupCount = () => readCollectionScope().catalog.length;
   const canOperatePreview = (environmentId: EnvironmentId) =>
     readEnvironmentScope(environmentId, AuthPreviewOperateScope);
 
@@ -93,7 +112,21 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
 
   const startNewLocal: CommandHandler = (event) => {
     claim(event);
-    void startNewThreadFromContext(readThreadContext());
+    const context = readThreadContext();
+    if (
+      context.defaultProjectRef === null &&
+      useUiStateStore.getState().activeProjectCollectionId !== null
+    ) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "No projects in this group",
+          description: "Edit the group to choose projects.",
+        }),
+      );
+      return;
+    }
+    void startNewThreadFromContext(context);
   };
 
   const previewCommand =
@@ -108,12 +141,19 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
     {
       "chat.newLocal": startNewLocal,
       "chat.newWithoutProject": (event) => {
-        const { activeThread, activeDraftThread } = readThreadContext();
+        const target = readRouteTarget();
+        const activeThread = target?.kind === "server" ? readThreadShell(target.threadRef) : null;
+        const activeDraftThread =
+          target?.kind === "draft"
+            ? useComposerDraftStore.getState().getDraftSession(target.draftId)
+            : null;
         const environmentId = scratch.scratchEnvironmentId(
           activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null,
         );
         if (environmentId === null) return;
         claim(event);
+        useThreadSelectionStore.getState().clearSelection();
+        useUiStateStore.getState().selectProjectCollection(null, null);
         void scratch.startScratchThread(environmentId);
       },
       "chat.new": (event) => {

@@ -67,6 +67,22 @@ export function hasExplicitComposerModelSelection(
   );
 }
 
+export function restrictNewThreadContext(
+  context: ChatThreadActionContext,
+  projectKeys: ReadonlySet<string> | null,
+  defaultProjectRef: ScopedProjectRef | null,
+): ChatThreadActionContext {
+  const includes = (thread: ThreadContextLike | null | undefined) =>
+    thread != null &&
+    (projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`));
+  return {
+    ...context,
+    activeDraftThread: includes(context.activeDraftThread) ? context.activeDraftThread : null,
+    activeThread: includes(context.activeThread) ? context.activeThread : undefined,
+    defaultProjectRef,
+  };
+}
+
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
 ): ScopedProjectRef | null {

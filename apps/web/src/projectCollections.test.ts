@@ -182,6 +182,10 @@ describe("project collections", () => {
       project("root", "/repo"),
     ]);
     expect(scope(saved, remote).catalog.map((row) => row.isScratch)).toEqual([true]);
+    const beforeConfig = capture(
+      catalog([project("scratch", "/scratch", { repositoryIdentity: null })]),
+    );
+    expect(scope(beforeConfig, rows).catalog).toContain(rows[0]);
     expect(saved.members).toEqual([{ kind: "scratch" }]);
     expect(collectionMemberMatchesRow({ kind: "scratch" }, rows[1]!, settings())).toBe(false);
   });

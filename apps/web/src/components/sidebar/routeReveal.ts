@@ -9,6 +9,7 @@ import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 export interface SidebarRouteReveal {
   observedKey: string | null;
   pendingKey: string | null;
+  restoredRouteKey?: string | null;
 }
 
 export function pendingSidebarRouteReveal(
@@ -23,8 +24,12 @@ export function pendingSidebarRouteReveal(
   return reveal.pendingKey;
 }
 
-export function completeSidebarRouteReveal(reveal: SidebarRouteReveal): void {
+export function completeSidebarRouteReveal(
+  reveal: SidebarRouteReveal,
+  heldRouteKey?: string | null,
+): void {
   reveal.pendingKey = null;
+  if (heldRouteKey !== undefined) reveal.restoredRouteKey = heldRouteKey;
 }
 
 // Each route change and each mount scroll to the open thread once. Render records
@@ -50,6 +55,7 @@ type RevealableThread = Parameters<typeof filterSidebarV2VisibleThreads>[0][numb
 export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   readonly reveal: SidebarRouteReveal;
   readonly routeKey: string | null;
+  readonly rawRouteKey?: string | null;
   readonly isSearching: boolean;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   readonly delegatedUnderParent: ReadonlySet<string>;
@@ -57,10 +63,19 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
 }): { readonly pendingKey: string | null; readonly widensScope: boolean } {
   const { reveal, routeKey, isSearching, scopedProjectKeys, delegatedUnderParent, findThread } =
     input;
+  if (
+    reveal.restoredRouteKey != null &&
+    input.rawRouteKey != null &&
+    input.rawRouteKey !== reveal.restoredRouteKey
+  ) {
+    reveal.restoredRouteKey = null;
+    reveal.pendingKey = routeKey;
+  }
   const pendingKey = pendingSidebarRouteReveal(reveal, routeKey);
   // Search results replace the thread list; the reveal waits for it to return.
   const thread = pendingKey === null || isSearching ? undefined : findThread(pendingKey);
   const widensScope =
+    reveal.restoredRouteKey == null &&
     thread !== undefined &&
     scopedProjectKeys !== null &&
     filterSidebarV2VisibleThreads([thread], scopedProjectKeys, delegatedUnderParent).length === 0 &&

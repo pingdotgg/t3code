@@ -33,6 +33,7 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
+  filterSidebarV2VisibleThreads,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
@@ -48,6 +49,7 @@ import {
 } from "../types";
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
 import {
+  type SidebarRouteReveal,
   completeSidebarRouteReveal,
   pendingSidebarRouteReveal,
   resolveSidebarRouteReveal,
@@ -1337,6 +1339,55 @@ describe("resolveSidebarRouteReveal", () => {
       });
     resolve("environment-test:unlisted");
     expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, widensScope: true });
+  });
+
+  it("holds an explicit selection through delayed shells, search, and a reloaded child resolving to its parent row", () => {
+    const childKey = "environment-test:child";
+    const reveal: SidebarRouteReveal = {
+      observedKey: null,
+      pendingKey: null,
+      restoredRouteKey: childKey,
+    };
+    const resolve = (rawRouteKey: string, routeKey: string, known: boolean, isSearching = false) =>
+      resolveSidebarRouteReveal({
+        reveal,
+        routeKey,
+        rawRouteKey,
+        isSearching,
+        scopedProjectKeys,
+        delegatedUnderParent: new Set(),
+        findThread: known ? findThread : () => undefined,
+      });
+    expect(resolve(childKey, childKey, false).widensScope).toBe(false);
+    expect(resolve(childKey, hiddenKey, true).widensScope).toBe(false);
+    expect(resolve(childKey, hiddenKey, true, true).widensScope).toBe(false);
+    completeSidebarRouteReveal(reveal, childKey);
+    expect(resolve(childKey, hiddenKey, true).widensScope).toBe(false);
+    expect(
+      resolve("environment-test:unlisted", "environment-test:unlisted", false).widensScope,
+    ).toBe(false);
+    expect(resolve(childKey, hiddenKey, true).widensScope).toBe(true);
+    completeSidebarRouteReveal(reveal, childKey);
+    expect(resolve("environment-test:sibling-child", hiddenKey, true).widensScope).toBe(true);
+  });
+
+  it("consumes a pending reveal before its project becomes known", () => {
+    const reveal: SidebarRouteReveal = { observedKey: null, pendingKey: null };
+    const input = {
+      reveal,
+      routeKey: hiddenKey,
+      rawRouteKey: hiddenKey,
+      isSearching: false,
+      scopedProjectKeys,
+      delegatedUnderParent: new Set<string>(),
+    };
+    expect(resolveSidebarRouteReveal({ ...input, findThread: () => undefined }).widensScope).toBe(
+      false,
+    );
+    completeSidebarRouteReveal(reveal, hiddenKey);
+    expect(resolveSidebarRouteReveal({ ...input, findThread }).widensScope).toBe(false);
+    expect(filterSidebarV2VisibleThreads([hidden], new Set(), new Set())).toEqual([]);
+    expect(filterSidebarV2VisibleThreads([hidden], null, new Set())).toEqual([hidden]);
   });
 
   it("holds a pending reveal without widening while searching", () => {
