@@ -158,7 +158,11 @@ export function buildTraitsTriggerDisplay(input: {
     if (
       input.provider === "codex" &&
       descriptor.id === "cyberAccessProgram" &&
-      getProviderOptionCurrentValue(descriptor) === "default"
+      getProviderOptionCurrentValue(
+        descriptor,
+        input.modelSelection,
+        input.reportedModelSelection,
+      ) === "default"
     ) {
       continue;
     }

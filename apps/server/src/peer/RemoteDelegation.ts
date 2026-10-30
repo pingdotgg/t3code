@@ -28,6 +28,7 @@ import type * as Tool from "effect/ai/Tool";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
+  resolveCyberAccessProgram,
   resolveInteractionMode,
   resolveRuntimeMode,
   taskPrompt,
@@ -231,6 +232,7 @@ const make = Effect.gen(function* () {
           message: "Pass target.model from orchestrator_capabilities with this environmentId.",
         });
       }
+      if (target.options !== undefined) yield* resolveCyberAccessProgram(inherited, target.options);
       const options =
         target.options ??
         (instanceId === inherited.instanceId && model === inherited.model

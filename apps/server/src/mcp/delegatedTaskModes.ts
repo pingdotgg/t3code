@@ -91,7 +91,7 @@ export function resolveInteractionMode(
 
 /** A child may keep its parent's cyber access program but not choose another; only the user can. */
 export function resolveCyberAccessProgram(
-  parentSelection: ModelSelection,
+  parentSelection: ModelSelection | undefined,
   requested: ReadonlyArray<ProviderOptionSelection>,
 ): Effect.Effect<void, OrchestratorMcpFailure> {
   const value = requested.find((selection) => selection.id === "cyberAccessProgram")?.value;
