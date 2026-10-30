@@ -316,6 +316,58 @@ describe("HtmlRender", () => {
     },
   );
 
+  // The fake browser is a shebang script, which Windows cannot execute.
+  describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "when the browser cannot be signalled",
+    () => {
+      // A browser T3 cannot signal, as under AppArmor in an LXC container, must still exit.
+      it.live("asks the browser to close when the preview finishes instead of signalling it", () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const directory = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-fake-browser-",
+          });
+          const executable = path.join(directory, "chrome-headless-shell");
+          const exitRecord = path.join(directory, "exited");
+          yield* fileSystem.writeFileString(
+            executable,
+            `#!${process.execPath}
+const fs = require("node:fs");
+process.on("SIGTERM", () => {});
+const quit = () => { fs.writeFileSync(${JSON.stringify(exitRecord)}, "asked to close"); process.exit(0); };
+const reply = (message) => fs.writeSync(4, JSON.stringify(message) + "\\0");
+const results = {
+  "Target.createTarget": { targetId: "page" },
+  "Target.attachToTarget": { sessionId: "session" },
+  "Runtime.evaluate": { result: { value: 100 } },
+  "Page.captureScreenshot": { data: "iVBORw0KGgo=" },
+};
+let buffered = "";
+fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
+  const messages = (buffered + chunk).split("\\0");
+  buffered = messages.pop();
+  for (const { id, method, sessionId } of messages.map((raw) => JSON.parse(raw))) {
+    if (method === "Browser.close") quit();
+    reply({ id, sessionId, result: results[method] ?? {} });
+    if (method === "Page.navigate") reply({ sessionId, method: "Page.loadEventFired", params: {} });
+  }
+});
+`,
+            { mode: 0o755 },
+          );
+
+          yield* HtmlRender.HtmlRender.use((htmlRender) =>
+            htmlRender.preview({ html: "<p>x</p>" }),
+          ).pipe(Effect.provide(layerHtmlRender(executable)));
+
+          const exitedBy = yield* fileSystem.readFileString(exitRecord).pipe(Effect.option);
+          expect(Option.getOrElse(exitedBy, () => "killed by a signal")).toBe("asked to close");
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+    },
+  );
+
   it.live("matches preview media queries and text colors to the requested appearance", (ctx) =>
     Effect.gen(function* () {
       const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
