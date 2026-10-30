@@ -1,3 +1,4 @@
+import "~/index.css";
 import {
   EnvironmentId,
   NodeId,
@@ -11,11 +12,28 @@ import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  default: (({ text }: { text: string }) => <p>{text}</p>) as never,
-}));
+vi.mock(import("../../state/server"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const noConfig = Atom.make(null);
+  return {
+    ...actual,
+    serverEnvironment: { ...actual.serverEnvironment, configValueAtom: (() => noConfig) as never },
+  };
+});
 
+vi.mock(import("../../hooks/useSettings"), async (original) => {
+  const actual = await original();
+  type Settings = ReturnType<typeof actual.getClientSettings>;
+  function useClientSettings<T = Settings>(select?: (settings: Settings) => T): T {
+    const settings = { ...actual.getClientSettings(), mathRenderingEnabled: true };
+    return select ? select(settings) : (settings as T);
+  }
+  return { ...actual, useClientSettings };
+});
+
+import { page, userEvent } from "vite-plus/test/browser";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { act, fakeTimers, render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
@@ -224,4 +242,118 @@ it("isolates drafts by environment, thread and request and discards only resolve
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
+});
+
+function markdownPanel(
+  onToggleOption = vi.fn(),
+  onAdvance = vi.fn(),
+  option = {
+    label: "**Return** Promise<void>",
+    description: "Use [help](https://example.com/help) with Array<string>.",
+  },
+) {
+  return (
+    <ComposerPendingUserInputPanel
+      pendingUserInputs={[
+        {
+          ...prompt,
+          questions: [
+            {
+              ...prompt.questions[0]!,
+              question: "Schema\n\nRead **the guide** and Promise<void>.",
+              options: [option],
+            },
+          ],
+        },
+      ]}
+      cwd="/repo"
+      threadRef={threadRef}
+      answers={{}}
+      questionIndex={0}
+      respondingRequestIds={[]}
+      onToggleOption={onToggleOption}
+      onAdvance={onAdvance}
+      onDismiss={() => {}}
+    />
+  );
+}
+
+it("renders option Markdown while preserving the raw answer", async () => {
+  using _timers = fakeTimers();
+  const select = vi.fn();
+  const advance = vi.fn();
+  await using screen = await render(markdownPanel(select, advance));
+  await expect.element(screen.getByText("Return", { exact: true })).toBeVisible();
+  expect(screen.container.innerText).toContain("Return Promise<void>");
+  expect(screen.container.innerText).toContain("with Array<string>.");
+  await userEvent.click(screen.getByRole("button", { name: "Return Promise<void>", exact: true }));
+  expect(select).toHaveBeenCalledExactlyOnceWith("question-0", "**Return** Promise<void>");
+  await act(() => vi.advanceTimersByTime(200));
+  expect(advance).toHaveBeenCalledOnce();
+});
+
+it("opens option links without answering or advancing", async () => {
+  using _timers = fakeTimers();
+  const select = vi.fn();
+  const advance = vi.fn();
+  await using screen = await render(markdownPanel(select, advance));
+  const link = screen.getByRole("link", { name: "help", exact: true });
+  const opened = vi.fn((event: Event) => event.preventDefault());
+  link.element().addEventListener("click", opened);
+  await userEvent.click(link);
+  (link.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(opened).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTime(200));
+  expect(select).not.toHaveBeenCalled();
+  expect(advance).not.toHaveBeenCalled();
+});
+
+it("renders an inert collapsed Markdown preview", async () => {
+  await using screen = await render(markdownPanel());
+  await userEvent.click(
+    screen.container.querySelector<HTMLButtonElement>("[data-pending-user-input-toggle]")!,
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Return Promise<void>", exact: true }))
+    .not.toBeInTheDocument();
+  await expect.element(screen.getByText("the guide", { exact: true })).toBeVisible();
+  expect(screen.container.innerText).toContain("Promise<void>.");
+  expect(screen.container.innerText).not.toContain("**");
+});
+
+it("opens option images without answering", async () => {
+  const select = vi.fn();
+  const advance = vi.fn();
+  const image = new URL("/apple-touch-icon.png", window.location.href).href;
+  await using screen = await render(
+    markdownPanel(select, advance, { label: `![Preview](${image})`, description: "" }),
+  );
+  await userEvent.click(screen.getByAltText("Preview", { exact: true }));
+  await expect.element(page.getByRole("dialog", { name: "Expanded image preview" })).toBeVisible();
+  expect(select).not.toHaveBeenCalled();
+  expect(advance).not.toHaveBeenCalled();
+});
+
+it("scrolls option equations without answering", async () => {
+  const select = vi.fn();
+  const advance = vi.fn();
+  const container = document.createElement("div");
+  container.style.width = "400px";
+  await using screen = await render(
+    markdownPanel(select, advance, {
+      label: "Equation",
+      description: "$$\n" + Array(100).fill("x_i").join(" + ") + "\n$$",
+    }),
+    { container },
+  );
+  const scroller = screen.getByLabelText("Scroll display equation");
+  await expect.element(scroller).toBeVisible();
+  const element = scroller.element();
+  await vi.waitFor(() => expect(element.scrollWidth).toBeGreaterThan(element.clientWidth));
+  await userEvent.click(scroller);
+  await userEvent.wheel(element, { delta: { x: 200, y: 0 } });
+  await vi.waitFor(() => expect(element.scrollLeft).toBeGreaterThan(0));
+  expect(select).not.toHaveBeenCalled();
+  expect(advance).not.toHaveBeenCalled();
 });

@@ -1,5 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
-import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
+import { memo, use, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
@@ -93,6 +93,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
   // Keep question identity stable for its shortcut listener.
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
+  const optionIdPrefix = useId();
+  const headerId = optionIdPrefix + "-header";
+  const previewId = optionIdPrefix + "-preview";
   const activeQuestion = progress.activeQuestion;
   const customAnswerActive = progress.customAnswer.trim().length > 0;
   // Read before later hooks to preserve the question's compiler cache.
@@ -151,7 +154,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLMediaElement
+      ) {
         return;
       }
       if (
@@ -184,26 +191,37 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         setCollapsedQuestionId(open ? null : activeQuestion.id);
       }}
     >
-      <CollapsibleTrigger
-        render={<ComposerBanner.Row render={<button type="button" />} />}
-        title={
-          isCollapsed ? "Show the question and its options" : "Hide the question and its options"
-        }
-        data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-        className="px-4 pt-1.5"
-      >
-        <ComposerBanner.Content>
-          <span className="shrink-0 text-muted-foreground">{activeQuestion.header}</span>
+      <ComposerBanner.Row className="relative px-4 pt-1.5">
+        <CollapsibleTrigger
+          render={<button type="button" />}
+          aria-labelledby={headerId}
+          aria-describedby={isCollapsed ? previewId : undefined}
+          title={
+            isCollapsed ? "Show the question and its options" : "Hide the question and its options"
+          }
+          data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
+          className="absolute inset-0 cursor-pointer rounded-md focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        />
+        <ComposerBanner.Content className="pointer-events-none relative">
+          <span id={headerId} className="shrink-0 text-muted-foreground">
+            {activeQuestion.header}
+          </span>
           {isCollapsed ? (
             <>
               <ComposerBanner.Separator />
-              <span className="min-w-0 flex-1 truncate text-secondary-label">
-                {activeQuestion.question}
+              <span id={previewId} inert className="min-w-0 flex-1" data-pending-user-input-preview>
+                <ChatMarkdown
+                  text={activeQuestion.question}
+                  cwd={cwd}
+                  threadRef={threadRef}
+                  parseRawHtml={false}
+                  className="line-clamp-1 max-h-lh text-xs/4 text-secondary-label [&>p]:inline [&>p]:after:content-['_']"
+                />
               </span>
             </>
           ) : null}
         </ComposerBanner.Content>
-        <ComposerBanner.Actions className="gap-0">
+        <ComposerBanner.Actions className="pointer-events-none relative gap-0">
           {prompt.questions.length > 1 ? (
             <ComposerBanner.Count>
               {questionIndex + 1}/{prompt.questions.length}
@@ -211,27 +229,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           ) : null}
           <ComposerBanner.ToggleIcon expanded={!isCollapsed} />
           {prompt.dismissible ? (
-            <ComposerBanner.Dismiss
-              render={<span role="button" tabIndex={0} />}
-              aria-label="Dismiss question without answering"
-              title="Dismiss question without answering"
-              disabled={isResponding}
-              data-pending-user-input-dismiss
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onDismiss(prompt.requestId);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                event.stopPropagation();
-                onDismiss(prompt.requestId);
-              }}
-            />
+            <span className="pointer-events-auto self-stretch inline-flex">
+              <ComposerBanner.Dismiss
+                aria-label="Dismiss question without answering"
+                title="Dismiss question without answering"
+                disabled={isResponding}
+                data-pending-user-input-dismiss
+                onClick={() => onDismiss(prompt.requestId)}
+              />
+            </span>
           ) : null}
         </ComposerBanner.Actions>
-      </CollapsibleTrigger>
+      </ComposerBanner.Row>
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="ps-6 pe-4 pb-1 wrap-anywhere sm:ps-5.5">
@@ -250,48 +259,62 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   optimisticSingleSelect.optionValue === optionValue;
                 const isSelected =
                   isOptimisticallySelected || draftSelectedOptions?.[index] === true;
-                const className = cn(
-                  "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 text-left sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
-                  isSelected ? "text-foreground" : "text-foreground/70 hover:bg-muted/30",
-                  (disabled || isResponding) && "opacity-50 cursor-not-allowed",
-                  !disabled && !isResponding && "cursor-pointer",
-                );
-                // The h-5 slots match the label's line box, so the indicator and shortcut stay on its first line.
-                const content = (
-                  <>
-                    <span className="pointer-events-none flex h-5 shrink-0 items-center">
+                const labelId = optionIdPrefix + "-" + index + "-label";
+                const descriptionId = optionIdPrefix + "-" + index + "-description";
+                const hasDescription = option.description && option.description !== option.label;
+                return (
+                  <div
+                    key={activeQuestion.id + ":" + optionValue}
+                    className={cn(
+                      "group relative flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 text-left sm:ps-1.5 transition-colors duration-150 has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-primary/25",
+                      isSelected ? "text-foreground" : "text-foreground/70 hover:bg-muted/30",
+                      (disabled || isResponding) && "opacity-50 cursor-not-allowed",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      aria-labelledby={labelId}
+                      aria-describedby={hasDescription ? descriptionId : undefined}
+                      aria-pressed={isSelected}
+                      disabled={disabled || isResponding}
+                      className="absolute inset-0 cursor-pointer rounded-md outline-none disabled:cursor-not-allowed"
+                      onClick={() => handleOptionSelection(activeQuestion.id, optionValue)}
+                    />
+                    <span className="pointer-events-none relative flex h-5 shrink-0 items-center">
                       {activeQuestion.multiSelect ? (
                         <CheckboxMark checked={isSelected} />
                       ) : (
                         <OptionRadio checked={isSelected} />
                       )}
                     </span>
-                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{option.label}</span>
-                      {option.description && option.description !== option.label ? (
-                        <span className="text-secondary-label text-2xs">{option.description}</span>
+                    <div className="pointer-events-none relative min-w-0 flex-1 flex flex-col gap-0.5 [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_[role=button]]:pointer-events-auto [&_[role=link]]:pointer-events-auto [&_input]:pointer-events-auto [&_summary]:pointer-events-auto [&_video]:pointer-events-auto [&_audio]:pointer-events-auto [&_pre]:pointer-events-auto [&_.overflow-x-auto]:pointer-events-auto [&_[data-slot^=scroll-area-]]:pointer-events-auto">
+                      <div id={labelId}>
+                        <ChatMarkdown
+                          text={option.label}
+                          cwd={cwd}
+                          threadRef={threadRef}
+                          parseRawHtml={false}
+                          className="text-sm font-medium text-current"
+                        />
+                      </div>
+                      {hasDescription ? (
+                        <div id={descriptionId}>
+                          <ChatMarkdown
+                            text={option.description}
+                            cwd={cwd}
+                            threadRef={threadRef}
+                            parseRawHtml={false}
+                            className="text-secondary-label text-2xs"
+                          />
+                        </div>
                       ) : null}
                     </div>
                     {index < 9 ? (
-                      <span className="flex h-5 w-7 shrink-0 items-center justify-center sm:w-6">
+                      <span className="pointer-events-none relative flex h-5 w-7 shrink-0 items-center justify-center sm:w-6">
                         <Kbd>{index + 1}</Kbd>
                       </span>
                     ) : null}
-                  </>
-                );
-                return (
-                  <button
-                    key={`${activeQuestion.id}:${optionValue}`}
-                    type="button"
-                    aria-pressed={isSelected}
-                    disabled={disabled || isResponding}
-                    onClick={() => {
-                      handleOptionSelection(activeQuestion.id, optionValue);
-                    }}
-                    className={className}
-                  >
-                    {content}
-                  </button>
+                  </div>
                 );
               })}
             </div>
