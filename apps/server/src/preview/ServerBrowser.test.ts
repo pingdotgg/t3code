@@ -1265,6 +1265,27 @@ it.live.each(["save failed", "oversized"])(
     ).pipe(Effect.provide(layer)),
 );
 
+it.live("a restarted server removes the previous run's downloads and keeps its profiles", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const previousTab = path.join(stateDir, "server-browser", "downloads", "previous-tab");
+      const profile = path.join(stateDir, "server-browser", "profiles", "default");
+      yield* fs.makeDirectory(previousTab, { recursive: true });
+      yield* fs.makeDirectory(profile, { recursive: true });
+      yield* fs.writeFileString(path.join(previousTab, "report.csv"), "a,b");
+      yield* fs.writeFileString(path.join(profile, "Preferences"), "{}");
+
+      yield* Layer.build(ServerBrowser.layer);
+
+      expect(yield* fs.exists(previousTab)).toBe(false);
+      expect(yield* fs.readFileString(path.join(profile, "Preferences"))).toBe("{}");
+    }),
+  ).pipe(Effect.provide(dependencies)),
+);
+
 it.live("a page's file picker goes to the controller and takes its uploaded files", () =>
   Effect.scoped(
     Effect.gen(function* () {
