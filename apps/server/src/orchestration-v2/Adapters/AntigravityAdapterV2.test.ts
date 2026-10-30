@@ -848,6 +848,7 @@ describe("AntigravityAdapterV2 subagent tools", () => {
         const threadId = ThreadId.make("thread-antigravity-child-tools");
         const childTool = "33e9093cd2d9d11b9df002ad1d225480:128";
         const unfinishedTool = "33e9093cd2d9d11b9df002ad1d225480:129";
+        let promptCount = 0;
         const adapter = yield* makeAntigravityAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
@@ -872,6 +873,20 @@ describe("AntigravityAdapterV2 subagent tools", () => {
                 // agy_acp_server streams child trajectories' steps on the parent session.
                 prompt: () =>
                   Effect.gen(function* () {
+                    promptCount += 1;
+                    if (promptCount === 2) {
+                      if (sessionUpdate === undefined) return yield* Effect.die("missing handler");
+                      yield* sessionUpdate({
+                        sessionId: "mock-session-1",
+                        update: {
+                          sessionUpdate: "tool_call_update",
+                          toolCallId: unfinishedTool,
+                          status: "completed",
+                          rawOutput: { combinedOutput: "child finished" },
+                        },
+                      });
+                      return { stopReason: "end_turn" };
+                    }
                     const updates: ReadonlyArray<EffectAcpSchema.SessionUpdate> = [
                       {
                         sessionUpdate: "agent_message_chunk",
@@ -909,6 +924,14 @@ describe("AntigravityAdapterV2 subagent tools", () => {
                       }
                       yield* sessionUpdate({ sessionId: "mock-session-1", update });
                     }
+                    if (sessionUpdate === undefined) return yield* Effect.die("missing handler");
+                    yield* sessionUpdate({
+                      sessionId: childTool.split(":")[0]!,
+                      update: {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "Saved child result" },
+                      },
+                    });
                     if (outcome === "failed") {
                       return yield* new EffectAcpErrors.AcpTransportError({
                         detail: "Child lifecycle failure",
@@ -989,6 +1012,62 @@ describe("AntigravityAdapterV2 subagent tools", () => {
           child?.type === "subagent.updated" ? child.subagent.status : undefined,
           outcome === "end_turn" ? "idle" : outcome,
         );
+        if (outcome !== "end_turn") return;
+        if (sessionUpdate === undefined) return yield* Effect.die("missing handler");
+        yield* sessionUpdate({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: unfinishedTool,
+            title: "must not replace the title while no turn is active",
+          },
+        });
+        yield* session.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            modelSelection,
+            ordinal: 2,
+            now: yield* DateTime.now,
+          }),
+        );
+        const nextEvents = Array.from(
+          yield* session.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        );
+        const previousChild = child?.type === "subagent.updated" ? child.subagent : undefined;
+        const nextChildEvent = [...events, ...nextEvents].findLast(
+          (event) => event.type === "subagent.updated",
+        );
+        const nextChild =
+          nextChildEvent?.type === "subagent.updated" ? nextChildEvent.subagent : undefined;
+        assert.isDefined(previousChild);
+        assert.equal(previousChild?.result, "Saved child result");
+        assert.equal(nextChild?.id, previousChild?.id);
+        assert.equal(nextChild?.childThreadId, previousChild?.childThreadId);
+        assert.equal(nextChild?.runId, previousChild?.runId);
+        assert.equal(nextChild?.prompt, previousChild?.prompt);
+        assert.equal(nextChild?.title, previousChild?.title);
+        assert.equal(nextChild?.model, previousChild?.model);
+        assert.equal(nextChild?.result, previousChild?.result);
+        assert.equal(nextChild?.status, "idle");
+        assert.equal(nextEvents.filter((event) => event.type === "app_thread.created").length, 0);
+        const nextTool = nextEvents
+          .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []))
+          .findLast((item) => item.nativeItemRef?.nativeId?.endsWith(unfinishedTool));
+        const previousTool = items.findLast((item) =>
+          item.nativeItemRef?.nativeId?.endsWith(unfinishedTool),
+        );
+        assert.equal(nextTool?.id, previousTool?.id);
+        assert.equal(nextTool?.threadId, childThreadId);
+        assert.equal(nextTool?.title, previousTool?.title);
+        assert.equal(nextTool?.ordinal, previousTool?.ordinal);
+        assert.deepEqual(nextTool?.startedAt, previousTool?.startedAt);
+        assert.equal(nextTool?.status, "completed");
       }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
