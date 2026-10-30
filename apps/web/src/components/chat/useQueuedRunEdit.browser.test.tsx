@@ -1,6 +1,7 @@
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
+  ChatAttachmentId,
   MessageId,
   RunId,
   ThreadId,
@@ -8,6 +9,8 @@ import {
 } from "@t3tools/contracts";
 import { useImperativeHandle, type RefObject } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { toastManager } from "../ui/toast";
 
 import { act, render } from "../../../test/render";
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -141,6 +144,58 @@ const promptOf = (ref: ScopedThreadRef) =>
   useComposerDraftStore.getState().getComposerDraft(ref)?.prompt ?? "";
 
 describe("useQueuedRunEdit", () => {
+  it.each(["", "Ultrathink:\n"])(
+    "opens attachment-only edits empty and saves their attachments (%j)",
+    async (prefix) => {
+      const { hook } = setup();
+      mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+      await using _screen = await render(view(THREAD_A, "queued", hook));
+      using toast = vi.spyOn(toastManager, "add");
+      const attachments = [
+        {
+          type: "image" as const,
+          id: ChatAttachmentId.make("kept"),
+          name: "kept.png",
+          mimeType: "image/png",
+          sizeBytes: 10,
+        },
+      ];
+      const request = {
+        runId: RUN,
+        messageId: MessageId.make("message-1"),
+        text: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        attachments,
+      };
+      await act(() => requireHook(hook).beginEdit(request));
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt ??
+          "",
+      ).toBe("");
+      expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment)).toEqual(
+        attachments,
+      );
+      await act(() =>
+        useComposerDraftStore
+          .getState()
+          .setRuntimeMode(requireHook(hook).draftTarget, "full-access"),
+      );
+      await act(() => setRuns(THREAD_A, "running"));
+      expect(toast).not.toHaveBeenCalled();
+      expect(requireHook(hook).isEditing).toBe(false);
+      await act(() => setRuns(THREAD_A, "queued"));
+      await act(() => requireHook(hook).beginEdit(request));
+      await act(() => requireHook(hook).saveEdit(savedContent(""), () => {}));
+      expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+            edit: expect.objectContaining({ attachments }),
+          }),
+        }),
+      );
+    },
+  );
+
   it("keeps an open edit when the user leaves the thread and comes back", async () => {
     const { hook } = setup();
     await using screen = await render(view(THREAD_A, "queued", hook));

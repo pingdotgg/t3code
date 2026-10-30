@@ -18,6 +18,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -139,6 +140,47 @@ const message = (
     createdAt: at(options.minute ?? 1),
     updatedAt: at(options.minute ?? 1),
   },
+});
+
+it.layer(layerTest)("ThreadSearch attachment-only messages", (it) => {
+  it.effect("does not match attachment-only bootstrap text in indexed or fallback search", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:attachments");
+      const threadId = ThreadId.make("thread:attachments");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(threadId, project),
+          message(threadId, "ordinary", "user", "Review the attached files", { minute: 1 }),
+          message(threadId, "attachment", "user", ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, { minute: 2 }),
+          message(
+            threadId,
+            "ultrathink",
+            "user",
+            `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+            { minute: 3 },
+          ),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      for (const indexed of [true, false]) {
+        if (!indexed) yield* sql`DROP TABLE orchestration_v2_message_search`;
+        assert.deepEqual((yield* search.search({ query: "conversation context" })).matches, []);
+        assert.deepEqual((yield* search.search({ query: "ultrathink" })).matches, []);
+        assert.deepEqual(
+          (yield* search.search({ query: "attached files" })).matches.map((match) => [
+            match.messageId,
+            match.snippet,
+          ]),
+          [[MessageId.make("ordinary"), "Review the attached files"]],
+        );
+      }
+    }),
+  );
 });
 
 it.layer(layerTest)("ThreadSearch", (it) => {

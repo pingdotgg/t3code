@@ -33,6 +33,7 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
+import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { indexedMessageCondition } from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
@@ -453,7 +454,9 @@ export const make = Effect.gen(function* () {
     const hitCount = (threadId: ThreadId) => hitCounts.get(threadId) ?? 1;
     const matchMessage = messageMatcher(input.query);
     for (const row of rows) {
-      const text = row.text.replace(MARKDOWN_LINK, "$1");
+      const text = isAttachmentOnlyBootstrapPrompt(row.text)
+        ? ""
+        : row.text.replace(MARKDOWN_LINK, "$1");
       const match = matchMessage(text);
       if (match === null) continue;
       const hit = { row, text, ...match };
