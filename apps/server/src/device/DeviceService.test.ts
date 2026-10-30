@@ -42,6 +42,37 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
+it.effect.each([400, 500])(
+  "distinguishes screenshot HTTP rejection (%s) from transport failure",
+  (status) =>
+    Effect.gen(function* () {
+      const operations = makeDeviceHubOperations({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        origin: "http://device.test",
+        http: HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response("private hub output", { status })),
+          ),
+        ),
+        run: () => Effect.die("Screenshot does not run a command"),
+        androidAvailable: Effect.succeed(false),
+      });
+      const result = yield* operations
+        .screenshot({
+          id: "phone",
+          name: "Phone",
+          version: "iOS 26.3",
+          platform: "ios",
+          booted: true,
+          physical: false,
+        })
+        .pipe(Effect.result);
+      expect(result).toMatchObject({
+        failure: { _tag: "DeviceOperationError", reason: "hub_rejected" },
+      });
+    }),
+);
+
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string | { error?: string; errors?: Array<{ message: string; error?: string }> },
