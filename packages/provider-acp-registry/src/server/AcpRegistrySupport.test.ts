@@ -698,7 +698,7 @@ describe("AcpRegistrySupport", () => {
     },
   );
 
-  it.effect("installs a tar archive containing a root directory entry", () => {
+  it.effect("installs a tar archive with a root entry and a listing larger than 1 MiB", () => {
     const downloadUrl = "https://registry.test/agent.tar.gz";
     const agent = makeAgent({
       binary: { "linux-x86_64": { archive: downloadUrl, cmd: "./agent" } },
@@ -709,6 +709,14 @@ describe("AcpRegistrySupport", () => {
       const source = `${cacheDir}/source`;
       yield* fileSystem.makeDirectory(source);
       yield* fileSystem.writeFileString(`${source}/agent`, "#!/bin/sh\necho managed\n");
+      // 5,000 long names list past the generic 1 MiB command output cap.
+      const entries = `${source}/entries`;
+      yield* fileSystem.makeDirectory(entries);
+      yield* Effect.forEach(
+        Array.from({ length: 5_000 }, (_, index) => index),
+        (index) => fileSystem.writeFileString(`${entries}/${index}-${"e".repeat(240)}`, ""),
+        { concurrency: 16 },
+      );
       const archivePath = `${cacheDir}/agent.tar.gz`;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const tar = yield* spawner.spawn(
