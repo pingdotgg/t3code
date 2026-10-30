@@ -51,7 +51,8 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
 function leadingExternalLinkTextLength(text: string): number {
   const protocol = /^(?:https?:\/\/)/i.exec(text)?.[0];
   if (protocol) return protocol.length;
-  return Math.min(text.length, 1);
+  // A whole code point, so a surrogate pair is not split across elements.
+  return Array.from(text.slice(0, 2))[0]?.length ?? 0;
 }
 
 // Long words such as URLs can break after any character so they fit narrow
@@ -91,8 +92,7 @@ export function MarkdownExternalLinkContent({
     );
   }
 
-  const childNodes = Children.toArray(children);
-  const firstChild = childNodes[0];
+  const [firstChild, ...restChildren] = Children.toArray(children);
 
   if (typeof firstChild === "string" && firstChild.length > 0) {
     const leadingLength = leadingExternalLinkTextLength(firstChild);
@@ -103,18 +103,19 @@ export function MarkdownExternalLinkContent({
           {firstChild.slice(0, leadingLength)}
         </span>
         {breakableExternalLinkText(firstChild.slice(leadingLength))}
-        {childNodes.slice(1)}
+        {restChildren}
       </>
     );
   }
 
   return (
     <>
-      <span className="whitespace-nowrap">
+      {/* Only the favicon/element boundary stays unbreakable; the element's own words still wrap. */}
+      <span className="whitespace-nowrap [&>*]:whitespace-normal">
         <MarkdownLinkFavicon host={host} />
         {firstChild}
       </span>
-      {childNodes.slice(1)}
+      {restChildren}
     </>
   );
 }
