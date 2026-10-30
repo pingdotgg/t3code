@@ -13,10 +13,10 @@ import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Stream from "effect/Stream";
 
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { idleCompactionWindow, usageLimitOutlastsCache } from "./IdleCompaction.ts";
+import { idleCompactionAction, idleCompactionWindow } from "./IdleCompaction.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -29,7 +29,7 @@ export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const providers = yield* ProviderRegistry.ProviderRegistry;
+  const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
     function* (threadId: ThreadId, runId: RunId) {
@@ -49,11 +49,10 @@ export const make = Effect.gen(function* () {
           ],
           { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
         );
-        const beforeCacheExpires =
-          resolveIdleCompaction(current, records.thread.providerInstanceId) ===
-          "beforeCacheExpires";
+        const mode = resolveIdleCompaction(current, records.thread.providerInstanceId);
         if (
-          (!beforeCacheExpires && !current.compactBeforeUsageLimit) ||
+          mode === "off" ||
+          (mode !== "beforeCacheExpires" && !current.compactBeforeUsageLimit) ||
           !resolveProjectProviderInstanceEnabled(
             current,
             records.thread.projectId,
@@ -64,13 +63,23 @@ export const make = Effect.gen(function* () {
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         const window = idleCompactionWindow(records, nowMs);
         if (window?.runId !== runId) return;
-        const usageWindows = current.compactBeforeUsageLimit
-          ? ((yield* providers.getProviders).find(
-              (provider) => provider.instanceId === records.thread.providerInstanceId,
-            )?.usageLimits?.windows ?? [])
-          : [];
-        if (nowMs < window.startMs && !usageLimitOutlastsCache(usageWindows, window.endMs)) {
-          if (!beforeCacheExpires) return;
+        // The instance snapshot, not the registry list: the registry applies the
+        // run's last usage update asynchronously and can still be behind here.
+        const instance = current.compactBeforeUsageLimit
+          ? yield* providerInstances.getInstance(records.thread.providerInstanceId)
+          : undefined;
+        const action = idleCompactionAction({
+          mode,
+          compactBeforeUsageLimit: current.compactBeforeUsageLimit,
+          window,
+          usageWindows:
+            instance === undefined
+              ? []
+              : ((yield* instance.snapshot.getSnapshot).usageLimits?.windows ?? []),
+          nowMs,
+        });
+        if (action === "skip") return;
+        if (action === "wait") {
           yield* Effect.sleep(Duration.millis(window.startMs - nowMs));
           continue;
         }

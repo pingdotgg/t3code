@@ -13,8 +13,8 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import {
+  idleCompactionAction,
   idleCompactionWindow,
-  usageLimitOutlastsCache,
   type IdleCompactionRecords,
 } from "./IdleCompaction.ts";
 
@@ -159,19 +159,34 @@ describe("idleCompactionWindow", () => {
   });
 });
 
-describe("usageLimitOutlastsCache", () => {
-  it("needs a nearly spent window that resets after the cache expires", () => {
-    const cacheExpiresMs = NOW_MS + 60 * MINUTE_MS;
-    const window = (usedPercent: number, resetsInMs?: number) => ({
+describe("idleCompactionAction", () => {
+  it("compacts near a usage limit that outlasts the cache, unless set to never", () => {
+    const window = { startMs: NOW_MS + 58 * MINUTE_MS, endMs: NOW_MS + 60 * MINUTE_MS };
+    const usage = (usedPercent: number, resetsInMs?: number) => ({
       id: "five_hour",
       kind: "session" as const,
       label: "Session",
       usedPercent,
       ...(resetsInMs === undefined ? {} : { resetsAt: DateTime.formatIso(at(resetsInMs)) }),
     });
-    expect(usageLimitOutlastsCache([window(95, 90 * MINUTE_MS)], cacheExpiresMs)).toBe(true);
-    expect(usageLimitOutlastsCache([window(94, 90 * MINUTE_MS)], cacheExpiresMs)).toBe(false);
-    expect(usageLimitOutlastsCache([window(95, 30 * MINUTE_MS)], cacheExpiresMs)).toBe(false);
-    expect(usageLimitOutlastsCache([window(95)], cacheExpiresMs)).toBe(false);
+    const action = (
+      mode: "onReturn" | "beforeCacheExpires" | "off",
+      usageWindows: ReadonlyArray<ReturnType<typeof usage>>,
+      nowMs = NOW_MS,
+      compactBeforeUsageLimit = true,
+    ) => idleCompactionAction({ mode, compactBeforeUsageLimit, window, usageWindows, nowMs });
+    const nearLimit = [usage(95, 90 * MINUTE_MS)];
+
+    expect(action("onReturn", nearLimit)).toBe("compact");
+    expect(action("beforeCacheExpires", nearLimit)).toBe("compact");
+    expect(action("off", nearLimit)).toBe("skip");
+    expect(action("onReturn", nearLimit, NOW_MS, false)).toBe("skip");
+    expect(action("onReturn", [usage(94, 90 * MINUTE_MS)])).toBe("skip");
+    expect(action("onReturn", [usage(95, 30 * MINUTE_MS)])).toBe("skip");
+    expect(action("onReturn", [usage(95)])).toBe("skip");
+    // Inside the cache window, only the cache-expiry mode compacts without a usage reason.
+    expect(action("onReturn", [], window.startMs)).toBe("skip");
+    expect(action("beforeCacheExpires", [])).toBe("wait");
+    expect(action("beforeCacheExpires", [], window.startMs)).toBe("compact");
   });
 });

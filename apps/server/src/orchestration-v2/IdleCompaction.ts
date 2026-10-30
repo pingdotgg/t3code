@@ -1,4 +1,5 @@
 import type {
+  IdleCompactionMode,
   OrchestrationV2ThreadProjection,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
@@ -108,17 +109,29 @@ export function idleCompactionWindow(
 }
 
 /**
- * Whether a usage window is nearly spent and resets after `cacheExpiresMs`: a
- * stop on that limit would resume against an expired cache.
+ * What to do with an idle compaction window. A nearly spent usage window that
+ * resets after the cache expires compacts at once: a stop on that limit would
+ * resume against an expired cache. "Never" always wins.
  */
-export function usageLimitOutlastsCache(
-  windows: ReadonlyArray<ServerProviderUsageWindow>,
-  cacheExpiresMs: number,
-): boolean {
-  return windows.some(
-    (window) =>
-      window.usedPercent >= NEAR_USAGE_LIMIT_PERCENT &&
-      window.resetsAt !== undefined &&
-      Date.parse(window.resetsAt) > cacheExpiresMs,
-  );
+export function idleCompactionAction(input: {
+  readonly mode: IdleCompactionMode;
+  readonly compactBeforeUsageLimit: boolean;
+  readonly window: { readonly startMs: number; readonly endMs: number };
+  readonly usageWindows: ReadonlyArray<ServerProviderUsageWindow>;
+  readonly nowMs: number;
+}): "compact" | "wait" | "skip" {
+  const { mode, window, nowMs } = input;
+  if (mode === "off") return "skip";
+  if (
+    input.compactBeforeUsageLimit &&
+    input.usageWindows.some(
+      (usage) =>
+        usage.usedPercent >= NEAR_USAGE_LIMIT_PERCENT &&
+        usage.resetsAt !== undefined &&
+        Date.parse(usage.resetsAt) > window.endMs,
+    )
+  )
+    return "compact";
+  if (mode !== "beforeCacheExpires") return "skip";
+  return nowMs < window.startMs ? "wait" : "compact";
 }
