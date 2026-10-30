@@ -3,14 +3,25 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { getSystemLocaleMock, getUserDefaultMock } = vi.hoisted(() => ({
-  getSystemLocaleMock: vi.fn(() => "en-GB"),
-  getUserDefaultMock: vi.fn((_key: string) => false),
-}));
+const { getSystemLocaleMock, getUserDefaultMock, relaunchMock, spawnMock, unrefMock } = vi.hoisted(
+  () => {
+    const unrefMock = vi.fn();
+    return {
+      getSystemLocaleMock: vi.fn(() => "en-GB"),
+      getUserDefaultMock: vi.fn((_key: string) => false),
+      relaunchMock: vi.fn(),
+      spawnMock: vi.fn(() => ({ unref: unrefMock })),
+      unrefMock,
+    };
+  },
+);
+
+vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 
 vi.mock("electron", () => ({
   app: {
     getSystemLocale: getSystemLocaleMock,
+    relaunch: relaunchMock,
   },
   systemPreferences: {
     getUserDefault: getUserDefaultMock,
@@ -23,7 +34,73 @@ describe("ElectronApp", () => {
   beforeEach(() => {
     getSystemLocaleMock.mockReset();
     getUserDefaultMock.mockReset();
+    relaunchMock.mockReset();
+    spawnMock.mockClear();
+    unrefMock.mockReset();
   });
+
+  it("waits for the old process before starting the new one on Linux", () => {
+    const launch = ElectronApp.linuxRelaunchCommand(4321, "/opt/t3code/t3code", ["--flag", "it's"]);
+    assert.strictEqual(launch.command, "/bin/sh");
+    assert.deepStrictEqual(launch.args.slice(2), [
+      "t3code-relaunch",
+      "4321",
+      "/opt/t3code/t3code",
+      "--flag",
+      "it's",
+    ]);
+  });
+
+  it.effect("relaunches through a detached spawn on Linux instead of Electron's relauncher", () =>
+    Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      yield* electronApp
+        .relaunch({ execPath: "/opt/t3code/t3code", args: ["--x"] })
+        .pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, {}),
+        );
+
+      assert.strictEqual(relaunchMock.mock.calls.length, 0);
+      assert.strictEqual(spawnMock.mock.calls.length, 1);
+      const [command, args, options] = spawnMock.mock.calls[0] as unknown as [
+        string,
+        ReadonlyArray<string>,
+        { detached: boolean; stdio: string },
+      ];
+      assert.strictEqual(command, "/bin/sh");
+      assert.deepStrictEqual(args.slice(3), [String(process.pid), "/opt/t3code/t3code", "--x"]);
+      assert.deepStrictEqual(options, { detached: true, stdio: "ignore" });
+      assert.strictEqual(unrefMock.mock.calls.length, 1);
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("relaunches the AppImage file rather than its temporary mount", () =>
+    Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      yield* electronApp.relaunch({ execPath: process.execPath, args: ["--x"] }).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Environment, {
+          APPIMAGE: "/home/me/Apps/T3-Code.AppImage",
+        }),
+      );
+
+      const [, args] = spawnMock.mock.calls[0] as unknown as [string, ReadonlyArray<string>];
+      assert.deepStrictEqual(args.slice(4), ["/home/me/Apps/T3-Code.AppImage", "--x"]);
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("keeps Electron's relauncher on other platforms", () =>
+    Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      yield* electronApp
+        .relaunch({ args: ["--x"] })
+        .pipe(Effect.provideService(HostProcess.Platform, "darwin"));
+
+      assert.deepStrictEqual(relaunchMock.mock.calls, [[{ args: ["--x"] }]]);
+      assert.strictEqual(spawnMock.mock.calls.length, 0);
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
 
   it("keeps the macOS region override and hour cycle in the locale tag", () => {
     assert.strictEqual(ElectronApp.toSystemLocaleTag("en_GB"), "en-GB");
