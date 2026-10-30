@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -87,7 +88,9 @@ export interface PackageManagedProviderMaintenanceDefinition {
     readonly isCommandPath?: (commandPath: string) => boolean;
     /** The updater cannot detect installs outside `isCommandPath`, so leave those manual-only. */
     readonly requiresCommandPath?: boolean;
-    readonly env?: NodeJS.ProcessEnv;
+    readonly env?:
+      | NodeJS.ProcessEnv
+      | ((context: ProviderMaintenanceResolutionContext) => NodeJS.ProcessEnv);
   } | null;
 }
 
@@ -446,6 +449,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   }
 
   const nativeUpdate = definition.nativeUpdate;
+  const nativeEnv = nativeUpdate?.env;
   const native = nativeUpdate
     ? makeProviderMaintenanceCapabilities({
         provider: definition.provider,
@@ -454,7 +458,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         updateArgs: nativeUpdate.args,
         updateLockKey: `${definition.provider}-native`,
         platform: context.platform,
-        ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
+        ...(nativeEnv
+          ? { env: typeof nativeEnv === "function" ? nativeEnv(context) : nativeEnv }
+          : {}),
       })
     : manual;
   // A native-looking launcher can still delegate to a mise-owned install.
@@ -822,22 +828,14 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   const request = HttpClientRequest.get(
     `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
   ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
-  const response = yield* client.execute(request).pipe(
+  // The deadline covers the body too: headers can arrive before the JSON stalls.
+  const payload = yield* client.execute(request).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(NpmLatestVersionResponse)),
     Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
     Effect.orElseSucceed(() => Option.none()),
   );
-  if (Option.isNone(response)) {
-    return null;
-  }
-  const httpResponse = response.value;
-  if (httpResponse.status < 200 || httpResponse.status >= 300) {
-    return null;
-  }
-  const payload = yield* httpResponse.json.pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(NpmLatestVersionResponse)),
-    Effect.orElseSucceed(() => null),
-  );
-  return payload ? nonEmptyString(payload.version) : null;
+  return Option.isSome(payload) ? nonEmptyString(payload.value.version) : null;
 });
 
 /** The installer's own answer is cached apart from the npm registry entry. */

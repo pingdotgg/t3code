@@ -13,7 +13,9 @@ import * as Fiber from "effect/Fiber";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 import {
   createProviderVersionAdvisory,
@@ -139,6 +141,39 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(version).toBe("1.2.0");
       }),
     ),
+  );
+
+  it.effect("reads the latest version from the npm registry", () =>
+    resolveLatestProviderVersion(manualPackageTool).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "1.2.3" }))),
+        ),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("1.2.3");
+      }),
+    ),
+  );
+
+  it.effect("gives up on a registry body that stalls after the headers", () =>
+    Effect.gen(function* () {
+      const lookup = yield* resolveLatestProviderVersion(manualPackageTool).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(new ReadableStream()))),
+          ),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("4 seconds");
+      expect(lookup.pollUnsafe()).toBeDefined();
+      expect(yield* Fiber.join(lookup)).toBeNull();
+    }),
   );
 
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>

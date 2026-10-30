@@ -678,7 +678,7 @@ describe("EnvironmentThreads", () => {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION });
 
       yield* Queue.offer(harness.inputs, titleUpdated("Live title", CACHED_SNAPSHOT_SEQUENCE + 1));
-      yield* awaitThreadState(
+      const live = yield* awaitThreadState(
         harness.observed,
         (value) =>
           value.status === "live" &&
@@ -686,6 +686,8 @@ describe("EnvironmentThreads", () => {
           value.data.value.thread.title === "Live title",
       );
 
+      // Readers compare this to a command's commit sequence; it moves with the data it describes.
+      expect(live.sequence).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
     }),
@@ -1288,6 +1290,7 @@ describe("EnvironmentThreads", () => {
               status: "cached",
               error: Option.none(),
               history: { ...EMPTY_THREAD_HISTORY_META, historyCursor: null, expanded: true },
+              sequence: CACHED_SNAPSHOT_SEQUENCE,
             },
             sequence: CACHED_SNAPSHOT_SEQUENCE,
             persisted: true,
