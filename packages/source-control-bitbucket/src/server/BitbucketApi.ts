@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   NonNegativeInt,
+  settingsSecretLiteral,
   SourceControlProviderKind,
   TrimmedNonEmptyString,
   type SourceControlProviderAuth,
@@ -557,7 +558,11 @@ function resolveCredential(
   env: Config.Success<typeof BitbucketApiEnvConfig>,
 ): BitbucketCredential | null {
   return (
-    credentialFrom(settings) ??
+    credentialFrom({
+      accessToken: settingsSecretLiteral(settings.accessToken),
+      email: settings.email,
+      apiToken: settingsSecretLiteral(settings.apiToken),
+    }) ??
     credentialFrom({
       accessToken: Option.getOrElse(env.accessToken, () => ""),
       email: Option.getOrElse(env.email, () => ""),

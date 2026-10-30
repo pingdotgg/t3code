@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { makeProviderSettingsSchema, ProviderDriverKind, TrimmedString } from "@t3tools/contracts";
+import {
+  makeProviderSettingsSchema,
+  ProviderDriverKind,
+  SecretProviderId,
+  TrimmedString,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { providerClients } from "./providerDriverMeta";
@@ -55,6 +60,27 @@ describe("ProviderSettingsForm helpers", () => {
     );
 
     expect(next).toEqual({ experimental: false });
+  });
+
+  it("stores a secret reference as written", () => {
+    const reference = {
+      provider: SecretProviderId.make("personal"),
+      reference: "op://Private/Bitbucket/token",
+    };
+
+    const next = nextProviderConfigWithFieldValue(
+      { email: "me@example.com" },
+      {
+        key: "accessToken",
+        control: "password",
+        label: "Access token",
+        secret: true,
+        clearWhenEmpty: "omit",
+      },
+      reference,
+    );
+
+    expect(next).toEqual({ email: "me@example.com", accessToken: reference });
   });
 });
 

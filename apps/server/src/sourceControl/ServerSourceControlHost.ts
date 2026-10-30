@@ -1,11 +1,15 @@
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
+import { resolveSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { resolveSourceControlHostSecrets } from "./sourceControlHostSecrets.ts";
 
 export const layer = Layer.effect(
   SourceControlHost.SourceControlHost,
@@ -14,8 +18,24 @@ export const layer = Layer.effect(
     const process = yield* VcsProcess.VcsProcess;
     const git = yield* GitVcsDriver.GitVcsDriver;
     const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
+    const secrets = yield* SecretResolver.SecretResolver;
     return SourceControlHost.SourceControlHost.of({
-      settings: { get: serverSettings.getSettings, update: serverSettings.updateSettings },
+      settings: {
+        get: serverSettings.getSettings.pipe(
+          Effect.flatMap((settings) =>
+            resolveSourceControlHostSecrets(settings.sourceControlHosts, (source) =>
+              resolveSettingsSecret(secrets, source),
+            ).pipe(
+              Effect.map((sourceControlHosts) =>
+                sourceControlHosts === settings.sourceControlHosts
+                  ? settings
+                  : { ...settings, sourceControlHosts },
+              ),
+            ),
+          ),
+        ),
+        update: serverSettings.updateSettings,
+      },
       process: { run: process.run },
       git: {
         execute: git.execute,
@@ -35,4 +55,4 @@ export const layer = Layer.effect(
       },
     });
   }),
-);
+).pipe(Layer.provide(SecretResolverLayer.layer));

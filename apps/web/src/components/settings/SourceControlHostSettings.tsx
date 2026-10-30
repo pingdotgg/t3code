@@ -48,10 +48,13 @@ export function SourceControlHostSettings({
         value={saved ?? {}}
         idPrefix={`source-control-${definition.kind}-${environmentId}`}
         variant="settings"
+        environmentId={environmentId}
         onChange={(next) => {
           const fields = next ?? {};
           const changed = Object.fromEntries(
-            Object.entries(fields).filter(([key, value]) => saved?.[key] !== value),
+            Object.entries(fields).filter(
+              ([key, value]) => JSON.stringify(saved?.[key]) !== JSON.stringify(value),
+            ),
           );
           const cleared = Object.keys(saved ?? {}).filter((key) => !(key in fields));
           void save({ ...changed, ...Object.fromEntries(cleared.map((key) => [key, ""])) });
