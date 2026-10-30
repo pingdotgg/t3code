@@ -78,7 +78,6 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
-  const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
   const { sendInFlight: sendInFlightRef, uncertainSubmissions: uncertainSubmissionsRef } =
     draftSendState(routeThreadKey);
@@ -96,6 +95,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     readFileBlockReason,
     buildOutgoingMessageContext,
     isCurrentSend,
+    clearSubmittedDraft,
   }: {
     readonly threadId: ThreadId;
     readonly project: EnvironmentProject;
@@ -112,6 +112,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     ) => ReturnType<typeof buildMessageContext>;
     /** False once a newer send from this composer started. */
     readonly isCurrentSend: () => boolean;
+    readonly clearSubmittedDraft: () => boolean;
   }) => {
     const { attachments: attachmentsSnapshot, messageText } = sendSnapshot;
     const failedSelections: ModelSelection[] = [];
@@ -132,9 +133,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
         text: messageText,
         attachments: attachmentsSnapshot,
       });
-      promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
+      if (!clearSubmittedDraft()) return;
       clearedDraft = true;
       const clearedDraftSnapshot = useComposerDraftStore
         .getState()

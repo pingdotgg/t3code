@@ -73,6 +73,25 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
 // router: false because the chat shortcuts and the launcher stand-in never navigate.
 const options = { router: false } as const;
 
+it("does not type the sidebar row's activation key into the draft", async () => {
+  const composerKeys: string[] = [];
+  const rowKeys: string[] = [];
+  await using screen = await render(
+    <>
+      <Chat composerKeys={composerKeys} />
+      <div role="treeitem" tabIndex={0} onKeyDown={(event) => rowKeys.push(event.key)}>
+        Thread
+      </div>
+    </>,
+    options,
+  );
+  await userEvent.tab();
+  await expect.element(screen.getByRole("treeitem")).toHaveFocus();
+  await userEvent.keyboard(" a");
+  expect(rowKeys).toEqual([" "]);
+  expect(composerKeys).toEqual(["a"]);
+});
+
 it("leaves the launcher's letters to the launcher, in either case", async () => {
   const composerKeys: string[] = [];
   const received: string[] = [];

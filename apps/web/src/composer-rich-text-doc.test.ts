@@ -306,6 +306,7 @@ describe("composer rich text document model", () => {
     "@README.md explain this",
     '@"docs/My File.md" and $my-skill please',
     "snake_case stays literal",
+    "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
     "unmatched ** stays literal",
     "**bold** then @README.md then *italic*",
   ])("round-trips %s through a real ProseMirror document", (value) => {
@@ -888,7 +889,7 @@ describe("pasting into a path query", () => {
   });
 
   it("parses markdown when the paste does not continue a path query", () => {
-    expect(boldText(paste("Open ", "src/__test__.tsx"))).toEqual(["test"]);
+    expect(boldText(paste("Open ", "__test__ now"))).toEqual(["test"]);
     expect(boldText(paste("Open @a ", "__b__"))).toEqual(["b"]);
     expect(boldText(paste("Open @", " __b__"))).toEqual(["b"]);
   });

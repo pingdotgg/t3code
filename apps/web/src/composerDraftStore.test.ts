@@ -368,6 +368,20 @@ describe("composerDraftStore file attachments", () => {
     resetComposerDraftStore();
   });
 
+  it("does not clear newer input when an upload for a submitted draft finishes", () => {
+    const store = useComposerDraftStore.getState();
+    store.addFiles(threadRef, [makeFile("file-1")]);
+    store.setPrompt(threadRef, "First version");
+    const submitted = store.getComposerDraft(threadRef);
+    store.setPrompt(threadRef, "Revised while uploading");
+    const revised = store.getComposerDraft(threadRef);
+    store.setFileUpload(threadRef, "file-1", TEST_ENVIRONMENT_ID, "pending-report-pdf");
+    store.clearComposerContent(threadRef, submitted);
+    expect(store.getComposerDraft(threadRef)?.prompt).toBe("Revised while uploading");
+    expect(store.clearComposerContent(threadRef, revised)).toBe(true);
+    expect(store.getComposerDraft(threadRef)).toBeNull();
+  });
+
   it("persists uploaded file references without including file contents", () => {
     const store = useComposerDraftStore.getState();
     store.addFiles(threadRef, [

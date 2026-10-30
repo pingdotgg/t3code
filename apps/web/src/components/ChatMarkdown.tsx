@@ -207,6 +207,7 @@ import { MarkdownExternalLinkContent } from "./chat/MarkdownExternalLink";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
 import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
+import { remarkComposerPaths } from "./chat/remarkComposerPaths";
 import { rehypeTextDirection } from "./chat/markdownTextDirection";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
 import {
@@ -234,6 +235,7 @@ interface ChatMarkdownProps {
   skills?: ReadonlyArray<ServerProviderSkill>;
   className?: string;
   lineBreaks?: boolean;
+  composerMessage?: boolean;
   parseRawHtml?: boolean;
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   onRunShellCommand?: ((command: string) => void) | undefined;
@@ -1637,11 +1639,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
 const REMARK_MATH: Pluggable = [remarkMath, { singleDollarTextMath: true }];
 // Shared lists, so every message with the same options shares a processor and its cache.
 const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
-  plain: CHAT_MARKDOWN_REMARK_PLUGINS,
-  breaks: CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  math: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS],
-  mathBreaks: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
-} satisfies Record<string, PluggableList>;
+  plain: {
+    text: CHAT_MARKDOWN_REMARK_PLUGINS,
+    math: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS],
+  },
+  breaks: {
+    text: CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+    math: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+  },
+  composer: {
+    text: [...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS, remarkComposerPaths],
+    math: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS, remarkComposerPaths],
+  },
+} satisfies Record<string, Record<"text" | "math", PluggableList>>;
 
 const markdownRenderers = new WeakMap<
   PluggableList,
@@ -1698,6 +1708,7 @@ function ChatMarkdown({
   className,
   inline = false,
   lineBreaks = false,
+  composerMessage = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
@@ -1723,14 +1734,8 @@ function ChatMarkdown({
   };
   const sharedRemarkPlugins =
     CHAT_MARKDOWN_REMARK_PLUGIN_SETS[
-      componentState.mathEnabled
-        ? lineBreaks
-          ? "mathBreaks"
-          : "math"
-        : lineBreaks
-          ? "breaks"
-          : "plain"
-    ];
+      composerMessage ? "composer" : lineBreaks ? "breaks" : "plain"
+    ][componentState.mathEnabled ? "math" : "text"];
   // Extra and incremental plugins are per instance, so their output is not shared.
   const uncachedPlugins = extraRemarkPlugins.length > 0 || incrementalParsing;
   const remarkPlugins = uncachedPlugins

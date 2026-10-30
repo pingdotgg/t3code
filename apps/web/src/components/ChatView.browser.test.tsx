@@ -1,3 +1,4 @@
+import "~/index.css";
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
@@ -14,6 +15,8 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   installFakeEnvironment,
+  runningRun,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
@@ -61,4 +64,29 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("can stop a running turn on a phone without opening the keyboard", async () => {
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  await page.viewport(390, 844);
+  await using _viewport = {
+    [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
+  };
+  const thread = threadWithHistory("phone-running", 1);
+  const activeRun = runningRun(thread.id, "phone-run", 2, "phone-user");
+  using _environment = installFakeEnvironment([{ ...thread, runs: [...thread.runs, activeRun] }]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByRole("button", { name: "Expand composer" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeEnabled();
 });

@@ -775,6 +775,28 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const threadIdForSend = activeThread.id;
+    const draftAtSend = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+    const clearSubmittedDraft = () => {
+      const onOriginalRoute = currentRouteThreadKeyRef.current === routeThreadKey;
+      if (
+        (onOriginalRoute && composerRef.current?.hasPendingAttachments()) ||
+        !clearComposerDraftContent(composerDraftTarget, draftAtSend)
+      ) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Draft changed before sending",
+            description: "Your edits are still in the composer. Send again when ready.",
+          }),
+        );
+        return false;
+      }
+      if (onOriginalRoute) {
+        promptRef.current = "";
+        composerRef.current?.resetCursorState();
+      }
+      return true;
+    };
     const sendSnapshot = snapshotComposerSend({
       prompt: promptForSend,
       images: composerImages,
@@ -1085,6 +1107,11 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
     }
+    if (multipleModelSelections === null && !clearSubmittedDraft()) {
+      sendInFlightRef.current = false;
+      setDockedDraftHeroThreadKey((key) => (key === activeThreadKey ? null : key));
+      return;
+    }
     if (sendQueuesBehindSetup) {
       setSetupQueueSendThreadKey(activeThreadKey);
     } else {
@@ -1121,6 +1148,7 @@ export function useComposerSend(input: ComposerSendInput) {
         readFileBlockReason: () => readLiveAttachmentCapabilities().fileBlockReason,
         buildOutgoingMessageContext,
         isCurrentSend: () => composerSendGenerationRef.current === sendGeneration,
+        clearSubmittedDraft,
       });
       return;
     }
@@ -1174,9 +1202,6 @@ export function useComposerSend(input: ComposerSendInput) {
       : null;
     // Keep new-thread flows from reusing this draft while attachments and worktree setup settle.
     if (sentDraftThreadRef) markPromotedDraftThreadByRef(sentDraftThreadRef);
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
 
     const title = deriveThreadTitleSeed({
       text: messageTextForSend,

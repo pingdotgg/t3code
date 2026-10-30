@@ -7,12 +7,11 @@ import {
   InputRule,
   Node,
   wrappingInputRule,
-  type JSONContent,
   type TiptapEditorHTMLElement,
 } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
@@ -121,7 +120,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
-import { importPastedComposerText } from "./composerInlineTokenPaste";
+import { importPastedComposerText, readPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
@@ -1106,6 +1105,8 @@ function ComposerPromptEditorTiptapInner(
         literalText,
       }),
       editable: !disabled,
+      // The paste handler already parses Markdown; a second pass would restyle literal code spans.
+      enablePasteRules: false,
       editorProps: {
         attributes: editorAttributes,
         handleKeyDown: (view, event) => {
@@ -1349,11 +1350,15 @@ function ComposerPromptEditorTiptapInner(
         handlePaste: (view, event) => {
           const clipboardData = event.clipboardData;
           if (!clipboardData || clipboardData.files.length > 0) return false;
-          const pastedText = clipboardData.getData("text/plain");
+          const pastedText = readPastedComposerText(clipboardData);
           if (!pastedText) return false;
           event.preventDefault();
-          // Paste verbatim inside fences; markdown parsing would split blocks and create unsupported chips.
-          if (isInCodeBlock(view)) {
+          const { storedMarks, selection } = view.state;
+          // Code spans cannot hold a newline or backtick, so those pastes take the Markdown path and split the span.
+          const inCodeSpan =
+            !/[\n`]/.test(pastedText) &&
+            (storedMarks ?? selection.$from.marks()).some((mark) => mark.type.name === "code");
+          if (isInCodeBlock(view) || inCodeSpan) {
             const { from, to } = view.state.selection;
             view.dispatch(
               markAsClipboardEdit(
@@ -1366,7 +1371,7 @@ function ComposerPromptEditorTiptapInner(
           const importFragment = readCallbacks().importContextFragment;
           let text =
             !literalText && importFragment
-              ? importPastedComposerText(clipboardData, importFragment)
+              ? importPastedComposerText(clipboardData, importFragment, pastedText)
               : pastedText;
           const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
           const isChip = (token: (typeof tokens)[number] | undefined) =>
@@ -1386,42 +1391,45 @@ function ComposerPromptEditorTiptapInner(
           const literalLength = literalText
             ? 0
             : pastedPathQueryLength(lineBefore, text, readCallbacks().isPathQueryActive?.());
-          const editorInstance = (view.dom as TiptapEditorHTMLElement).editor;
-          if (editorInstance) {
-            const $paste = view.state.selection.$from;
-            const nested = ["listItem", "taskItem", "blockquote"].some((name) =>
-              hasAncestor($paste, name),
+          const nested = ["listItem", "taskItem", "blockquote"].some((name) =>
+            hasAncestor($from, name),
+          );
+          const blocks = buildTiptapContent(text, skillLabelFor, {
+            styling: richText,
+            blocks: !nested,
+            literalText,
+            literalLength,
+          });
+          const doc = view.state.schema.nodeFromJSON({ type: "doc", content: blocks });
+          const tr = markAsClipboardEdit(view.state.tr, "paste");
+          const first = doc.firstChild;
+          if (
+            doc.childCount === 1 &&
+            first?.type.name === "paragraph" &&
+            first.childCount === 1 &&
+            first.firstChild?.isText &&
+            !first.firstChild.marks.length
+          ) {
+            tr.insertText(first.textContent);
+          } else {
+            // Open paragraph edges join the text on either side of the selection, as native paste does.
+            tr.replaceSelection(
+              new Slice(
+                doc.content,
+                first?.type.name === "paragraph" ? 1 : 0,
+                doc.lastChild?.type.name === "paragraph" ? 1 : 0,
+              ),
             );
-            insertMarkdownParagraphs(
-              text,
-              skillLabelFor,
-              { styling: richText, blocks: !nested, literalText, literalLength },
-              (content) => {
-                editorInstance
-                  .chain()
-                  .command(({ tr }) => {
-                    markAsClipboardEdit(tr, "paste");
-                    return true;
-                  })
-                  .insertContent(content)
-                  .command(({ tr }) => {
-                    // Move after a pasted rule so the next keystroke cannot replace it; add a trailing line
-                    // if needed.
-                    const { selection } = tr;
-                    if (!(selection instanceof NodeSelection) || !selection.node.isBlock) {
-                      return true;
-                    }
-                    if (!tr.doc.resolve(selection.to).nodeAfter?.isTextblock) {
-                      tr.insert(selection.to, tr.doc.type.schema.nodes.paragraph!.create());
-                    }
-                    tr.setSelection(TextSelection.create(tr.doc, selection.to + 1));
-                    return true;
-                  })
-                  .run();
-              },
-            );
-            scrollTiptapCaretIntoView(editorInstance);
           }
+          const { selection: afterPaste } = tr;
+          if (afterPaste instanceof NodeSelection && afterPaste.node.isBlock) {
+            // Leave a caret after a pasted rule so typing cannot replace it.
+            if (!tr.doc.resolve(afterPaste.to).nodeAfter?.isTextblock) {
+              tr.insert(afterPaste.to, view.state.schema.nodes.paragraph!.create());
+            }
+            tr.setSelection(TextSelection.create(tr.doc, afterPaste.to + 1));
+          }
+          view.dispatch(tr.scrollIntoView());
           return true;
         },
       },
@@ -1828,23 +1836,6 @@ function ComposerPromptEditorTiptapInner(
       </ComposerContextRecordsContext>
     </RichComposerSkillsContext>
   );
-}
-
-/** Split newlines into paragraphs; trailing hard breaks render no visible line. */
-function insertMarkdownParagraphs(
-  value: string,
-  skillLabelFor: (name: string) => SkillMeta | null,
-  options: { styling: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
-  insertContent: (content: JSONContent[] | JSONContent) => void,
-): void {
-  const blocks = buildTiptapContent(value, skillLabelFor, options);
-  if (blocks.length === 1 && blocks[0]?.type === "paragraph") {
-    const inline = (blocks[0]?.content ?? []) as JSONContent[];
-    if (inline.length === 0) return;
-    insertContent(inline);
-    return;
-  }
-  insertContent(blocks as JSONContent[]);
 }
 
 /** Native scrolling follows only real input; explicitly reveal programmatically placed carets. */

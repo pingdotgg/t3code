@@ -128,6 +128,19 @@ function buttonsLabelled(container: HTMLElement, label: string) {
   );
 }
 
+it("shows paths as composed only in user messages, while preserving Markdown emphasis", async () => {
+  setup();
+  const text = "Read src/__test__.tsx and pkg/_private_/init. Keep _italics_ and **bold**.";
+  await using screen = await renderText(text, { composerMessage: true });
+  expect(screen.container.querySelector("p")?.textContent).toBe(
+    "Read src/__test__.tsx and pkg/_private_/init. Keep italics and bold.",
+  );
+  expect(screen.container.querySelector("em")?.textContent).toBe("italics");
+  expect(screen.container.querySelector("strong")?.textContent).toBe("bold");
+  await screen.rerender(<ChatMarkdown cwd="/tmp/project" text={text} />);
+  expect(screen.container.querySelector("strong")?.textContent).toBe("test");
+});
+
 it("shows unavailable audio when a workspace embed has no thread", async () => {
   setup();
   await using screen = await renderText("![recording](clip.wav)");

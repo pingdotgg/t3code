@@ -6,10 +6,11 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type ComposerThreadTarget,
+  type DraftId,
 } from "../../composerDraftStore";
 
 export function recoverQueuedMessageEdit(input: {
-  readonly editTarget: ComposerThreadTarget;
+  readonly editTarget: DraftId;
   readonly threadTarget: ComposerThreadTarget;
   readonly originalText: string;
 }): "kept" | "discarded" | "clean" {
@@ -18,11 +19,12 @@ export function recoverQueuedMessageEdit(input: {
   const recovery = resolveQueuedEditExit({
     editChanged:
       draft !== null &&
-      (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0),
+      (draft.prompt !== input.originalText ||
+        composerDraftHasUserContent({ ...draft, prompt: "" })),
     threadDraftEmpty: !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
   });
   if (recovery === "kept") {
-    store.moveComposerPromptAndImages(input.editTarget, input.threadTarget);
+    store.recoverQueuedEditContent(input.editTarget, input.threadTarget);
   } else {
     store.clearComposerContent(input.editTarget);
   }
