@@ -79,8 +79,14 @@ function onlyHubAccount(
   }
   const [only, ...rest] = freshestByAccount.values();
   if (!only || rest.length > 0) return null;
+  // A login seen in several workspaces, reported without one, may be another workspace's account.
+  if (hasLogin(only.account) && resolveKey(only.account) === null) return null;
   return limitsNotice(only.account.usageLimits) === null ? only : null;
 }
+
+const hasLogin = (account: UsageLimitSourceAccount) =>
+  normalizeEmail(account.email) !== undefined ||
+  account.usageLimits.credentialFingerprint !== undefined;
 
 const checkedAtMs = ({ account }: HubAccount) => Date.parse(account.usageLimits.checkedAt);
 
