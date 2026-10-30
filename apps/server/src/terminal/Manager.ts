@@ -1691,8 +1691,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const legacyHistoryName = (threadId: string) => `${legacySafeThreadId(threadId)}.log`;
   const legacyHistoryPath = (threadId: string) => path.join(logsDir, legacyHistoryName(threadId));
-  // Ids this long could never have been written under the legacy name.
+  // Legacy names must not overlap current history files, including on case-insensitive filesystems.
+  // Ids past the filename limit could never have been written under the legacy name.
   const hasLegacyHistoryPath = (threadId: string) =>
+    !legacySafeThreadId(threadId).toLowerCase().startsWith("terminal_") &&
     Buffer.byteLength(legacyHistoryName(threadId)) <= MAX_FILE_NAME_BYTES;
 
   const readManagerState = SynchronizedRef.get(managerStateRef);
@@ -2133,7 +2135,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* Effect.forEach(
       entries.filter(
         (name) =>
-          name === `${legacySafeThreadId(threadId)}.log` ||
+          (hasLegacyHistoryPath(threadId) && name === legacyHistoryName(threadId)) ||
           threadParts.some((part) => name === `${part}.log` || name.startsWith(`${part}_`)),
       ),
       (name) =>

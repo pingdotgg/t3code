@@ -1193,6 +1193,28 @@ it.layer(
     }),
   );
 
+  // Case-insensitive filesystems resolve "Terminal_YQ.log" to thread "a"'s "terminal_YQ.log",
+  // so the mixed-case file stands in for that alias on case-sensitive hosts.
+  it.effect.each(["terminal_", "Terminal_"])(
+    "never resolves a %s legacy history name to another thread's history file",
+    (prefix) =>
+      Effect.gen(function* () {
+        const { manager, logsDir } = yield* createManager();
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const threadId = `${prefix}${Base64Url.encode("a")}`;
+        const otherThreadPath = path.join(logsDir, `${threadId}.log`);
+        yield* fs.makeDirectory(logsDir, { recursive: true });
+        yield* fs.writeFileString(otherThreadPath, "thread a\n");
+
+        expect((yield* manager.open(openInput({ threadId }))).history).toBe("");
+        yield* manager.close({ threadId, terminalId: DEFAULT_TERMINAL_ID, deleteHistory: true });
+        yield* manager.close({ threadId, deleteHistory: true });
+
+        expect(yield* fs.readFileString(otherThreadPath)).toBe("thread a\n");
+      }),
+  );
+
   it.effect("keeps reading and deleting history at an encoded path that already fit", () =>
     Effect.gen(function* () {
       const threadId = "x".repeat(120);
