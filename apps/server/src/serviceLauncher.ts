@@ -614,6 +614,9 @@ async function terminateChild(
 }
 
 /** Keyed by T3 home, so only the launcher serving that home can answer. */
+/** The Windows scheduled task that runs the launcher. */
+export const SERVICE_TASK_NAME = "t3code";
+
 export const serviceControlPipePath = (baseDir: string) =>
   `\\\\.\\pipe\\t3code-service-${NodeCrypto.createHash("sha256")
     .update(NodePath.resolve(baseDir).toLowerCase())
@@ -1232,6 +1235,8 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
   }
   const output =
     options.logFile === undefined ? undefined : NodeFS.openSync(options.logFile, "a", 0o600);
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  const windows = process.platform === "win32";
   try {
     const environment = await readServiceEnvironment(baseDir, {
       ...process.env,
@@ -1241,8 +1246,6 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     const state = await readServiceState(statePath);
     const serviceUnit = serviceUnitFromEnvironment(environment);
-    // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
-    const windows = process.platform === "win32";
     const launcher = new Launcher(baseDir, state, {
       environment,
       ...(serviceUnit === undefined ? {} : { serviceUnit }),
@@ -1271,6 +1274,14 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
         output,
         `[service-launcher] ${cause instanceof Error ? cause.message : String(cause)}\n`,
       );
+    }
+    // Agents the server left behind keep the console host, and so the task, running; ending it
+    // lets the next repeating trigger start the service again.
+    if (windows && options.serviceUnit !== undefined) {
+      NodeChildProcess.spawnSync("schtasks", ["/End", "/TN", SERVICE_TASK_NAME], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
     }
     throw cause;
   } finally {
