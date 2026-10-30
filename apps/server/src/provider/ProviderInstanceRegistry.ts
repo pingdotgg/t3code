@@ -194,8 +194,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
     };
   }
 
-  const childScope = yield* Scope.make();
-  yield* Scope.addFinalizer(parentScope, Scope.close(childScope, Exit.void).pipe(Effect.ignore));
+  const childScope = yield* Scope.fork(parentScope);
 
   const createResult = yield* driver
     .create({
