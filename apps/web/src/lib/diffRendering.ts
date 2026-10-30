@@ -34,14 +34,9 @@ export function fnv1a32(
 }
 
 function buildPatchCacheKey(patch: string, scope = "diff-panel"): string {
-  const normalizedPatch = patch.trim();
-  const primary = fnv1a32(normalizedPatch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
-  const secondary = fnv1a32(
-    normalizedPatch,
-    SECONDARY_HASH_SEED,
-    SECONDARY_HASH_MULTIPLIER,
-  ).toString(36);
-  return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+  const primary = fnv1a32(patch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
+  const secondary = fnv1a32(patch, SECONDARY_HASH_SEED, SECONDARY_HASH_MULTIPLIER).toString(36);
+  return `${scope}:${patch.length}:${primary}:${secondary}`;
 }
 
 export type RenderablePatch =
@@ -164,15 +159,10 @@ export function getRenderablePatch(
   cacheScope = "diff-panel",
   options: RenderablePatchOptions = {},
 ): RenderablePatch | null {
-  if (!patch) return null;
-  const normalizedPatch = patch.trim();
-  if (normalizedPatch.length === 0) return null;
+  if (!patch?.trim()) return null;
 
   try {
-    const parsedPatches = parsePatchFiles(
-      normalizedPatch,
-      buildPatchCacheKey(normalizedPatch, cacheScope),
-    );
+    const parsedPatches = parsePatchFiles(patch, buildPatchCacheKey(patch, cacheScope));
     const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     const files = sourceFiles.map((file) => {
       const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;
@@ -184,13 +174,13 @@ export function getRenderablePatch(
 
     return {
       kind: "raw",
-      text: normalizedPatch,
+      text: patch,
       reason: "Unsupported diff format. Showing raw patch.",
     };
   } catch {
     return {
       kind: "raw",
-      text: normalizedPatch,
+      text: patch,
       reason: "Failed to parse patch. Showing raw patch.",
     };
   }
