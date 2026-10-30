@@ -1267,6 +1267,51 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    {
+      platform: "win32",
+      shell: String.raw`C:\Program Files\Git\bin\bash.exe`,
+      expected: String.raw`C:\Program Files\Git\bin\bash.exe`,
+      args: ["--login", "-i"],
+    },
+    { platform: "win32", shell: "pwsh.exe", expected: "pwsh.exe", args: ["-NoLogo"] },
+    { platform: "win32", shell: "  ", expected: "pwsh.exe", args: ["-NoLogo"] },
+    {
+      platform: "linux",
+      shell: "/opt/custom shell/bin/bash",
+      expected: "/opt/custom shell/bin/bash",
+      args: undefined,
+    },
+    { platform: "darwin", shell: "  ", expected: "/bin/zsh", args: ["-o", "nopromptsp"] },
+  ] as const)(
+    "uses the configured terminal shell on $platform: $shell",
+    ({ platform, shell, expected, args }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: { T3CODE_TERMINAL_SHELL: shell, SHELL: "/bin/zsh" },
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+
+        yield* manager.open(openInput());
+
+        expect(ptyAdapter.spawnInputs[0]?.shell).toBe(expected);
+        expect(ptyAdapter.spawnInputs[0]?.args).toEqual(args);
+      }),
+  );
+
+  it.effect("lets script terminals keep the default shell without changing other terminals", () =>
+    Effect.gen(function* () {
+      const gitBash = String.raw`C:\Program Files\Git\bin\bash.exe`;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { T3CODE_TERMINAL_SHELL: gitBash },
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+
+      yield* manager.open(openInput({ env: { T3CODE_TERMINAL_SHELL: "" } }));
+      yield* manager.open(openInput({ terminalId: "interactive" }));
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["pwsh.exe", gitBash]);
+    }),
+  );
+
   it.effect("preserves Windows Path casing when appending managed ACP binaries", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1336,8 +1381,8 @@ it.layer(
       const ptyAdapter = new FakePtyAdapter();
       const { manager } = yield* createManager(5, {
         ptyAdapter,
-        shellResolver: () => "C:\\missing\\custom-shell.exe",
         env: {
+          T3CODE_TERMINAL_SHELL: "C:\\missing\\custom-shell.exe",
           ComSpec: "C:\\Windows\\System32\\cmd.exe",
           PATH: "C:\\Windows\\System32",
           SystemRoot: "C:\\Windows",
