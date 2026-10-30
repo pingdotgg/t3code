@@ -22,30 +22,41 @@ const layerResolver = Layer.succeed(SecretResolver.SecretResolver, {
 
 const fakeResolver = SecretResolver.SecretResolver.use((resolver) => Effect.succeed(resolver));
 
-it.effect("replaces credential references with the secrets they name", () =>
-  Effect.gen(function* () {
-    const resolver = yield* fakeResolver;
-    const hosts = {
-      bitbucket: { email: "me@example.test", accessToken: source("bitbucket#token") },
-      gitcafe: { token: source("missing#token") },
-    };
-    const resolved = yield* resolveSourceControlHostSecrets(hosts, (value) =>
-      resolveSettingsSecret(resolver, value),
-    );
-    assert.deepEqual(resolved, {
-      bitbucket: { email: "me@example.test", accessToken: "bb_from_provider" },
-      gitcafe: { token: "" },
-    });
-  }).pipe(Effect.provide(layerResolver)),
+const hosts = {
+  bitbucket: { email: "me@example.test", accessToken: source("bitbucket#token") },
+  gitcafe: { token: source("missing#token") },
+  github: { tokens: { "github.com": "ghp_literal" } },
+};
+
+const countingResolver = Effect.gen(function* () {
+  const resolver = yield* fakeResolver;
+  const reads: Array<string> = [];
+  const resolve = (value: Parameters<typeof resolveSettingsSecret>[1]) =>
+    Effect.sync(() => {
+      if (typeof value !== "string") reads.push(value.reference);
+    }).pipe(Effect.andThen(resolveSettingsSecret(resolver, value)));
+  return { reads, resolve };
+});
+
+it.effect(
+  "replaces only the requested kind's credential references with the secrets they name",
+  () =>
+    Effect.gen(function* () {
+      const { reads, resolve } = yield* countingResolver;
+      const resolved = yield* resolveSourceControlHostSecrets(hosts, "bitbucket", resolve);
+      assert.deepEqual(resolved, {
+        ...hosts,
+        bitbucket: { email: "me@example.test", accessToken: "bb_from_provider" },
+      });
+      assert.deepEqual(reads, ["bitbucket#token"]);
+    }).pipe(Effect.provide(layerResolver)),
 );
 
-it.effect("hands back the same settings when no credential names a secret", () =>
+it.effect("leaves the resolver unused for a kind that holds no reference", () =>
   Effect.gen(function* () {
-    const resolver = yield* fakeResolver;
-    const hosts = { gitcafe: { token: "literal" } };
-    const resolved = yield* resolveSourceControlHostSecrets(hosts, (value) =>
-      resolveSettingsSecret(resolver, value),
-    );
+    const { reads, resolve } = yield* countingResolver;
+    const resolved = yield* resolveSourceControlHostSecrets(hosts, "github", resolve);
     assert.strictEqual(resolved, hosts);
+    assert.deepEqual(reads, []);
   }).pipe(Effect.provide(layerResolver)),
 );

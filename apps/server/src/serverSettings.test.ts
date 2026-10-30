@@ -1533,36 +1533,26 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.isTrue(Option.isNone(yield* stored("bitbucket", "accessToken", null)));
         assert.isTrue(Option.isNone(yield* stored("github", "tokens", "github.com")));
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
+
+        const reference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Bitbucket/token",
+        };
+        yield* serverSettings.updateSettings({
+          sourceControlHosts: { bitbucket: { accessToken: "bb-access" } },
+        });
+        assert.isTrue(Option.isSome(yield* stored("bitbucket", "accessToken", null)));
+        const referenced = yield* serverSettings.updateSettings({
+          sourceControlHosts: { bitbucket: { accessToken: reference } },
+        });
+        assert.deepEqual(referenced.sourceControlHosts.bitbucket?.accessToken, reference);
+        assert.isTrue(Option.isNone(yield* stored("bitbucket", "accessToken", null)));
+        assert.deepEqual(
+          ServerSettingsModule.redactServerSettingsForClient(referenced).sourceControlHosts
+            .bitbucket?.accessToken,
+          reference,
+        );
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
-  );
-
-  it.effect("keeps a credential reference as written and drops the literal it replaces", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const secrets = yield* ServerSecretStore.ServerSecretStore;
-      const reference = {
-        provider: SecretProviderId.make("personal"),
-        reference: "op://Private/Bitbucket/token",
-      };
-      const stored = (kind: string, field: string) =>
-        secrets.get(sourceControlHostSecretName({ kind, field, serverHost: null }));
-
-      yield* serverSettings.updateSettings({
-        sourceControlHosts: { bitbucket: { accessToken: "bb-access" } },
-      });
-      assert.isTrue(Option.isSome(yield* stored("bitbucket", "accessToken")));
-
-      const saved = yield* serverSettings.updateSettings({
-        sourceControlHosts: { bitbucket: { accessToken: reference } },
-      });
-      assert.deepEqual(saved.sourceControlHosts.bitbucket?.accessToken, reference);
-      assert.isTrue(Option.isNone(yield* stored("bitbucket", "accessToken")));
-      assert.deepEqual(
-        ServerSettingsModule.redactServerSettingsForClient(saved).sourceControlHosts.bitbucket
-          ?.accessToken,
-        reference,
-      );
-    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
   it.effect("keeps the retired keys for another load when a token cannot be copied", () => {
