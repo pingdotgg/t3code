@@ -2,6 +2,7 @@ import { LoaderCircleIcon, PauseIcon, PlayIcon, TriangleAlertIcon } from "lucide
 import { createContext, useContext, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { cn } from "~/lib/utils";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { middleTruncateAttachmentName } from "../composerInlineChip";
 
@@ -15,6 +16,7 @@ type AudioPreviewProps = {
   readonly revision?: string | null;
   readonly onError?: () => void;
   readonly compact?: boolean;
+  readonly variant?: "chip" | "bubble";
   readonly failed?: boolean;
   readonly onOpen?: (() => void) | undefined;
   readonly onRetry?: () => void;
@@ -111,7 +113,11 @@ function AudioChip(props: AudioPreviewProps) {
     <ContextChip
       kind="file"
       {...(props.failed ? { state: "invalid" as const } : {})}
-      className="relative isolate overflow-hidden"
+      className={cn(
+        "relative isolate overflow-hidden",
+        props.variant === "bubble" &&
+          "w-64 gap-2 rounded-2xl bg-message px-3 py-2 text-sm text-message-foreground",
+      )}
       title={props.failed ? "Audio unavailable. Open the file or retry playback." : props.name}
     >
       <span
@@ -140,7 +146,7 @@ function AudioChip(props: AudioPreviewProps) {
       >
         <Icon aria-hidden className={loading && props.src ? "animate-spin" : undefined} />
       </ContextChipAction>
-      <ContextChipLabel className="max-w-72">
+      <ContextChipLabel className={props.variant === "bubble" ? "flex-1" : "max-w-72"}>
         {open ? (
           <button
             type="button"
