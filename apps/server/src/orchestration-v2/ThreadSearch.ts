@@ -33,7 +33,7 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
-import { indexedMessageCondition } from "./messageSearchIndex.ts";
+import { indexedMessageCondition, nonPlaceholderMessageCondition } from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
@@ -209,11 +209,12 @@ export const messageHitsQuery = (
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
           WHERE orchestration_v2_message_search MATCH ${match}
             AND orchestration_v2_message_search.rowid >= coalesce((
-              SELECT rowid FROM orchestration_v2_message_search
+              SELECT orchestration_v2_message_search.rowid FROM orchestration_v2_message_search
               WHERE orchestration_v2_message_search MATCH ${match}
-              ORDER BY rowid DESC
+              ORDER BY orchestration_v2_message_search.rowid DESC
               LIMIT 1 OFFSET ${MESSAGE_CANDIDATE_LIMIT - 1}
             ), 0)
+            AND ${nonPlaceholderMessageCondition(sql)}
         `
     }
       -- Answers to an agent's question show inside its question card, where
