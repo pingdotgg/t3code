@@ -217,6 +217,7 @@ export const DesktopSnapShotEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("started"), id: DesktopSnapShotId }),
   Schema.Struct({ type: Schema.Literal("ready"), id: DesktopSnapShotId }),
   Schema.Struct({ type: Schema.Literal("failed"), id: Schema.optional(DesktopSnapShotId) }),
+  Schema.Struct({ type: Schema.Literal("cancelled"), id: DesktopSnapShotId }),
   Schema.Struct({ type: Schema.Literal("shortcut-changed") }),
 ]);
 export type DesktopSnapShotEvent = typeof DesktopSnapShotEvent.Type;

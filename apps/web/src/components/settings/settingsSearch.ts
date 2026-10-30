@@ -768,6 +768,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "snap-shot-capture-area",
+    title: "Capture area",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
+    searchTerms: ["region selection crop partial screenshot"],
+  },
+  {
     id: "snap-shot-shortcut",
     title: "Capture shortcut",
     to: "/settings/snap-shot",

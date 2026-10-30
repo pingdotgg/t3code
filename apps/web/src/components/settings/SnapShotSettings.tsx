@@ -50,7 +50,14 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
-import { SelectButton } from "../ui/select";
+import {
+  Select,
+  SelectButton,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Switch } from "../ui/switch";
 import { SnapShotSetupDialog } from "./SnapShotSetupDialog";
 import { useSnapShotShortcutRecorder } from "./useSnapShotShortcutRecorder";
@@ -81,6 +88,7 @@ type ShortcutCheck =
 export function SnapShotSettings() {
   const settings = useClientSettings((current) => ({
     snapShotAnimations: current.snapShotAnimations,
+    snapShotCaptureArea: current.snapShotCaptureArea,
     snapShotEnabled: current.snapShotEnabled,
     snapShotFlash: current.snapShotFlash,
     snapShotIncludeAccessibility: current.snapShotIncludeAccessibility,
@@ -138,6 +146,8 @@ export function SnapShotSettings() {
   const captureAvailable = Boolean(bridge) && state !== null && state.mode !== "unavailable";
   const feedbackUnavailable = snapShotFeedbackUnavailableMessage(state);
   const managedShortcut = state?.linuxBackend === "niri" || state?.linuxBackend === "hyprland";
+  // Region capture uses macOS's native selection tool.
+  const regionCaptureAvailable = state?.macPermissions !== undefined;
   const shortcutChanged = !managedShortcut && !sameSnapShotShortcut(candidate, savedShortcut);
   const displayShortcut = shortcutChanged ? candidate : (state?.shortcut ?? savedShortcut);
   const candidateConflict = shortcutChanged
@@ -410,12 +420,45 @@ export function SnapShotSettings() {
                   />
                 }
               />
+              {regionCaptureAvailable ? (
+                <SettingsRow
+                  {...searchableSetting("snap-shot-capture-area")}
+                  description="Capture the window you're using, or select an area of the screen."
+                  control={
+                    <div className="w-full sm:w-40">
+                      <Select
+                        value={settings.snapShotCaptureArea}
+                        onValueChange={(value) => {
+                          if (value === "window" || value === "region")
+                            void save({ snapShotCaptureArea: value });
+                        }}
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          className="w-full min-w-0"
+                          aria-label="Capture area"
+                        >
+                          <SelectValue>
+                            {settings.snapShotCaptureArea === "region" ? "Region" : "Window"}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup align="end" alignItemWithTrigger={false}>
+                          <SelectItem value="window">Window (default)</SelectItem>
+                          <SelectItem value="region">Region</SelectItem>
+                        </SelectPopup>
+                      </Select>
+                    </div>
+                  }
+                />
+              ) : null}
               <SettingsRow
                 {...searchableSetting("snap-shot-shortcut")}
                 description={
                   state?.linuxBackend === "picker"
                     ? "Choose a window to capture from any app."
-                    : "Capture the window you're using without switching apps."
+                    : regionCaptureAvailable && settings.snapShotCaptureArea === "region"
+                      ? "Select an area of the screen to capture without switching apps."
+                      : "Capture the window you're using without switching apps."
                 }
                 status={managedShortcut ? undefined : shortcutStatus}
                 control={

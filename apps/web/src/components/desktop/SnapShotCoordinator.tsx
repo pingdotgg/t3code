@@ -440,6 +440,7 @@ export function SnapShotCoordinator() {
         case "ready":
           void drain();
           return;
+        case "cancelled":
         case "failed": {
           if (event.id) {
             captureTargetsRef.current.delete(event.id);
@@ -450,6 +451,7 @@ export function SnapShotCoordinator() {
             soundedCaptureIdsRef.current,
             pendingAnimationStartsRef.current,
           );
+          if (event.type === "cancelled") return;
           void bridge.getSnapShotState().then((state) => {
             if (!getClientSettings().snapShotEnabled) return;
             toastManager.add(

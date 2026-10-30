@@ -44,7 +44,11 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { startGlobalShiftShortcutProcess } from "./GlobalShiftShortcutProcess.ts";
 import { startMacModifierPairShortcutProcess } from "./MacModifierPairShortcutProcess.ts";
 import { activeWindow, type ActiveWindow } from "./ActiveWindow.ts";
-import { captureMacWindowSnapshot, type MacSnapShotSource } from "./MacSnapShot.ts";
+import {
+  captureMacRegionSnapshot,
+  captureMacWindowSnapshot,
+  type MacSnapShotSource,
+} from "./MacSnapShot.ts";
 import type { LinuxCaptureFeedback, LinuxWindowMetadata } from "./LinuxSnapShot.ts";
 import { niriSocketPath } from "./NiriSnapShot.ts";
 import { CaptureShortcutConfig, niriCaptureConfigPath } from "./CaptureShortcutConfig.ts";
@@ -128,6 +132,7 @@ const DesktopSnapShotOperation = Schema.Literals([
   "disabled",
   "no-window-selected",
   "window-unavailable",
+  "cancelled",
   "capture",
 ]);
 
@@ -155,6 +160,8 @@ export class DesktopSnapShotError extends Schema.TaggedError<DesktopSnapShotErro
         return "No window was selected.";
       case "window-unavailable":
         return "The active window is not available for capture.";
+      case "cancelled":
+        return "The capture was cancelled.";
       case "capture":
         return "Could not capture the active window.";
     }
@@ -467,14 +474,23 @@ async function captureSource({
   {
     const revealPreparation =
       platform === "win32" ? prepareReveal().catch(() => undefined) : Promise.resolve();
-    if (mode === "direct") {
+    const region = platform === "darwin" && settings.snapShotCaptureArea === "region";
+    if (mode === "direct" && !region) {
       active = await activeWindow(platform);
     }
 
     let source: MacSnapShotSource | RegionSnapShotSource | Electron.DesktopCapturerSource;
     let png: Buffer;
     let imageTempReady = false;
-    if (platform === "darwin") {
+    if (region) {
+      const selection = await captureMacRegionSnapshot(
+        imageTempPath,
+        snapShotThumbnailSize(undefined),
+      );
+      if (!selection) throw new DesktopSnapShotError({ operation: "cancelled", captureId });
+      ({ source, png } = selection);
+      imageTempReady = true;
+    } else if (platform === "darwin") {
       if (!active) {
         throw new DesktopSnapShotError({ operation: "window-unavailable", captureId });
       }
@@ -684,6 +700,8 @@ async function showCaptureFeedback(
 ): Promise<boolean> {
   // Wayland does not let this client position overlays on another app's window.
   if (platform === "linux") return false;
+  // Region captures have no window bounds to flash or animate from.
+  if (!active) return false;
   const bounds = snapShotFlashBounds(active, platform);
   const animationsEnabled =
     settings.snapShotAnimations &&
@@ -1006,7 +1024,11 @@ export const make = Effect.gen(function* () {
     const prepared = yield* prepareCapture(settings).pipe(
       Effect.tapError((error) =>
         (error.captureId ? discardCapture(error.captureId) : Effect.void).pipe(
-          Effect.andThen(setFailure(error.message, error.captureId)),
+          Effect.andThen(
+            error.operation === "cancelled" && error.captureId
+              ? emit({ type: "cancelled", id: error.captureId as DesktopSnapShotId })
+              : setFailure(error.message, error.captureId),
+          ),
         ),
       ),
       snapshotMutex.withPermitsIfAvailable(1),

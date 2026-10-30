@@ -48,6 +48,7 @@ const {
   getFileIconMock,
   getSourcesMock,
   macCaptureMock,
+  macRegionCaptureMock,
   linuxCaptureMock,
   linuxBackendMock,
   niriShortcutMock,
@@ -116,6 +117,7 @@ const {
   getFileIconMock: vi.fn(),
   getSourcesMock: vi.fn(),
   macCaptureMock: vi.fn(),
+  macRegionCaptureMock: vi.fn(),
   linuxCaptureMock: vi.fn<
     () => Promise<import("./LinuxSnapShot.ts").LinuxWindowSnapshot | undefined>
   >(async () => undefined),
@@ -187,7 +189,10 @@ vi.mock("./RegionSnapShot.ts", async (original) => ({
 vi.mock("./WindowsCaptureFeedback.ts", () => ({
   showWindowsCaptureOverlay: (window: Electron.BaseWindow) => window.showInactive(),
 }));
-vi.mock("./MacSnapShot.ts", () => ({ captureMacWindowSnapshot: macCaptureMock }));
+vi.mock("./MacSnapShot.ts", () => ({
+  captureMacWindowSnapshot: macCaptureMock,
+  captureMacRegionSnapshot: macRegionCaptureMock,
+}));
 vi.mock("./LinuxSnapShot.ts", () => ({
   captureLinuxWindow: linuxCaptureMock,
   getLinuxCaptureSupport: async () => ({
@@ -1873,6 +1878,57 @@ it.effect("capture fails closed while snapshots are disabled", () => {
       assert.lengthOf(regionCaptureMock.mock.calls, 0);
     }),
   ).pipe(Effect.provide(layerTest("win32")));
+});
+
+it.effect("captures a selected macOS region and ignores a cancelled selection", () => {
+  activeWindowMock.mockClear();
+  macCaptureMock.mockClear();
+  macRegionCaptureMock
+    .mockReset()
+    .mockResolvedValueOnce({ source: { name: "Screen region" }, png: Buffer.from([1, 2, 3]) })
+    .mockResolvedValueOnce(undefined);
+  const events: DesktopSnapShotEvent["type"][] = [];
+  const metadata: string[] = [];
+  const layer = Layer.mergeAll(
+    layerTest("darwin", {
+      makeDirectory: () => Effect.void,
+      rename: () => Effect.void,
+      remove: () => Effect.void,
+      writeFileString: (_path, text) =>
+        Effect.sync(() => {
+          metadata.push(text);
+        }),
+    }),
+    Layer.succeed(
+      DesktopWindow.DesktopWindow,
+      DesktopWindow.DesktopWindow.of({
+        activate: Effect.void,
+        prepareCaptureReveal: Effect.void,
+        dispatchMenuAction: () => Effect.void,
+        dispatchSnapShotEvent: (event: DesktopSnapShotEvent) =>
+          Effect.sync(() => {
+            events.push(event.type);
+          }),
+      } as unknown as DesktopWindow.DesktopWindow["Service"]),
+    ),
+  );
+
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      yield* service.configure(enabledSettings({ snapShotCaptureArea: "region" }));
+
+      yield* service.capture;
+      assert.deepEqual(events, ["requested", "ready"]);
+      assert.include(metadata[0], '"windowTitle":"Screen region"');
+
+      const cancelled = yield* Effect.flip(service.capture);
+      assert.equal(cancelled.operation, "cancelled");
+      assert.deepEqual(events, ["requested", "ready", "requested", "cancelled"]);
+      assert.lengthOf(activeWindowMock.mock.calls, 0);
+      assert.lengthOf(macCaptureMock.mock.calls, 0);
+    }),
+  ).pipe(Effect.provide(layer));
 });
 
 it.effect(

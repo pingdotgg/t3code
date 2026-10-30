@@ -8,6 +8,7 @@ import type { ActiveWindow } from "./ActiveWindow.ts";
 
 const MAC_SCREEN_CAPTURE_PATH = "/usr/sbin/screencapture";
 const MAC_SCREEN_CAPTURE_TIMEOUT_MS = 15_000;
+const MAC_REGION_SELECTION_TIMEOUT_MS = 120_000;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export type MacSnapShotSource = {
@@ -15,30 +16,16 @@ export type MacSnapShotSource = {
   readonly name: string;
 };
 
-function macSnapShotArguments(windowId: number, outputPath: string): string[] {
-  return ["-l", String(windowId), "-o", "-x", "-t", "png", outputPath];
-}
-
-function runMacSnapShot(windowId: number, outputPath: string): Promise<void> {
+function runMacScreenCapture(args: ReadonlyArray<string>, timeout: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    NodeChildProcess.execFile(
-      MAC_SCREEN_CAPTURE_PATH,
-      macSnapShotArguments(windowId, outputPath),
-      { timeout: MAC_SCREEN_CAPTURE_TIMEOUT_MS },
-      (error) => {
-        if (error) reject(error);
-        else resolve();
-      },
-    );
+    NodeChildProcess.execFile(MAC_SCREEN_CAPTURE_PATH, args, { timeout }, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
   });
 }
 
-export async function captureMacWindowSnapshot(
-  active: ActiveWindow,
-  outputPath: string,
-  maxSize: Electron.Size,
-): Promise<{ readonly source: MacSnapShotSource; readonly png: Buffer }> {
-  await runMacSnapShot(active.id, outputPath);
+async function readMacSnapShot(outputPath: string, maxSize: Electron.Size): Promise<Buffer> {
   const capturedPng = await NodeFSP.readFile(outputPath);
   if (
     capturedPng.length < PNG_SIGNATURE.length ||
@@ -61,10 +48,43 @@ export async function captureMacWindowSnapshot(
           .toPNG()
       : capturedPng;
   if (png !== capturedPng) await NodeFSP.writeFile(outputPath, png);
+  return png;
+}
+
+export async function captureMacWindowSnapshot(
+  active: ActiveWindow,
+  outputPath: string,
+  maxSize: Electron.Size,
+): Promise<{ readonly source: MacSnapShotSource; readonly png: Buffer }> {
+  await runMacScreenCapture(
+    ["-l", String(active.id), "-o", "-x", "-t", "png", outputPath],
+    MAC_SCREEN_CAPTURE_TIMEOUT_MS,
+  );
   return {
     source: {
       name: active.title.trim() || active.owner.name.trim() || "Window",
     },
-    png,
+    png: await readMacSnapShot(outputPath, maxSize),
+  };
+}
+
+/** Resolves `undefined` when the user cancels the selection. */
+export async function captureMacRegionSnapshot(
+  outputPath: string,
+  maxSize: Electron.Size,
+): Promise<{ readonly source: MacSnapShotSource; readonly png: Buffer } | undefined> {
+  await runMacScreenCapture(
+    ["-i", "-s", "-x", "-t", "png", outputPath],
+    MAC_REGION_SELECTION_TIMEOUT_MS,
+  );
+  // Escape exits successfully without writing the file.
+  const selected = await NodeFSP.access(outputPath).then(
+    () => true,
+    () => false,
+  );
+  if (!selected) return undefined;
+  return {
+    source: { name: "Screen region" },
+    png: await readMacSnapShot(outputPath, maxSize),
   };
 }

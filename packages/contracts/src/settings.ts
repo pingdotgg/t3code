@@ -216,6 +216,9 @@ export const SnapShotShortcut = Schema.Union([
   SnapShotKeyChord,
 ]);
 export type SnapShotShortcut = typeof SnapShotShortcut.Type;
+export const SnapShotCaptureArea = Schema.Literals(["window", "region"]);
+export type SnapShotCaptureArea = typeof SnapShotCaptureArea.Type;
+const DEFAULT_SNAP_SHOT_CAPTURE_AREA: SnapShotCaptureArea = "window";
 export const SnapShotSound = Schema.Literals(["soft-pop", "camera-shutter"]);
 export type SnapShotSound = typeof SnapShotSound.Type;
 const DEFAULT_SNAP_SHOT_SOUND: SnapShotSound = "soft-pop";
@@ -511,6 +514,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   snapShotShortcut: SnapShotShortcut.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNAP_SHOT_SHORTCUT)),
+  ),
+  snapShotCaptureArea: SnapShotCaptureArea.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNAP_SHOT_CAPTURE_AREA)),
   ),
   snapShotPlaySound: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotSound: SnapShotSound.pipe(
@@ -1787,6 +1793,7 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),
+  snapShotCaptureArea: Schema.optionalKey(SnapShotCaptureArea),
   snapShotPlaySound: Schema.optionalKey(Schema.Boolean),
   snapShotSound: Schema.optionalKey(SnapShotSound),
   snapShotFlash: Schema.optionalKey(Schema.Boolean),

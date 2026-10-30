@@ -29,6 +29,9 @@ is open it starts a draft in the current project.
 
 Pressing the shortcut while T3 Code is in front captures T3 Code itself.
 
+On macOS, set **Capture area** to **Region** to drag out part of the screen instead of capturing
+the whole window. Press Esc to cancel the selection. Region captures do not include app text.
+
 Pending captures are kept on disk until the attachment is saved to the draft, so a capture survives
 closing the app mid-way and is attached on the next launch. Captures rejected because the image is
 too large are discarded.
