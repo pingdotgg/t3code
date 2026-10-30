@@ -28,6 +28,11 @@ background services, update only after that version is published to npm. The
 confirmation lists each machine it skips and why, such as a machine that is
 offline or needs a manual update. Use **Settings → Environments** for those.
 
+Servers that support registry prechecks check their own npm registry before an
+update is offered. Older servers still receive the update request and check
+availability through their existing updater. If the release is unavailable
+there, the update reports a failure that you can retry.
+
 If a desktop app restarts on its old version, T3 Code tells you the update did
 not apply. It does not install that version again on its own, even when another
 device asks. Use the update button on that machine to retry.
@@ -143,12 +148,34 @@ choose **Update** to install it. If not, the window links to the last version
 that started on your computer. Download and install it to go back. Use **Copy
 details** to include the error in a bug report.
 
+## Registries and proxies
+
+Release availability checks run on the connected server, not in your browser.
+Configure npm's registry, authentication, and proxy settings on that machine.
+When updating multiple environments, servers that support registry prechecks
+each check their own registry. Older servers validate availability during the
+update rather than through another environment's registry or a browser lookup.
+Track switches look up the target release using the primary environment; update
+that server first if it does not support registry lookups.
+
+These checks require npm on the server's PATH. If npm or its configured registry
+is unavailable, T3 Code cannot confirm the release; it does not retry public npm.
+If npm cannot be started, the error asks you to install npm or make it available
+on the server's PATH. This also applies to standalone and desktop installations:
+release-track switching requires npm even when the app itself does not.
+
 ## Update providers
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
 at once. Hover it to see which providers it will update. Providers that only
 offer a manual update command are not included.
+
+When npm is available, npm-based provider version checks use its configured
+registry, authentication, and proxy settings. Configure npm on the server's
+machine, including for native provider installations. If that lookup fails,
+the latest version stays unknown rather than retrying the public npm registry.
+Installer-specific checks, such as Homebrew and pnpm, still take priority.
 
 After a successful provider CLI update, T3 Code refreshes model discovery for
 every enabled instance of that provider using its own configuration. Connected

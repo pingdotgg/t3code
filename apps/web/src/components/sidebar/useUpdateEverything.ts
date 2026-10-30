@@ -5,7 +5,7 @@ import { APP_VERSION } from "~/branding";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
-import { useNpmReleasePublished } from "~/state/npmRelease";
+import { npmReleasePublishedAtom } from "~/state/npmRelease";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom } from "~/state/server";
 import { environmentSessionStatesAtom } from "~/state/session";
@@ -76,10 +76,15 @@ export function useUpdateEverything(
   } = channelSwitch
     ? { ...collectChannelSwitchTargets(machines, channelSwitch), waitForNpm: [] }
     : collectServerUpdateTargets(machines, targetVersion, localUpdateVersion !== null);
-  const published = useNpmReleasePublished(waitForNpm.length > 0 ? targetVersion : null);
-  const servers = published
-    ? behindServers
-    : behindServers.filter((server) => !waitForNpm.includes(server));
+  const published = useAtomValue(
+    npmReleasePublishedAtom(targetVersion)(
+      environmentIdsKey(waitForNpm.map((server) => server.environmentId)),
+    ),
+  );
+  const servers = behindServers.filter(
+    (server) =>
+      !waitForNpm.includes(server) || published[waitForNpm.indexOf(server)]?.published === true,
+  );
   const skipped: ReadonlyArray<SkippedMachine> = [
     ...unreachable,
     ...behindServers
@@ -87,7 +92,9 @@ export function useUpdateEverything(
       .map((server) => ({
         environmentId: server.environmentId,
         label: server.serverLabel,
-        reason: `t3@${targetVersion} is not on npm yet`,
+        reason:
+          published[waitForNpm.indexOf(server)]?.reason ??
+          `Could not confirm t3@${targetVersion} is available in this environment's npm registry`,
       })),
   ];
   // Track-only hosts save a setting and restart nothing, so they are neither listed nor counted.
