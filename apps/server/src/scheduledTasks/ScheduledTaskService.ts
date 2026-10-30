@@ -1470,6 +1470,35 @@ export const layer = Layer.effect(
         WHERE delivery_id = ${deliveryId}`.pipe(Effect.asVoid, Effect.mapError(dedupeError));
     };
 
+    // Each suppression bucket retains its own rows, never real run history.
+    const deliveryBucket = (outcome: string, error: string | undefined) =>
+      outcome === "filtered"
+        ? "filtered"
+        : outcome === "duplicate" ||
+            outcome === "coalesced" ||
+            outcome === "rate_limited" ||
+            error === PROMPT_TOO_LONG
+          ? "dedupe"
+          : "main";
+    const pruneDeliveries = (
+      taskId: string,
+      retentionBucket: ReturnType<typeof deliveryBucket>,
+    ) => {
+      const rowBucket = sql.literal(`CASE WHEN outcome = 'filtered' THEN 'filtered'
+        WHEN outcome IN ('duplicate', 'coalesced', 'rate_limited') OR error = 'The filled-in prompt is too long.' THEN 'dedupe'
+        ELSE 'main' END`);
+      return sql`
+        DELETE FROM scheduled_task_webhook_deliveries
+        WHERE task_id = ${taskId} AND ${rowBucket} = ${retentionBucket}
+          AND delivery_id NOT IN (
+            SELECT delivery_id FROM scheduled_task_webhook_deliveries
+            WHERE task_id = ${taskId} AND ${rowBucket} = ${retentionBucket}
+            ORDER BY received_at DESC, rowid DESC
+            LIMIT ${retentionBucket === "main" ? WEBHOOK_DELIVERY_RETENTION : retentionBucket === "filtered" ? WEBHOOK_FILTERED_DELIVERY_RETENTION : WEBHOOK_DEDUPE_DELIVERY_RETENTION}
+          )
+      `;
+    };
+
     const recordDelivery = (input: {
       readonly id: string;
       readonly taskId: ScheduledTaskId;
@@ -1511,30 +1540,7 @@ export const layer = Layer.effect(
                 rendered_prompt = excluded.rendered_prompt,
                 error = excluded.error
             `;
-            // Each suppression bucket retains its own rows, never real run history.
-            const bucket = (outcome: string, error: string | undefined) =>
-              outcome === "filtered"
-                ? "filtered"
-                : outcome === "duplicate" ||
-                    outcome === "coalesced" ||
-                    outcome === "rate_limited" ||
-                    error === PROMPT_TOO_LONG
-                  ? "dedupe"
-                  : "main";
-            const retentionBucket = bucket(input.outcome, input.error);
-            const rowBucket = sql.literal(`CASE WHEN outcome = 'filtered' THEN 'filtered'
-              WHEN outcome IN ('duplicate', 'coalesced', 'rate_limited') OR error = 'The filled-in prompt is too long.' THEN 'dedupe'
-              ELSE 'main' END`);
-            yield* sql`
-            DELETE FROM scheduled_task_webhook_deliveries
-            WHERE task_id = ${input.taskId} AND ${rowBucket} = ${retentionBucket}
-              AND delivery_id NOT IN (
-                SELECT delivery_id FROM scheduled_task_webhook_deliveries
-                WHERE task_id = ${input.taskId} AND ${rowBucket} = ${retentionBucket}
-                ORDER BY received_at DESC, rowid DESC
-                LIMIT ${retentionBucket === "main" ? WEBHOOK_DELIVERY_RETENTION : retentionBucket === "filtered" ? WEBHOOK_FILTERED_DELIVERY_RETENTION : WEBHOOK_DEDUPE_DELIVERY_RETENTION}
-              )
-          `;
+            yield* pruneDeliveries(input.taskId, deliveryBucket(input.outcome, input.error));
           }),
         )
         .pipe(
@@ -1545,11 +1551,21 @@ export const layer = Layer.effect(
     };
 
     const markDeliveryFailed = (deliveryId: string, message: string) =>
-      sql`
-        UPDATE scheduled_task_webhook_deliveries
-        SET outcome = 'dispatch_failed', error = ${message}
-        WHERE delivery_id = ${deliveryId}
-      `.pipe(Effect.ignore);
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const [updated] = yield* sql<{ task_id: string }>`
+              UPDATE scheduled_task_webhook_deliveries
+              SET outcome = 'dispatch_failed', error = ${message}
+              WHERE delivery_id = ${deliveryId}
+              RETURNING task_id
+            `;
+            // An oversized prompt moves the row into the suppression bucket.
+            if (updated !== undefined)
+              yield* pruneDeliveries(updated.task_id, deliveryBucket("dispatch_failed", message));
+          }),
+        )
+        .pipe(Effect.ignore);
 
     /** Sliding one-minute window for deliveries that can start work. */
     const takeRateSlot = (

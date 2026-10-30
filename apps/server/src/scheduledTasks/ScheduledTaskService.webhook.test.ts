@@ -1320,6 +1320,40 @@ it.effect.each([119_000, 120_000])(
   },
 );
 
+it.effect("oversized coalesced windows stay within the suppression bucket's limit", () => {
+  const workers = new Map<string, Effect.Effect<void>>();
+  return withService(
+    ({ service, sql, launches }) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          yield* webhookTaskInput({
+            prompt: `{{body.absent}}${" ".repeat(10_000)}{{body.text}}`,
+            schedule: {
+              type: "webhook",
+              dedupe: { coalesceKey: "{{body.group}}", coalesceWindowSeconds: 10 },
+            },
+          }),
+        );
+        const bodyText = JSON.stringify({ group: "B", text: "x".repeat(120_000) });
+        for (let i = 0; i < 21; i++) {
+          const accepted = yield* service.triggerWebhook(
+            requestFor(task, { bodyText, body: new TextEncoder().encode(bodyText) }),
+          );
+          assert.equal(accepted._tag === "accepted" && accepted.outcome, "accepted");
+          yield* TestClock.adjust("10 seconds");
+          yield* drainPendingDispatch(workers);
+        }
+        assert.equal(yield* Queue.size(launches), 0);
+        const counts = yield* sql<{
+          outcome: string;
+          count: number;
+        }>`SELECT outcome, COUNT(*) AS count FROM scheduled_task_webhook_deliveries GROUP BY outcome`;
+        assert.deepEqual(counts, [{ outcome: "dispatch_failed", count: 20 }]);
+      }),
+    { workers },
+  );
+});
+
 it.effect.each([1, 11])(
   "keeps relay claims for %i coalesced updates after their window closes",
   (count) => {
