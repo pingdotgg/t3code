@@ -1,138 +1,60 @@
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
-import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
-import { parseFileUrlHref } from "./fileLinks.ts";
-import { safeDecodeURIComponent } from "./markdownLinks.ts";
-import {
-  isUncPath,
-  isWindowsDrivePath,
-  normalizeProjectPathForComparison,
-  stripSlashPrefixedWindowsDrive,
-} from "./path.ts";
+import { markdownDestinationHostPath } from "./markdownLinks.ts";
+import { chatMarkdownImageSources } from "./markdownPipeline.ts";
+import { isUncPath, isWindowsDrivePath, normalizeProjectPathForComparison } from "./path.ts";
 
-const parser = unified().use(remarkParse).use(remarkKeepWindowsPaths);
-interface MarkdownNode {
-  readonly type: string;
-  readonly url?: string | undefined;
-  readonly identifier?: string | undefined;
-  readonly label?: string | null | undefined;
-  readonly alt?: string | null | undefined;
-  readonly title?: string | null | undefined;
-  readonly position?:
-    | {
-        readonly start: { readonly offset?: number | undefined };
-        readonly end: { readonly offset?: number | undefined };
-      }
-    | undefined;
-  readonly children?: ReadonlyArray<MarkdownNode> | undefined;
-}
+const parser = unified().use(remarkParse);
 
-// Mobile Markdown parsers consume Windows backslashes; UNC paths also need file: to
-// distinguish them from protocol-relative web URLs.
-function imageDestination(path: string): string {
-  return isWindowsDrivePath(path)
+function imageEmbed(path: string): string {
+  // Forward slashes read the same in every client parser; UNC paths also need file: to
+  // distinguish them from protocol-relative web URLs.
+  const destination = isWindowsDrivePath(path)
     ? path.replaceAll("\\", "/")
     : isUncPath(path)
       ? `file:${path.replaceAll("\\", "/")}`
       : path;
+  // Clients split `?`/`#`, decode `%` and `&` entities, and read POSIX backslashes as escapes;
+  // line breaks end an angle destination.
+  const escaped = destination.replace(/[%?#&\\\r\n]/g, encodeURIComponent).replace(/[<>]/g, "\\$&");
+  return `![](<${escaped}>)`;
 }
 
-// Backslashes left after Windows conversion belong to POSIX names, where Markdown would read them
-// as escapes; line breaks end an angle destination.
-function angleDestination(path: string): string {
-  return `<${path.replace(/[%?#&\\\r\n]/g, encodeURIComponent).replace(/[<>]/g, "\\$&")}>`;
+// Only a root-level fence can swallow appended blocks; nested fences end with their container.
+function closingFence(text: string): string {
+  const last = parser.parse(text).children.at(-1);
+  if (last?.type !== "code") return "";
+  const source = text.slice(last.position?.start.offset, last.position?.end.offset);
+  const fence = /^(`{3,}|~{3,})/.exec(source)?.[0];
+  if (fence === undefined) return "";
+  const lines = source.split(/\r\n|\r|\n/);
+  const closing = /^ {0,3}(`{3,}|~{3,})[\t ]*$/.exec(lines.at(-1) ?? "")?.[1];
+  const closed =
+    lines.length > 1 &&
+    closing !== undefined &&
+    closing[0] === fence[0] &&
+    closing.length >= fence.length;
+  return closed ? "" : `${/[\r\n]$/.test(text) ? "" : "\n"}${fence}`;
 }
 
+/** Appends an embed for each saved image the reply does not already show. */
 export function appendGeneratedImageEmbeds(text: string, savedPaths: Iterable<string>): string {
-  const destinations = new Map(
-    Array.from(savedPaths, (path) => [normalizeProjectPathForComparison(path), path]),
+  const shown = new Set(
+    chatMarkdownImageSources(text).flatMap((source) => {
+      const path = markdownDestinationHostPath(source);
+      return path === null ? [] : [normalizeProjectPathForComparison(path)];
+    }),
   );
-  const missing = new Map(destinations);
-  const definitions = new Map<string, MarkdownNode>();
-  const images: Array<MarkdownNode> = [];
-  const visit = (node: MarkdownNode) => {
-    if (
-      node.type === "definition" &&
-      node.identifier !== undefined &&
-      !definitions.has(node.identifier)
-    ) {
-      definitions.set(node.identifier, node);
-    } else if (node.type === "image" || node.type === "imageReference") {
-      images.push(node);
-    }
-    node.children?.forEach(visit);
-  };
-  const nodes = parser.parse(text).children;
-  nodes.forEach(visit);
-  const edits = new Map<number, { readonly end: number; readonly text: string }>();
-  for (const image of images) {
-    const target = image.type === "image" ? image : definitions.get(image.identifier ?? "");
-    if (target?.url === undefined) continue;
-    // Literal percent sequences may be file names, so raw paths take precedence over decoding.
-    // Protect file URL delimiters so parsing does not discard literal query/hash characters.
-    const file = /^file:/i.test(target.url)
-      ? parseFileUrlHref(target.url.replace(/[%?#]/g, encodeURIComponent))
-      : null;
-    const rawPath = stripSlashPrefixedWindowsDrive(
-      file === null ? target.url : safeDecodeURIComponent(file.path),
-    );
-    const path = [rawPath, safeDecodeURIComponent(rawPath)].find((candidate) =>
-      destinations.has(normalizeProjectPathForComparison(candidate)),
-    );
-    if (path === undefined) continue;
-    missing.delete(normalizeProjectPathForComparison(path));
-    const destination = angleDestination(imageDestination(path));
-    const start = target.position?.start.offset;
-    const end = target.position?.end.offset;
-    if (
-      (imageDestination(target.url) !== target.url ||
-        /[?#]/.test(target.url) ||
-        (path === rawPath && path.includes("%"))) &&
-      start !== undefined &&
-      end !== undefined
-    ) {
-      const label =
-        target.type === "image" ? (target.alt ?? "") : (target.label ?? target.identifier ?? "");
-      const escapedLabel = label.replace(/[\\[\]]/g, "\\$&");
-      const title = target.title == null ? "" : ` "${target.title.replace(/["\\]/g, "\\$&")}"`;
-      edits.set(start, {
-        end,
-        text:
-          target.type === "image"
-            ? `![${escapedLabel}](${destination}${title})`
-            : `[${escapedLabel}]: ${destination}${title}`,
-      });
-    }
+  const missing = new Map<string, string>();
+  for (const path of savedPaths) {
+    const key = normalizeProjectPathForComparison(path);
+    if (!shown.has(key) && !missing.has(key)) missing.set(key, path);
   }
-  let result = text;
-  for (const [start, edit] of Array.from(edits).sort(([left], [right]) => right - left)) {
-    result = result.slice(0, start) + edit.text + result.slice(edit.end);
-  }
-  if (missing.size > 0) {
-    // Only a root-level fence can swallow appended blocks; nested fences end with their container.
-    const last = nodes.at(-1);
-    const start = last?.position?.start.offset;
-    const source =
-      last?.type === "code" && start !== undefined
-        ? text.slice(start, last.position?.end.offset)
-        : "";
-    const fence = /^(`{3,}|~{3,})/.exec(source)?.[0];
-    if (fence !== undefined) {
-      const lines = source.split(/\r\n|\r|\n/);
-      const closing = /^ {0,3}(`{3,}|~{3,})[\t ]*$/.exec(lines.at(-1) ?? "")?.[1];
-      if (
-        lines.length === 1 ||
-        closing === undefined ||
-        closing[0] !== fence[0] ||
-        closing.length < fence.length
-      ) {
-        result += `${/[\r\n]$/.test(result) ? "" : "\n"}${fence}`;
-      }
-    }
-  }
+  if (missing.size === 0) return text;
+  let result = text + closingFence(text);
   for (const path of missing.values()) {
-    result += `${result.length > 0 ? "\n\n" : ""}![](${angleDestination(imageDestination(path))})`;
+    result += `${result.length > 0 ? "\n\n" : ""}${imageEmbed(path)}`;
   }
   return result;
 }
