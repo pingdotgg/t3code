@@ -14,6 +14,7 @@ import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -296,6 +297,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  const serviceScope = yield* Effect.scope;
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
     onProgress: (line: string) => Effect.Effect<void>,
@@ -573,23 +575,25 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       },
     );
 
-    return yield* commandCoordinator
+    // Installers cannot be safely killed mid-install, so the update outlives a disconnecting caller.
+    const updateFiber = yield* commandCoordinator
       .withCommandLock({
         targetKey,
         lockKey: update.lockKey,
         onQueued: setQueuedState,
         run: runProviderUpdate(),
       })
-      .pipe(
-        Effect.mapError((error) =>
-          isServerProviderUpdateError(error)
-            ? new ServerProviderUpdateError({
-                provider,
-                reason: error.reason,
-              })
-            : error,
-        ),
-      );
+      .pipe(Effect.forkIn(serviceScope));
+    return yield* Fiber.join(updateFiber).pipe(
+      Effect.mapError((error) =>
+        isServerProviderUpdateError(error)
+          ? new ServerProviderUpdateError({
+              provider,
+              reason: error.reason,
+            })
+          : error,
+      ),
+    );
   });
 
   return ProviderMaintenanceRunner.of({
