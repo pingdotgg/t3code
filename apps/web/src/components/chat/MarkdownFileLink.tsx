@@ -5,7 +5,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { cloneElement, memo, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, type MouseEvent as ReactMouseEvent } from "react";
 
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
@@ -14,7 +14,7 @@ import type { markdownFileCopyPaths } from "../../markdownFileHostPath";
 import { documentChipKindForFileName } from "../../pierre-icons";
 import { ContextChip } from "../ContextChip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { useSharedTooltip } from "../ui/shared-tooltip";
+import { useSharedTooltip, withSharedTooltip } from "../ui/shared-tooltip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { FileTagChipContent } from "./FileTagChip";
 import {
@@ -379,7 +379,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
       />
     </ContextChip>
   );
-  if (sharedTooltip) return cloneElement(chip, sharedTooltip);
+  if (sharedTooltip) return withSharedTooltip(chip, sharedTooltip);
   return (
     <Tooltip>
       <TooltipTrigger render={chip} />

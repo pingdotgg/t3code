@@ -119,7 +119,7 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
-import { SharedTooltipProvider, useSharedTooltip } from "./ui/shared-tooltip";
+import { SharedTooltipProvider, useSharedTooltip, withSharedTooltip } from "./ui/shared-tooltip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -1000,7 +1000,7 @@ function selectInlineCode(event: ReactMouseEvent<HTMLElement>) {
 
 function MarkdownLinkTooltip({ link, href }: { link: React.ReactElement; href: string }) {
   const sharedTooltip = useSharedTooltip({ render: () => href });
-  if (sharedTooltip) return React.cloneElement(link, sharedTooltip);
+  if (sharedTooltip) return withSharedTooltip(link, sharedTooltip);
   return (
     <Tooltip>
       <TooltipTrigger render={link} />

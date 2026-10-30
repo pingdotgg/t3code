@@ -1,14 +1,17 @@
 import {
+  cloneElement,
   createContext,
   use,
   useRef,
   useState,
   type FocusEvent,
   type MouseEvent,
+  type PointerEvent,
+  type ReactElement,
   type ReactNode,
 } from "react";
 
-import { Tooltip, TooltipPopup } from "./tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./tooltip";
 
 // Base UI's tooltip timing: open after a rest, reopen at once right after another closed.
 const OPEN_DELAY_MS = 600;
@@ -30,6 +33,8 @@ interface SharedTooltipState extends SharedTooltipContent {
 interface SharedTooltipApi {
   show(anchor: HTMLElement, content: SharedTooltipContent, immediate: boolean): void;
   hide(anchor: HTMLElement): void;
+  /** A press closes it at once, as Base UI's closeOnClick does. */
+  dismiss(anchor: HTMLElement): void;
   holdOpen(): void;
 }
 
@@ -75,6 +80,12 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
         if (current.current) commit({ ...current.current, open: false });
       }, CLOSE_GRACE_MS);
     },
+    dismiss(anchor) {
+      clearTimer();
+      if (current.current?.anchor !== anchor) return;
+      if (current.current.open) lastClosedAt.current = 0;
+      commit({ ...current.current, open: false });
+    },
     holdOpen() {
       clearTimer();
     },
@@ -110,6 +121,7 @@ export interface SharedTooltipTriggerProps {
   onMouseLeave: (event: MouseEvent<HTMLElement>) => void;
   onFocus: (event: FocusEvent<HTMLElement>) => void;
   onBlur: (event: FocusEvent<HTMLElement>) => void;
+  onPointerDown: (event: PointerEvent<HTMLElement>) => void;
 }
 
 /** Props that show `content` on the shared tooltip, or null outside a SharedTooltipProvider. */
@@ -125,5 +137,57 @@ export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTr
         api.show(event.currentTarget, content, true);
     },
     onBlur: (event) => api.hide(event.currentTarget),
+    onPointerDown: (event) => api.dismiss(event.currentTarget),
   };
+}
+
+type Handlers = Partial<Record<keyof SharedTooltipTriggerProps, (event: never) => void>>;
+
+/** The trigger's own handlers run first, then the shared tooltip's. */
+export function withSharedTooltip<Props>(
+  element: ReactElement<Props>,
+  tooltip: SharedTooltipTriggerProps,
+  children?: ReactNode,
+): ReactElement {
+  const own = element.props as Handlers;
+  const merged: Record<string, (event: never) => void> = {};
+  for (const key of Object.keys(tooltip) as Array<keyof SharedTooltipTriggerProps>) {
+    const shared = tooltip[key] as (event: never) => void;
+    const mine = own[key];
+    merged[key] = mine
+      ? (event) => {
+          mine(event);
+          shared(event);
+        }
+      : shared;
+  }
+  return children === undefined
+    ? cloneElement(element, merged as Partial<Props>)
+    : cloneElement(element, merged as Partial<Props>, children);
+}
+
+/** A tooltip on `render`: the shared one inside a SharedTooltipProvider, Base UI's otherwise. */
+export function SharedTooltipTrigger({
+  render,
+  children,
+  label,
+  side = "top",
+  variant,
+}: {
+  render: ReactElement;
+  children?: ReactNode;
+  label: ReactNode;
+  side?: SharedTooltipContent["side"];
+  variant?: SharedTooltipContent["variant"];
+}) {
+  const tooltip = useSharedTooltip({ render: () => label, side, ...(variant ? { variant } : {}) });
+  if (tooltip) return withSharedTooltip(render, tooltip, children);
+  return (
+    <Tooltip>
+      <TooltipTrigger render={render}>{children}</TooltipTrigger>
+      <TooltipPopup side={side} {...(variant ? { variant } : {})}>
+        {label}
+      </TooltipPopup>
+    </Tooltip>
+  );
 }
