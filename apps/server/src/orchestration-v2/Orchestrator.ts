@@ -13618,7 +13618,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.limitRecovery.resetAt === input.limitRecovery.resetAt
           )
             return;
-          yield* dispatchWithReceiptEffect({ type: "thread.metadata.update", ...input });
+          const command = { type: "thread.metadata.update", ...input } as const;
+          // A Stop that reached the run before its limit failure landed had nothing to disarm.
+          const stopped = yield* stopReachedRun(command, input.threadId, input.limitRecovery.runId);
+          yield* dispatchWithReceiptEffect(
+            stopped
+              ? {
+                  ...command,
+                  limitRecovery: { ...input.limitRecovery, autoResume: false, snooze: false },
+                }
+              : command,
+          );
         }),
       );
     }),
