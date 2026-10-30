@@ -238,6 +238,26 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  it.effect("advertises the Wi-Fi address ahead of Windows Hyper-V switches", () =>
+    withHarness(
+      {
+        Tailscale: [{ address: "100.64.0.5", family: "IPv4", internal: false }],
+        "vEthernet (Default Switch)": [{ address: "172.25.80.1", family: "IPv4", internal: false }],
+        "vEthernet (WSL (Hyper-V firewall))": [
+          { address: "172.24.144.1", family: "IPv4", internal: false },
+        ],
+        "Wi-Fi": [{ address: "192.168.1.147", family: "IPv4", internal: false }],
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const change = yield* serverExposure.setMode("network-accessible");
+        assert.equal(change.state.advertisedHost, "192.168.1.147");
+      }),
+    ),
+  );
+
   it.effect("persists tailscale serve preferences atomically and reports no-op updates", () =>
     withHarness(
       emptyNetworkInterfaces,

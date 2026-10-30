@@ -73,7 +73,7 @@ const isUsableLanIpv4Address = (address: string): boolean =>
 
 // Private bridges and VM adapters are fallbacks; host bridges can carry the real LAN address.
 const HOST_ONLY_INTERFACE =
-  /^(bridge\d|utun|ipsec|ppp|tun|tap|wg|docker|br-|veth|virbr|vmnet|vboxnet|VirtualBox|VMware)/;
+  /^(bridge\d|utun|ipsec|ppp|tun|tap|wg|docker|br-|veth|virbr|vmnet|vboxnet|VirtualBox|VMware|vEthernet)/;
 
 const isHttpsEndpointUrl = (value: string): boolean => {
   try {
