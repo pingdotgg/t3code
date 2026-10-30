@@ -106,6 +106,9 @@ function ColumnScreen(props: {
   readonly footer?: ReactNode;
 }) {
   const { descriptor } = props;
+  const { layout } = useAdaptiveWorkspaceLayout();
+  // A collapsed split shows the primary column as the page itself, not as a sidebar.
+  const sidebar = props.primary === true && layout.usesSplitView;
   // Options a screen set inside this workspace tab slot, over its route's.
   const options = slotScreenOptions(
     use(WorkspaceSlotOptionsContext),
@@ -146,7 +149,7 @@ function ColumnScreen(props: {
         props.navigation.emit({ type: "transitionEnd", target: key, data: { closing: true } })
       }
     >
-      <PaneContext value={props.primary ? "sidebar" : "content"}>
+      <PaneContext value={sidebar ? "sidebar" : "content"}>
         <NavigationContext value={descriptor.navigation}>
           <NavigationRouteContext value={descriptor.route}>
             <V5StackHeader
@@ -162,7 +165,7 @@ function ColumnScreen(props: {
               }
             />
             <ColumnContent
-              primary={props.primary}
+              primary={sidebar}
               insetHorizontally={
                 (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
               }
