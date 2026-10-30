@@ -522,9 +522,14 @@ export interface EnvironmentQueryTarget<Input> {
   readonly input: Input;
 }
 
+interface EnvironmentQueryError {
+  readonly environmentId: EnvironmentId;
+  readonly message: string;
+}
+
 interface MergedEnvironmentQueryView<A> {
   readonly values: ReadonlyArray<readonly [EnvironmentId, A]>;
-  readonly error: string | null;
+  readonly error: EnvironmentQueryError | null;
   readonly isPending: boolean;
 }
 
@@ -539,13 +544,16 @@ function createMergedEnvironmentQuery<Input, A>(
     Atom.make((get): MergedEnvironmentQueryView<A> => {
       const targets = JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>;
       const values: Array<readonly [EnvironmentId, A]> = [];
-      let error: string | null = null;
+      let error: EnvironmentQueryError | null = null;
       let isPending = false;
       for (const target of targets) {
         const result = get(atomFor(target));
         isPending ||= result.waiting;
         if (result._tag === "Failure" && error === null) {
-          error = formatEnvironmentQueryError(result.cause);
+          error = {
+            environmentId: target.environmentId,
+            message: formatEnvironmentQueryError(result.cause),
+          };
         }
         const value = AsyncResult.getOrElse(result, () => null);
         if (value !== null) values.push([target.environmentId, value]);
@@ -608,7 +616,7 @@ export function usePullRequestTurnRefresh(environmentId: EnvironmentId): number 
 
 export interface MergedPullRequestListView {
   readonly data: MergedPullRequestList | null;
-  readonly error: string | null;
+  readonly error: EnvironmentQueryError | null;
   readonly isPending: boolean;
   readonly refresh: (targets?: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>) => void;
 }
