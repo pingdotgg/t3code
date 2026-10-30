@@ -2591,15 +2591,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         if (clicked._tag === "Failure" || clicked.value === null) return;
         const chosenView = transcriptViewFromMenuAction(clicked.value);
         if (chosenView) {
-          await updateClientSettings({ transcriptView: chosenView }).catch((error: unknown) =>
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Failed to change transcript view",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            ),
-          );
+          await updateClientSettings({ transcriptView: chosenView });
           return;
         }
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;

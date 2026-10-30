@@ -157,9 +157,7 @@ export function useThreadActionMenu(input: {
       const action: ThreadActionMenuId = clicked.value;
       const chosenView = transcriptViewFromMenuAction(action);
       if (chosenView) {
-        await updateClientSettings({ transcriptView: chosenView }).catch((error: unknown) =>
-          failureToast("Failed to change transcript view", error),
-        );
+        await updateClientSettings({ transcriptView: chosenView });
         return;
       }
       if (
