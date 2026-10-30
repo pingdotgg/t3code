@@ -36,6 +36,22 @@ export const make = Effect.gen(function* () {
       // Loops once after the wait: the thread may have moved on.
       while (true) {
         const current = yield* settings.getSettings;
+        const thread = yield* projections.getThread(threadId);
+        const claudeInstance = Object.hasOwn(current.providerInstances, thread.providerInstanceId)
+          ? current.providerInstances[thread.providerInstanceId]?.driver === "claudeAgent"
+          : thread.providerInstanceId === "claudeAgent";
+        const mode = resolveIdleCompaction(current, thread.providerInstanceId);
+        if (
+          !claudeInstance ||
+          mode === "off" ||
+          (mode !== "beforeCacheExpires" && !current.compactBeforeUsageLimit) ||
+          !resolveProjectProviderInstanceEnabled(
+            current,
+            thread.projectId,
+            thread.providerInstanceId,
+          )
+        )
+          return;
         const records = yield* projections.getThreadRecords(
           threadId,
           [
@@ -49,24 +65,13 @@ export const make = Effect.gen(function* () {
           ],
           { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
         );
-        const mode = resolveIdleCompaction(current, records.thread.providerInstanceId);
-        if (
-          mode === "off" ||
-          (mode !== "beforeCacheExpires" && !current.compactBeforeUsageLimit) ||
-          !resolveProjectProviderInstanceEnabled(
-            current,
-            records.thread.projectId,
-            records.thread.providerInstanceId,
-          )
-        )
-          return;
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         const window = idleCompactionWindow(records, nowMs);
         if (window?.runId !== runId) return;
         // The instance snapshot, not the registry list: the registry applies the
         // run's last usage update asynchronously and can still be behind here.
         const instance = current.compactBeforeUsageLimit
-          ? yield* providerInstances.getInstance(records.thread.providerInstanceId)
+          ? yield* providerInstances.getInstance(thread.providerInstanceId)
           : undefined;
         const action = idleCompactionAction({
           mode,
