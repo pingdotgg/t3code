@@ -108,6 +108,7 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import {
   projectGroupsSpanEnvironments,
+  buildSidebarProjectPickerEntries,
   resolveSidebarProjectScopeKeys,
   filterSidebarProjectScopeKeysByEnvironment,
   toggleSidebarProjectScopeKey,
@@ -1323,8 +1324,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
   const startThreadInProjectFolder = useStableCallback((group: SidebarProjectSnapshot) => {
+    const [entry] = buildSidebarProjectPickerEntries({
+      groups: [group],
+      preferredProjectRef: null,
+      excludedEnvironmentIds,
+    });
+    if (!entry) return;
     if (isMobile) setOpenMobile(false);
-    void handleNewThread(scopeProjectRef(group.environmentId, group.id));
+    void handleNewThread(
+      scopeProjectRef(entry.targetProject.environmentId, entry.targetProject.id),
+    );
   });
   const handleProjectFolderContextMenu = useStableCallback(
     (group: SidebarProjectSnapshot, position: { x: number; y: number }) => {

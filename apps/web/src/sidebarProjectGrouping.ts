@@ -249,32 +249,38 @@ export function buildSidebarProjectSnapshots(input: {
 export function buildSidebarProjectPickerEntries(input: {
   groups: ReadonlyArray<SidebarProjectSnapshot>;
   preferredProjectRef: ScopedProjectRef | null;
+  excludedEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }) {
   const preferredProjectRef = input.preferredProjectRef;
   const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
+    const excludedIds = input.excludedEnvironmentIds;
+    const memberProjects = excludedIds
+      ? group.memberProjects.filter((project) => !excludedIds.has(project.environmentId))
+      : group.memberProjects;
     const isPreferred = preferredProjectRef
-      ? group.memberProjectRefs.some(
+      ? !excludedIds?.has(preferredProjectRef.environmentId) &&
+        group.memberProjectRefs.some(
           (projectRef) =>
             projectRef.environmentId === preferredProjectRef.environmentId &&
             projectRef.projectId === preferredProjectRef.projectId,
         )
       : false;
     const preferredProject = preferredProjectRef
-      ? (group.memberProjects.find(
+      ? (memberProjects.find(
           (project) =>
             project.environmentId === preferredProjectRef.environmentId &&
             project.id === preferredProjectRef.projectId,
         ) ??
-        group.memberProjects.find(
+        memberProjects.find(
           (project) => project.environmentId === preferredProjectRef.environmentId,
         ))
       : null;
     const targetProject =
       preferredProject ??
-      group.memberProjects.find(
+      memberProjects.find(
         (project) => project.environmentId === group.environmentId && project.id === group.id,
       ) ??
-      group.memberProjects[0];
+      memberProjects[0];
     if (!targetProject) return [];
 
     return [{ group, targetProject, isPreferred }];

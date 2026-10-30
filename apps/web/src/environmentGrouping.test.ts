@@ -391,6 +391,32 @@ describe("environment grouping", () => {
       environmentId: primaryEnvironmentId,
       id: fallbackPrimary.id,
     });
+    const filtered = buildSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: null,
+      excludedEnvironmentIds: new Set([primaryEnvironmentId]),
+    });
+    expect(
+      filtered.find(
+        (entry) => entry.group.projectKey === destinationRepositoryIdentity.canonicalKey,
+      )?.targetProject,
+    ).toMatchObject({ environmentId: remoteEnvironmentId, id: destinationRemote.id });
+    expect(filtered.some((entry) => entry.group.displayName === "fallback")).toBe(false);
+    expect(
+      buildSidebarProjectPickerEntries({
+        groups,
+        preferredProjectRef: null,
+        excludedEnvironmentIds: new Set([remoteEnvironmentId]),
+      }).find((entry) => entry.group.projectKey === destinationRepositoryIdentity.canonicalKey)
+        ?.targetProject,
+    ).toMatchObject({ environmentId: primaryEnvironmentId, id: destinationPrimary.id });
+    expect(
+      buildSidebarProjectPickerEntries({
+        groups,
+        preferredProjectRef: null,
+        excludedEnvironmentIds: new Set([primaryEnvironmentId, remoteEnvironmentId]),
+      }),
+    ).toEqual([]);
   });
 
   it("puts the preferred project before pinned projects", () => {
