@@ -74,13 +74,9 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
           const abort = () => prepared.cancelInputSelection?.();
           signal?.addEventListener("abort", abort, { once: true });
           try {
-            let selecting: void | Promise<void>;
             try {
-              selecting = prepared.setInput(selected.uid);
-            } catch {
-              return;
-            }
-            await selecting;
+              await prepared.setInput(selected.uid);
+            } catch {}
             if (signal) throwIfVoiceTranscriptionAborted(signal);
           } finally {
             signal?.removeEventListener("abort", abort);

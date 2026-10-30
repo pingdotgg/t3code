@@ -72,7 +72,7 @@ describe("createLazyVoiceRecorder", () => {
         native.setInput.mockImplementationOnce(() => Promise.reject(failure));
       },
     );
-    await expect(timedOut.recorder.prepareToRecordAsync()).rejects.toBe(failure);
+    await expect(timedOut.recorder.prepareToRecordAsync()).resolves.toBeUndefined();
   });
 
   it("forwards status events until the recorder is released", async () => {
