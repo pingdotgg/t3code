@@ -318,6 +318,35 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
+  it.effect("registers the URL scheme when a Linux distro supplies its launcher", () => {
+    const recorded = emptyRecording();
+    const launcher = "/nix/store/example-t3code/bin/t3code-desktop";
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        environment: {
+          isPackaged: false,
+          desktopLauncherPath: Option.some(launcher),
+          appImagePath: Option.none(),
+        },
+      });
+
+      assert.equal(recorded.files.length, 1);
+      assert.include(recorded.files[0]?.content, `Exec=${launcher} %U`);
+      assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
+      assert.deepEqual(recorded.commands, [
+        {
+          command: "update-desktop-database",
+          args: ["/home/alice/.local/share/applications"],
+        },
+        {
+          command: "xdg-mime",
+          args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3code"],
+        },
+      ]);
+    });
+  });
+
   it.effect("writes the portal identity without claiming the URL scheme in development", () => {
     const nonLinux = emptyRecording();
     const unpackaged = emptyRecording();
