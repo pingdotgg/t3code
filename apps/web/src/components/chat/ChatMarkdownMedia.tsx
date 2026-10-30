@@ -5,6 +5,7 @@ import { TriangleAlertIcon } from "lucide-react";
 import {
   createContext,
   memo,
+  use,
   useState,
   type ComponentProps,
   type CSSProperties,
@@ -71,6 +72,8 @@ const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
 );
 export const MarkdownLinkContext = createContext(false);
+// The thread's latest workspace mutation; local media reloads when an agent rewrites it in place.
+export const WorkspaceMutationContext = createContext<string | null | undefined>(undefined);
 
 function expandableMarkdownImageProps(
   onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined,
@@ -339,13 +342,16 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const resource = props.resource;
+  const contextMutationId = use(WorkspaceMutationContext);
+  const workspaceMutationId =
+    props.workspaceMutationId === undefined ? contextMutationId : props.workspaceMutationId;
   const assetUrl = useAssetUrlState(
     props.environmentId,
     resource,
-    props.workspaceMutationId !== undefined &&
+    workspaceMutationId !== undefined &&
       props.kind !== "video" &&
       (resource._tag === "media-file" || resource._tag === "workspace-file")
-      ? props.workspaceMutationId
+      ? workspaceMutationId
       : undefined,
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);

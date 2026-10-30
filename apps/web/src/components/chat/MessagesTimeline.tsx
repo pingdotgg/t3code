@@ -4,6 +4,7 @@ import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { MarkdownFindContext } from "./markdownFindContext";
+import { WorkspaceMutationContext } from "./ChatMarkdownMedia";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
@@ -279,6 +280,7 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  workspaceMutationId?: string | null | undefined;
   skills?: ReadonlyArray<ServerProviderSkill>;
   runs: ReadonlyArray<HandoffTimelineRun>;
   anchorMessageId: MessageId | null;
@@ -307,12 +309,16 @@ interface MessagesTimelineProps {
 export function MessagesTimeline(props: MessagesTimelineProps) {
   const find = useContext(ThreadFindTimelineContext);
   const findOpen = find?.findOpen ?? props.findOpen;
+  const { workspaceMutationId, ...timelineProps } = props;
+  // A context, so a mutation re-renders only local images, not every row's markdown.
   return (
-    <ConversationTimeline
-      {...props}
-      {...find}
-      liveFollowEnabled={!findOpen && props.liveFollowEnabled}
-    />
+    <WorkspaceMutationContext value={workspaceMutationId}>
+      <ConversationTimeline
+        {...timelineProps}
+        {...find}
+        liveFollowEnabled={!findOpen && props.liveFollowEnabled}
+      />
+    </WorkspaceMutationContext>
   );
 }
 

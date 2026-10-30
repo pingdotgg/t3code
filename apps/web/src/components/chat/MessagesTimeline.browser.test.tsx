@@ -62,6 +62,56 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
   };
 });
 
+// Each evaluation of the URL query is one mint, with a URL the browser cannot reuse.
+const assetQuery = vi.hoisted(() => ({ mints: 0 }));
+vi.mock(import("~/state/assets"), async (original) => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const createUrl = Atom.family((_key: string) =>
+    Atom.make(() => {
+      assetQuery.mints += 1;
+      return AsyncResult.success({
+        relativeUrl: `data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7#mint-${assetQuery.mints}`,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      });
+    }).pipe(Atom.keepAlive),
+  );
+  const actual = await original();
+  return {
+    ...actual,
+    assetEnvironment: {
+      ...actual.assetEnvironment,
+      createUrl: (target: { readonly input: unknown }) => createUrl(JSON.stringify(target.input)),
+    },
+  };
+});
+vi.mock(import("~/state/session"), async (original) => {
+  const { Option } = await import("effect");
+  const { PrimaryConnectionTarget } = await import("@t3tools/client-runtime/connection");
+  const { EnvironmentId } = await import("@t3tools/contracts");
+  const target = new PrimaryConnectionTarget({
+    environmentId: EnvironmentId.make("environment-local"),
+    label: "Local",
+    httpBaseUrl: "http://localhost:1",
+    wsBaseUrl: "ws://localhost:1",
+  });
+  return {
+    ...(await original()),
+    usePreparedConnection: () =>
+      Option.some({
+        environmentId: target.environmentId,
+        label: target.label,
+        httpBaseUrl: target.httpBaseUrl,
+        socketUrl: target.wsBaseUrl,
+        httpAuthorization: null,
+        target,
+      }),
+  };
+});
+vi.mock(import("~/state/filesystem"), async (original) => ({
+  ...(await original()),
+  useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
+}));
+
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const CREATED_AT = "2026-03-17T19:12:28.000Z";
 
@@ -490,6 +540,30 @@ describe("MessagesTimeline citations", () => {
     );
     await expect.element(screen.getByText("the cited answer")).toBeVisible();
     expect(toast).not.toHaveBeenCalled();
+  });
+});
+
+describe("MessagesTimeline media", () => {
+  it("reloads a local image at the same path after a workspace mutation", async () => {
+    const props = baseProps();
+    const entries = [
+      message("![plot](/Volumes/data/plot.png)", { role: "assistant" }, "plot"),
+    ] as Entry[];
+    const timeline = (workspaceMutationId: string) => (
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        workspaceMutationId={workspaceMutationId}
+      />
+    );
+    await using screen = await renderElement(timeline("mutation-1"));
+    const image = screen.getByRole("button", { name: "Preview plot" });
+    await expect.element(image).toHaveAttribute("src", expect.stringContaining("#mint-"));
+    const before = image.element().getAttribute("src");
+
+    await screen.rerender(timeline("mutation-2"));
+    await expect.element(image).not.toHaveAttribute("src", before);
+    await expect.element(image).toHaveAttribute("src", expect.stringContaining("#mint-"));
   });
 });
 

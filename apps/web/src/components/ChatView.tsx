@@ -3307,6 +3307,7 @@ export default function ChatView(props: ChatViewProps) {
                 activeThreadKey={activeThreadKey}
                 syncing={threadSyncPhase !== null}
                 detailLoading={threadDetailLoading}
+                workspaceMutationId={workspaceMutationId}
                 citationRequest={citationRequest}
                 citationHistory={citationHistory}
                 onCiteAssistantText={citeAssistantTextStable}
