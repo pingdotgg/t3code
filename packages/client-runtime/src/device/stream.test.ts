@@ -747,32 +747,39 @@ describe("shared device stream readiness and recovery", () => {
     },
   );
 
-  it("reports a video-only software backlog instead of retrying or opening MJPEG", async () => {
-    const { client, videoBodies, events, configureVideo, overloadVideo } = recoveryFixture(
-      "ios",
-      false,
-      true,
-    );
-    try {
-      client.start();
-      await vi.advanceTimersByTimeAsync(0);
-      await configureVideo(0);
-      await overloadVideo(0);
-      await configureVideo(1);
-      await overloadVideo(1);
-      await configureVideo(2);
-      await overloadVideo(2);
-      expect(events.onStatus).toHaveBeenLastCalledWith(
-        "error",
-        "This browser cannot keep up with the Duo panel's video.",
+  it.each([
+    { videoOnly: true, serveSimOnly: false, name: "Duo panel" },
+    { videoOnly: false, serveSimOnly: true, name: "device" },
+  ])(
+    "reports software backlog without MJPEG for $name",
+    async ({ videoOnly, serveSimOnly, name }) => {
+      const { client, videoBodies, events, configureVideo, overloadVideo } = recoveryFixture(
+        "ios",
+        false,
+        videoOnly,
+        serveSimOnly,
       );
-      expect(events.onMjpegFallback).not.toHaveBeenCalled();
-      expect(videoBodies).toHaveLength(3);
-    } finally {
-      client.stop();
-    }
-    expect(vi.getTimerCount()).toBe(0);
-  });
+      try {
+        client.start();
+        await vi.advanceTimersByTimeAsync(0);
+        await configureVideo(0);
+        await overloadVideo(0);
+        await configureVideo(1);
+        await overloadVideo(1);
+        await configureVideo(2);
+        await overloadVideo(2);
+        expect(events.onStatus).toHaveBeenLastCalledWith(
+          "error",
+          `This browser cannot keep up with the ${name}'s video.`,
+        );
+        expect(events.onMjpegFallback).not.toHaveBeenCalled();
+        expect(videoBodies).toHaveLength(3);
+      } finally {
+        client.stop();
+      }
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it("discards decoder support results and output from a previous Android socket", async () => {
     const { client, sockets, sps, events, Decoder, decoders, decodedFrame, drawImage } =

@@ -686,7 +686,9 @@ export function createDeviceStreamClient(
         iosRecoveryFrames = 0;
         if (++iosDecoderBacklogs >= 2) {
           if (iosPreferSoftware) {
-            if (target.videoOnly) fail("This browser cannot keep up with the Duo panel's video.");
+            if (serveSimOnly) fail("This browser cannot keep up with the device's video.");
+            else if (target.videoOnly)
+              fail("This browser cannot keep up with the Duo panel's video.");
             else fallBackToMjpeg();
             return;
           }
