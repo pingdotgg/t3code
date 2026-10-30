@@ -204,6 +204,7 @@ async function click(element: HTMLElement) {
 
 function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
   environmentQuery.data = { tasks: scheduledTasks };
+  assetQuery.mints = 0;
 }
 
 const TASK_ID = ScheduledTaskId.make("task-1");
@@ -545,6 +546,7 @@ describe("MessagesTimeline citations", () => {
 
 describe("MessagesTimeline media", () => {
   it("reloads a local image at the same path after a workspace mutation", async () => {
+    setup();
     const props = baseProps();
     const entries = [
       message("![plot](/Volumes/data/plot.png)", { role: "assistant" }, "plot"),
