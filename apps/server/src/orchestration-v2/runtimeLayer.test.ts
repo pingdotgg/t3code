@@ -1726,7 +1726,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
-  it.effect("merges an explicit provider-finished run while checkpoint capture is pending", () =>
+  it.effect("refuses busy merge-back targets without blocking the queue", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -1741,6 +1741,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       );
       const forkTransferId = ContextTransferId.make("runtime-layer-waiting-merge-fork-transfer");
 
+      yield* seedProject({
+        projectId,
+        title: "Merge-back project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(now),
+      });
       yield* orchestrator.dispatch({
         type: "thread.create",
         createdBy: "user",
@@ -1864,6 +1871,87 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
               checkpointId: null,
               contextHandoffId: null,
             },
+          },
+        ],
+      });
+
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-merge-target-start"),
+        threadId: targetThreadId,
+        messageId: MessageId.make("runtime-layer-merge-target-message"),
+        text: "Keep working in the parent.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      const activeTarget = yield* orchestrator.getThreadProjection(targetThreadId);
+      const targetRun = activeTarget.runs[0]!;
+      for (const status of ["preparing", "starting", "waiting", "queued", "running"] as const) {
+        yield* eventSink.write({
+          commandId: CommandId.make(`runtime-layer-merge-target-${status}`),
+          events: [
+            {
+              id: EventId.make(`runtime-layer-merge-target-${status}-event`),
+              type: "run.updated",
+              threadId: targetThreadId,
+              runId: targetRun.id,
+              occurredAt: now,
+              payload: { ...targetRun, status },
+            },
+          ],
+        });
+        const error = yield* orchestrator
+          .dispatch({
+            type: "thread.merge_back",
+            createdBy: "user",
+            creationSource: "mobile",
+            commandId: CommandId.make(`runtime-layer-merge-refused-${status}`),
+            sourceThreadId,
+            targetThreadId,
+            sourcePoint: { type: "run", runId: sourceRunId },
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+        assert.equal(
+          error.cause,
+          "Finish or stop the target thread's active work and clear its queue before merging back.",
+        );
+        const refusedTarget = yield* orchestrator.getThreadProjection(targetThreadId);
+        assert.deepEqual(refusedTarget.contextTransfers, activeTarget.contextTransfers);
+        assert.equal(refusedTarget.runs[0]?.status, status);
+      }
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-merge-target-queue"),
+        threadId: targetThreadId,
+        messageId: MessageId.make("runtime-layer-merge-target-queued-message"),
+        text: "Run this after the current turn.",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const queuedTarget = yield* orchestrator.getThreadProjection(targetThreadId);
+      const queuedRun = queuedTarget.runs.find((run) => run.status === "queued");
+      assert.isDefined(queuedRun);
+      yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make("runtime-layer-merge-target-cancel-queue"),
+        threadId: targetThreadId,
+        runId: queuedRun.id,
+      });
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-layer-merge-target-complete"),
+        events: [
+          {
+            id: EventId.make("runtime-layer-merge-target-completed-event"),
+            type: "run.updated",
+            threadId: targetThreadId,
+            runId: targetRun.id,
+            occurredAt: now,
+            payload: { ...targetRun, status: "completed", completedAt: now },
           },
         ],
       });
