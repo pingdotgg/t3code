@@ -2605,6 +2605,27 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("sends a closed plan once while prose keeps streaming after it", () =>
+    Effect.gen(function* () {
+      const delta = (text: string) =>
+        event("session.text.delta", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_plan_assistant",
+          ordinal: 0,
+          delta: text,
+        });
+      const { plans, messages } = yield* planTurn([
+        delta("<proposed_plan>\n# Plan\n</proposed_plan>\n"),
+        delta("Ready"),
+        delta(" when you are."),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      assert.equal(plans.length, 1);
+      assert.equal(plans[0]?.status, "active");
+      assert.equal(messages.at(-1), "Ready when you are.");
+    }),
+  );
+
   it.effect("supersedes a plan left unclosed by a failed turn", () =>
     Effect.gen(function* () {
       const { plans, planItems } = yield* planTurn([

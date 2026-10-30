@@ -230,7 +230,12 @@ interface ActiveTurn {
   readonly planMode: boolean;
   readonly proposedPlans: Map<
     string,
-    { readonly id: PlanId; markdown: string; readonly startedAt: DateTime.Utc; closed: boolean }
+    {
+      readonly id: PlanId;
+      markdown: string;
+      readonly startedAt: DateTime.Utc;
+      outcome: "streaming" | "completed" | "abandoned";
+    }
   >;
   heldEnd: TurnTerminal | undefined;
   awaitingStart: boolean;
@@ -912,8 +917,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       outcome: "streaming" | "completed" | "abandoned",
     ) {
       const nativeItemId = `${nativeId}:proposed_plan`;
-      const updatedAt = yield* DateTime.now;
       let entry = turn.proposedPlans.get(nativeId);
+      // Prose after a closed plan re-splits the same block; resending the full plan adds nothing.
+      if (entry?.markdown === markdown && entry.outcome === outcome) return;
+      const updatedAt = yield* DateTime.now;
       if (entry === undefined) {
         entry = {
           id: yield* idAllocator.allocate
@@ -925,12 +932,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             .pipe(Effect.orDie),
           markdown,
           startedAt: updatedAt,
-          closed: false,
+          outcome,
         };
         turn.proposedPlans.set(nativeId, entry);
       }
       entry.markdown = markdown;
-      entry.closed = outcome !== "streaming";
+      entry.outcome = outcome;
       const plan: OrchestrationV2PlanArtifact = {
         id: entry.id,
         threadId: turn.input.threadId,
@@ -1628,7 +1635,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* emitText(state, turn, open.block, open.kind, (text) => text, true, terminal.status);
       }
       for (const [nativeId, plan] of Array.from(turn.proposedPlans)) {
-        if (plan.closed) continue;
+        if (plan.outcome !== "streaming") continue;
         yield* emitProposedPlan(
           state,
           turn,
