@@ -28,16 +28,9 @@ const CLOBBER_PREFIX = "user-content-";
 
 class Bail extends Error {}
 
+// Positions are shared with the mdast: nothing changes one in place.
 function copyPosition(position: Position | undefined): Position | undefined {
-  if (!position) return undefined;
-  return {
-    start: {
-      line: position.start.line,
-      column: position.start.column,
-      offset: position.start.offset,
-    },
-    end: { line: position.end.line, column: position.end.column, offset: position.end.offset },
-  } as Position;
+  return position;
 }
 
 function element(

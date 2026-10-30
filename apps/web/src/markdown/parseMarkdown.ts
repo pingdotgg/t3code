@@ -105,7 +105,8 @@ class DocumentParser {
       children: this.convertChildren(root),
       position: { start: this.point(0), end: this.point(this.source.length) },
     };
-    transformAutolinkLiterals(tree);
+    // Decoded text can only hold an autolink if the source has one of these.
+    if (/[@&]|www|http/i.test(this.source)) transformAutolinkLiterals(tree);
     return tree;
   }
 

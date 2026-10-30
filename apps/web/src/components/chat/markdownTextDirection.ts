@@ -1,4 +1,4 @@
-import { textDirection } from "~/textDirection";
+import { LETTER, RTL_LETTER, textDirection } from "~/textDirection";
 
 type HastNode = {
   type?: string;
@@ -66,7 +66,24 @@ export function rehypeTextDirection() {
 export function blockTextDirections(tree: HastNode) {
   for (const block of tree.children ?? []) {
     if (block.type !== "element" || block.tagName === "pre") continue;
-    const dir = textDirection(proseText(block));
+    const dir = scriptOf(block) === "rtl" ? textDirection(proseText(block)) : scriptOf(block);
     if (dir) block.properties = { ...block.properties, dir };
   }
+}
+
+
+/** "rtl" when any prose letter is right-to-left; otherwise what textDirection would say. */
+function scriptOf(node: HastNode): "rtl" | "ltr" | undefined {
+  let found: "ltr" | undefined;
+  const visit = (current: HastNode): boolean => {
+    if (current.type === "text") {
+      const value = current.value ?? "";
+      if (RTL_LETTER.test(value)) return true;
+      if (!found && LETTER.test(value)) found = "ltr";
+      return false;
+    }
+    if (current.tagName === "code") return false;
+    return (current.children ?? []).some(visit);
+  };
+  return visit(node) ? "rtl" : found;
 }
