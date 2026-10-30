@@ -251,6 +251,32 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
     }),
   );
+
+  it("attaches the managed Cua Driver unless the user's Codex config defines one", () => {
+    const mcpSession = {
+      environmentId: EnvironmentId.make("environment-codex-cua"),
+      threadId: ThreadId.make("thread-codex-cua"),
+      providerSessionId: "mcp-session-codex-cua",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-codex-token",
+      browserToolsAvailable: true,
+      cuaDriver: {
+        command: "/resources/cua-driver",
+        args: ["mcp", "--embedded", "--socket", "/tmp/cua.sock"],
+        environment: [{ name: "CUA_MODE", value: "embedded" }],
+      },
+    };
+    const config = (userCuaDriver: boolean) =>
+      CodexAdapterV2.codexThreadRuntimeParams({ mcpSession, userCuaDriver }).config;
+    assert.deepEqual(config(false)["mcp_servers.cua-driver"], {
+      command: "/resources/cua-driver",
+      args: ["mcp", "--embedded", "--socket", "/tmp/cua.sock"],
+      env: { CUA_MODE: "embedded" },
+    });
+    assert.isDefined(config(true)["mcp_servers.t3-code"]);
+    assert.notProperty(config(true), "mcp_servers.cua-driver");
+  });
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {

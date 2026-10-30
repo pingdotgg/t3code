@@ -523,6 +523,22 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     browserToolsAvailable: true,
   });
 
+  it("attaches the managed Cua Driver as a stdio server beside t3-code", () => {
+    const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: {
+        ...mcpSessionFor(ThreadId.make("thread-claude-mcp-cua")),
+        cuaDriver: { command: "/resources/cua-driver", args: ["mcp"], environment: [] },
+      },
+      readOnlySandbox: false,
+    });
+    assert.deepEqual(overrides.mcpServers?.["cua-driver"], {
+      type: "stdio",
+      command: "/resources/cua-driver",
+      args: ["mcp"],
+      env: {},
+    });
+  });
+
   it("pre-approves only read-only t3-code tools in a read-only sandbox", () => {
     const threadId = ThreadId.make("thread-claude-mcp-read-only");
     const mcpSession = mcpSessionFor(threadId);

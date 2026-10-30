@@ -36,6 +36,7 @@ import {
   type ProviderInstanceId,
   type RunId,
   type RuntimeRequestId,
+  ThreadId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -57,6 +58,7 @@ import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
@@ -310,6 +312,8 @@ interface ThreadState {
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
+  /** The managed Cua Driver as registered for this thread; `socket` names its daemon. */
+  cua: { readonly name: string; readonly directory: string; readonly socket: string } | undefined;
   instructions: string | undefined;
 }
 
@@ -356,13 +360,20 @@ export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId:
   return `t3-code-${Hex.encode(digest).slice(0, 16)}`;
 });
 
-// Last match wins: deny all threads' T3 servers, then allow only this thread's.
-const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
+/** The thread's managed Cua Driver, registered beside its T3 server under the same rules. */
+const cuaMcpServerName = (t3ServerName: string) =>
+  t3ServerName.replace(/^t3-code-/u, "cua-driver-");
+
+// Last match wins: deny all threads' T3 servers, then allow only this thread's. Every thread's
+// Cua Driver is registered per directory too, so it gets the same pair, allowed only while attached.
+const mcpRules = (mcpServerName: string | null, computerUse: boolean): ReadonlyArray<Rule> =>
   mcpServerName === null
     ? []
     : [
         { action: "t3-code-*", resource: "*", effect: "deny" },
         { action: `${mcpServerName}_*`, resource: "*", effect: "allow" },
+        { action: "cua-driver-*", resource: "*", effect: "deny" },
+        ...(computerUse ? [rule(`${cuaMcpServerName(mcpServerName)}_*`, "allow")] : []),
       ];
 
 const sessionRules = (
@@ -370,6 +381,7 @@ const sessionRules = (
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
   mcpServerName: string | null,
+  computerUse = false,
 ): ReadonlyArray<Rule> => [
   ...(policy.runtimeMode === "full-access"
     ? [rule("*", "allow")]
@@ -382,7 +394,7 @@ const sessionRules = (
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
   ...paths,
-  ...mcpRules(mcpServerName),
+  ...mcpRules(mcpServerName, computerUse),
 ];
 
 const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<Rule>) =>
@@ -754,6 +766,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       stoppedChildren: new Set(),
       strandedSteers: new Set(),
       mcp: undefined,
+      cua: undefined,
       instructions: undefined,
     });
 
@@ -2638,7 +2651,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
-      for (const state of threads.values()) state.mcp = undefined;
+      for (const state of threads.values()) {
+        state.mcp = undefined;
+        state.cua = undefined;
+      }
       yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
@@ -2770,6 +2786,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
         appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
+        appThreadId !== null &&
+          (yield* mcpSessions.read(ThreadId.make(appThreadId)))?.cuaDriver !== undefined,
       );
     });
 
@@ -3006,7 +3024,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     yield* Effect.addFinalizer(() =>
       Effect.forEach(
-        [...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),
+        [...threads.values()].flatMap((state) => [
+          ...(state.mcp === undefined ? [] : [state.mcp]),
+          ...(state.cua === undefined ? [] : [state.cua]),
+        ]),
         removeMcp,
         { concurrency: 8, discard: true },
       ),
@@ -3060,8 +3081,55 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         if (mcpAvailable) state.mcp = wanted;
       }
+      // The managed Cua Driver follows the same per-directory registration; a
+      // new daemon generation (another socket) replaces the old entry.
+      const cuaDriver = state.mcp === undefined ? undefined : mcpSession?.cuaDriver;
+      const wantedCua =
+        cuaDriver === undefined
+          ? undefined
+          : {
+              name: cuaMcpServerName(name),
+              directory,
+              socket: cuaDriver.socketPath ?? cuaDriver.args.join(" "),
+            };
+      if (
+        state.cua !== undefined &&
+        (wantedCua === undefined ||
+          state.cua.directory !== wantedCua.directory ||
+          state.cua.socket !== wantedCua.socket)
+      ) {
+        yield* removeMcp(state.cua);
+        state.cua = undefined;
+      }
+      if (cuaDriver !== undefined && wantedCua !== undefined && state.cua === undefined) {
+        const config = McpProviderSession.cuaOpenCodeMcpConfig(cuaDriver);
+        const added = yield* client.mcp
+          .add({
+            server: wantedCua.name,
+            location: { directory },
+            config: new Mcp.LocalConfig({
+              type: "local",
+              command: config.command,
+              environment: config.environment,
+            }),
+          })
+          .pipe(
+            Effect.timeout(INVENTORY_TIMEOUT),
+            Effect.as(true),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not add Cua Driver to OpenCode.", cause).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+        if (added) state.cua = wantedCua;
+      }
       const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+        buildRuntimeInstructions({
+          harness: "OpenCode",
+          model: turnInput.modelSelection.model,
+          computerUse: state.cua !== undefined,
+        }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
       ]
         .filter((part) => part !== undefined && part.length > 0)
@@ -3804,6 +3872,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           threads.delete(child);
         }
         if (state.mcp !== undefined) yield* removeMcp(state.mcp);
+        if (state.cua !== undefined) yield* removeMcp(state.cua);
       }),
       respondToRuntimeRequest: Effect.fn("OpenCode2Adapter.respondToRuntimeRequest")(
         function* (requestInput) {
