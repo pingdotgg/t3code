@@ -4,7 +4,7 @@ import { stopFilePaths } from "@t3tools/client-runtime/review-guide-tour";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { SymbolView } from "../../../components/ui/AppSymbol";
-import { PullRequestMarkdown } from "../PullRequestMarkdown";
+import { PullRequestGuideMarkdown } from "../PullRequestMarkdown";
 import { Menu } from "../../../components/ui/Menu";
 
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
@@ -59,7 +59,7 @@ export function GuideOutline({
       </View>
       {guide.stops[0]?.summary ? (
         <View className="mb-6">
-          <PullRequestMarkdown markdown={guide.stops[0].summary} />
+          <PullRequestGuideMarkdown markdown={guide.stops[0].summary} />
         </View>
       ) : null}
       {guide.stops.map((stop, position) => {

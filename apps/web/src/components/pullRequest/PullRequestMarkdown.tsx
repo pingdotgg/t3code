@@ -23,6 +23,7 @@ import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestM
 
 export const PullRequestMarkdownContext = createContext<{
   autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
+  resolveUrl: ((url: string) => string) | null;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
@@ -93,6 +94,7 @@ export function PullRequestMarkdown({
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
+              resolveUrl={context?.resolveUrl ?? undefined}
               sourceControlMedia
             />
           );

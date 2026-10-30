@@ -1,3 +1,4 @@
+import { changeRequestLinkResolver } from "@t3tools/client-runtime/pull-request-markdown";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
@@ -137,6 +138,39 @@ it("loads a host image through the page's own route when there is no environment
   expect(new Set(hostImageUrl.mock.calls.map(([path]) => path))).toEqual(
     new Set(["/work/my shot.png"]),
   );
+});
+
+it("resolves destinations in parsed html and reference links, but not code", async () => {
+  setup();
+  const resolveUrl = changeRequestLinkResolver({
+    provider: "github",
+    url: "https://github.com/team/repo/pull/8",
+  })!;
+  await using screen = await renderText(
+    [
+      '<img alt="before > after" src="/team/repo/blob/abc/a.png">',
+      "",
+      `<img alt="b" title="src='example'" src="../blob/abc/b.png">`,
+      "",
+      '<a href="../blob/abc/docs.md">docs</a> [ref][r] `![c](../blob/abc/c.png)`',
+      "",
+      "[r]: ../blob/abc/ref.md",
+    ].join("\n"),
+    { resolveUrl },
+  );
+  await expect
+    .element(screen.getByAltText("before > after"))
+    .toHaveAttribute("src", "https://github.com/team/repo/blob/abc/a.png");
+  await expect
+    .element(screen.getByAltText("b"))
+    .toHaveAttribute("src", "https://github.com/team/repo/blob/abc/b.png");
+  await expect
+    .element(screen.getByRole("link", { name: "docs" }))
+    .toHaveAttribute("href", "https://github.com/team/repo/blob/abc/docs.md");
+  await expect
+    .element(screen.getByRole("link", { name: "ref" }))
+    .toHaveAttribute("href", "https://github.com/team/repo/blob/abc/ref.md");
+  await expect.element(screen.getByText("![c](../blob/abc/c.png)", { exact: true })).toBeVisible();
 });
 
 describe("ChatMarkdown favicon privacy", () => {

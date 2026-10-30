@@ -245,6 +245,8 @@ interface ChatMarkdownProps {
       `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
   sourceControlMedia?: boolean | undefined;
   headingLevelOffset?: number | undefined;
+  /** Rewrites every destination, raw HTML's included, before the renderer reads it. */
+  resolveUrl?: ((url: string) => string) | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -491,6 +493,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   sourceControlMedia = false,
+  resolveUrl,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
@@ -644,7 +647,8 @@ function useChatMarkdownState({
     });
   };
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
-  const markdownUrlTransform = (href: string) => {
+  const markdownUrlTransform = (url: string) => {
+    const href = resolveUrl?.(url) ?? url;
     if (parseAssistantCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
     if (parseThreadLinkHref(href)) return href;

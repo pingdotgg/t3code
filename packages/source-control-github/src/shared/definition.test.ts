@@ -159,3 +159,26 @@ describe("GitHub media URLs", () => {
     }
   });
 });
+
+describe("GitHub relative URLs", () => {
+  const resolve = (url: string) =>
+    definition.resolveRelativeUrl?.(url, "https://github.com/o/r/pull/5");
+
+  it("resolves a pull request body's relative destinations against the pull request page", () => {
+    expect(resolve("../blob/dd60e3cd/docs/shot.png?raw=true")).toBe(
+      "https://github.com/o/r/blob/dd60e3cd/docs/shot.png?raw=true",
+    );
+    expect(resolve("/other/r/blob/801d91ff/docs/shot.webp?raw=true")).toBe(
+      "https://github.com/other/r/blob/801d91ff/docs/shot.webp?raw=true",
+    );
+    for (const url of [
+      "https://example.com/shot.png",
+      "#x",
+      "mailto:a@example.com",
+      "//evil.example/shot.png",
+      "\\\\evil.example\\shot.png",
+    ]) {
+      expect(resolve(url), url).toBeNull();
+    }
+  });
+});

@@ -11,7 +11,7 @@ import { buildReviewParsedDiff } from "../../review/reviewModel";
 import { useNativeReviewDiffBridge } from "../../review/useNativeReviewDiffBridge";
 import { useAppearanceCodeSurface } from "../../settings/appearance/useAppearanceCodeSurface";
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
-import { PullRequestMarkdown } from "../PullRequestMarkdown";
+import { PullRequestGuideMarkdown } from "../PullRequestMarkdown";
 
 const EMPTY_IDS: readonly string[] = [];
 
@@ -55,7 +55,7 @@ export function ReviewGuideExcerpt({
   const [NativeDiff] = useState(() => resolveNativeReviewDiffView());
   return (
     <View className="gap-3">
-      {excerpt.caption.trim() ? <PullRequestMarkdown markdown={excerpt.caption} /> : null}
+      {excerpt.caption.trim() ? <PullRequestGuideMarkdown markdown={excerpt.caption} /> : null}
       <View className="overflow-hidden rounded-lg border border-border-subtle">
         <Pressable
           accessibilityRole="button"

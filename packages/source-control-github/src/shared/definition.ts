@@ -44,6 +44,21 @@ function isRepositoryPath(repository: string): boolean {
   );
 }
 
+const ABSOLUTE_OR_PAGE_LOCAL = /^(?:[a-z][a-z\d+.-]*:|[#?]|$)/iu;
+
+/** As github.com's browser reads a body's destinations: relative to the pull request's page. */
+function resolveRelativeUrl(url: string, changeRequestUrl: string): string | null {
+  if (ABSOLUTE_OR_PAGE_LOCAL.test(url)) return null;
+  try {
+    const page = new URL(changeRequestUrl);
+    const resolved = new URL(url, page);
+    // `//host/x`, and the `\\host/x` a browser reads the same way, leave the page's origin.
+    return resolved.origin === page.origin ? resolved.href : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Signing in through the T3 Code for GitHub app lifts the per-user API rate limit to the app's. */
 export const APP_SIGN_IN: SourceControlAppSignIn = {
   appName: "T3 Code for GitHub",
@@ -127,6 +142,7 @@ export const definition = defineSourceControl({
       ? null
       : new URL(`/${encodeURIComponent(login)}`, repositoryUrl).toString(),
   referenceAutolinks: gitHubReferenceAutolinks,
+  resolveRelativeUrl,
   changeRequestChecksUrl: (changeRequestUrl) => `${changeRequestUrl.replace(/\/+$/u, "")}/checks`,
   // Before servers reported their actions, GitHub was the only host they acted on from a list.
   changeRequestActionsWhenUnreported: new Set(["close", "merge", "ready", "reopen"] as const),
