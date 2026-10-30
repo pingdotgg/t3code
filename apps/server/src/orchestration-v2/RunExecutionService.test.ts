@@ -36,6 +36,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { CodexAppServerRequestError } from "effect-codex-app-server/errors";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -2637,6 +2638,35 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
     );
     const error = written.find((item) => item.type === "error");
     assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
+  }),
+);
+
+it.effect("records a provider's input rejection at turn start in the terminal error", () =>
+  Effect.gen(function* () {
+    const rejection = "goal objective must be at most 4000 characters";
+    const { written, observed } = yield* captureRootRunTermination({
+      key: "start-failure:input-rejected",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () => Stream.never,
+      afterStart: (closed) => Deferred.succeed(closed, undefined),
+      startTurn: (turnInput) =>
+        Effect.fail(
+          new ProviderAdapter.ProviderAdapterTurnStartError({
+            driver,
+            threadId: turnInput.threadId,
+            providerThreadId: turnInput.providerThread.id,
+            runId: turnInput.runId,
+            cause: new CodexAppServerRequestError({
+              code: -32600,
+              errorMessage: rejection,
+              method: "thread/goal/set",
+            }),
+          }),
+        ),
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    const error = written.find((item) => item.type === "error");
+    assert.include(error?.failure.message ?? "", rejection);
   }),
 );
 

@@ -61,6 +61,10 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
   },
 };
 
+// codex_protocol::protocol::validate_thread_goal_objective
+const CODEX_GOAL_VALIDATION_MESSAGE =
+  /^goal objective must (?:not be empty|be at most \d{1,6} characters)$/u;
+
 const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",
   attachment_unreadable: "an attachment could not be read",
@@ -108,7 +112,21 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeSettingsLaunchArgError":
         case "ClaudeMcpRegistrationTimeoutError":
         case "CursorModelUnavailableError":
+        case "CodexGoalObjectiveTooLongError":
           return { known: stringField(cause, "message"), category: categoryMessage() };
+        case "CodexAppServerRequestError": {
+          // Only Codex's fixed-shape goal validation text is actionable and
+          // safe to show; other request error text stays hidden.
+          const rejection = stringField(cause, "message");
+          if (
+            (cause as Record<string, unknown>).method === "thread/goal/set" &&
+            rejection !== undefined &&
+            CODEX_GOAL_VALIDATION_MESSAGE.test(rejection)
+          ) {
+            return { known: `Codex rejected the goal: ${rejection}.`, category: categoryMessage() };
+          }
+          break;
+        }
         case "ContextHandoffDeliveryUncertainError":
           return {
             known:

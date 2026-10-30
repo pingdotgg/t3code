@@ -103,6 +103,16 @@ it("keeps unrecognized reasons and provider text out of category messages", () =
     { _tag: "ProviderAdapterProtocolError", reason: "private-config" },
     { _tag: "ProviderAdapterProtocolError", reason: "constructor" },
     { _tag: "constructor", cause: "private-config" },
+    {
+      _tag: "CodexAppServerRequestError",
+      method: "thread/goal/set",
+      message: "thread not found: private-thread",
+    },
+    {
+      _tag: "CodexAppServerRequestError",
+      method: "turn/start",
+      message: "goal objective must be at most 4000 characters",
+    },
   ]) {
     assert.equal(
       makeProviderFailure({ cause: { _tag: "ProviderAdapterTurnStartError", cause } }).message,
