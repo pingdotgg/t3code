@@ -34,7 +34,8 @@ const withGatewayHeaders = <A, E>(
       never
     >;
     readonly calls: Array<HookCall>;
-  }) => Effect.Effect<A, E>,
+    readonly filePath: string;
+  }) => Effect.Effect<A, E, FileSystem.FileSystem>,
   encryptionAvailable = true,
 ) =>
   Effect.gen(function* () {
@@ -68,7 +69,10 @@ const withGatewayHeaders = <A, E>(
         Effect.provide(layerDependencies),
         Effect.orDie,
       );
-    return yield* use({ start, calls });
+    const { stateDir } = yield* DesktopEnvironment.DesktopEnvironment.pipe(
+      Effect.provide(layerDependencies),
+    );
+    return yield* use({ start, calls, filePath: `${stateDir}/gateway-headers.json` });
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 const serviceToken = [
@@ -139,6 +143,24 @@ describe("DesktopGatewayHeaders", () => {
         assert.deepStrictEqual(yield* second.remove("wss://code.example.com/ws"), []);
         assert.deepStrictEqual(calls.at(-1)?.urls, null);
         assert.deepStrictEqual(yield* (yield* start()).list, []);
+      }),
+    ),
+  );
+
+  it.effect("leaves a saved file it cannot read untouched", () =>
+    withGatewayHeaders(({ start, filePath }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* (yield* start()).set({ origin: "https://code.example.com", headers: serviceToken });
+        yield* fileSystem.writeFileString(filePath, "unreadable");
+
+        const restarted = yield* start();
+        assert.deepStrictEqual(yield* restarted.list, []);
+        const error = yield* Effect.flip(
+          restarted.set({ origin: "https://other.example.com", headers: serviceToken }),
+        );
+        assert.strictEqual(error.reason, "read-failed");
+        assert.strictEqual(yield* fileSystem.readFileString(filePath), "unreadable");
       }),
     ),
   );

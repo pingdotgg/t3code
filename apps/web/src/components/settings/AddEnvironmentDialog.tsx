@@ -171,6 +171,7 @@ export function AddEnvironmentDialog({
 
     setSavedBackendHost("");
     setSavedBackendPairingCode("");
+    setSavedBackendGatewayHeaders("");
     setSavedBackendSshHost("");
     setSavedBackendSshUsername("");
     setSavedBackendSshPort("");

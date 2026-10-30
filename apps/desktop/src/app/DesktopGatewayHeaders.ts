@@ -40,6 +40,7 @@ export class DesktopGatewayHeadersError extends Schema.TaggedError<DesktopGatewa
     reason: Schema.Literals([
       "invalid-origin",
       "encryption-unavailable",
+      "read-failed",
       "persist-failed",
       "apply-failed",
     ]),
@@ -52,6 +53,8 @@ export class DesktopGatewayHeadersError extends Schema.TaggedError<DesktopGatewa
         return "Gateway headers need an http or https environment address.";
       case "encryption-unavailable":
         return "Gateway headers need the system keychain, which is unavailable.";
+      case "read-failed":
+        return "Could not read the saved gateway headers, so they were left unchanged.";
       case "persist-failed":
         return "Could not save the gateway headers.";
       case "apply-failed":
@@ -139,7 +142,8 @@ export const make = Effect.fn("DesktopGatewayHeaders.make")(function* (hook: Gat
   const path = yield* Path.Path;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const filePath = path.join(environment.stateDir, "gateway-headers.json");
-  const entriesRef = yield* Ref.make<GatewayHeadersEntries>([]);
+  // `null` until the saved file is read; a mutation must not overwrite a file it could not read.
+  const entriesRef = yield* Ref.make<GatewayHeadersEntries | null>(null);
   const mutex = yield* Semaphore.make(1);
 
   const apply = (entries: GatewayHeadersEntries) =>
@@ -199,24 +203,32 @@ export const make = Effect.fn("DesktopGatewayHeaders.make")(function* (hook: Gat
       : Effect.succeed(origin);
   };
 
-  const update = (change: (entries: GatewayHeadersEntries) => GatewayHeadersEntries) =>
-    mutex.withPermits(1)(
-      Ref.get(entriesRef).pipe(Effect.flatMap((entries) => persist(change(entries)))),
+  const current = Effect.gen(function* () {
+    const loaded = yield* Ref.get(entriesRef);
+    if (loaded !== null) return loaded;
+    const entries = yield* load.pipe(
+      Effect.mapError(() => new DesktopGatewayHeadersError({ reason: "read-failed" })),
     );
+    yield* Ref.set(entriesRef, entries);
+    return entries;
+  });
+
+  const update = (change: (entries: GatewayHeadersEntries) => GatewayHeadersEntries) =>
+    mutex.withPermits(1)(current.pipe(Effect.flatMap((entries) => persist(change(entries)))));
 
   return DesktopGatewayHeaders.of({
     install: Effect.gen(function* () {
-      const entries = yield* load.pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not read saved desktop gateway headers.", { cause }).pipe(
+      const entries = yield* current.pipe(
+        // The cause can quote a saved header value, so log nothing from it.
+        Effect.catch(() =>
+          Effect.logWarning("Could not read saved desktop gateway headers.").pipe(
             Effect.as<GatewayHeadersEntries>([]),
           ),
         ),
       );
-      yield* Ref.set(entriesRef, entries);
       yield* apply(entries);
     }).pipe(Effect.withSpan("DesktopGatewayHeaders.install")),
-    list: Ref.get(entriesRef).pipe(Effect.map(toEntryViews)),
+    list: Ref.get(entriesRef).pipe(Effect.map((entries) => toEntryViews(entries ?? []))),
     set: Effect.fn("DesktopGatewayHeaders.set")(function* (input) {
       const origin = yield* requireOrigin(input.origin);
       return yield* update((entries) => [
