@@ -788,6 +788,7 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("unlink", "/api/connect/unlink", {
       headers: OptionalBearerHeaders,
+      query: Schema.Struct({ expectedCloudUserId: Schema.optionalKey(TrimmedNonEmptyString) }),
       success: EnvironmentCloudRelayConfigResult,
       error: EnvironmentHttpCloudErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

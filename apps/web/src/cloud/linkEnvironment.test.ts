@@ -25,7 +25,11 @@ import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
-import { readPrimaryCloudLinkState, type CloudLinkTarget } from "./linkEnvironment";
+import {
+  readPrimaryCloudLinkState,
+  unlinkPrimaryEnvironmentFromCloud,
+  type CloudLinkTarget,
+} from "./linkEnvironment";
 
 const TARGET: CloudLinkTarget = {
   environmentId: "environment-1",
@@ -145,6 +149,93 @@ afterEach(() => {
 });
 
 describe("web cloud link environment client", () => {
+  it.effect(
+    "unlinks without relay-read access before deregistering the account from the relay",
+    () =>
+      Effect.gen(function* () {
+        const fetchMock = vi
+          .fn()
+          .mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = new Request(input, init);
+            return Promise.resolve(
+              request.method === "GET"
+                ? Response.json(
+                    { _tag: "EnvironmentHttpForbiddenError", message: "Missing relay:read" },
+                    { status: 403 },
+                  )
+                : Response.json({ ok: true, endpointRuntimeStatus: { status: "disabled" } }),
+            );
+          });
+        vi.stubGlobal("fetch", fetchMock);
+        vi.stubGlobal("window", { location: { origin: "http://127.0.0.1:3000" } });
+
+        yield* withServices(
+          unlinkPrimaryEnvironmentFromCloud({
+            target: TARGET,
+            clerkToken: "clerk-token",
+            expectedCloudUserId: "user-1",
+          }),
+        );
+
+        const requests = fetchMock.mock.calls.map(([input, init]) => new Request(input, init));
+        expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+          ["POST", "/api/connect/unlink"],
+          ["DELETE", "/v1/client/environment-links/environment-1"],
+        ]);
+        expect(new URL(requests[0]!.url).searchParams.get("expectedCloudUserId")).toBe("user-1");
+        expect(requests[1]!.headers.get("authorization")).toBe("Bearer clerk-token");
+      }),
+  );
+
+  it.effect("skips relay deregistration when guarded unlink reports an account mismatch", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(
+            { _tag: "EnvironmentHttpConflictError", message: "Account mismatch" },
+            { status: 409 },
+          ),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("window", { location: { origin: "http://127.0.0.1:3000" } });
+
+      yield* withServices(
+        unlinkPrimaryEnvironmentFromCloud({
+          target: TARGET,
+          clerkToken: "clerk-token",
+          expectedCloudUserId: "user-1",
+        }),
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const request = new Request(fetchMock.mock.calls[0]![0], fetchMock.mock.calls[0]![1]);
+      expect(request.method).toBe("POST");
+      expect(new URL(request.url).searchParams.get("expectedCloudUserId")).toBe("user-1");
+    }),
+  );
+
+  it.effect("preserves conflict failures for unguarded unlink", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(
+            { _tag: "EnvironmentHttpConflictError", message: "Unlink conflict" },
+            { status: 409 },
+          ),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("window", { location: { origin: "http://127.0.0.1:3000" } });
+
+      const error = yield* withServices(
+        unlinkPrimaryEnvironmentFromCloud({ target: TARGET, clerkToken: "clerk-token" }),
+      ).pipe(Effect.flip);
+
+      expect(error.message).toContain("Unlink conflict");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }),
+  );
   it.effect("uses desktop bearer auth for primary cloud link state", () =>
     Effect.gen(function* () {
       const fetchMock = vi.fn().mockResolvedValue(
