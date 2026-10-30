@@ -350,6 +350,48 @@ it.effect("records only failed calls of tools that hand off no work", () => {
   );
 });
 
+it.effect("rejects an unknown organize target instead of archiving the calling thread", () => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const outcome = yield* server
+      .callTool({
+        name: "t3_thread_organize",
+        arguments: { action: "archive", threadIds: ["other-thread"] },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.result,
+      );
+    expect(dispatched).toEqual([]);
+    expect(outcome).toMatchObject({
+      _tag: "Failure",
+      failure: { message: expect.stringContaining("Expected no excess property") },
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            dispatch: (command) => {
+              dispatched.push(command);
+              return Effect.succeed({ sequence: 1 } as never);
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("keeps unexpected handler defects private through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

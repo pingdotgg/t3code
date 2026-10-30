@@ -81,6 +81,10 @@ import {
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
 import { resolvePreviewAnnotationImage } from "./TimelineUserMessageRow.logic";
 
+// Drawn inside the media so dark screenshots keep an edge on the dark background.
+const MEDIA_EDGE_CLASS_NAME =
+  "relative after:pointer-events-none after:absolute after:inset-0 after:z-10 after:rounded-[inherit] after:ring-1 after:ring-inset after:ring-black/9 dark:after:ring-white/12";
+
 const BUBBLE_CHIP_CLASS_NAME =
   "[&_[data-slot=context-chip]]:[--context-chip-ink:var(--context-chip-message,var(--context-chip-accent))]";
 
@@ -327,9 +331,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       : null,
   );
   const senderLabel = senderShell?.title.trim() || "Agent";
-  const resolvedContext = resolveUserMessageContext(
-    userMessage.attribution === "guest" ? { ...row.message, text: userMessage.text } : row.message,
-  );
+  const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
   const chippedAttachmentIds = new Set(
@@ -340,6 +342,27 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
+  // Images or videos sent without words show as media, not as a bubble around them.
+  const mediaOnly =
+    !folded &&
+    userMessage.attribution !== "guest" &&
+    resolvedContext.text.trim() === "" &&
+    userAudio.length === 0 &&
+    unchippedFiles.length === 0 &&
+    unknownAttachments.length === 0 &&
+    regularImages.length + userVideos.length > 0;
+  // A lone image keeps its own shape; a 4:3 crop hides most of a wide screenshot.
+  const loneImage =
+    mediaOnly &&
+    userVideos.length === 0 &&
+    regularImages.length === 1 &&
+    regularImages[0]!.source?.kind !== "snap-shot";
+  // Several images sent without words share one rounded shape, split by hairlines.
+  const collage =
+    mediaOnly &&
+    userVideos.length === 0 &&
+    regularImages.length > 1 &&
+    regularImages.every((image) => image.source?.kind !== "snap-shot");
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
     .map((record) => record.contextId);
@@ -461,16 +484,19 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <GuestMessageName name={userMessage.guestName} />
         </div>
       ) : null}
-      {row.message.inputIntent === "steer" ||
-      row.message.inputIntent === "promoted_queued_to_steer" ? (
+      {(row.message.inputIntent === "steer" ||
+        row.message.inputIntent === "promoted_queued_to_steer") &&
+      !row.continuesSteer ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
       <div
         className={cn(
           "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
           BUBBLE_CHIP_CLASS_NAME,
-          userMessage.attribution === "guest" ? guestBubbleClassName(false) : "bg-message",
-          !folded && "p-3",
+          userMessage.attribution === "guest"
+            ? guestBubbleClassName(false)
+            : !mediaOnly && "bg-message",
+          !folded && !mediaOnly && "p-3",
           folded && expanded && "w-full",
         )}
       >
@@ -502,15 +528,45 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             )}
           >
             {(regularImages.length > 0 || userVideos.length > 0) && (
-              <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
-                {regularImages.map((image) => (
+              <div
+                className={cn(
+                  "grid",
+                  !mediaOnly
+                    ? "mb-2 max-w-[210px] grid-cols-2 gap-2"
+                    : loneImage
+                      ? "max-w-full"
+                      : collage
+                        ? cn(
+                            MEDIA_EDGE_CLASS_NAME,
+                            "w-80 max-w-full gap-px overflow-hidden rounded-2xl bg-black/9 dark:bg-white/12",
+                            regularImages.length === 2
+                              ? "auto-rows-[12rem] grid-cols-2"
+                              : regularImages.length === 3
+                                ? "auto-rows-[calc(6rem-0.5px)] grid-cols-[3fr_2fr]"
+                                : "auto-rows-[6rem] grid-cols-2",
+                          )
+                        : "w-80 max-w-full grid-cols-2 gap-2",
+                )}
+              >
+                {regularImages.map((image, index) => (
                   <div
                     key={image.id}
                     className={cn(
                       "bg-background/70",
                       image.source?.kind === "snap-shot" && image.previewUrl
                         ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
-                        : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+                        : loneImage
+                          ? cn(MEDIA_EDGE_CLASS_NAME, "overflow-hidden rounded-2xl")
+                          : collage
+                            ? cn(
+                                "overflow-hidden bg-background",
+                                regularImages.length === 3 && index === 0 && "row-span-2",
+                                regularImages.length > 3 &&
+                                  regularImages.length % 2 === 1 &&
+                                  index === regularImages.length - 1 &&
+                                  "col-span-2",
+                              )
+                            : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
                     )}
                   >
                     {image.previewUrl ? (
@@ -532,11 +588,23 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                           alt={image.name}
                           decoding="async"
                           loading="lazy"
-                          className="block size-full transform-gpu object-cover"
+                          className={cn(
+                            "block transform-gpu",
+                            // A fixed height keeps the row from growing when the image loads.
+                            loneImage
+                              ? "h-48 w-auto min-w-24 max-w-full object-cover"
+                              : "size-full object-cover",
+                          )}
                         />
                       </button>
                     ) : (
-                      <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground/70">
+                      <div
+                        className={cn(
+                          "flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground/70",
+                          loneImage && "h-48 w-64 max-w-full",
+                          collage && "h-full",
+                        )}
+                      >
                         {image.name}
                       </div>
                     )}
