@@ -3,6 +3,7 @@ import {
   WorkspacePresentationHostContext,
 } from "./workspace-presentation-context";
 import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
+import { useSoftKeyboardShowing } from "../keyboard/useSoftKeyboardShowing";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AdaptiveWorkspaceContext, useAdaptiveWorkspaceLayout } from "./adaptive-workspace-context";
 import { threadSelectionDeferral } from "./deferred-navigation";
@@ -17,7 +18,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
 import { use, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Keyboard, Platform, useWindowDimensions, View } from "react-native";
-import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
+import { KeyboardController, useKeyboardContext } from "react-native-keyboard-controller";
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -245,16 +246,27 @@ function AdaptiveWorkspaceLayoutContent(
     usesSplitView: baseLayout.usesSplitView,
   });
   const [composerEditing, setComposerEditing] = useState(false);
-  const softKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const softKeyboardVisible = useSoftKeyboardShowing();
   // Keyed on the soft keyboard, not focus: a hardware keyboard leaves room for the sidebar, and
-  // Back closes the keyboard while the editor keeps focus. Deferred so the composer commits its
-  // keyboard render first; relaying out in the same commit held it behind the keyboard.
+  // Back closes the keyboard while the editor keeps focus. The sidebar returns as the keyboard
+  // starts hiding, not after. Deferred so the composer commits its keyboard render first;
+  // relaying out in the same commit held it behind the keyboard.
   const composerKeyboardActive = useDeferredValue(
     Platform.OS === "android" && baseLayout.usesSplitView && composerEditing && softKeyboardVisible,
   );
+  const sidebarWithoutKeyboard =
+    !workspacePage && (primarySidebarPinned || preferredSidebarVisible);
   const showPrimarySidebar =
+    sidebarWithoutKeyboard && (primarySidebarPinned || !composerKeyboardActive);
+  // While the composer edits, the sidebar's width follows the keyboard's own progress, so it
+  // leaves and returns in step with the keyboard instead of on a timer of its own.
+  const keyboardHoldsSidebar =
+    Platform.OS === "android" &&
+    baseLayout.usesSplitView &&
     !workspacePage &&
-    (primarySidebarPinned || (preferredSidebarVisible && !composerKeyboardActive));
+    !primarySidebarPinned &&
+    (composerEditing || composerKeyboardActive);
+  const keyboardProgress = useKeyboardContext().reanimated.progress;
   const shouldRenderNavigationRail =
     Platform.OS === "android" && baseLayout.usesSplitView && !floatingTabsEnabled;
   const enabledTabs = useEnabledNavigationTabs();
@@ -340,6 +352,32 @@ function AdaptiveWorkspaceLayoutContent(
       layout,
       nativeWorkspace,
       showPrimarySidebar,
+      width,
+    ],
+  );
+  // Whether the sidebar is open once the keyboard is gone; the keyboard's progress scales it.
+  const sidebarRestsOpen = useMemo(
+    () =>
+      showPrimarySidebar === sidebarWithoutKeyboard
+        ? panes.primarySidebarVisible
+        : deriveWorkspacePaneLayout({
+            layout,
+            viewportWidth: width,
+            nativeWorkspace,
+            primarySidebarPreferredVisible: sidebarWithoutKeyboard,
+            auxiliaryPanePreferredVisible,
+            auxiliaryPaneRole,
+            auxiliaryPanePreferredWidth: auxiliaryPanePreferredWidth ?? undefined,
+          }).primarySidebarVisible,
+    [
+      auxiliaryPanePreferredVisible,
+      auxiliaryPaneRole,
+      auxiliaryPanePreferredWidth,
+      layout,
+      nativeWorkspace,
+      panes.primarySidebarVisible,
+      showPrimarySidebar,
+      sidebarWithoutKeyboard,
       width,
     ],
   );
@@ -720,10 +758,16 @@ function AdaptiveWorkspaceLayoutContent(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0) : 0,
   );
   const renderedRailWidth = useSharedValue(navigationRailWidth);
+  const keyboardHold = useSharedValue(keyboardHoldsSidebar);
   const leavingWorkspacePage = useRef(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- animates the Reanimated rail and sidebar width shared values toward the layout's targets
   useEffect(() => {
     if (nativeWorkspace) return;
+    // Released mid-keyboard (the composer blurred), the timing starts where the sidebar is drawn.
+    if (keyboardHold.get() && !keyboardHoldsSidebar) {
+      renderedSidebarWidth.set(renderedSidebarWidth.get() * (1 - keyboardProgress.get()));
+    }
+    keyboardHold.set(keyboardHoldsSidebar);
     renderedRailWidth.set(withTiming(navigationRailWidth, WORKSPACE_PANE_TIMING));
     // A workspace page hides the sidebar through React instead, in the same commit that mounts
     // the page. Animating it here would hide it a few frames before the page appears.
@@ -733,7 +777,7 @@ function AdaptiveWorkspaceLayoutContent(
     }
     const snap = leavingWorkspacePage.current;
     leavingWorkspacePage.current = false;
-    const targetWidth = panes.primarySidebarVisible
+    const targetWidth = (keyboardHoldsSidebar ? sidebarRestsOpen : panes.primarySidebarVisible)
       ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
       : 0;
     // The content beside it already took its final width when the page closed.
@@ -748,6 +792,10 @@ function AdaptiveWorkspaceLayoutContent(
     layout.listPaneWidth,
     layout.listPaneGap,
     panes.primarySidebarVisible,
+    keyboardHoldsSidebar,
+    keyboardHold,
+    keyboardProgress,
+    sidebarRestsOpen,
     renderedSidebarWidth,
     renderedRailWidth,
     settleListPane,
@@ -758,19 +806,23 @@ function AdaptiveWorkspaceLayoutContent(
   // Showing or hiding the sidebar clips a fixed-width list. A hinge resize instead tracks the
   // animated edge, so the header actions slide with it rather than jumping or being covered.
   const listPaneGap = layout.listPaneGap ?? 0;
+  const drawnSidebarWidth = useDerivedValue(
+    () => renderedSidebarWidth.value * (keyboardHold.value ? 1 - keyboardProgress.value : 1),
+  );
   const listPaneAnimatedStyle = useAnimatedStyle(() => ({
     width: Math.min(
       listPaneCeiling,
-      Math.max(listPaneFloor, renderedSidebarWidth.value - listPaneGap),
+      Math.max(listPaneFloor, drawnSidebarWidth.value - listPaneGap),
     ),
+    // Following the keyboard, the list rides the sidebar's edge like the content beside it,
+    // instead of being uncovered in place.
+    transform: [{ translateX: drawnSidebarWidth.value - renderedSidebarWidth.value }],
   }));
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     // Fading a UIKit glass ancestor can leave remounted header effects missing.
     opacity:
-      Platform.OS === "ios" || floatingTabsEnabled
-        ? 1
-        : Math.min(1, renderedSidebarWidth.value / 80),
-    width: renderedSidebarWidth.value,
+      Platform.OS === "ios" || floatingTabsEnabled ? 1 : Math.min(1, drawnSidebarWidth.value / 80),
+    width: drawnSidebarWidth.value,
   }));
 
   // Clip the navigator at its settled width so native headers and markdown reflow only once per pane toggle.
@@ -780,7 +832,7 @@ function AdaptiveWorkspaceLayoutContent(
       0,
       viewportWidth -
         renderedRailWidth.value -
-        renderedSidebarWidth.value -
+        drawnSidebarWidth.value -
         renderedInspectorWidth.value,
     ),
   );
@@ -933,14 +985,18 @@ function AdaptiveWorkspaceLayoutContent(
         <View
           collapsable={false}
           style={
-            contentTargetWidth !== null
-              ? {
-                  flex: 1,
-                  width: contentTargetWidth,
-                  alignSelf: contentAnchor.end ? "flex-end" : "flex-start",
-                  marginRight: contentAnchor.end ? contentEndGap : 0,
-                }
-              : { flex: 1 }
+            // While the keyboard moves the sidebar, the content tracks its edge every frame so
+            // the two land together; a settled width would jump when React commits mid-slide.
+            keyboardHoldsSidebar
+              ? { flex: 1, marginRight: contentEndGap }
+              : contentTargetWidth !== null
+                ? {
+                    flex: 1,
+                    width: contentTargetWidth,
+                    alignSelf: contentAnchor.end ? "flex-end" : "flex-start",
+                    marginRight: contentAnchor.end ? contentEndGap : 0,
+                  }
+                : { flex: 1 }
           }
         >
           {/* Android holds the content still, so its floating controls keep its width. */}

@@ -1,4 +1,4 @@
-import { useNavigation, useRoute } from "@react-navigation/native";
+import { useRoute } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
@@ -10,6 +10,7 @@ import { useWorkspaceSurface } from "../../workspace/useWorkspaceSurface";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
 import { useAdaptiveWorkspaceLayout } from "../../layout/adaptive-workspace-context";
+import { useSettingsPageBack } from "../useSettingsPageBack";
 import {
   ScreenScrollViewBottomInset,
   ScreenScrollViewSurface,
@@ -24,13 +25,13 @@ export function SettingsScreen(
     readonly workspaceRoot?: boolean;
   },
 ) {
-  const navigation = useNavigation();
   const route = useRoute();
   const workspace = useWorkspaceTabs();
   const surface = useWorkspaceSurface();
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
   const { layout } = useAdaptiveWorkspaceLayout();
+  const back = useSettingsPageBack();
   const cover = deviceType === "duo-folded";
   // Android opens Settings as a workspace tab; its root page has nothing to go back to.
   const workspaceRoot =
@@ -49,7 +50,7 @@ export function SettingsScreen(
         search={props.search}
         trailing={Platform.OS === "android" ? props.trailing : undefined}
         sidebar={false}
-        onBack={workspaceRoot ? undefined : () => navigation.goBack()}
+        onBack={workspaceRoot ? undefined : back}
         hideBottomBorder={!props.formSheet}
       />
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
