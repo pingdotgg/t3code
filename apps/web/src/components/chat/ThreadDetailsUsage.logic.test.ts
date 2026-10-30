@@ -241,6 +241,25 @@ describe("thread details limits", () => {
     expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
   });
 
+  it("does not borrow a login's hub account when its workspace could be another instance's", () => {
+    const signedIn = (id: string, workspaceId: string, limits: ServerProviderUsageLimits) => {
+      const base = claudeInstance(limits);
+      return {
+        ...base,
+        instanceId: ProviderInstanceId.make(id),
+        auth: { ...base.auth, email: "me@example.com", workspaceId },
+      };
+    };
+    const resolved = resolveThreadDetailsLimits(
+      instanceId,
+      [signedIn(instanceId, "team-a", unsupported), signedIn("claude-b", "team-b", limitsAt(10))],
+      [hub("hub", [{ id: "claude-x.json", email: "me@example.com", limits: limitsAt(25) }])],
+      now,
+    );
+
+    expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
+  });
+
   it("does not borrow a hub account in a different workspace of the same login", () => {
     const base = claudeInstance(unsupported);
     const inTeamA = {
