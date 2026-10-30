@@ -191,7 +191,6 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
-import { LRUCache } from "../lib/lruCache";
 import { chatRenderHast } from "../markdown/chatHast";
 import {
   type MarkdownIslandOptions,
@@ -474,28 +473,31 @@ function blockFileLinkSources(
   return { hrefs, spans };
 }
 
-// Links and code spans never cross blocks.
-const blockFileLinkSourcesCache = new LRUCache<BlockFileLinkSources>(2_000, 4 * 1024 * 1024);
+// Links and code spans never cross blocks: a streamed reply rescans only its open last block.
+const MAX_CACHED_BLOCKS = 2_000;
+const blockFileLinkSourcesByConfig = new Map<string, Map<string, BlockFileLinkSources>>();
 
 function fileLinkSourcesKey(
   text: string,
   cwd: string | undefined,
   imageBaseDir: string | undefined,
-  streaming: boolean,
+  streamingBlocks: ReadonlyArray<string> | null,
 ): string {
-  // A finished message scans once; a streamed one rescans only its open last block.
-  if (!streaming) {
+  if (!streamingBlocks) {
     const { hrefs, spans } = blockFileLinkSources(text, cwd, imageBaseDir);
     return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
   }
+  const config = `${cwd ?? ""}\u0000${imageBaseDir ?? ""}`;
+  let cache = blockFileLinkSourcesByConfig.get(config);
+  if (!cache) blockFileLinkSourcesByConfig.set(config, (cache = new Map()));
   const hrefs = new Set<string>();
   const spans = new Set<string>();
-  for (const block of splitMarkdownBlocks(text) ?? [text]) {
-    const key = `${cwd ?? ""}\u0000${imageBaseDir ?? ""}\u0000${block}`;
-    let sources = blockFileLinkSourcesCache.get(key);
+  for (const block of streamingBlocks) {
+    let sources = cache.get(block);
     if (!sources) {
+      if (cache.size >= MAX_CACHED_BLOCKS) cache.clear();
       sources = blockFileLinkSources(block, cwd, imageBaseDir);
-      blockFileLinkSourcesCache.set(key, sources, key.length * 2);
+      cache.set(block, sources);
     }
     for (const href of sources.hrefs) hrefs.add(href);
     for (const span of sources.spans) spans.add(span);
@@ -526,25 +528,28 @@ function resolveFileLinkSources(
   return { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath };
 }
 
-function useChatMarkdownState({
-  text,
-  inline = false,
-  cwd,
-  threadRef,
-  pullRequestPanelRef,
-  environmentId: explicitEnvironmentId,
-  onTaskListChange,
-  isStreaming = false,
-  skills = EMPTY_MARKDOWN_SKILLS,
-  onUseArtifactTemplate,
-  onRunShellCommand,
-  imageBaseDir,
-  workspaceMutationId,
-  onImageExpand,
-  renderContextReference,
-  headingLevelOffset = 0,
-  sourceControlMedia = false,
-}: ChatMarkdownProps) {
+function useChatMarkdownState(
+  {
+    text,
+    inline = false,
+    cwd,
+    threadRef,
+    pullRequestPanelRef,
+    environmentId: explicitEnvironmentId,
+    onTaskListChange,
+    isStreaming = false,
+    skills = EMPTY_MARKDOWN_SKILLS,
+    onUseArtifactTemplate,
+    onRunShellCommand,
+    imageBaseDir,
+    workspaceMutationId,
+    onImageExpand,
+    renderContextReference,
+    headingLevelOffset = 0,
+    sourceControlMedia = false,
+  }: ChatMarkdownProps,
+  streamingBlocks: ReadonlyArray<string> | null,
+) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
   const mediaRequestId = useRef(0);
@@ -720,7 +725,7 @@ function useChatMarkdownState({
   // Keyed by the file links found, not the text, so streamed text that adds none keeps the
   // renderer context, and every block reading it, unchanged.
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
-  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir, isStreaming)}`;
+  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir, isStreaming ? (streamingBlocks ?? splitMarkdownBlocks(text) ?? [text]) : null)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
     resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir);
   const resolveThreadPullRequest = (
@@ -1893,8 +1898,6 @@ function ChatMarkdown({
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
-  const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
-    useChatMarkdownState({ text, inline, ...props });
   // Streaming re-renders only the last block; offsets for task edits need the whole text.
   const streamingBlocks =
     props.isStreaming === true &&
@@ -1903,6 +1906,8 @@ function ChatMarkdown({
     !props.onTaskListChange
       ? splitMarkdownBlocks(text)
       : null;
+  const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
+    useChatMarkdownState({ text, inline, ...props }, streamingBlocks);
   const incrementalParsing =
     props.isStreaming === true &&
     streamingBlocks === null &&
