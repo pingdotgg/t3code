@@ -1335,22 +1335,39 @@ export const layer: Layer.Layer<
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
         const replacement = yield* loadFromProvider(
-          session.ensureThread({
-            threadId: projection.thread.id,
-            title: projection.thread.title,
-            modelSelection: run.modelSelection,
-            runtimePolicy: resolvedRuntimePolicy,
-            providerSessionId,
-            // Clear the native ref to force a fresh session while preserving row identity.
-            existingProviderThread: { ...providerThread, nativeThreadRef: null },
-            forceNewNativeThread: true,
-          }),
+          session
+            .ensureThread({
+              threadId: projection.thread.id,
+              title: projection.thread.title,
+              modelSelection: run.modelSelection,
+              runtimePolicy: resolvedRuntimePolicy,
+              providerSessionId,
+              // Clear the native ref to force a fresh session while preserving row identity.
+              existingProviderThread: { ...providerThread, nativeThreadRef: null },
+              forceNewNativeThread: true,
+            })
+            .pipe(
+              // A provider that hands back its existing session cannot take the recovery handoff.
+              Effect.filterOrFail(
+                (replacement) =>
+                  replacement.nativeThreadRef?.nativeId == null ||
+                  replacement.nativeThreadRef.nativeId !== providerThread.nativeThreadRef?.nativeId,
+                () =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: session.driver,
+                    detail:
+                      "the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session",
+                  }),
+              ),
+            ),
         );
         if (replacement === undefined) return undefined;
         const { handoff, transferId, createdAt } = yield* recoveryHandoff;
-        effectiveHandoffs = withRecoveryHandoff(handoff);
-        resumeFellBack = true;
-        yield* eventSink.write({
+        const replacementWrite = yield* eventSink.writeIfRunCurrent({
+          threadId: projection.thread.id,
+          runId: run.id,
+          activeAttemptId: attempt.id,
+          expectedStatus: "starting",
           events: [
             {
               id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
@@ -1389,6 +1406,9 @@ export const layer: Layer.Layer<
             },
           ],
         });
+        if (!replacementWrite.committed) return undefined;
+        effectiveHandoffs = withRecoveryHandoff(handoff);
+        resumeFellBack = true;
         return replacement;
       });
       if (loadedProviderThread === undefined) return;
