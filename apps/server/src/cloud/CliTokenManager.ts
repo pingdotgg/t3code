@@ -124,7 +124,6 @@ const PersistedToken = Schema.Struct({
   accessToken: Schema.String,
   refreshToken: Schema.String,
   expiresAtEpochMs: Schema.Number,
-  identity: Schema.optional(Schema.String),
 });
 export type PersistedToken = typeof PersistedToken.Type;
 
@@ -135,7 +134,6 @@ const encodePersistedToken = Schema.encodeEffect(PersistedTokenJson);
 const OAuthTokenResponse = Schema.Struct({
   access_token: Schema.String,
   refresh_token: Schema.optional(Schema.String),
-  id_token: Schema.optional(Schema.String),
   expires_in: Schema.Number,
   token_type: Schema.String,
 });
@@ -168,29 +166,6 @@ const DeviceAuthorizationResponse = Schema.Struct({
   expires_in: Schema.Number,
   interval: Schema.optional(Schema.Number),
 });
-
-const OidcIdentityClaimsJson = Schema.fromJsonString(
-  Schema.Struct({
-    email: Schema.optional(Schema.String),
-    preferred_username: Schema.optional(Schema.String),
-    sub: Schema.optional(Schema.String),
-  }),
-);
-const decodeOidcIdentityClaimsJson = Schema.decodeUnknownOption(OidcIdentityClaimsJson);
-
-function idTokenIdentity(idToken: string | undefined): string | null {
-  if (!idToken) return null;
-  const payload = idToken.split(".")[1];
-  if (!payload) return null;
-  const decoded = Base64Url.decodeString(payload);
-  if (decoded._tag !== "Success") return null;
-  const claims = decodeOidcIdentityClaimsJson(decoded.success);
-  if (Option.isNone(claims)) return null;
-  for (const value of [claims.value.email, claims.value.preferred_username, claims.value.sub]) {
-    if (typeof value === "string" && value.length > 0) return value;
-  }
-  return null;
-}
 
 export class CloudCliCredentialRemovalError extends Schema.TaggedError<CloudCliCredentialRemovalError>()(
   "CloudCliCredentialRemovalError",
@@ -299,16 +274,11 @@ const readTokenResponse = Effect.fn("cloud.cli_token.read_token_response")(funct
 ) {
   const body = yield* HttpClientResponse.schemaBodyJson(OAuthTokenResponse)(response);
   const now = yield* Clock.currentTimeMillis;
-  const identity = idTokenIdentity(body.id_token);
   return {
-    token: {
-      accessToken: body.access_token,
-      refreshToken: body.refresh_token ?? params.refresh_token ?? "",
-      expiresAtEpochMs: now + body.expires_in * 1_000,
-      ...(identity === null ? {} : { identity }),
-    } satisfies PersistedToken,
-    identity,
-  };
+    accessToken: body.access_token,
+    refreshToken: body.refresh_token ?? params.refresh_token ?? "",
+    expiresAtEpochMs: now + body.expires_in * 1_000,
+  } satisfies PersistedToken;
 });
 
 const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
@@ -495,14 +465,11 @@ export const make = Effect.gen(function* () {
 
   const refresh = Effect.fn("cloud.cli_token.refresh")(function* (token: PersistedToken) {
     const metadata = yield* cloudCliOAuthConfig;
-    const { token: refreshed } = yield* exchangeToken(metadata, {
+    return yield* exchangeToken(metadata, {
       grant_type: "refresh_token",
       refresh_token: token.refreshToken,
       client_id: metadata.clientId,
     });
-    return refreshed.identity === undefined && token.identity !== undefined
-      ? { ...refreshed, identity: token.identity }
-      : refreshed;
   });
 
   const login = Effect.fn("cloud.cli_token.login")(function* () {
@@ -561,7 +528,7 @@ export const make = Effect.gen(function* () {
     if (authorization._tag === "HeadlessRequested") {
       return authorization;
     }
-    const { token } = yield* exchangeToken(metadata, {
+    const token = yield* exchangeToken(metadata, {
       grant_type: "authorization_code",
       code: authorization.code,
       redirect_uri: metadata.redirectUri,
