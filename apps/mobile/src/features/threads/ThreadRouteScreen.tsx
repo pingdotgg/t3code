@@ -532,29 +532,12 @@ function ThreadRouteContent(
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
 
   const handleOpenGitInspector = () => {
-    if (!fileInspector.supported) {
-      if (selectedThread === null) {
-        return;
-      }
-      navigation.navigate("GitOverview", {
-        environmentId: String(selectedThread.environmentId),
-        threadId: String(selectedThread.id),
-      });
-      return;
-    }
     navigation.setParams({ inspector: undefined });
     setChosenInspectorMode("git");
     showInspector();
   };
   const handleOpenFilesInspector = () => {
     if (selectedThread === null || selectedThreadCwd === null) {
-      return;
-    }
-    if (!fileInspector.supported) {
-      navigation.navigate("ThreadFiles", {
-        environmentId: String(selectedThread.environmentId),
-        threadId: String(selectedThread.id),
-      });
       return;
     }
     navigation.setParams({ inspector: undefined });
@@ -577,33 +560,38 @@ function ThreadRouteContent(
       threadId: String(selectedThread.id),
       path: path.split("/").filter((segment) => segment.length > 0),
     };
-    if (fileInspector.supported) {
-      navigation.navigate("ThreadFile", params);
-      return;
-    }
     navigation.navigate("ThreadFile", params);
   };
-  const safeAreaInsets = useSafeAreaInsets();
-  const inspectorHeaderInset = Platform.OS === "ios" ? 0 : safeAreaInsets.top;
   const renderGitInspector = () => (
-    <GitOverviewSheet
-      headerInset={inspectorHeaderInset}
-      presentation="inspector"
-      route={{ params: { environmentId: environmentId!, threadId: threadId! } }}
-    />
+    <InspectorHeaderInset>
+      {(headerInset) => (
+        <GitOverviewSheet
+          headerInset={headerInset}
+          presentation="inspector"
+          route={{ params: { environmentId: environmentId!, threadId: threadId! } }}
+        />
+      )}
+    </InspectorHeaderInset>
   );
   const renderFilesInspector = () =>
     selectedThread !== null && selectedThreadCwd !== null ? (
-      <ThreadFileNavigatorPane
-        cwd={selectedThreadCwd}
-        environmentId={selectedThread.environmentId}
-        headerInset={inspectorHeaderInset}
-        projectName={selectedThreadProject?.title ?? "Files"}
-        selectedPath={null}
-        onSelectFile={handleSelectInspectorFile}
-      />
+      <InspectorHeaderInset>
+        {(headerInset) => (
+          <ThreadFileNavigatorPane
+            cwd={selectedThreadCwd}
+            environmentId={selectedThread.environmentId}
+            headerInset={headerInset}
+            projectName={selectedThreadProject?.title ?? "Files"}
+            selectedPath={null}
+            onSelectFile={handleSelectInspectorFile}
+          />
+        )}
+      </InspectorHeaderInset>
     ) : null;
-  const renderRouteInspector = () => props.renderInspector?.(inspectorHeaderInset);
+  const renderRouteInspector = () =>
+    props.renderInspector ? (
+      <InspectorHeaderInset>{props.renderInspector}</InspectorHeaderInset>
+    ) : null;
   const renderPreviewInspector = () =>
     previewTarget && panes.auxiliaryPaneVisible ? (
       <ThreadInspectorPreview
@@ -765,9 +753,8 @@ function ThreadRouteContent(
             onPress: handleToggleInspector,
           }
         : undefined,
-    onOpenFilesInspector:
-      fileInspector.supported && selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
-    onOpenGitInspector: fileInspector.supported ? handleOpenGitInspector : undefined,
+    onOpenFilesInspector: selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
+    onOpenGitInspector: handleOpenGitInspector,
     onMergeBack:
       mergeBackTargetThreadId !== null && mergeBackRun !== null
         ? () => void handleMergeBack()
@@ -1079,6 +1066,12 @@ function ThreadRouteContent(
       {renderThreadRouteBody()}
     </>
   );
+}
+
+/** The inspector's top inset where it renders: under an Android column's status bar, not a sheet's. */
+function InspectorHeaderInset(props: { readonly children: (headerInset: number) => ReactNode }) {
+  const insets = useSafeAreaInsets();
+  return props.children(Platform.OS === "ios" ? 0 : insets.top);
 }
 
 export function FullscreenThreadRouteScreen(
