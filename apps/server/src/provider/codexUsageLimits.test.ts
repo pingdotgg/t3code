@@ -1,4 +1,5 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { applyUsageLimitsUpdate } from "@t3tools/provider-core/server/usageLimits";
 import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import type { V2GetAccountRateLimitsResponse__RateLimitSnapshot } from "effect-codex-app-server/schema";
@@ -265,29 +266,58 @@ describe("codexRateLimitsToUpdate", () => {
     expect(codexRateLimitsToUpdate({ planType: "plus" })).toBeUndefined();
   });
 
-  it("states credit eligibility only when a notification changes it", () => {
-    const credits = { hasCredits: true, unlimited: false };
-    const eligible = { secondary: { usedPercent: 100, windowDurationMins: 10080 }, credits };
-    expect(codexRateLimitsToUpdate(eligible)?.continuesOnCredits).toBe(true);
-    expect(codexRateLimitsToUpdate(structuredClone(eligible), eligible)).toBeUndefined();
-    expect(codexRateLimitsToUpdate({ spendControlReached: true }, eligible)).toEqual({
+  it("only revokes the probe's credit grant, and only on an explicit block signal", () => {
+    const credits = { hasCredits: true, unlimited: false, balance: "42.50" };
+    const probe = {
+      limitId: "codex",
+      planType: "plus",
+      secondary: { usedPercent: 100, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+      credits,
+      spendControlReached: false,
+    } satisfies V2GetAccountRateLimitsResponse__RateLimitSnapshot;
+    // Codex sends null for policy fields it could not read on every ordinary notification.
+    const wire = {
+      limitId: "codex",
+      planType: "plus",
+      secondary: { usedPercent: 85, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+      credits,
+      spendControlReached: null,
+      individualLimit: null,
+      rateLimitReachedType: null,
+    } satisfies V2GetAccountRateLimitsResponse__RateLimitSnapshot;
+    const afterNotification = (
+      probed: V2GetAccountRateLimitsResponse__RateLimitSnapshot,
+      notification: V2GetAccountRateLimitsResponse__RateLimitSnapshot,
+    ) =>
+      applyUsageLimitsUpdate({
+        previous: codexRateLimitsToLimits({ checkedAt, snapshot: probed }),
+        update: codexRateLimitsToUpdate(notification) ?? { windows: [] },
+        checkedAt: "2026-07-18T10:00:05.000Z",
+      })?.continuesOnCredits;
+
+    for (const blocked of [
+      { ...probe, spendControlReached: true },
+      { ...probe, rateLimitReachedType: "workspace_member_usage_limit_reached" as const },
+      {
+        ...probe,
+        individualLimit: { limit: "50", used: "50", remainingPercent: 0, resetsAt: 1_784_500_000 },
+      },
+    ]) {
+      expect(afterNotification(blocked, wire)).toBeUndefined();
+    }
+    expect(afterNotification(probe, { ...wire, credits: null })).toBe(true);
+    expect(afterNotification(probe, { ...wire, spendControlReached: true })).toBe(false);
+    expect(
+      afterNotification(probe, {
+        ...wire,
+        credits: { hasCredits: false, unlimited: false, balance: "0" },
+      }),
+    ).toBe(false);
+    expect(codexRateLimitsToUpdate({ spendControlReached: true })).toEqual({
       windows: [],
       continuesOnCredits: false,
     });
-    expect(
-      codexRateLimitsToUpdate(
-        { rateLimitReachedType: "workspace_member_usage_limit_reached" },
-        eligible,
-      )?.continuesOnCredits,
-    ).toBe(false);
-    expect(
-      codexRateLimitsToUpdate({ credits: { hasCredits: false, unlimited: false } }, eligible)
-        ?.continuesOnCredits,
-    ).toBe(false);
-    expect(codexRateLimitsToUpdate({ spendControlReached: false }, eligible)).toBeUndefined();
-    expect(
-      codexRateLimitsToUpdate({ secondary: { usedPercent: 100, windowDurationMins: 10080 } }),
-    ).not.toHaveProperty("continuesOnCredits");
+    expect(codexRateLimitsToUpdate({ ...wire, secondary: null })).toBeUndefined();
   });
 
   it("ignores Spark notifications so they cannot overwrite the main allowance", () => {

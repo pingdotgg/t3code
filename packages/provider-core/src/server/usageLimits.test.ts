@@ -82,30 +82,28 @@ describe("applyUsageLimitsUpdate", () => {
     });
   });
 
-  it("drops credit spending when an update says the account can no longer spend", () => {
+  it("revokes a probe's credit grant, even without a window change, and nothing else", () => {
     const previous = { ...published, continuesOnCredits: true };
     const checkedAtNext = "2026-09-03T12:00:05.000Z";
-    expect(
+    const revoke = (
+      limits: typeof published & { readonly continuesOnCredits?: boolean },
+      windows = [] as ReadonlyArray<typeof weekly>,
+    ) =>
       applyUsageLimitsUpdate({
-        previous,
+        previous: limits,
         checkedAt: checkedAtNext,
-        update: { windows: [], continuesOnCredits: false },
-      }),
-    ).toEqual({ checkedAt: checkedAtNext, windows: [session, weekly] });
-    expect(
-      applyUsageLimitsUpdate({
-        previous,
-        checkedAt: checkedAtNext,
-        update: { windows: [{ ...weekly }], continuesOnCredits: false },
-      }),
-    ).toEqual({ checkedAt: checkedAtNext, windows: [session, weekly] });
-    expect(
-      applyUsageLimitsUpdate({
-        previous,
-        checkedAt: checkedAtNext,
-        update: { windows: [], continuesOnCredits: true },
-      }),
-    ).toBe(previous);
+        update: { windows, continuesOnCredits: false },
+      });
+    const revoked = {
+      checkedAt: checkedAtNext,
+      windows: [session, weekly],
+      continuesOnCredits: false,
+    };
+    expect(revoke(previous)).toEqual(revoked);
+    expect(revoke(previous, [weekly])).toEqual(revoked);
+    expect(revoke(published)).toBe(published);
+    const alreadyRevoked = { ...published, continuesOnCredits: false };
+    expect(revoke(alreadyRevoked)).toBe(alreadyRevoked);
   });
 });
 
@@ -137,6 +135,20 @@ describe("resolveUsageLimitsAfterProbe", () => {
     const newer = { ...probed, checkedAt: "2026-09-03T12:00:06.000Z" };
     expect(resolveUsageLimitsAfterProbe({ published: live, probed: sameTime })).toEqual(sameTime);
     expect(resolveUsageLimitsAfterProbe({ published: live, probed: newer })).toEqual(newer);
+  });
+
+  it("keeps a revocation published after the probe started, and lets a newer probe reset it", () => {
+    const revoked = {
+      ...published,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      continuesOnCredits: false,
+    };
+    const granted = { ...published, continuesOnCredits: true };
+    expect(
+      resolveUsageLimitsAfterProbe({ published: revoked, probed: granted })?.continuesOnCredits,
+    ).toBe(false);
+    const newer = { ...granted, checkedAt: "2026-09-03T12:00:06.000Z" };
+    expect(resolveUsageLimitsAfterProbe({ published: revoked, probed: newer })).toBe(newer);
   });
 
   it("keeps the last good windows through a failed probe but not an unsupported one", () => {
