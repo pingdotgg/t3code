@@ -182,7 +182,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerSettings from "./serverSettings.ts";
-import { collectSourceControlHostSecretReferences } from "./sourceControl/sourceControlHostSecrets.ts";
+import { invalidateSettingsSecrets } from "./secrets/settingsSecretValue.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -2313,13 +2313,7 @@ export const layerWsRpc = (
               yield* usageLimitSources.refresh;
             }
             if (input.reloadSecrets === true && input.instanceId === undefined) {
-              const references = yield* serverSettings.getSettings.pipe(
-                Effect.map((settings) =>
-                  collectSourceControlHostSecretReferences(settings.sourceControlHosts),
-                ),
-                Effect.orElseSucceed(() => []),
-              );
-              yield* secretResolver.invalidate(references);
+              yield* invalidateSettingsSecrets(secretResolver, serverSettings.getSettings);
             }
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({

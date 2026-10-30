@@ -4,7 +4,10 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { resolveSettingsSecret } from "../secrets/settingsSecretValue.ts";
+import {
+  invalidateSettingsSecrets,
+  resolveSettingsSecret,
+} from "../secrets/settingsSecretValue.ts";
 import {
   collectSourceControlHostSecretReferences,
   resolveSourceControlHostSecrets,
@@ -103,7 +106,8 @@ it.effect("reads a collected reference again once it is invalidated", () =>
         ),
       invalidate: (references) =>
         Effect.sync(() => {
-          for (const reference of references ?? []) cache.delete(reference.reference);
+          if (references === undefined) cache.clear();
+          else for (const reference of references) cache.delete(reference.reference);
         }),
     });
     const read = () =>
@@ -115,10 +119,16 @@ it.effect("reads a collected reference again once it is invalidated", () =>
       accessToken: "stale",
     });
     current = "rotated";
-    yield* resolver.invalidate(collectSourceControlHostSecretReferences(hosts));
+    yield* invalidateSettingsSecrets(resolver, Effect.succeed({ sourceControlHosts: hosts }));
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "rotated",
+    });
+    current = "rotated again";
+    yield* invalidateSettingsSecrets(resolver, Effect.fail("settings unreadable"));
+    assert.deepEqual((yield* read()).bitbucket, {
+      email: "me@example.test",
+      accessToken: "rotated again",
     });
   }),
 );
