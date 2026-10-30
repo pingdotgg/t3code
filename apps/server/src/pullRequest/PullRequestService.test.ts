@@ -2204,7 +2204,7 @@ it.effect("a refresh or a finished turn drops the provider's own change request 
         }),
       ],
       providers: [
-        fakeProvider(SourceControlProviderKind.make("gitlab"), {
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
           forgetChangeRequestReads: (scope) => Effect.sync(() => void forgotten.push(scope)),
         }),
       ],
@@ -2241,7 +2241,7 @@ it.effect("a read during a refresh cannot keep the provider's old change request
         }),
       ],
       providers: [
-        fakeProvider(SourceControlProviderKind.make("gitlab"), {
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
           getChangeRequest: () =>
             Effect.sync(() => {
               held ??= hostTitle;
