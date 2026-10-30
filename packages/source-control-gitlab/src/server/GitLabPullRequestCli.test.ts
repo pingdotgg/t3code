@@ -96,6 +96,58 @@ afterEach(() => {
 });
 
 layer("GitLabPullRequestCli.layer", (it) => {
+  it.effect("batches approval reads at GitLab's page limit and skips an empty list", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(({ stdin }) => {
+        const { variables } = JSON.parse(stdin ?? "{}");
+        return Effect.succeed(
+          output(
+            JSON.stringify({
+              data: {
+                metadata: { enterprise: true },
+                project: {
+                  mergeRequests: {
+                    nodes: variables.iids.map((iid: string) => ({
+                      iid,
+                      approved: true,
+                      approvedBy: { nodes: [{ username: "reviewer" }] },
+                    })),
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      });
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const reference = { cwd: "/w", repository: "acme/web", host: "gitlab.internal" };
+      expect(yield* cli.getReviewDecisions({ ...reference, numbers: [] })).toEqual(new Map());
+      expect(mockedExecute).not.toHaveBeenCalled();
+      const decisions = yield* cli.getReviewDecisions({
+        ...reference,
+        numbers: Array.from({ length: 101 }, (_, index) => index + 1),
+      });
+      expect(callAt(0).host).toBe(reference.host);
+      expect(callAt(1).host).toBe(reference.host);
+      expect(decisions.size).toBe(101);
+      expect(decisions.get(101)).toBe("approved");
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      expect(
+        [0, 1].map((index) => JSON.parse(callAt(index).stdin ?? "{}").variables.iids.length),
+      ).toEqual([100, 1]);
+      expect(argsOfCall(0)).toEqual([
+        "api",
+        "graphql",
+        "--method",
+        "POST",
+        "--input",
+        "-",
+        "--header",
+        "Content-Type: application/json",
+      ]);
+    }),
+  );
+
   it.effect("asks GitLab for one row more than the page, to probe for a next page", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(3, 1))));
