@@ -230,12 +230,15 @@ object AgentNotifications {
     // Only a one-row card on the alert's own thread is known to show nothing more
     // than the alert. Grouped alerts and cards with other rows stay visible.
     val covered = alerted && terminal != null && data["alert_path"] == data["activity_path"]
-    if (covered) prefs.edit().putString("coveredTerminal", terminal).apply()
     if (updatedAt < prefs.getLong("lastUpdate", 0)) {
       // A newer replay of this same finish may already show the card.
+      if (covered && prefs.getString("lastTerminal", null) == terminal) {
+        prefs.edit().putString("coveredTerminal", terminal).apply()
+      }
       if (isCovered(prefs, prefs.getString("lastTerminal", null))) cancelActivity(context)
       return
     }
+    if (covered) prefs.edit().putString("coveredTerminal", terminal).apply()
     prefs.edit().putLong("lastUpdate", updatedAt).putString("lastTerminal", terminal).apply()
     val active = data["active"] == "true"
     // Use absolute state expiry: a replay must not extend a finished card or

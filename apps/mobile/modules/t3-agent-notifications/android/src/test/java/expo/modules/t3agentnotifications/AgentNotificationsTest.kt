@@ -369,9 +369,18 @@ class AgentNotificationsTest {
     AgentNotifications.receive(context, finish + ("updated_at" to (now + 1000).toString()))
     assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
     assertTrue(manager.activeNotifications.any { it.id == "finish".hashCode() })
+    AgentNotifications.receive(
+      context,
+      finished("previous-run", now + 900000) + ("updated_at" to now.toString())
+    )
+    AgentNotifications.receive(
+      context,
+      finish.filterKeys { !it.startsWith("alert_") } + ("updated_at" to (now + 3000).toString())
+    )
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
     shadowOf(manager).setNotificationsEnabled(false)
     AgentNotifications.receive(context, update("revoked-permission", true))
-    assertEquals(4, manager.activeNotifications.size)
+    assertEquals(5, manager.activeNotifications.size)
   }
 
   @Test
