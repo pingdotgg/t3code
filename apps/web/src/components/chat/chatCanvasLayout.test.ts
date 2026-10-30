@@ -8,7 +8,7 @@ import {
 
 const preview: ChatCanvasPreview = {
   key: "browser:one",
-  width: 320,
+  width: null,
   position: null,
   source: { width: 1600, height: 1000 },
 };
@@ -23,13 +23,94 @@ const expectClear = (result: ReturnType<typeof resolve>) => {
 };
 
 describe("chat canvas layout", () => {
+  it.each([
+    { canvasWidth: 744, previewWidth: 240 },
+    { canvasWidth: 900, previewWidth: null },
+    { canvasWidth: 900, previewWidth: 240 },
+    { canvasWidth: 952, previewWidth: 400 },
+  ])(
+    "keeps chat fixed with a $previewWidth preview in a compact $canvasWidth pixel canvas",
+    ({ canvasWidth, previewWidth }) => {
+      const original = resolve(canvasWidth, null).chat;
+      for (const x of [12, canvasWidth / 2, canvasWidth - 252]) {
+        const result = resolve(canvasWidth, {
+          ...preview,
+          width: previewWidth,
+          position: { x, y: 200 },
+          source: { width: 390, height: 844 },
+        });
+        expect(result.chat).toEqual(original);
+        expect(result.overlapsChat).toBe(true);
+      }
+    },
+  );
+
+  it("reflows chat once the canvas has room for the minimum side-by-side layout", () => {
+    const result = resolve(953, {
+      ...preview,
+      width: 240,
+      position: { x: 701, y: 200 },
+    });
+    expect(result.chat).toMatchObject({ left: 48, width: 641 });
+    expectClear(result);
+  });
+
+  it.each([1012, 1040, 1100])(
+    "overlays a preview when details already constrain chat in a %spx canvas",
+    (width) => {
+      const layout = (preview: ChatCanvasPreview | null) =>
+        resolveChatCanvasLayout({
+          container: { width, height: 900 },
+          maxChatWidth: 736,
+          composerHeight: 180,
+          detailsCard: { left: width - 292, right: width - 12, bottom: 400 },
+          preview,
+        });
+      const original = layout(null).chat;
+      for (const x of [12, width / 2, width - 412]) {
+        const result = layout({
+          ...preview,
+          width: 400,
+          position: { x, y: 200 },
+          source: { width: 768, height: 1024 },
+        });
+        expect(result.chat).toEqual(original);
+        expect(result.overlapsChat).toBe(true);
+      }
+    },
+  );
+
+  it("folds details around a manually dragged preview and expands them after moving away", () => {
+    const container = { width: 1584, height: 988 };
+    const detailsCard = { left: 1292, right: 1572, bottom: 400 };
+    const layout = (position: ChatCanvasPreview["position"]) =>
+      resolveChatCanvasLayout({
+        container,
+        detailsCard,
+        preview: { ...preview, width: null, position },
+      });
+    const density = (result: ReturnType<typeof layout>) => {
+      const card = resolveThreadDetailsCardLayout({
+        container,
+        lane: { padding: 48, minChatWidth: 640 },
+        frame: result.frame,
+        overlapsDetailsCard: result.overlapsDetailsCard,
+      })!;
+      return resolveThreadDetailsCardDensity(card.height, { full: 388, compact: 182 });
+    };
+    const dragged = layout({ x: 1252, y: 275 });
+    expect(dragged.frame).toEqual({ x: 1252, y: 275, width: 320, height: 200 });
+    expect(density(dragged)).toBe("compact");
+    expect(density(layout({ x: 1252, y: 500 }))).toBe("full");
+    expect(layout(null).overlapsDetailsCard).toBe(false);
+  });
+
   it("lifts a growing preview above the composer without snapping at the chat boundary", () => {
     let previous: ReturnType<typeof resolve> | undefined;
     for (let width = 480; width <= 1100; width++) {
       const result = resolve(1344, {
         ...preview,
         width,
-        lastInteraction: "resize",
         position: { x: 1332 - width, y: 888 - Math.round(width / 1.6) },
       });
       const frame = result.frame!;
@@ -53,13 +134,11 @@ describe("chat canvas layout", () => {
     const moved = resolve(width, {
       ...preview,
       position: { x: start.x - 300, y: start.y },
-      lastInteraction: "drag",
     });
     expect(moved.frame).toEqual({ ...start, x: start.x - 300 });
     const returned = resolve(width, {
       ...preview,
       position: { x: start.x, y: start.y },
-      lastInteraction: "drag",
     });
     expect(returned.frame).toEqual(start);
   });
@@ -87,7 +166,7 @@ describe("chat canvas layout", () => {
     expect(resolve(1800, player).chat.width).toBe(768);
     expect(player.width).toBe(480);
   });
-  it("constrains a dragged preview below the full top-right card instead of folding it", () => {
+  it("folds the top-right card when a dragged preview crosses it", () => {
     const result = resolveChatCanvasLayout({
       container: { width: 1584, height: 988 },
       maxChatWidth: 736,
@@ -100,8 +179,8 @@ describe("chat canvas layout", () => {
         position: { x: 1260, y: 240 },
       },
     });
-    expect(result.frame).toEqual({ x: 1260, y: 351, width: 240, height: 365 });
-    expect(result.overlapsDetailsCard).toBe(false);
+    expect(result.frame).toEqual({ x: 1260, y: 240, width: 240, height: 365 });
+    expect(result.overlapsDetailsCard).toBe(true);
     expect(result.chat).toEqual({ left: 330, width: 736, insetStart: 0, insetEnd: 188 });
   });
   it("centers the chat beside a details card it would crowd", () => {
@@ -135,9 +214,9 @@ describe("chat canvas layout", () => {
       expect(Math.abs(leftAt(width + 1) - leftAt(width))).toBeLessThanOrEqual(1);
     }
   });
-  it("keeps a dragged or resized preview below the open find bar", () => {
+  it("keeps default-sized and explicitly sized previews below the open find bar", () => {
     const findBar = { left: 1292, right: 1572, bottom: 48 };
-    const layout = (lastInteraction: "drag" | "resize") =>
+    const layout = (width: number | null) =>
       resolveChatCanvasLayout({
         container: { width: 1584, height: 988 },
         maxChatWidth: 736,
@@ -145,20 +224,23 @@ describe("chat canvas layout", () => {
         findBar,
         preview: {
           ...preview,
-          width: 240,
+          width,
           source: { width: 240, height: 365 },
           position: { x: 1332, y: 12 },
-          lastInteraction,
         },
       });
-    for (const lastInteraction of ["drag", "resize"] as const) {
-      const result = layout(lastInteraction);
-      expect(result.frame).toEqual({ x: 1332, y: 60, width: 240, height: 365 });
+    for (const width of [null, 240]) {
+      const result = layout(width);
+      expect(result.frame).toEqual({
+        x: 1332,
+        y: 60,
+        ...(width === null ? { width: 210, height: 320 } : { width: 240, height: 365 }),
+      });
       expect(result.overlapsDetailsCard).toBe(false);
       expect(result.chat).toEqual({ left: 424, width: 736, insetStart: 0, insetEnd: 0 });
     }
   });
-  it("uses space beside the full card if a tall preview cannot fit below it", () => {
+  it("opens beside the full card if a tall preview cannot fit below it", () => {
     const result = resolveChatCanvasLayout({
       container: { width: 1584, height: 988 },
       maxChatWidth: 736,
@@ -168,14 +250,14 @@ describe("chat canvas layout", () => {
         ...preview,
         width: 240,
         source: { width: 240, height: 700 },
-        position: { x: 1260, y: 100 },
+        position: null,
       },
     });
-    expect(result.frame).toEqual({ x: 1008, y: 100, width: 240, height: 700 });
+    expect(result.frame).toEqual({ x: 1008, y: 276, width: 240, height: 700 });
     expect(result.overlapsDetailsCard).toBe(false);
     expectClear(result);
   });
-  it("keeps a large player when clearing the full card would leave no readable chat", () => {
+  it("preserves the chosen size while folding the card and keeping chat readable", () => {
     const container = { width: 1584, height: 988 };
     const source = { width: 1000, height: 1523 };
     const layout = (width: number) => {
@@ -197,13 +279,13 @@ describe("chat canvas layout", () => {
     const shifted = layout(460);
     expect(shifted.frame!.width).toBe(460);
     expect(shifted.chat.left).toBeLessThan(424);
-    expect(shifted.overlapsDetailsCard).toBe(false);
+    expect(shifted.overlapsDetailsCard).toBe(true);
     expectClear(shifted);
 
     const narrowed = layout(532);
     expect(narrowed.frame!.width).toBe(532);
-    expect(narrowed.chat.width).toBe(656);
-    expect(narrowed.overlapsDetailsCard).toBe(false);
+    expect(narrowed.chat.width).toBe(736);
+    expect(narrowed.overlapsDetailsCard).toBe(true);
     expectClear(narrowed);
 
     const grown = layout(600);
@@ -236,7 +318,6 @@ describe("chat canvas layout", () => {
             width: resized.width,
             position: resized,
             source,
-            lastInteraction: "resize",
           },
         });
       };
@@ -267,7 +348,7 @@ describe("chat canvas layout", () => {
       expect(density(layout(400))).toBe("full");
     },
   );
-  it("requests card folding only when no full-card slot fits and keeps the composer clear", () => {
+  it("folds details around an oversized preview while keeping the composer clear", () => {
     const result = resolveChatCanvasLayout({
       container: { width: 1584, height: 988 },
       maxChatWidth: 736,
@@ -277,7 +358,7 @@ describe("chat canvas layout", () => {
         ...preview,
         width: 1300,
         source: { width: 1300, height: 400 },
-        position: { x: 12, y: 12 },
+        position: { x: 12, y: 700 },
       },
     });
     expect(result.overlapsDetailsCard).toBe(true);

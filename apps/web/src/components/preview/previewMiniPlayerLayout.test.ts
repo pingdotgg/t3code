@@ -35,6 +35,65 @@ describe("resolvePreviewMiniPlayerSourceSize", () => {
 });
 
 describe("resolvePreviewMiniPlayerFrame", () => {
+  it("fits a portrait phone's default preview inside the default box", () => {
+    expect(
+      resolvePreviewMiniPlayerFrame({
+        width: null,
+        position: null,
+        source: { width: 390, height: 844 },
+        container,
+      }),
+    ).toMatchObject({ width: 148, height: 320 });
+  });
+
+  it.each([
+    { width: 390, height: 844 },
+    { width: 768, height: 1024 },
+    { width: 1024, height: 768 },
+  ])("lets a $width×$height device shrink below 240 pixels wide", (source) => {
+    const requestedWidth = source.width > source.height ? 210 : 140;
+    const expected = {
+      width: requestedWidth,
+      height: Math.round((requestedWidth * source.height) / source.width),
+    };
+    expect(
+      resolvePreviewMiniPlayerFrame({ width: requestedWidth, position: null, source, container }),
+    ).toMatchObject(expected);
+    expect(
+      resizePreviewMiniPlayer({
+        start: { x: 12, y: 12, width: 240, height: (240 * source.height) / source.width },
+        direction: "east",
+        delta: { x: requestedWidth - 240, y: 0 },
+        source,
+        container,
+      }),
+    ).toMatchObject(expected);
+  });
+
+  it("retains the 240×150 minimum for a 16:10 preview", () => {
+    expect(
+      resolvePreviewMiniPlayerFrame({ width: 1, position: null, source, container }),
+    ).toMatchObject({ width: 240, height: 150 });
+  });
+
+  it.each([
+    { source: { width: 1600, height: 900 }, width: 267 },
+    { source: { width: 2100, height: 900 }, width: 350 },
+  ])("keeps wide previews at least 150 pixels tall", ({ source, width }) => {
+    expect(
+      resolvePreviewMiniPlayerFrame({ width: 1, position: null, source, container }),
+    ).toMatchObject({ width, height: 150 });
+    expect(
+      resizePreviewMiniPlayer({
+        start: { x: 12, y: 12, width: 400, height: (400 * source.height) / source.width },
+        direction: "east",
+        delta: { x: -399, y: 0 },
+        source,
+        container,
+      }),
+    ).toMatchObject({ width, height: 150 });
+  });
+
   it("shrinks to the space above the composer without losing the stored width", () => {
     const frame = resolvePreviewMiniPlayerFrame({
       width: 800,

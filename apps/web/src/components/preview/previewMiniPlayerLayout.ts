@@ -14,7 +14,7 @@ export const PREVIEW_MINI_PLAYER_CORNER_RADIUS = 12;
 // The mini-player shell straddles this webview at 47 and 49: above --z-sheet, under dialogs (50).
 export const PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX = 48;
 const PREVIEW_MINI_PLAYER_DEFAULT_BOX = { width: 320, height: 320 } as const;
-const PREVIEW_MINI_PLAYER_MIN_SIZE = { width: 240, height: 150 } as const;
+export const PREVIEW_MINI_PLAYER_MIN_SIZE = { width: 240, height: 150 } as const;
 
 export interface PreviewMiniPlayerFrame extends PreviewMiniPlayerPosition, PreviewMiniPlayerSize {}
 
@@ -114,11 +114,7 @@ function fitPreviewMiniPlayerWidth(
 ): PreviewMiniPlayerSize {
   const aspectRatio = source.width / source.height;
   const width = Math.min(
-    Math.max(
-      desiredWidth,
-      PREVIEW_MINI_PLAYER_MIN_SIZE.width,
-      PREVIEW_MINI_PLAYER_MIN_SIZE.height * aspectRatio,
-    ),
+    Math.max(desiredWidth, PREVIEW_MINI_PLAYER_MIN_SIZE.height * aspectRatio),
     Math.max(1, max.width),
     Math.max(1, max.height * aspectRatio),
   );

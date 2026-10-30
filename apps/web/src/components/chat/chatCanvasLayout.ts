@@ -1,5 +1,6 @@
 import {
   clampPreviewMiniPlayerPosition,
+  PREVIEW_MINI_PLAYER_MIN_SIZE,
   resolvePreviewMiniPlayerFrame,
   type PreviewMiniPlayerFrame,
   type PreviewMiniPlayerObstacles,
@@ -71,15 +72,20 @@ export function resolveChatCanvasLayout({
   let frame: PreviewMiniPlayerFrame | null = null;
   let overlapsChat = false;
   if (preview && container.width > 0 && container.height > 0) {
+    const explicitlySized = preview.width !== null;
+    const canReflowChat =
+      normalWidth === centeredWidth &&
+      container.width > padding + minChatWidth + PREVIEW_MINI_PLAYER_MIN_SIZE.width + GAP * 2;
     frame = resolvePreviewMiniPlayerFrame({ ...preview, container });
     // Reserve a chat lane only if the preview still has room to drag.
     const minimumPreviewX =
-      preview.lastInteraction === "resize" ||
+      explicitlySized ||
+      !canReflowChat ||
       container.width <= padding + minChatWidth + frame.width + GAP * 2
         ? GAP
         : padding + minChatWidth + GAP;
     if (preview.position === null) frame = { ...frame, y: container.height - frame.height - GAP };
-    if (preview.lastInteraction === "resize" && composerHeight > 0) {
+    if (explicitlySized && composerHeight > 0) {
       const laneWidth = Math.min(normalWidth, minChatWidth);
       const transitionWidth = Math.max(GAP, normalWidth - laneWidth);
       const lift = Math.min(
@@ -111,7 +117,7 @@ export function resolveChatCanvasLayout({
             bottom: Math.max(detailsCard.bottom, findBar.bottom),
           }
         : (detailsCard ?? findBar);
-    const cardObstacle = preview.lastInteraction === "resize" ? findBar : dragObstacle;
+    const cardObstacle = preview.position === null ? dragObstacle : findBar;
     frame = {
       ...frame,
       ...clampPreviewMiniPlayerPosition(
@@ -125,6 +131,7 @@ export function resolveChatCanvasLayout({
     const chatBeside = (player: PreviewMiniPlayerFrame) => {
       const normalRight = normalLeft + normalWidth;
       if (player.x >= normalRight + GAP) return chat;
+      if (!canReflowChat) return null;
       const width = Math.min(maxChatWidth, player.x - GAP - padding);
       if (width < minChatWidth) return null;
       const left = Math.min(normalLeft, player.x - GAP - width);
@@ -142,7 +149,7 @@ export function resolveChatCanvasLayout({
     }
     if (nextChat) chat = nextChat;
     else overlapsChat = true;
-    if (overlapsChat && preview.lastInteraction === "resize") {
+    if (overlapsChat && explicitlySized && canReflowChat) {
       const width = Math.min(normalWidth, minChatWidth);
       chat = {
         left: padding,
