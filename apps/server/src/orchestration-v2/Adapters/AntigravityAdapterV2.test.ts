@@ -128,6 +128,49 @@ const layerSession = Layer.mergeAll(
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
 
+describe("AntigravityAdapterV2 compaction", () => {
+  it.effect("does not expose unsupported manual compaction on the provider session", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("antigravity-compaction-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const session = yield* adapter.openSession({
+        threadId: ThreadId.make("thread-antigravity-compaction"),
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-compaction"),
+        modelSelection: { instanceId, model: "gemini-test-low" },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+      assert.isUndefined(session.compactThread);
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
+
 describe("AntigravityAdapterV2 session open", () => {
   it.effect.each([
     {
