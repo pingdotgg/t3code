@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -72,6 +73,7 @@ function makeLayer(input: {
   readonly stall?: boolean;
   readonly git?: Partial<HostGit>;
   readonly env?: Record<string, string>;
+  readonly remoteUrl?: string;
 }) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
     input.stall
@@ -108,7 +110,7 @@ function makeLayer(input: {
       remotes: [
         {
           name: "origin",
-          url: "git@bitbucket.org:pingdotgg/t3code.git",
+          url: input.remoteUrl ?? "git@bitbucket.org:pingdotgg/t3code.git",
           pushUrl: Option.none(),
           isPrimary: true,
         },
@@ -336,6 +338,78 @@ it.effect("prefers an explicit repository and uses context when the repository i
     assert.strictEqual(listRemotes.mock.calls.length, 0);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("sends a self-hosted Bitbucket remote nowhere unless an API base url is configured", () =>
+  Effect.gen(function* () {
+    const remoteUrl = "https://bitbucket.example.com/scm/proj/repo.git";
+    const context = {
+      provider: {
+        kind: SourceControlProviderKind.make("bitbucket"),
+        name: "Bitbucket Self-Hosted",
+        baseUrl: "https://bitbucket.example.com",
+      },
+      remoteName: "origin",
+      remoteUrl,
+    };
+    const cloudEnv = {
+      T3CODE_BITBUCKET_EMAIL: "user@example.com",
+      T3CODE_BITBUCKET_API_TOKEN: "t",
+    };
+    const response = (request: HttpClientRequest.HttpClientRequest) =>
+      Response.json(request.url.endsWith("/branching-model") ? {} : repositoryJson);
+    const defaultBranch = (setup: ReturnType<typeof makeLayer>, withContext: boolean) =>
+      BitbucketApi.BitbucketApi.pipe(
+        Effect.flatMap((bitbucket) =>
+          bitbucket.getDefaultBranch({ cwd: "/repo", ...(withContext ? { context } : {}) }),
+        ),
+        Effect.provide(setup.layer),
+      );
+    const requestedUrls = (setup: ReturnType<typeof makeLayer>) =>
+      setup.execute.mock.calls.map(([request]) => request.url).toSorted();
+
+    // A self-hosted remote in the checkout, then a self-hosted context beside a Cloud remote.
+    for (const [setup, withContext] of [
+      [makeLayer({ response, env: cloudEnv, remoteUrl }), false],
+      [makeLayer({ response, env: cloudEnv }), true],
+    ] as const) {
+      const result = yield* defaultBranch(setup, withContext).pipe(Effect.result);
+      assert.deepStrictEqual(requestedUrls(setup), []);
+      assert.strictEqual(
+        Result.isFailure(result) && result.failure._tag,
+        "BitbucketRepositoryRemoteNotFoundError",
+      );
+    }
+
+    // An explicit repository does not let a self-hosted context reach the Cloud API.
+    const explicit = makeLayer({ response, env: cloudEnv });
+    const cloneUrls = yield* BitbucketApi.BitbucketApi.pipe(
+      Effect.flatMap((bitbucket) =>
+        bitbucket.getRepositoryCloneUrls({ cwd: "/repo", context, repository: "proj/repo" }),
+      ),
+      Effect.provide(explicit.layer),
+      Effect.result,
+    );
+    assert.deepStrictEqual(requestedUrls(explicit), []);
+    assert.strictEqual(
+      Result.isFailure(cloneUrls) && cloneUrls.failure._tag,
+      "BitbucketRepositoryRemoteNotFoundError",
+    );
+
+    const cloud = makeLayer({ response, env: cloudEnv });
+    yield* defaultBranch(cloud, false);
+    assert.deepStrictEqual(requestedUrls(cloud), [
+      "https://api.bitbucket.org/2.0/repositories/pingdotgg/t3code",
+      "https://api.bitbucket.org/2.0/repositories/pingdotgg/t3code/branching-model",
+    ]);
+
+    const configured = makeLayer({ response, remoteUrl });
+    yield* defaultBranch(configured, true);
+    assert.deepStrictEqual(requestedUrls(configured), [
+      "https://api.test.local/2.0/repositories/proj/repo",
+      "https://api.test.local/2.0/repositories/proj/repo/branching-model",
+    ]);
+  }),
+);
 
 it.effect(
   "prefers the Bitbucket branching model development branch as the default PR target",
