@@ -34,6 +34,8 @@ export const ServerProviderUsageLimits = Schema.Struct({
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  /** The account keeps working on credits after its windows run out. */
+  continuesOnCredits: Schema.optional(Schema.Boolean),
   externalUsage: Schema.optional(
     Schema.Struct({
       label: TrimmedNonEmptyString,

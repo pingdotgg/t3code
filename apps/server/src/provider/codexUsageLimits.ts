@@ -26,6 +26,11 @@ export interface CodexRateLimitSnapshot {
     readonly remainingPercent: number;
     readonly resetsAt: number;
   } | null;
+  readonly credits?: {
+    readonly hasCredits: boolean;
+    readonly unlimited: boolean;
+  } | null;
+  readonly spendControlReached?: boolean | null;
 }
 
 export interface CodexResetCreditsSummary {
@@ -123,13 +128,17 @@ export function codexRateLimitsToLimits(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
-  const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
+  const snapshot = input.rateLimitsByLimitId?.codex ?? input.snapshot;
+  const continuesOnCredits =
+    (snapshot.credits?.hasCredits === true || snapshot.credits?.unlimited === true) &&
+    snapshot.spendControlReached !== true;
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
-      windows,
+      windows: codexRateLimitsToWindows(snapshot),
     }),
     ...(resetCredits ? { resetCredits } : {}),
+    ...(continuesOnCredits ? { continuesOnCredits } : {}),
   };
 }
 

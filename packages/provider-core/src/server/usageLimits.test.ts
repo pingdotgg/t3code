@@ -66,18 +66,19 @@ describe("applyUsageLimitsUpdate", () => {
     ).toEqual({ checkedAt, windows: [weekly], unavailable: { reason: "probeFailed" } });
   });
 
-  it("preserves reset credits when a streamed window update changes usage", () => {
+  it("preserves reset credits and credit spending when a streamed window update changes usage", () => {
     const resetCredits = { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00.000Z" };
     const next = applyUsageLimitsUpdate({
-      previous: { ...published, resetCredits },
+      previous: { ...published, resetCredits, continuesOnCredits: true },
       checkedAt: "2026-09-03T12:00:05.000Z",
-      update: { windows: [{ ...session, usedPercent: 55 }] },
+      update: { windows: [{ ...weekly, usedPercent: 100 }] },
     });
 
     expect(next).toEqual({
       checkedAt: "2026-09-03T12:00:05.000Z",
-      windows: [{ ...session, usedPercent: 55 }, weekly],
+      windows: [session, { ...weekly, usedPercent: 100 }],
       resetCredits,
+      continuesOnCredits: true,
     });
   });
 });

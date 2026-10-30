@@ -26,6 +26,7 @@ export function exhaustedUsageWindow(
   now: number,
   model?: string,
 ) {
+  if (provider?.usageLimits?.continuesOnCredits) return undefined;
   const exhausted = (provider?.usageLimits?.windows ?? []).filter(
     (window) =>
       (window.usedPercent ?? 0) >= 100 &&
