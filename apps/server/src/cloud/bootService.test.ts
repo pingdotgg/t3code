@@ -70,6 +70,10 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
     '[Service]\nEnvironment=T3CODE_HOME="/srv/t3\\n"\n',
     `${unit}EnvironmentFile=/srv/t3.env\n`,
     `${unit}Environment=T3CODE_HOME=/srv/t3\n`,
+    unit.replace(/^ExecStart=/m, "Environment = T3CODE_HOME=/srv/t3\nExecStart="),
+    unit.replace(/^ExecStart=/m, "EnvironmentFile = /srv/t3.env\nExecStart="),
+    unit.replace(/^ExecStart=/m, "Environment=\nExecStart="),
+    unit.replace(/^ExecStart=/m, "Environment=PORT=3773 \\\n  T3CODE_HOME=/srv/t3\nExecStart="),
   ]) {
     expect(BootService.bootServiceBaseDirOf(unknown), unknown).toBeUndefined();
   }
@@ -654,21 +658,29 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
   );
 
   it.effect.each([
-    ["linux", '[Service]\nEnvironment="T3CODE_HOME=/srv/t3"\nExecStart=/srv/t3/t3\n'],
-    ["linux", "[Service]\nEnvironment=PORT=3773 T3CODE_HOME=/srv/t3\nExecStart=/srv/t3/t3\n"],
-    ["linux", "[Service]\nEnvironmentFile=/srv/t3.env\nExecStart=/srv/t3/t3\n"],
+    ["linux", () => '[Service]\nEnvironment="T3CODE_HOME=/srv/t3"\nExecStart=/srv/t3/t3\n'],
+    ["linux", () => "[Service]\nEnvironment=PORT=3773 T3CODE_HOME=/srv/t3\nExecStart=/srv/t3/t3\n"],
+    ["linux", () => "[Service]\nEnvironmentFile=/srv/t3.env\nExecStart=/srv/t3/t3\n"],
+    // systemd applies the later, spaced assignment, so this serves /srv/t3.
+    [
+      "linux",
+      (baseDir: string) =>
+        `[Service]\nEnvironment=T3CODE_HOME=${baseDir}\nEnvironment = T3CODE_HOME=/srv/t3\nExecStart=/srv/t3/t3\n`,
+    ],
     [
       "darwin",
-      "<plist>\n<dict>\n\t<key>T3CODE_HOME</key><!-- moved -->\n\t<string>/srv/t3</string>\n</dict>\n</plist>\n",
+      () =>
+        "<plist>\n<dict>\n\t<key>T3CODE_HOME</key><!-- moved -->\n\t<string>/srv/t3</string>\n</dict>\n</plist>\n",
     ],
     ["linux", undefined],
   ] as const)(
     "restart and install leave a %s service whose T3 home they cannot read alone",
-    ([platform, contents]) =>
+    ([platform, render]) =>
       Effect.gen(function* () {
-        const { service, fs, commands } = yield* makeHarness(platform);
+        const { service, fs, commands, baseDir } = yield* makeHarness(platform);
         const { unitPath } = yield* service.status;
         const path = yield* Path.Path;
+        const contents = render?.(baseDir);
         yield* fs.makeDirectory(contents === undefined ? unitPath : path.dirname(unitPath), {
           recursive: true,
         });

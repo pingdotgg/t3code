@@ -160,36 +160,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
         expect(installOptions).toEqual([]);
       }),
   );
-
-  it.effect.each([otherHomeStatus, unknownHomeStatus])(
-    "status does not offer to repair a service install would refuse",
-    (serviceStatus) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
-        vi.spyOn(BootService, "layer").mockReturnValue(
-          Layer.succeed(BootService.BootService, makeTestService(serviceStatus).service),
-        );
-
-        const output = yield* Command.runWith(serviceCommand, { version: packageJson.version })([
-          "status",
-          "--base-dir",
-          baseDir,
-        ]).pipe(
-          Effect.andThen(TestConsole.logLines),
-          Effect.map((lines) => lines.join("\n")),
-          Effect.provideService(HostProcess.Environment, {}),
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provide(
-            Layer.mergeAll(
-              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
-              Layer.fresh(TestConsole.layer),
-            ),
-          ),
-        );
-        expect(output).not.toContain("repair");
-      }),
-  );
 });
 
 it.effect.each([

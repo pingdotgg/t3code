@@ -17,7 +17,7 @@ import {
   BOOT_SERVICE_LAUNCHD_LABEL,
   BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_UNIT_FILE,
-  bootServiceBaseDirOf,
+  bootServiceBaseDirHintOf,
 } from "./cloud/bootService.ts";
 import { ServiceLauncherHostProcess } from "./cloud/serviceLauncherClient.ts";
 import {
@@ -126,7 +126,7 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
       platform === "darwin"
         ? NodePath.join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
         : NodePath.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
-    const baseDir = bootServiceBaseDirOf(yield* fs.readFileString(unitPath));
+    const baseDir = bootServiceBaseDirHintOf(yield* fs.readFileString(unitPath));
     if (
       baseDir === undefined ||
       (yield* fs.realPath(NodePath.join(baseDir, "userdata"))) !== (yield* fs.realPath(stateDir))

@@ -27,6 +27,7 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   readonly platform: "darwin" | "linux";
   readonly outputs: Readonly<Record<string, { readonly code: number; readonly stdout?: string }>>;
   readonly unitServesOtherHome?: boolean;
+  readonly serviceLines?: string;
   readonly restartPending?: boolean;
   readonly activeVersion?: string;
   readonly npmRuntime?: boolean;
@@ -79,7 +80,10 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
         ]
       : [
           path.join(root, ".config", "systemd", "user", "t3code.service"),
-          renderBootServiceUnit(plan),
+          renderBootServiceUnit(plan).replace(
+            "[Service]\n",
+            `[Service]\n${input.serviceLines ?? ""}`,
+          ),
         ];
   yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
   yield* fs.writeFileString(unitPath, unit);
@@ -356,6 +360,12 @@ describe("server ownership", () => {
               "systemctl is-active": { code: 3, stdout: "inactive\n" },
               "systemctl is-enabled": { code: 0, stdout: "enabled\n" },
             },
+          },
+          {
+            platform: "linux",
+            // Install refuses to vouch for this hand edit, but it still names this home.
+            serviceLines: "EnvironmentFile=-/not-present.env\n",
+            outputs: { "systemctl is-active": { code: 0, stdout: "active\n" } },
           },
           {
             platform: "darwin",

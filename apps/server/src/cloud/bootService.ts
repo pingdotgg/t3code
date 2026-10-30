@@ -100,16 +100,24 @@ const unescapeXmlText = (value: string) => {
 const SYSTEMD_BASE_DIR =
   /^Environment=T3CODE_HOME=((?:[^\s"'\\%]|%%)+|"(?:\\["\\]|[^"\\%]|%%)*")[ \t]*$/;
 
+/** systemd allows blanks around `=`; an empty `Environment=` resets earlier assignments. */
+const SYSTEMD_HOME_SOURCE =
+  /^[ \t]*[A-Za-z]*Environment(?:File[ \t]*=.*|[ \t]*=(?:[ \t]*|.*T3CODE_HOME.*))$/gm;
+
 /**
  * The T3 home a unit or plist serves, or undefined when it cannot be known.
  * Only the shapes this file renders count. Anything else that could set the
- * home (another assignment, an EnvironmentFile, a comment) makes it unknown.
+ * home (another assignment, an EnvironmentFile, a reset, a line continuation,
+ * a comment) makes it unknown.
  */
 export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const [line, ...moreLines] =
-    contents.match(/^[ \t]*[A-Za-z]*Environment(?:File=.*|=.*T3CODE_HOME.*)$/gm) ?? [];
+  const [line, ...moreLines] = contents.match(SYSTEMD_HOME_SOURCE) ?? [];
   if (line !== undefined) {
-    const value = moreLines.length === 0 ? SYSTEMD_BASE_DIR.exec(line)?.[1] : undefined;
+    // A trailing backslash joins the next line, which can carry an assignment.
+    const value =
+      moreLines.length === 0 && !/\\[ \t]*$/m.test(contents)
+        ? SYSTEMD_BASE_DIR.exec(line)?.[1]
+        : undefined;
     return value === undefined ? undefined : unquoteSystemdValue(value);
   }
   const [, afterKey, ...moreKeys] = contents.split("<key>T3CODE_HOME</key>");
@@ -118,6 +126,17 @@ export function bootServiceBaseDirOf(contents: string): string | undefined {
       ? /^\s*<string>([^<]*)<\/string>/.exec(afterKey)?.[1]
       : undefined;
   return value === undefined ? undefined : unescapeXmlText(value);
+}
+
+/**
+ * A home the unit or plist may serve, read past hand edits. For checks that must
+ * not miss a running service; install and status need `bootServiceBaseDirOf`.
+ */
+export function bootServiceBaseDirHintOf(contents: string): string | undefined {
+  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
+  if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
+  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  return plist === undefined ? undefined : unescapeXmlText(plist);
 }
 
 /** The executable an installed unit or plist starts: the launcher's runtime. */
