@@ -13,7 +13,6 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useFocusEffect } from "@react-navigation/native";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
 import {
   use,
@@ -44,13 +43,11 @@ import {
   deriveWorkspacePaneLayout,
   isPrimarySidebarPinned,
   isWorkspaceListPath,
-  type WorkspaceAuxiliaryPaneRole,
 } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
-import { useThreadCwd } from "../../state/use-selected-thread-worktree";
 import { environmentThreadShells } from "../../state/threads";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
@@ -115,38 +112,39 @@ import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 
 export { useAdaptiveWorkspaceLayout };
 
-export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
-  const { activateAuxiliaryPaneRole } = useAdaptiveWorkspaceLayout();
-
-  useFocusEffect(() => activateAuxiliaryPaneRole(role));
-}
-
-/** Capture inspector navigation contexts. Register on focus events because frozen blurred screens may never clean up. */
-export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefined) {
+/**
+ * Shows its children in the workspace's inspector column while this screen is focused. Register on
+ * focus events because frozen blurred screens may never clean up.
+ */
+export function Inspector(props: {
+  readonly children: ReactNode;
+  /** Opens the column the first time this key registers while its route stays on the stack. */
+  readonly revealKey?: string;
+}) {
   const { registerWorkspaceInspector } = useAdaptiveWorkspaceLayout();
   const navigation = use(NavigationContext);
   const route = use(NavigationRouteContext);
-
-  const wrappedRender = (() => {
-    if (render === undefined) {
-      return undefined;
-    }
-    return () => (
-      <NavigationContext.Provider value={navigation}>
-        <NavigationRouteContext.Provider value={route}>{render()}</NavigationRouteContext.Provider>
-      </NavigationContext.Provider>
-    );
-  })();
+  const render = () => (
+    <NavigationContext.Provider value={navigation}>
+      <NavigationRouteContext.Provider value={route}>
+        {props.children}
+      </NavigationRouteContext.Provider>
+    </NavigationContext.Provider>
+  );
+  const reveal =
+    props.revealKey === undefined || route === undefined
+      ? undefined
+      : { routeKey: route.key, key: props.revealKey };
 
   const focusedRef = useRef(false);
   const deactivateRef = useRef<(() => void) | null>(null);
 
   const syncRegistration = useEffectEvent(() => {
-    if (!focusedRef.current || wrappedRender === undefined) {
+    if (!focusedRef.current) {
       deactivateRef.current?.();
       return;
     }
-    deactivateRef.current = registerWorkspaceInspector(wrappedRender);
+    deactivateRef.current = registerWorkspaceInspector(render, reveal);
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Navigation focus events own the inspector registration lifetime.
@@ -173,13 +171,14 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
     };
   }, [navigation]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Changed pane content replaces the focused inspector registration.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Changed column content replaces the focused inspector registration.
   useEffect(() => {
     if (focusedRef.current) {
       syncRegistration();
     }
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changed pane content replaces its existing native workspace registration.
-  }, [wrappedRender]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changed column content replaces its existing native workspace registration.
+  }, [props.children, props.revealKey]);
+  return null;
 }
 
 export function AdaptiveWorkspaceLayout(props: {
@@ -187,7 +186,6 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly pathname: string;
   readonly workspaceRouteKey: string | undefined;
   readonly workspaceRouteName: string | undefined;
-  readonly workspaceRouteKeys: ReadonlyArray<string>;
   readonly selectedPullRequestKey?: string | null;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
@@ -215,7 +213,6 @@ function AdaptiveWorkspaceLayoutContent(
     readonly pathname: string;
     readonly workspaceRouteKey: string | undefined;
     readonly workspaceRouteName: string | undefined;
-    readonly workspaceRouteKeys: ReadonlyArray<string>;
     readonly selectedPullRequestKey?: string | null;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
@@ -237,20 +234,13 @@ function AdaptiveWorkspaceLayoutContent(
   const workspacePage =
     Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
   const navigation = useNavigation();
-  const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
-  const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
-  const [supplementaryPanePreferredWidth, setSupplementaryPanePreferredWidth] = useState<
-    number | null
-  >(null);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
   const [fileInspectorPreferredWidth, setFileInspectorPreferredWidth] = useState<number | null>(
     null,
   );
   const [primarySidebarSearchQuery, setPrimarySidebarSearchQuery] = useState("");
   const [railOverlay, setRailOverlay] = useState(false);
-  const [focusedAuxiliaryPaneRole, setFocusedAuxiliaryPaneRole] =
-    useState<WorkspaceAuxiliaryPaneRole | null>(null);
   // The compiler can't memoize these derivations: they stay live across later hook calls. Fresh
   // objects here change the workspace context on every render, so every workspace screen
   // re-renders on any layout state change, and the inspector registration then loops: each
@@ -356,17 +346,11 @@ function AdaptiveWorkspaceLayoutContent(
       }),
     [fileInspectorPreferredWidth, layout, showPrimarySidebar, shouldRenderPrimarySidebar, width],
   );
-  const auxiliaryPaneRole: WorkspaceAuxiliaryPaneRole =
-    focusedAuxiliaryPaneRole ?? (/\/files(?:\/|$)/.test(pathname) ? "inspector" : "supplementary");
-  const auxiliaryPanePreferredVisible =
-    !workspacePage &&
-    (auxiliaryPaneRole === "inspector"
-      ? fileInspectorPreferredVisible
-      : supplementaryPanePreferredVisible);
-  const auxiliaryPanePreferredWidth =
-    auxiliaryPaneRole === "inspector"
-      ? fileInspectorPreferredWidth
-      : supplementaryPanePreferredWidth;
+  const [workspaceInspector, setWorkspaceInspector] = useState<{
+    readonly render: () => ReactNode;
+    readonly active: boolean;
+  } | null>(null);
+  const inspectorActive = workspaceInspector?.active ?? false;
   const panes = useMemo(
     () =>
       deriveWorkspacePaneLayout({
@@ -374,18 +358,20 @@ function AdaptiveWorkspaceLayoutContent(
         viewportWidth: width,
         nativeWorkspace,
         primarySidebarPreferredVisible: showPrimarySidebar,
-        auxiliaryPanePreferredVisible,
-        auxiliaryPaneRole,
-        auxiliaryPanePreferredWidth: auxiliaryPanePreferredWidth ?? undefined,
+        // Only a column a screen fills makes room, so a stale preference can't hide the sidebar.
+        auxiliaryPanePreferredVisible:
+          !workspacePage && inspectorActive && fileInspectorPreferredVisible,
+        auxiliaryPanePreferredWidth: fileInspectorPreferredWidth ?? undefined,
       }),
     [
-      auxiliaryPanePreferredVisible,
-      auxiliaryPaneRole,
-      auxiliaryPanePreferredWidth,
+      fileInspectorPreferredVisible,
+      fileInspectorPreferredWidth,
+      inspectorActive,
       layout,
       nativeWorkspace,
       showPrimarySidebar,
       width,
+      workspacePage,
     ],
   );
   const activeThread = parseActiveThreadPath(pathname);
@@ -408,44 +394,26 @@ function AdaptiveWorkspaceLayoutContent(
     selectedThreadRef === null
       ? null
       : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
-  const isFilesRoute = props.workspaceRouteName === "ThreadFiles";
-  // Same resolution the Files screen uses: without a cwd it shows "Files unavailable" and
-  // registers no inspector, so revealing would only hide the sidebar beside that screen.
-  const filesCwd = useThreadCwd(isFilesRoute && fileInspector.supported ? selectedThreadRef : null);
-  // Opening a review or the files route reveals its inspector once per route and thread.
   // Routes still on the stack remember their reveal, so going back to one keeps the user's choice.
-  const revealsInspector =
-    props.workspaceRouteName === "ThreadReview" || (isFilesRoute && filesCwd !== null);
-  const [revealedInspectors, setRevealedInspectors] = useState<ReadonlyMap<string, string>>(
-    () => new Map(),
-  );
-  if (
-    revealsInspector &&
-    props.workspaceRouteKey !== undefined &&
-    selectedThreadKey !== null &&
-    revealedInspectors.get(props.workspaceRouteKey) !== selectedThreadKey
-  ) {
-    const next = new Map<string, string>();
-    for (const routeKey of props.workspaceRouteKeys) {
-      const revealedThreadKey = revealedInspectors.get(routeKey);
-      if (revealedThreadKey !== undefined) {
-        next.set(routeKey, revealedThreadKey);
-      }
-    }
-    next.set(props.workspaceRouteKey, selectedThreadKey);
-    setRevealedInspectors(next);
-    setFocusedAuxiliaryPaneRole("inspector");
-    setFileInspectorPreferredVisible(true);
-  }
-  const [workspaceInspector, setWorkspaceInspector] = useState<{
-    readonly render: () => ReactNode;
-    readonly active: boolean;
-  } | null>(null);
+  const revealedInspectors = useRef<ReadonlyMap<string, string>>(new Map());
   const workspaceInspectorOwner = useRef<symbol | null>(null);
-  const registerWorkspaceInspector = (render: () => ReactNode) => {
+  const registerWorkspaceInspector = (
+    render: () => ReactNode,
+    reveal?: { readonly routeKey: string; readonly key: string },
+  ) => {
     const owner = Symbol("workspace-inspector");
     workspaceInspectorOwner.current = owner;
     setWorkspaceInspector({ render, active: true });
+    if (reveal && revealedInspectors.current.get(reveal.routeKey) !== reveal.key) {
+      const state = rootStackState(navigation);
+      const live = new Set(state?.routes.slice(0, state.index + 1).map((route) => route.key));
+      revealedInspectors.current = new Map(
+        [...revealedInspectors.current, [reveal.routeKey, reveal.key] as const].filter(
+          ([routeKey]) => live.has(routeKey) || routeKey === reveal.routeKey,
+        ),
+      );
+      setFileInspectorPreferredVisible(true);
+    }
 
     return () => {
       // Outgoing screens deactivate after incoming registration; only the current owner may deactivate.
@@ -457,19 +425,6 @@ function AdaptiveWorkspaceLayoutContent(
   };
   const handleWorkspaceInspectorClosed = () => {
     setWorkspaceInspector((current) => (current !== null && !current.active ? null : current));
-  };
-  const activateAuxiliaryPaneRole = (role: WorkspaceAuxiliaryPaneRole) => {
-    const owner = Symbol(role);
-    activeRoleOwner.current = owner;
-    setFocusedAuxiliaryPaneRole(role);
-
-    return () => {
-      if (activeRoleOwner.current !== owner) {
-        return;
-      }
-      activeRoleOwner.current = null;
-      setFocusedAuxiliaryPaneRole(null);
-    };
   };
   const setPrimarySidebarVisible = (visible: boolean) => {
     if (layout.primarySidebarOverlaysContent) {
@@ -508,42 +463,21 @@ function AdaptiveWorkspaceLayoutContent(
   };
   const sidebarCommands = primarySidebarPinned ? [] : (["toggleSidebar"] as const);
   useHardwareKeyboardCommand(sidebarCommands, handleToggleSidebarCommand);
-  const showAuxiliaryPane = (role: WorkspaceAuxiliaryPaneRole) => {
-    if (role === "inspector") {
-      setFocusedAuxiliaryPaneRole("inspector");
-      setFileInspectorPreferredVisible(true);
-      return;
-    }
-    setFocusedAuxiliaryPaneRole("supplementary");
-    setSupplementaryPanePreferredVisible(true);
-  };
+  const showInspector = () => setFileInspectorPreferredVisible(true);
   const handleOpenFilesCommand = () => {
     const activeThread = parseActiveThreadPath(pathname);
     if (!layout.usesSplitView || !fileInspector.supported || activeThread === null) {
       return false;
     }
-    showAuxiliaryPane("inspector");
-    if (/\/files(?:\/|$)/.test(pathname)) {
+    showInspector();
+    if (props.workspaceRouteName === "ThreadFiles" || props.workspaceRouteName === "ThreadFile") {
       return true;
     }
     navigation.navigate("ThreadFiles", activeThread);
     return true;
   };
   useHardwareKeyboardCommand("files", handleOpenFilesCommand);
-  const toggleAuxiliaryPane = () => {
-    if (auxiliaryPaneRole === "inspector") {
-      setFileInspectorPreferredVisible((current) => !current);
-      return;
-    }
-    setSupplementaryPanePreferredVisible((current) => !current);
-  };
-  const setAuxiliaryPaneWidth = (nextWidth: number) => {
-    if (auxiliaryPaneRole === "inspector") {
-      setFileInspectorPreferredWidth(nextWidth);
-      return;
-    }
-    setSupplementaryPanePreferredWidth(nextWidth);
-  };
+  const toggleAuxiliaryPane = () => setFileInspectorPreferredVisible((current) => !current);
   /**
    * The one way to open a workspace tab: replaces the workspace with the tab's list and, when the
    * window has columns, the page it last showed, keeping any sheet on top. An overlay sidebar
@@ -667,10 +601,9 @@ function AdaptiveWorkspaceLayoutContent(
     });
   };
 
-  const inspectorColumnTargetWidth =
-    workspaceInspector !== null && workspaceInspector.active && panes.auxiliaryPaneVisible
-      ? (panes.auxiliaryPaneWidth ?? 0)
-      : 0;
+  const inspectorColumnTargetWidth = panes.auxiliaryPaneVisible
+    ? (panes.auxiliaryPaneWidth ?? 0)
+    : 0;
   // Android's split content is a rounded card: keep it off the screen edge like the list card.
   const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
   const contentTargetWidth = layout.usesSplitView
@@ -862,15 +795,14 @@ function AdaptiveWorkspaceLayoutContent(
     primarySidebarSearchQuery,
     startNewTask: handleStartNewTask,
     selectDetail: handleSelectDetail,
-    activateAuxiliaryPaneRole,
     registerWorkspaceInspector,
     setPrimarySidebarSearchQuery,
-    showAuxiliaryPane,
+    showInspector,
     toggleAuxiliaryPane,
     togglePrimarySidebar,
     setPrimarySidebarVisible,
     openWorkspaceTab,
-    setAuxiliaryPaneWidth,
+    setAuxiliaryPaneWidth: setFileInspectorPreferredWidth,
     composerKeyboardActive,
     setComposerEditing,
     sidebarByOrientation,
@@ -1037,7 +969,7 @@ function AdaptiveWorkspaceLayoutContent(
         active={workspaceInspector?.active ?? false}
         panes={panes}
         renderInspector={workspaceInspector?.render}
-        setAuxiliaryPaneWidth={setAuxiliaryPaneWidth}
+        setAuxiliaryPaneWidth={setFileInspectorPreferredWidth}
         onClosed={handleWorkspaceInspectorClosed}
       />
       {shouldRenderNavigationRail && navigationRailWidth > 0 ? (
