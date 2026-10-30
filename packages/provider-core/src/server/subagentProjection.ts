@@ -189,9 +189,14 @@ export function withSubstitutedModelNote(
 }
 
 function rootProviderNotices(
-  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
+  projection: Pick<OrchestrationV2ThreadProjection, "turnItems" | "providerTurns">,
   run: OrchestrationV2Run,
 ): ReadonlyArray<string> {
+  const attemptTurnIds = new Set(
+    projection.providerTurns
+      .filter((turn) => run.activeAttemptId !== null && turn.runAttemptId === run.activeAttemptId)
+      .map((turn) => turn.id),
+  );
   return projection.turnItems
     .filter(
       (item): item is Extract<OrchestrationV2TurnItem, { readonly type: "system_notice" }> =>
@@ -199,6 +204,8 @@ function rootProviderNotices(
         item.runId === run.id &&
         item.nodeId === run.rootNodeId &&
         item.parentItemId === null &&
+        item.providerTurnId !== null &&
+        attemptTurnIds.has(item.providerTurnId) &&
         // T3's own notices, such as usage limits, carry weak refs.
         item.nativeItemRef?.strength === "strong",
     )

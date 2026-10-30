@@ -1572,7 +1572,11 @@ const make = Effect.gen(function* () {
       : null;
     const resultContextTransferId = resultTransfer?.id ?? null;
     const latestTerminalResultContextTransferId = resultTransferForRun(terminalRun)?.id ?? null;
-    const executionRun = taskResultRun ?? childRun;
+    const executionRun =
+      task.result === null
+        ? (taskResultRun ?? childRun)
+        : (childControls.runs.find((run) => run.id === resultTransfer?.sourcePoint.runId) ??
+          childRun);
     const modelSelection = executionRun?.modelSelection ??
       childControls.thread.modelSelection ?? {
         instanceId: task.providerInstanceId,
