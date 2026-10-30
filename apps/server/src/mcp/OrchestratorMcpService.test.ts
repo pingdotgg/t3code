@@ -2526,6 +2526,18 @@ describe("OrchestratorMcpService provider resolution", () => {
             target: { providerInstanceId: peerId, options: { reasoningEffort: "max" } },
             expected: { instanceId: peerId, model: inherited.model, options: override },
           },
+          {
+            name: "old Ultracode effort level",
+            target: { model: "ultracode-model", options: { effort: "ultracode" } },
+            expected: {
+              instanceId: codexInstanceId,
+              model: "ultracode-model",
+              options: [
+                { id: "effort", value: "xhigh" },
+                { id: "ultracode", value: true },
+              ],
+            },
+          },
         ] as const;
         for (const testCase of cases) {
           const commands: Array<unknown> = [];
@@ -2567,12 +2579,33 @@ describe("OrchestratorMcpService provider resolution", () => {
                   driver,
                   model: inherited.model,
                 }),
-                models: [inherited.model, "other-model"].map((model) => ({
-                  slug: model,
-                  name: model,
-                  isCustom: false,
-                  capabilities: null,
-                })),
+                models: [
+                  ...[inherited.model, "other-model"].map((model) => ({
+                    slug: model,
+                    name: model,
+                    isCustom: false,
+                    capabilities: null,
+                  })),
+                  {
+                    slug: "ultracode-model",
+                    name: "ultracode-model",
+                    isCustom: false,
+                    capabilities: {
+                      optionDescriptors: [
+                        {
+                          id: "effort",
+                          label: "Reasoning",
+                          type: "select",
+                          options: [
+                            { id: "high", label: "High" },
+                            { id: "xhigh", label: "Extra High" },
+                          ],
+                        },
+                        { id: "ultracode", label: "Ultracode", type: "boolean" },
+                      ],
+                    },
+                  },
+                ],
               },
               providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
             ]),

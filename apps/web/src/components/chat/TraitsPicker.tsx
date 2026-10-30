@@ -25,7 +25,7 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo, type ReactNode, useRef } from "react";
-import { GaugeIcon, ZapIcon } from "lucide-react";
+import { GaugeIcon, WorkflowIcon, ZapIcon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
@@ -586,6 +586,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   const {
     label: triggerLabel,
     speedLabel,
+    ultracode,
     otherLabels,
   } = buildTraitsTriggerDisplay({
     provider,
@@ -687,6 +688,9 @@ export const TraitsPicker = memo(function TraitsPicker({
               )}
               {speedLabel === "Fast" || speedLabel === "Ultrafast" ? (
                 <FastBolt ultra={speedLabel === "Ultrafast"} />
+              ) : null}
+              {ultracode ? (
+                <WorkflowIcon aria-hidden="true" data-composer-control-icon className="size-3" />
               ) : null}
               {otherLabels.length > 0 ? (
                 <span

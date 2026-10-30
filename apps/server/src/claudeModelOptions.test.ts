@@ -30,6 +30,34 @@ describe("compileClaudeModelSelection", () => {
     });
   });
 
+  it("runs Ultracode at the chosen effort and reads the old Ultracode effort as xhigh", () => {
+    expect(
+      compileClaudeModelSelection(
+        selection("claude-opus-5-5", [
+          { id: "effort", value: "high" },
+          { id: "ultracode", value: true },
+        ]),
+      ),
+    ).toMatchObject({ effort: "high", settings: { ultracode: true } });
+    expect(
+      compileClaudeModelSelection(
+        selection("claude-opus-5-5", [{ id: "effort", value: "ultracode" }]),
+      ),
+    ).toMatchObject({ effort: "xhigh", settings: { ultracode: true } });
+    const legacyTurnedOff = compileClaudeModelSelection(
+      selection("claude-opus-5-5", [
+        { id: "effort", value: "ultracode" },
+        { id: "ultracode", value: false },
+      ]),
+    );
+    expect(legacyTurnedOff.effort).toBe("xhigh");
+    expect(legacyTurnedOff.settings.ultracode).toBe(false);
+    expect(
+      compileClaudeModelSelection(selection("claude-opus-5-5", [{ id: "effort", value: "high" }]))
+        .settings,
+    ).not.toHaveProperty("ultracode");
+  });
+
   it("uses the model default SDK effort alongside prompt-injected effort", () => {
     expect(
       compileClaudeModelSelection(
