@@ -215,6 +215,10 @@ export class PullRequestService extends Context.Service<
     ) => Effect.Effect<void, PullRequestError>;
     readonly subscribeRefreshes: Stream.Stream<number>;
     readonly refreshAfterTurn: (projectId: ProjectId) => Effect.Effect<void>;
+    /** Project and remote lookups inside `effect` read once per filter, e.g. across one sync sweep. */
+    readonly withSharedProjectReads: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
     readonly detail: (input: PullRequestRef) => Effect.Effect<PullRequestDetail, PullRequestError>;
     readonly preview: (
       input: PullRequestRef,
@@ -333,6 +337,12 @@ interface WorkspaceProjects {
   >;
   readonly viewerRoots: ReadonlyMap<string, ReadonlyArray<string>>;
 }
+
+// Inherited by fibers forked inside the scope, so it is closed, not just dropped, when the scope ends.
+const sharedProjectReads = Context.Reference<{
+  open: boolean;
+  readonly reads: Map<string, Effect.Effect<WorkspaceProjects, PullRequestError>>;
+} | null>("t3/PullRequestService/sharedProjectReads", { defaultValue: () => null });
 
 interface RepositoryBatch {
   readonly key: string;
@@ -827,6 +837,34 @@ export const make = Effect.gen(function* () {
   });
 
   const listWorkspaceProjects = (
+    filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
+  ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
+    Effect.flatMap(sharedProjectReads, (shared) => {
+      if (shared === null || !shared.open) return readWorkspaceProjects(filter);
+      const key = JSON.stringify([filter.projectId, filter.projectIds, filter.host]);
+      const existing = shared.reads.get(key);
+      if (existing !== undefined) return existing;
+      return Effect.cached(readWorkspaceProjects(filter)).pipe(
+        Effect.tap((read) => Effect.sync(() => shared.reads.set(key, read))),
+        Effect.flatten,
+      );
+    });
+
+  const withSharedProjectReads = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.suspend(() => {
+      const shared = { open: true, reads: new Map() };
+      return effect.pipe(
+        Effect.provideService(sharedProjectReads, shared),
+        Effect.ensuring(
+          Effect.sync(() => {
+            shared.open = false;
+            shared.reads.clear();
+          }),
+        ),
+      );
+    });
+
+  const readWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
     (filter.projectId === undefined
@@ -3660,6 +3698,7 @@ export const make = Effect.gen(function* () {
     );
 
   return PullRequestService.of({
+    withSharedProjectReads,
     routing,
     routingIdentity,
     withRoutingCredential,

@@ -4944,7 +4944,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         // Claude has no recovered frame; the next assistant message proves recovery.
-        const completeProviderRetry = Effect.fn("ClaudeAdapterV2.completeProviderRetry")(function* (
+        // Runs on every model output frame and is almost always a no-op; only a pending retry gets a span.
+        const completeProviderRetry = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           updatedAt: DateTime.Utc,
         ) {
@@ -4977,7 +4978,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               startedAt: providerRetry.startedAt,
               updatedAt,
             }),
-          });
+          }).pipe(Effect.withSpan("ClaudeAdapterV2.completeProviderRetry"));
         });
 
         const rememberProviderThread =
