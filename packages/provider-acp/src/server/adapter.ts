@@ -1950,6 +1950,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const stoppedRunQuarantine = yield* Ref.make(false);
         // Native subagents can outlive interrupts; carry lineage forward to finish their original turn items.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        // Adopted trajectories can resume after their parent has settled without background work.
+        const adoptedSubagents = new Map<
+          string,
+          { readonly nativeThreadId: string; readonly subagent: ActiveAcpSubagent }
+        >();
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -4913,8 +4918,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               update.sessionUpdate === "tool_call_update"
             ) {
               if (subagent === undefined && flavor.adoptChildSession !== undefined) {
+                const adopted = adoptedSubagents.get(notification.sessionId);
+                if (adopted?.nativeThreadId === context.nativeThreadId) {
+                  const existing = adopted.subagent;
+                  context.subagents.set(
+                    existing.task.nativeTaskRef?.nativeId ?? String(existing.task.id),
+                    existing,
+                  );
+                  context.subagentsBySessionId.set(notification.sessionId, existing);
+                }
                 yield* emitSubagent(context, flavor.adoptChildSession(notification.sessionId));
                 subagent = context.subagentsBySessionId.get(notification.sessionId);
+                if (subagent !== undefined) {
+                  adoptedSubagents.set(notification.sessionId, {
+                    nativeThreadId: context.nativeThreadId,
+                    subagent,
+                  });
+                }
               }
               if (subagent === undefined) return;
               const nativeTaskId =
