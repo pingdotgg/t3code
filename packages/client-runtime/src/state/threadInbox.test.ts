@@ -250,7 +250,11 @@ describe("sortInboxThreadsBySend", () => {
     overrides: Partial<
       Pick<
         EnvironmentThreadShell,
-        "latestRun" | "latestUserMessageAt" | "latestUserAuthoredMessageAt" | "unsettledAt"
+        | "latestRun"
+        | "latestRunCompletedAt"
+        | "latestUserMessageAt"
+        | "latestUserAuthoredMessageAt"
+        | "unsettledAt"
       >
     > = {},
   ) => ({
@@ -318,6 +322,7 @@ describe("sortInboxThreadsBySend", () => {
         completedAt: "2026-06-01T03:00:00.000Z",
         assistantMessageId: null,
       },
+      latestRunCompletedAt: "2026-06-01T03:00:00.000Z",
     });
     const sentLater = inboxThread("sent-later", {
       latestUserAuthoredMessageAt: "2026-06-01T02:00:00.000Z",
@@ -332,5 +337,46 @@ describe("sortInboxThreadsBySend", () => {
       "sent-later",
       "returned-earlier",
     ]);
+  });
+
+  it("keeps a run waiting on you on top after a reload", () => {
+    const awaiting = inboxThread("awaiting", {
+      latestUserAuthoredMessageAt: "2026-06-01T01:00:00.000Z",
+      latestRun: {
+        runId: RunId.make("run:approval"),
+        status: "waiting" as const,
+        requestedAt: "2026-06-01T03:00:00.000Z",
+        startedAt: "2026-06-01T03:00:00.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const sentLater = inboxThread("sent-later", {
+      latestUserAuthoredMessageAt: "2026-06-01T02:00:00.000Z",
+    });
+    expect(
+      sortInboxThreadsBySend([sentLater, awaiting], () => undefined).map((entry) => entry.id),
+    ).toEqual(["awaiting", "sent-later"]);
+  });
+
+  it("ignores a completion time the server did not report", () => {
+    // Older servers omit it, so `latestRun.completedAt` is the thread's `updatedAt`.
+    const touched = inboxThread("touched", {
+      latestUserAuthoredMessageAt: "2026-06-01T01:00:00.000Z",
+      latestRun: {
+        runId: RunId.make("run:legacy"),
+        status: "completed" as const,
+        requestedAt: "2026-06-01T01:00:00.000Z",
+        startedAt: "2026-06-01T01:00:00.000Z",
+        completedAt: "2026-06-01T03:00:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const sentLater = inboxThread("sent-later", {
+      latestUserAuthoredMessageAt: "2026-06-01T02:00:00.000Z",
+    });
+    expect(
+      sortInboxThreadsBySend([sentLater, touched], () => undefined).map((entry) => entry.id),
+    ).toEqual(["sent-later", "touched"]);
   });
 });
