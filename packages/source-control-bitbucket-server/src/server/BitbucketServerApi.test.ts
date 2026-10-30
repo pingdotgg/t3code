@@ -489,17 +489,25 @@ it.effect("gets a pull request by number and by URL", () => {
   return Effect.gen(function* () {
     const bitbucket = yield* BitbucketServerApi.BitbucketServerApi;
     const byNumber = yield* bitbucket.getPullRequest({ cwd: "/repo", reference: "#1" });
-    const byUrl = yield* bitbucket.getPullRequest({
-      cwd: "/repo",
-      reference:
-        "https://bitbucket.example.com/bitbucket/projects/~JDOE/repos/testing-repo/pull-requests/1/overview",
-    });
+    const suffixes = [
+      "",
+      "/overview",
+      "?diffType=EFFECTIVE",
+      "#comment-42",
+      "?diffType=EFFECTIVE#comment-42",
+    ];
+    for (const suffix of suffixes) {
+      const byUrl = yield* bitbucket.getPullRequest({
+        cwd: "/repo",
+        reference: `https://bitbucket.example.com/bitbucket/projects/~JDOE/repos/testing-repo/pull-requests/1${suffix}`,
+      });
+      assert.deepStrictEqual(byUrl, byNumber);
+    }
 
     assert.strictEqual(byNumber.number, 1);
-    assert.deepStrictEqual(byUrl, byNumber);
     assert.deepStrictEqual(
       execute.mock.calls.map((call) => call[0].url),
-      [`${REPO}/pull-requests/1`, `${REPO}/pull-requests/1`],
+      Array.from({ length: suffixes.length + 1 }, () => `${REPO}/pull-requests/1`),
     );
   }).pipe(Effect.provide(layer));
 });

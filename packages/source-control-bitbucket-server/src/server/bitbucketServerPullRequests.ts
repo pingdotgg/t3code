@@ -8,7 +8,7 @@ export type NormalizedBitbucketPullRequestRecord = Omit<ChangeRequest, "provider
 
 export function normalizeBitbucketChangeRequestId(reference: string): string {
   return (
-    /\/pull-requests\/(\d+)(?:\/|$)/u.exec(reference)?.[1] ?? reference.trim().replace(/^#/, "")
+    /\/pull-requests\/(\d+)(?:[/?#]|$)/u.exec(reference)?.[1] ?? reference.trim().replace(/^#/, "")
   );
 }
 

@@ -470,16 +470,19 @@ describe("normalizeUnifiedDiff", () => {
       "index 0000000..e23fe64",
       "--- /dev/null",
       "+++ dst://LIVE.md",
-      "@@ -0,0 +1 @@",
+      "@@ -0,0 +1,2 @@",
       "+live",
+      "+++ dst://literal",
       "diff --git src://old.md dst://new.md",
       "rename from src://old.md",
       "rename to dst://new.md",
       "--- src://old.md",
       "+++ dst://new.md",
-      "@@ -1 +1 @@",
+      "@@ -1,2 +1,2 @@",
       "-src://kept",
+      "--- src://literal",
       "+dst://kept",
+      "+++ dst://literal",
     ].join("\n");
 
     expect(normalizeUnifiedDiff(patch).split("\n")).toEqual([
@@ -488,16 +491,19 @@ describe("normalizeUnifiedDiff", () => {
       "index 0000000..e23fe64",
       "--- /dev/null",
       "+++ b/LIVE.md",
-      "@@ -0,0 +1 @@",
+      "@@ -0,0 +1,2 @@",
       "+live",
+      "+++ dst://literal",
       "diff --git a/old.md b/new.md",
       "rename from old.md",
       "rename to new.md",
       "--- a/old.md",
       "+++ b/new.md",
-      "@@ -1 +1 @@",
+      "@@ -1,2 +1,2 @@",
       "-src://kept",
+      "--- src://literal",
       "+dst://kept",
+      "+++ dst://literal",
     ]);
   });
 });

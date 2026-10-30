@@ -554,12 +554,16 @@ export function decodeBuildStatusesJson(
  * the server; hunk lines are left alone.
  */
 export function normalizeUnifiedDiff(patch: string): string {
+  let inHunk = false;
   return patch
     .split("\n")
     .map((line) => {
       if (line.startsWith("diff --git ")) {
+        inHunk = false;
         return line.replaceAll(" src://", " a/").replaceAll(" dst://", " b/");
       }
+      if (line.startsWith("@@ ")) inHunk = true;
+      if (inHunk) return line;
       if (line.startsWith("--- src://")) return `--- a/${line.slice("--- src://".length)}`;
       if (line.startsWith("+++ dst://")) return `+++ b/${line.slice("+++ dst://".length)}`;
       if (line.startsWith("rename from src://")) {
