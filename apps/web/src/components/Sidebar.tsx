@@ -3574,11 +3574,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             onUnsnooze: attemptUnsnooze,
                             onUnpin: attemptUnpin,
                             onAcknowledgeWoke: acknowledgeWoke,
-                            // A pipeline's parent has no composer to receive files.
-                            onFileDropThreads:
-                              row.pipeline != null && row.pipeline.stepId === null
-                                ? undefined
-                                : handleThreadFileDrop,
+                            onFileDropThreads: handleThreadFileDrop,
                           };
                         };
                         const steps = pipelineStepsByParentKey.get(threadKey);

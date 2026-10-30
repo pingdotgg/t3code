@@ -179,7 +179,13 @@ import { FreshSessionNotice } from "./FreshSessionNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
-import { PipelineRunPanel, PipelineStepParentBar } from "./PipelineRunPanel";
+import { feedbackQuoteExcerpt } from "@t3tools/client-runtime/pipeline-run-presentation";
+import { PipelineCoordinatorScopeContext } from "./pipeline-coordinator-scope";
+import {
+  PipelineRunPanel,
+  PipelineRunSummaryHeader,
+  PipelineStepParentBar,
+} from "./PipelineRunPanel";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
 import {
@@ -507,13 +513,24 @@ function ThreadDetailBody(
   const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
-  // A pipeline's parent thread is runless: the run panel replaces its feed and composer.
+  // A pipeline's parent thread is the coordinator chat; the run panel sits above its feed.
   const threadPipeline = props.selectedThread.pipeline ?? null;
   const pipelineParentRunId = threadPipeline?.stepId === null ? threadPipeline.runId : null;
   const pipelineStep =
     threadPipeline !== null && threadPipeline.stepId !== null
       ? { runId: threadPipeline.runId, stepId: threadPipeline.stepId }
       : null;
+  const inCoordinatorSheet = useContext(PipelineCoordinatorScopeContext);
+  const handleSendStepFeedback = (messageText: string) => {
+    if (pipelineStep === null) return;
+    navigation.navigate("PipelineFeedback", {
+      environmentId: String(props.environmentId),
+      runId: String(pipelineStep.runId),
+      sourceThreadId: String(props.selectedThread.id),
+      sourceStepId: pipelineStep.stepId,
+      quote: feedbackQuoteExcerpt(messageText),
+    });
+  };
   const editingRunId = props.queuedRunEdit?.runId ?? null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the composer editor on the next animation frame when a queued run edit starts
   useEffect(() => {
@@ -1462,26 +1479,34 @@ function ThreadDetailBody(
           />
           {pipelineParentRunId !== null ? (
             <RenderErrorBoundary
-              key={selectedThreadKey}
+              key={`${selectedThreadKey}:pipeline`}
               resetKeys={[pipelineParentRunId]}
               renderFallback={(fallback) => (
                 <RenderFailureView
                   {...fallback}
                   title="The pipeline couldn't be displayed"
-                  bottomInset={estimatedOverlayHeight}
+                  bottomInset={0}
                 />
               )}
             >
-              <PipelineRunPanel
-                environmentId={props.environmentId}
-                runId={pipelineParentRunId}
-                topInset={navigationHeaderHeight}
-                automaticInsets={props.usesAutomaticContentInsets === true}
-                bottomInset={estimatedOverlayHeight}
-                contentMaxWidth={contentMaxWidth}
-              />
+              {inCoordinatorSheet ? (
+                <PipelineRunSummaryHeader
+                  environmentId={props.environmentId}
+                  runId={pipelineParentRunId}
+                  topInset={navigationHeaderHeight}
+                  contentMaxWidth={contentMaxWidth}
+                />
+              ) : (
+                <PipelineRunPanel
+                  environmentId={props.environmentId}
+                  runId={pipelineParentRunId}
+                  topInset={navigationHeaderHeight}
+                  contentMaxWidth={contentMaxWidth}
+                />
+              )}
             </RenderErrorBoundary>
-          ) : (
+          ) : null}
+          <View style={{ flex: 1 }}>
             <RenderErrorBoundary
               key={selectedThreadKey}
               resetKeys={[props.threadCwd]}
@@ -1538,7 +1563,11 @@ function ThreadDetailBody(
                     historyControls={props.historyControls}
                     contentSideInsets={nativeMetrics?.safeArea}
                     layoutVariant={layoutVariant}
-                    usesAutomaticContentInsets={props.usesAutomaticContentInsets}
+                    // The run panel above the feed already clears the header.
+                    usesAutomaticContentInsets={
+                      pipelineParentRunId === null ? props.usesAutomaticContentInsets : false
+                    }
+                    onSendFeedback={pipelineStep === null ? undefined : handleSendStepFeedback}
                     onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
                     onIsAtEndChange={setIsAtEnd}
                     skills={selectedProviderSkills}
@@ -1547,7 +1576,7 @@ function ThreadDetailBody(
                 </ColumnWidth>
               </WorkspaceMutationIdProvider>
             </RenderErrorBoundary>
-          )}
+          </View>
         </View>
       ) : (
         <View className="flex-1" />
@@ -1876,7 +1905,7 @@ function ThreadDetailBody(
                         }
                       />
                     </View>
-                  ) : pipelineParentRunId !== null ? null : (
+                  ) : (
                     <>
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}

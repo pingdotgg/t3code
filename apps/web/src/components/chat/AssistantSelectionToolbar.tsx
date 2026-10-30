@@ -4,8 +4,16 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { QuoteIcon } from "lucide-react";
-import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { feedbackQuoteExcerpt } from "@t3tools/client-runtime/pipeline-run-presentation";
+import { MessageSquareIcon, QuoteIcon } from "lucide-react";
+import {
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -24,23 +32,26 @@ export function AssistantSelectionToolbar({
   viewport,
   threadRef,
   onCite,
+  onSendFeedback,
 }: {
   viewport: HTMLElement | null;
   threadRef: ScopedThreadRef;
   onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  /** In a pipeline step's thread: sends the selected text as feedback instead of citing it. */
+  onSendFeedback?: ((quote: string) => void) | undefined;
 }) {
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
     position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
-  const toolbarRef = useRef<HTMLButtonElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const backgroundThread = use(BackgroundThreadContext);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps its position inside the window before paint
   useLayoutEffect(() => {
-    const toolbar = toolbarRef.current;
+    const toolbar = wrapperRef.current;
     if (!toolbar || !selection) return;
     const rect = toolbar.getBoundingClientRect();
     toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
@@ -139,14 +150,14 @@ export function AssistantSelectionToolbar({
     };
     const actions = observeSelectionActions({
       element: viewport,
-      getActionElement: () => toolbarRef.current,
+      getActionElement: () => wrapperRef.current,
       restoreAfterScroll: true,
       onSelection: update,
       onDismiss: clear,
     });
     actionsRef.current = actions;
     const focusActions = (event: KeyboardEvent) => {
-      const toolbar = toolbarRef.current;
+      const wrapper = wrapperRef.current;
       if (
         event.key !== "Tab" ||
         event.shiftKey ||
@@ -155,15 +166,16 @@ export function AssistantSelectionToolbar({
         event.metaKey ||
         event.isComposing ||
         event.defaultPrevented ||
-        !toolbar ||
-        toolbar.contains(event.target as Node)
+        !wrapper ||
+        wrapper.contains(event.target as Node)
       ) {
         return;
       }
-      if (toolbar.disabled) return;
+      const action = wrapper.querySelector<HTMLButtonElement>("button:not(:disabled)");
+      if (!action) return;
       event.preventDefault();
       event.stopPropagation();
-      toolbar.focus({ preventScroll: true });
+      action.focus({ preventScroll: true });
     };
     // Tab belongs to the foreground chat; a background timeline only follows its selection.
     if (!backgroundThread) document.addEventListener("keydown", focusActions, true);
@@ -188,29 +200,53 @@ export function AssistantSelectionToolbar({
     dismiss();
     return true;
   };
+  const sendFeedback = () => {
+    if (onSendFeedback === undefined) return;
+    onSendFeedback(feedbackQuoteExcerpt(selection.citation.text));
+    window.getSelection()?.removeAllRanges();
+    dismiss();
+  };
+  const handleKeyDown = (event: ReactKeyboardEvent) => {
+    event.stopPropagation();
+    if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      dismiss();
+    }
+  };
   return createPortal(
-    <Button
-      ref={toolbarRef}
-      type="button"
-      size="xs"
-      variant="glass"
-      disabled={tooLong}
-      aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
-      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+    <div
+      ref={wrapperRef}
+      className="fixed z-50 flex max-w-[calc(100vw-1rem)] gap-1"
       style={{ left: selection.position.x, top: selection.position.y }}
-      onPointerDown={(event) => event.preventDefault()}
-      onClick={cite}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
-          event.preventDefault();
-          dismiss();
-        }
-      }}
     >
-      <QuoteIcon aria-hidden="true" className="size-3.5" />
-      {tooLong ? "Shorten selection" : "Cite"}
-    </Button>,
+      <Button
+        type="button"
+        size="xs"
+        variant="glass"
+        disabled={tooLong}
+        aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={cite}
+        onKeyDown={handleKeyDown}
+      >
+        <QuoteIcon aria-hidden="true" className="size-3.5" />
+        {tooLong ? "Shorten selection" : "Cite"}
+      </Button>
+      {onSendFeedback ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="glass"
+          aria-label="Send selection as feedback to the pipeline"
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={sendFeedback}
+          onKeyDown={handleKeyDown}
+        >
+          <MessageSquareIcon aria-hidden="true" className="size-3.5" />
+          Send feedback
+        </Button>
+      ) : null}
+    </div>,
     document.body,
   );
 }

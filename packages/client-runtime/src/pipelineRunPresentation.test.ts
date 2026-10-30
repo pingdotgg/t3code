@@ -9,7 +9,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   availablePipelineActions,
+  buildCoordinatorFeedbackMessage,
+  pipelineFeedbackRoutes,
   pipelineFeedingStep,
+  pipelineRunStateLabel,
   pipelineRunStatusLabel,
   pipelineStepAwaitsHandoff,
   pipelineStepBreadcrumbTitle,
@@ -29,7 +32,12 @@ function makeRun(input: {
     pauseReason: input.pauseReason ?? null,
     currentStepIndex: input.currentStepIndex,
     definition: { name: "Pipeline", steps: NAMES.map((name) => ({ name })) },
-    steps: input.stepStatuses.map((status, index) => ({ index, status })),
+    steps: input.stepStatuses.map((status, index) => ({
+      index,
+      stepId: `s${index}`,
+      status,
+      attempt: status === "pending" ? 0 : 1,
+    })),
   } as unknown as PipelineRun;
 }
 
@@ -174,6 +182,93 @@ describe("rerunFrom", () => {
   });
 });
 
+describe("revise", () => {
+  it("offers steps that ran and are not working, in any run status", () => {
+    const running = makeRun({
+      status: "running",
+      currentStepIndex: 1,
+      stepStatuses: ["completed", "running", "pending"],
+    });
+    expect([0, 1, 2, 3].map(availablePipelineActions(running).revise)).toEqual([
+      true,
+      false,
+      false,
+      false,
+    ]);
+    const stopped = makeRun({
+      status: "paused",
+      pauseReason: "step_stopped",
+      currentStepIndex: 1,
+      stepStatuses: ["completed", "stopped", "pending"],
+    });
+    expect([0, 1, 2].map(availablePipelineActions(stopped).revise)).toEqual([true, true, false]);
+    const noHandoff = makeRun({
+      status: "paused",
+      pauseReason: "awaiting_handoff",
+      currentStepIndex: 1,
+      stepStatuses: ["completed", "running", "pending"],
+    });
+    expect([0, 1, 2].map(availablePipelineActions(noHandoff).revise)).toEqual([true, true, false]);
+    const completed = makeRun({
+      status: "completed",
+      currentStepIndex: 2,
+      stepStatuses: ["completed", "completed", "completed"],
+    });
+    expect([0, 1, 2].map(availablePipelineActions(completed).revise)).toEqual([true, true, true]);
+    const failed = makeRun({
+      status: "paused",
+      pauseReason: "step_failed",
+      currentStepIndex: 1,
+      stepStatuses: ["completed", "failed", "pending"],
+    });
+    expect([0, 1, 2].map(availablePipelineActions(failed).revise)).toEqual([true, true, false]);
+    const cancelled = makeRun({
+      status: "cancelled",
+      currentStepIndex: 1,
+      stepStatuses: ["completed", "stopped", "pending"],
+    });
+    expect([0, 1, 2].map(availablePipelineActions(cancelled).revise)).toEqual([true, true, false]);
+    // Skipped at its pause gate, so it never ran (attempt 0).
+    const skippedAtGate = makeRun({
+      status: "paused",
+      currentStepIndex: 2,
+      stepStatuses: ["completed", "skipped", "pending"],
+    });
+    const gate = {
+      ...skippedAtGate,
+      steps: skippedAtGate.steps.map((step) => (step.index === 1 ? { ...step, attempt: 0 } : step)),
+    };
+    expect([0, 1].map(availablePipelineActions(gate).revise)).toEqual([true, false]);
+  });
+
+  it("routes feedback to steps that may be revised and disables the working one", () => {
+    const run = makeRun({
+      status: "running",
+      currentStepIndex: 1,
+      stepStatuses: ["completed", "running", "pending"],
+    });
+    expect(pipelineFeedbackRoutes(run)).toEqual([
+      { stepIndex: 0, name: "Plan", disabled: false, hint: null },
+      { stepIndex: 1, name: "Implement", disabled: true, hint: "Message this step directly" },
+    ]);
+  });
+});
+
+describe("buildCoordinatorFeedbackMessage", () => {
+  it("quotes the text, names the source step, then adds the note", () => {
+    expect(
+      buildCoordinatorFeedbackMessage({
+        quote: "line one\nline two",
+        sourceStepName: "Guide",
+        sourceStepLink: "[Guide](t3code://v2/e/t)",
+        note: " Implement missed this. ",
+      }),
+    ).toBe(
+      "> line one\n> line two\n\nFrom step Guide ([Guide](t3code://v2/e/t))\n\nImplement missed this.",
+    );
+  });
+});
+
 describe("missing handoff", () => {
   it("labels the run and marks only the current step", () => {
     const run = makeRun({
@@ -183,6 +278,7 @@ describe("missing handoff", () => {
       stepStatuses: ["completed", "running", "pending"],
     });
     expect(pipelineRunStatusLabel(run)).toBe("Implement ended without handing off");
+    expect(pipelineRunStateLabel(run)).toBe("No handoff");
     expect([0, 1, 2].map((index) => pipelineStepAwaitsHandoff(run, index))).toEqual([
       false,
       true,

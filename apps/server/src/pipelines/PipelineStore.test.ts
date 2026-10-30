@@ -276,6 +276,34 @@ it.effect("round-trips a run with steps, truncating previews but keeping full ou
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect("persists revisions and the revising flag, and reads runs without any as empty", () =>
+  Effect.gen(function* () {
+    const store = yield* PipelineStore.PipelineStore;
+    yield* store.insertRunWithSteps(newRun(), newSteps(["plan", "build"]));
+    assert.deepStrictEqual((yield* store.getRun(runId))?.revisions, []);
+    assert.isFalse(yield* store.isStepRevising(runId, 1));
+
+    const revisions = [
+      {
+        stepIndex: 0,
+        stepId: decodeStepId("plan"),
+        feedback: "Cover dark mode",
+        quote: "light only",
+        sourceStepId: decodeStepId("build"),
+        author: "coordinator" as const,
+        createdAt: LATER,
+      },
+    ];
+    yield* store.updateRunWithSteps(runId, { updatedAt: LATER, revisions }, [
+      { index: 1, patch: { revising: true } },
+    ]);
+    assert.deepStrictEqual((yield* store.getRun(runId))?.revisions, revisions);
+    assert.isTrue(yield* store.isStepRevising(runId, 1));
+    yield* store.updateStep(runId, 1, { revising: false });
+    assert.isFalse(yield* store.isStepRevising(runId, 1));
+  }).pipe(Effect.provide(testLayer)),
+);
+
 it.effect("does not split a surrogate pair when truncating a preview", () =>
   Effect.sync(() => {
     const output = `${"a".repeat(PIPELINE_OUTPUT_PREVIEW_CHARS - 1)}\u{1F600}tail`;

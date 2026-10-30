@@ -2267,6 +2267,10 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "pipeline_run.id": input.runId }).pipe(
             Effect.andThen(pipelines.rerunFromStep(input)),
           ),
+        [WS_METHODS.pipelineRunsRevise]: (input) =>
+          Effect.annotateCurrentSpan({ "pipeline_run.id": input.runId }).pipe(
+            Effect.andThen(pipelines.reviseStep({ ...input, author: "user" })),
+          ),
         [WS_METHODS.pipelineRunsCancel]: (input) =>
           Effect.annotateCurrentSpan({ "pipeline_run.id": input.runId }).pipe(
             Effect.andThen(pipelines.cancel(input)),

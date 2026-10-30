@@ -17,6 +17,7 @@ import {
   OrchestratorMcpHandoffPipelineStepInput,
   OrchestratorMcpHandoffPipelineStepResult,
   OrchestratorMcpRerunPipelineInput,
+  OrchestratorMcpRevisePipelineStepInput,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
@@ -231,7 +232,7 @@ const StartPipelineTool = Tool.make("start_pipeline", {
 
 const PipelineStatusTool = Tool.make("pipeline_status", {
   description:
-    "Status of a pipeline run: each step's status, thread `link`, and output preview. `paused` with `awaiting_continue`: `continue_pipeline` if you started the run, else wait for the user. `awaiting_handoff`: the step's agent ended its turn without handing off, usually with a question; tell the user. No tool retries or skips a failed or stopped step: tell the user.",
+    "Status of a pipeline run: each step's status, thread `link`, output preview, and the feedback sent to steps so far (`revisions`). `paused` with `awaiting_continue`: `continue_pipeline` if you started the run, or if you are the run's own coordinator chat and the user's latest message asks you to; else wait for the user. The user's feedback on an earlier step: `revise_pipeline_step`. `awaiting_handoff`: the step's agent ended its turn without handing off, usually with a question; tell the user. No tool retries or skips a failed or stopped step: tell the user.",
   parameters: OrchestratorMcpPipelineRunInput,
   success: OrchestratorMcpPipelineRun,
   failure: OrchestratorMcpFailure,
@@ -245,7 +246,7 @@ const PipelineStatusTool = Tool.make("pipeline_status", {
 
 const ContinuePipelineTool = Tool.make("continue_pipeline", {
   description:
-    "Resume a paused pipeline run at `stepIndex`, its `currentStepIndex`. Starts the next step. Refused for a user-started run's `awaiting_continue` pause. For a failed, stopped or `awaiting_handoff` step, takes its thread's latest message as its result: only if the user asks.",
+    "Resume a paused pipeline run at `stepIndex`, its `currentStepIndex`. Starts the next step. Refused for a user-started run's `awaiting_continue` pause, unless you are that run's own coordinator chat: then only when the user's latest message asks you to continue. For a failed, stopped or `awaiting_handoff` step, takes its thread's latest message as its result: only if the user asks.",
   parameters: OrchestratorMcpContinuePipelineInput,
   success: OrchestratorMcpPipelineRun,
   failure: OrchestratorMcpFailure,
@@ -270,7 +271,7 @@ const CancelPipelineTool = Tool.make("cancel_pipeline", {
 
 const RerunPipelineTool = Tool.make("rerun_pipeline_step", {
   description:
-    "Run a paused, cancelled or completed pipeline run again from `stepIndex`: that step and every later one start over, earlier steps keep their results. Only if the user asks.",
+    "Start over: run a paused, cancelled or completed pipeline run again from `stepIndex` in fresh threads with the original prompts; earlier steps keep their results. Only if the user asks to start over. For feedback on a step's work use `revise_pipeline_step` instead.",
   parameters: OrchestratorMcpRerunPipelineInput,
   success: OrchestratorMcpPipelineRun,
   failure: OrchestratorMcpFailure,
@@ -278,6 +279,19 @@ const RerunPipelineTool = Tool.make("rerun_pipeline_step", {
   dependencies,
 })
   .annotate(Tool.Title, "Rerun a pipeline step")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
+const RevisePipelineStepTool = Tool.make("revise_pipeline_step", {
+  description:
+    "Send the user's feedback to an earlier step of a pipeline run. That step fixes it in its own thread, then every later step redoes its work in its thread. Stops a later step that is running. Only when the user gives feedback; refused from the run's own step threads.",
+  parameters: OrchestratorMcpRevisePipelineStepInput,
+  success: OrchestratorMcpPipelineRun,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Revise a pipeline step")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
@@ -463,6 +477,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ContinuePipelineTool,
   CancelPipelineTool,
   RerunPipelineTool,
+  RevisePipelineStepTool,
   HandoffPipelineStepTool,
   RequestSecretTool,
   CreateThreadsTool,

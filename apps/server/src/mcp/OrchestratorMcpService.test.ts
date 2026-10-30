@@ -3881,6 +3881,7 @@ describe("OrchestratorMcpService pipelines", () => {
         completedAt: null,
       },
     ],
+    revisions: [],
     createdBy: "agent",
     creationSource: "mcp",
     createdAt: at,
@@ -3902,15 +3903,24 @@ describe("OrchestratorMcpService pipelines", () => {
       readonly resolveCommit?: (cwd: string, revision: string) => string | undefined;
       /** Makes the caller a pipeline thread: a step when `stepId` is set, else the run's parent. */
       readonly pipelineThread?: { readonly runId: PipelineRunId; readonly stepId: string | null };
+      /** The thread that launched the caller, as for a task a step delegated. */
+      readonly callerParentThreadId?: ThreadId;
+      /** Other threads the service reads; any other id reads as the caller. */
+      readonly shells?: ReadonlyArray<OrchestrationV2ThreadShell>;
     } = {},
   ) => {
     const started: Array<{ input: unknown; options: unknown }> = [];
     const continued: Array<unknown> = [];
     const handedOff: Array<unknown> = [];
+    const revised: Array<unknown> = [];
+    const caller = liveThreadShell(callerThreadId, modes);
     const shell = {
-      ...liveThreadShell(callerThreadId, modes),
+      ...caller,
       ...extra.checkout,
       ...(extra.pipelineThread === undefined ? {} : { pipeline: extra.pipelineThread }),
+      ...(extra.callerParentThreadId === undefined
+        ? {}
+        : { lineage: { ...caller.lineage, parentThreadId: extra.callerParentThreadId } }),
     };
     const pipelines = Layer.mock(PipelineService.PipelineService)({
       list: () => Effect.succeed({ pipelines: [definition] }),
@@ -3928,6 +3938,11 @@ describe("OrchestratorMcpService pipelines", () => {
           continued.push(input);
           return { run: run({ status: "running", pauseReason: null }) };
         }),
+      reviseStep: (input) =>
+        Effect.sync(() => {
+          revised.push(input);
+          return { run: run({ status: "running", pauseReason: null, currentStepIndex: 0 }) };
+        }),
       handoffStep: (input) =>
         Effect.sync(() => {
           handedOff.push(input);
@@ -3938,7 +3953,8 @@ describe("OrchestratorMcpService pipelines", () => {
       NodeServices.layer,
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         getThreadRecords: () => Effect.succeed(idleThreadProjection(shell)),
-        getThreadShell: () => Effect.succeed(shell),
+        getThreadShell: (threadId) =>
+          Effect.succeed(extra.shells?.find((candidate) => candidate.id === threadId) ?? shell),
       }),
       ServerSettings.layerTest(),
       Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -3974,6 +3990,7 @@ describe("OrchestratorMcpService pipelines", () => {
       started,
       continued,
       handedOff,
+      revised,
       scope,
       layer: OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -4222,6 +4239,130 @@ describe("OrchestratorMcpService pipelines", () => {
       );
       assert.equal(failed.continued.length, 1);
     }),
+  );
+
+  it.effect("lets the run's coordinator chat continue a user's awaiting_continue pause", () =>
+    Effect.gen(function* () {
+      const coordinator = harness(
+        { runtimeMode: "full-access", interactionMode: "default" },
+        {
+          run: { createdBy: "user", parentThreadId: callerThreadId },
+          pipelineThread: { runId: PipelineRunId.make("pipeline-run:one"), stepId: null },
+        },
+      );
+      yield* withService(coordinator, (service) =>
+        service.continuePipeline(coordinator.scope, {
+          runId: PipelineRunId.make("pipeline-run:one"),
+          stepIndex: 1,
+        }),
+      );
+      assert.equal(coordinator.continued.length, 1);
+    }),
+  );
+
+  it.effect("sends feedback as the coordinator, as another agent, and never from a step", () =>
+    Effect.gen(function* () {
+      const runId = PipelineRunId.make("pipeline-run:one");
+      const input = { runId, stepIndex: 0, feedback: "Plan misses dark mode" };
+      const modes = { runtimeMode: "full-access", interactionMode: "default" } as const;
+      const coordinator = harness(modes, {
+        run: { parentThreadId: callerThreadId },
+        pipelineThread: { runId, stepId: null },
+      });
+      yield* withService(coordinator, (service) =>
+        service.revisePipelineStep(coordinator.scope, input),
+      );
+      assert.deepEqual(coordinator.revised, [{ ...input, author: "coordinator" }]);
+
+      const other = harness(modes);
+      yield* withService(other, (service) => service.revisePipelineStep(other.scope, input));
+      assert.deepEqual(other.revised, [{ ...input, author: "agent" }]);
+
+      const step = harness(modes, { pipelineThread: { runId, stepId: "plan" } });
+      const refused = yield* withService(step, (service) =>
+        service.revisePipelineStep(step.scope, input).pipe(Effect.flip),
+      );
+      assert.equal(refused.code, "invalid_request");
+      assert.equal(step.revised.length, 0);
+
+      // A task a step delegated is part of that step too.
+      const stepThreadId = ThreadId.make("thread:pipeline-step-0");
+      const delegated = harness(modes, {
+        callerParentThreadId: stepThreadId,
+        shells: [{ ...liveThreadShell(stepThreadId), pipeline: { runId, stepId: "plan" } }],
+      });
+      const delegatedRefused = yield* withService(delegated, (service) =>
+        service.revisePipelineStep(delegated.scope, input).pipe(Effect.flip),
+      );
+      assert.equal(delegatedRefused.code, "invalid_request");
+      assert.equal(delegated.revised.length, 0);
+    }),
+  );
+
+  it.effect(
+    "the coordinator runs its run's steps at their modes; another agent only within its own",
+    () =>
+      Effect.gen(function* () {
+        const runId = PipelineRunId.make("pipeline-run:one");
+        const narrow = { runtimeMode: "approval-required", interactionMode: "default" } as const;
+        // The coordinator has the first step's approval-required mode; step 2 runs at full-access.
+        const coordinator = harness(narrow, {
+          run: { createdBy: "user", parentThreadId: callerThreadId },
+          pipelineThread: { runId, stepId: null },
+        });
+        yield* withService(coordinator, (service) =>
+          Effect.all([
+            service.continuePipeline(coordinator.scope, { runId, stepIndex: 1 }),
+            service.revisePipelineStep(coordinator.scope, { runId, stepIndex: 0, feedback: "x" }),
+          ]),
+        );
+        assert.equal(coordinator.continued.length, 1);
+        assert.deepEqual(coordinator.revised, [
+          { runId, stepIndex: 0, feedback: "x", author: "coordinator" },
+        ]);
+
+        const planning = harness(
+          { runtimeMode: "full-access", interactionMode: "plan" },
+          { run: { parentThreadId: callerThreadId }, pipelineThread: { runId, stepId: null } },
+        );
+        const planRefused = yield* withService(planning, (service) =>
+          service
+            .revisePipelineStep(planning.scope, { runId, stepIndex: 0, feedback: "x" })
+            .pipe(Effect.flip),
+        );
+        assert.equal(planRefused.code, "interaction_mode_escalation_denied");
+
+        const other = harness(narrow);
+        const otherRefused = yield* withService(other, (service) =>
+          service
+            .revisePipelineStep(other.scope, { runId, stepIndex: 0, feedback: "x" })
+            .pipe(Effect.flip),
+        );
+        assert.equal(otherRefused.code, "runtime_mode_escalation_denied");
+        assert.equal(other.revised.length, 0);
+
+        // Every step fits, but the user raised step 1's thread to full-access since it ran.
+        const stepThreadId = ThreadId.make("thread:pipeline-step-0");
+        const raised = harness(narrow, {
+          run: {
+            definition: {
+              name: definition.name,
+              steps: definition.steps.map((entry) => ({
+                ...entry,
+                runtimeMode: "approval-required",
+              })),
+            },
+          },
+          shells: [liveThreadShell(stepThreadId, { runtimeMode: "full-access" })],
+        });
+        const raisedRefused = yield* withService(raised, (service) =>
+          service
+            .revisePipelineStep(raised.scope, { runId, stepIndex: 0, feedback: "x" })
+            .pipe(Effect.flip),
+        );
+        assert.equal(raisedRefused.code, "runtime_mode_escalation_denied");
+        assert.equal(raised.revised.length, 0);
+      }),
   );
 
   it.effect("starts a pipeline in the caller's worktree, or its own worktree on request", () =>

@@ -33,6 +33,11 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const PipelineCoordinatorPanel = lazy(() =>
+  import("./PipelineCoordinatorPanel").then((module) => ({
+    default: module.PipelineCoordinatorPanel,
+  })),
+);
 
 type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -183,6 +188,15 @@ export function RightPanelSurfaceContent(props: {
           parentPanel={props.sideChatParentPanel}
           onClose={() => onCloseSurface(surface)}
         />
+      );
+    case "pipeline-coordinator":
+      return (
+        <Suspense fallback={null}>
+          <PipelineCoordinatorPanel
+            stepThreadRef={threadRef}
+            parentPanel={props.sideChatParentPanel}
+          />
+        </Suspense>
       );
     case "device":
       return (

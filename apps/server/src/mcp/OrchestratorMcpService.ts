@@ -33,6 +33,7 @@ import {
   type OrchestratorMcpHandoffPipelineStepInput,
   type OrchestratorMcpHandoffPipelineStepResult,
   type OrchestratorMcpRerunPipelineInput,
+  type OrchestratorMcpRevisePipelineStepInput,
   type OrchestratorMcpListPipelinesResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpPipelineRun,
@@ -228,6 +229,11 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpRerunPipelineInput,
   ) => Effect.Effect<OrchestratorMcpPipelineRun, OrchestratorMcpFailure>;
+  /** Refused from the run's own step threads, so steps cannot route feedback upstream. */
+  readonly revisePipelineStep: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpRevisePipelineStepInput,
+  ) => Effect.Effect<OrchestratorMcpPipelineRun, OrchestratorMcpFailure>;
   /** Only from a pipeline step's own thread. */
   readonly handoffPipelineStep: (
     scope: McpInvocationScope,
@@ -309,6 +315,16 @@ function pipelineFailure(error: PipelineError): OrchestratorMcpFailure {
     : failure("orchestration_error", "The pipeline service failed. Try again, or tell the user.");
 }
 
+const REVISION_FEEDBACK_PREVIEW_CHARS = 500;
+/** How far up a caller's thread lineage the step-of-this-run check looks. */
+const PIPELINE_LINEAGE_MAX_HOPS = 8;
+
+/** The run's own coordinator chat acts for the user; the server can only check who is asking. */
+const isRunCoordinator = (
+  parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
+  run: Pick<PipelineRun, "parentThreadId">,
+) => parent?.thread.id === run.parentThreadId;
+
 function pipelineRunSummary(
   environmentId: EnvironmentId,
   run: PipelineRun,
@@ -324,6 +340,16 @@ function pipelineRunSummary(
     pauseReason: run.pauseReason,
     error: run.error,
     currentStepIndex: run.currentStepIndex,
+    revisions: run.revisions.map((revision) => ({
+      stepIndex: revision.stepIndex,
+      stepId: revision.stepId,
+      feedback:
+        revision.feedback.length > REVISION_FEEDBACK_PREVIEW_CHARS
+          ? `${revision.feedback.slice(0, REVISION_FEEDBACK_PREVIEW_CHARS)}…`
+          : revision.feedback,
+      author: revision.author,
+      createdAt: revision.createdAt,
+    })),
     steps: run.steps.map((step) => ({
       index: step.index,
       stepId: step.stepId,
@@ -2040,6 +2066,23 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  /** Whether the caller is one of the run's step threads, or a thread a step launched. */
+  const isWithinRunStep = Effect.fn("OrchestratorMcpService.isWithinRunStep")(function* (
+    parent: Pick<OrchestrationV2ThreadProjection, "thread">,
+    runId: PipelineRun["id"],
+  ): Effect.fn.Return<boolean, OrchestratorMcpFailure> {
+    let thread: Pick<OrchestrationV2ThreadShell, "pipeline" | "lineage"> | null = parent.thread;
+    for (let hop = 0; thread !== null && hop <= PIPELINE_LINEAGE_MAX_HOPS; hop += 1) {
+      if (thread.pipeline?.runId === runId && thread.pipeline.stepId !== null) return true;
+      const parentThreadId: ThreadId | null = thread.lineage.parentThreadId;
+      if (parentThreadId === null) return false;
+      thread = yield* threadManagement
+        .getThreadShell(parentThreadId)
+        .pipe(Effect.mapError(threadManagementFailure));
+    }
+    return false;
+  });
+
   /** Pipelines have no plan mode, and a step never runs broader than the caller's runtime mode. */
   const assertPipelineWithinLimits = Effect.fn("OrchestratorMcpService.assertPipelineWithinLimits")(
     function* (
@@ -2367,14 +2410,23 @@ const make = Effect.gen(function* () {
           .getRun(input.runId)
           .pipe(Effect.mapError(pipelineFailure));
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
-        if (existing.pauseReason === "awaiting_continue" && existing.createdBy === "user") {
+        const isCoordinator = isRunCoordinator(parent, existing);
+        if (
+          existing.pauseReason === "awaiting_continue" &&
+          existing.createdBy === "user" &&
+          !isCoordinator
+        ) {
           return yield* failure(
             "invalid_request",
             "The user started this run and set this pause, so only they can continue it. Tell the user it is waiting for them.",
           );
         }
-        // The run's steps were clamped to whoever started it. Continuing launches them for this caller.
-        yield* assertPipelineWithinLimits(limits, existing.definition.steps.slice(input.stepIndex));
+        // The run's steps were clamped to whoever started it, so its coordinator may run them all.
+        // Another caller launches them for itself.
+        yield* assertPipelineWithinLimits(
+          limits,
+          isCoordinator ? [] : existing.definition.steps.slice(input.stepIndex),
+        );
         const { run } = yield* pipelines
           .continueRun({ runId: input.runId, stepIndex: input.stepIndex })
           .pipe(Effect.mapError(pipelineFailure));
@@ -2401,6 +2453,48 @@ const make = Effect.gen(function* () {
         yield* assertPipelineWithinLimits(limits, existing.definition.steps.slice(input.stepIndex));
         const { run } = yield* pipelines
           .rerunFromStep({ runId: input.runId, stepIndex: input.stepIndex })
+          .pipe(Effect.mapError(pipelineFailure));
+        return pipelineRunSummary(scope.environmentId, run);
+      },
+    ),
+    revisePipelineStep: Effect.fn("OrchestratorMcpService.revisePipelineStep")(
+      function* (scope, input) {
+        const { parent, limits } = yield* loadCaller(scope);
+        const existing = yield* pipelines
+          .getRun(input.runId)
+          .pipe(Effect.mapError(pipelineFailure));
+        yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
+        if (parent !== undefined && (yield* isWithinRunStep(parent, existing.id))) {
+          return yield* failure(
+            "invalid_request",
+            "A step of a run cannot send feedback to its own run. Say what you found in your reply or hand off; the user or the run's coordinator decides.",
+          );
+        }
+        const isCoordinator = isRunCoordinator(parent, existing);
+        // The run's steps were clamped to whoever started it, so its coordinator may redo them all.
+        // Another caller redoes them for itself, including in step threads the user raised since.
+        yield* assertPipelineWithinLimits(
+          limits,
+          isCoordinator ? [] : existing.definition.steps.slice(input.stepIndex),
+        );
+        if (!isCoordinator) {
+          for (const step of existing.steps.slice(input.stepIndex)) {
+            if (step.childThreadId === null) continue;
+            const shell = yield* threadManagement
+              .getThreadShell(step.childThreadId)
+              .pipe(Effect.mapError(threadManagementFailure));
+            if (shell !== null && shell.deletedAt === null) {
+              yield* resolveRuntimeMode(limits.runtimeMode, shell.runtimeMode);
+            }
+          }
+        }
+        const { run } = yield* pipelines
+          .reviseStep({
+            runId: input.runId,
+            stepIndex: input.stepIndex,
+            feedback: input.feedback,
+            author: isCoordinator ? "coordinator" : "agent",
+          })
           .pipe(Effect.mapError(pipelineFailure));
         return pipelineRunSummary(scope.environmentId, run);
       },

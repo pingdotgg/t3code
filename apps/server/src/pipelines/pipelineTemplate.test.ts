@@ -1,7 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import type { PipelineRunStepStatus, PipelineSnapshot, PipelineStep } from "@t3tools/contracts";
 
-import { renderPipelinePrompt } from "./pipelineTemplate.ts";
+import {
+  pipelineReferencedStepIndexes,
+  pipelineUpstreamChangedMessage,
+  renderPipelinePrompt,
+} from "./pipelineTemplate.ts";
 
 function step(id: string, name: string, promptTemplate: string, skills: string[] = []) {
   return { id, name, promptTemplate, skills } as unknown as PipelineStep;
@@ -96,5 +100,43 @@ describe("renderPipelinePrompt", () => {
       steps: testCase.state,
     });
     assert.strictEqual(result.prompt, testCase.expected);
+  });
+});
+
+describe("revision messages", () => {
+  it("finds only the outputs a step's template reads", () => {
+    const qa = step("qa", "QA", "{{previous.output}} and {{steps.plan.output}}");
+    const names = snapshot(plan, build, qa);
+    assert.deepStrictEqual(
+      pipelineReferencedStepIndexes(names, 2, (index) => index !== 1),
+      [0],
+    );
+    assert.deepStrictEqual(
+      pipelineReferencedStepIndexes(names, 2, () => true),
+      [0, 1],
+    );
+    assert.deepStrictEqual(
+      pipelineReferencedStepIndexes(snapshot(plan, build), 1, () => true),
+      [],
+    );
+  });
+
+  it("lists every revision oldest first with quotes in an upstream-changed message", () => {
+    const history = [
+      { stepIndex: 0, feedback: "first note", quote: "old text", author: "user" as const },
+      { stepIndex: 1, feedback: "second note", quote: null, author: "coordinator" as const },
+    ];
+    const text = pipelineUpstreamChangedMessage({
+      revised: history[1]!,
+      history,
+      stepNames: ["Plan", "Build"],
+      outputs: [{ stepIndex: 1, output: "new build" }],
+      handoff: "HANDOFF",
+    });
+    assert.include(text, "new build");
+    const listing = text.slice(text.indexOf("All feedback"));
+    assert.isTrue(listing.indexOf("first note") < listing.indexOf("second note"));
+    assert.include(text, "> old text");
+    assert.isTrue(text.endsWith("HANDOFF"));
   });
 });

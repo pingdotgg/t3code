@@ -3,6 +3,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   availablePipelineActions,
   pipelineFeedingStep,
+  pipelineRevisionAuthorLabel,
   pipelineRunStatusLabel,
   pipelineStepAwaitsHandoff,
   stepName,
@@ -28,6 +29,7 @@ import {
   CircleDashedIcon,
   CircleDotIcon,
   ExternalLinkIcon,
+  MessageSquareIcon,
   RotateCcwIcon,
   SkipForwardIcon,
   SquareIcon,
@@ -37,6 +39,7 @@ import {
 import { useState } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
+import { useClientSettings } from "../../hooks/useSettings";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { useEnvironmentQuery } from "../../state/query";
 import { useQuietThreadShell } from "../../state/entities";
@@ -44,6 +47,7 @@ import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { cn } from "../../lib/utils";
+import { formatDayAwareTimestamp } from "../../timestampFormat";
 import ChatMarkdown from "../ChatMarkdown";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -52,7 +56,7 @@ import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { AgentElapsed } from "./AgentElapsed";
-import { useChatCanvas } from "./ChatCanvasContext";
+import { PipelineFeedbackDialog } from "./PipelineFeedbackDialog";
 import {
   newerPipelineRun,
   pipelineChildLiveState,
@@ -92,12 +96,17 @@ function useOpenThread(environmentId: EnvironmentId) {
   };
 }
 
-/** The parent thread's body: one subscription per run, scoped to this view. */
+/**
+ * The run's steps, pinned above the coordinator chat on the parent thread: one subscription per
+ * run, scoped to this view. It collapses to its name, status and actions, and scrolls within its
+ * own cap.
+ */
 export function PipelineRunView(props: {
   readonly environmentId: EnvironmentId;
   readonly runId: PipelineRun["id"];
   readonly cwd: string | undefined;
 }) {
+  const [expanded, setExpanded] = useState(true);
   const query = useEnvironmentQuery(
     serverEnvironment.pipelineRunLive({
       environmentId: props.environmentId,
@@ -105,23 +114,28 @@ export function PipelineRunView(props: {
     }),
   );
   const run = query.data?.run ?? null;
-  // The same scroller as the message timeline, so the chat canvas insets it beside the details card.
-  const registerTimeline = useChatCanvas()?.registerTimeline;
+  const statusLabel = useRunStatusLabel(props.environmentId, run);
   return (
-    <div
-      ref={registerTimeline}
-      className="messages-timeline-scroll scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto"
-      data-testid="pipeline-run-view"
-    >
-      <div className="chat-content-lane py-6">
-        {run === null ? (
-          <p className="text-sm text-muted-foreground">
+    <div className="shrink-0 border-b border-border/60" data-testid="pipeline-run-view">
+      <div className="chat-content-lane pt-2">
+        <CollapsibleSectionHeader expanded={expanded} onClick={() => setExpanded((open) => !open)}>
+          {run === null ? "Pipeline run" : `${run.definition.name} · ${statusLabel}`}
+        </CollapsibleSectionHeader>
+      </div>
+      {run === null ? (
+        expanded ? (
+          <p className="chat-content-lane py-3 text-sm text-muted-foreground">
             {query.error ?? "Loading pipeline run..."}
           </p>
-        ) : (
-          <PipelineRunBody environmentId={props.environmentId} liveRun={run} cwd={props.cwd} />
-        )}
-      </div>
+        ) : null
+      ) : (
+        <PipelineRunBody
+          environmentId={props.environmentId}
+          liveRun={run}
+          cwd={props.cwd}
+          expanded={expanded}
+        />
+      )}
     </div>
   );
 }
@@ -130,6 +144,8 @@ function PipelineRunBody(props: {
   readonly environmentId: EnvironmentId;
   readonly liveRun: PipelineRun;
   readonly cwd: string | undefined;
+  /** Collapsed, only the run's error and actions show. */
+  readonly expanded: boolean;
 }) {
   const { environmentId } = props;
   // The command's own result is the freshest run until the subscription catches up, so the
@@ -178,6 +194,10 @@ function PipelineRunBody(props: {
   });
   // One command at a time: the run changes shape under every action.
   const [inFlight, setInFlight] = useState<string | null>(null);
+  const [feedbackStepIndex, setFeedbackStepIndex] = useState<number | null>(null);
+  const canRevise = useAtomValue(
+    serverEnvironment.revisePipelineStep.permissionAtom(environmentId),
+  );
   const busy = inFlight !== null;
 
   const perform = async (
@@ -228,154 +248,165 @@ function PipelineRunBody(props: {
     );
   };
 
+  const actionsVisible = actions.continue || actions.retry || actions.skip || actions.cancel;
   return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-2">
-        <h1 className="min-w-0 truncate text-lg font-semibold text-foreground">
-          {run.definition.name}
-        </h1>
-        <RunStatusLabel environmentId={environmentId} run={run} />
-        {run.error ? (
-          <p className="text-sm text-destructive-foreground" role="alert">
-            {run.error}
-          </p>
-        ) : null}
-        {actions.continue || actions.retry || actions.skip || actions.cancel ? (
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            {actions.continue ? (
-              <Button
-                size="sm"
-                disabled={busy || !canContinue}
-                onClick={() =>
-                  void perform("continue", "Could not continue pipeline", () =>
-                    continueRun({ environmentId, input: stepAction }),
-                  )
-                }
-              >
-                {run.pauseReason === "awaiting_handoff" ? "Continue with last message" : "Continue"}
-              </Button>
-            ) : null}
-            {actions.retry && canRestoreFiles ? (
-              <Menu>
-                <MenuTrigger
-                  render={<Button size="sm" variant="outline" disabled={busy || !canRetry} />}
+    <>
+      {run.error || actionsVisible ? (
+        <div className="chat-content-lane flex flex-col gap-2 pt-1 pb-2">
+          {run.error ? (
+            <p className="text-sm text-destructive-foreground" role="alert">
+              {run.error}
+            </p>
+          ) : null}
+          {actionsVisible ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {actions.continue ? (
+                <Button
+                  size="sm"
+                  disabled={busy || !canContinue}
+                  onClick={() =>
+                    void perform("continue", "Could not continue pipeline", () =>
+                      continueRun({ environmentId, input: stepAction }),
+                    )
+                  }
+                >
+                  {run.pauseReason === "awaiting_handoff"
+                    ? "Continue with last message"
+                    : "Continue"}
+                </Button>
+              ) : null}
+              {actions.retry && canRestoreFiles ? (
+                <Menu>
+                  <MenuTrigger
+                    render={<Button size="sm" variant="outline" disabled={busy || !canRetry} />}
+                  >
+                    Retry {currentName}
+                    <ChevronDownIcon className="size-3.5" />
+                  </MenuTrigger>
+                  <MenuPopup align="start" className="max-w-72">
+                    <MenuItem className="items-start" onClick={() => retryCurrent(true)}>
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <MenuItemLabel>Retry from step start</MenuItemLabel>
+                        <span className="text-xs text-muted-foreground">
+                          Undo this step's file changes, then run it again. Commits stay on the
+                          branch.
+                        </span>
+                      </span>
+                    </MenuItem>
+                    <MenuItem onClick={() => retryCurrent(false)}>
+                      <MenuItemLabel>Retry with current files</MenuItemLabel>
+                    </MenuItem>
+                  </MenuPopup>
+                </Menu>
+              ) : actions.retry ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || !canRetry}
+                  onClick={() => retryCurrent(false)}
                 >
                   Retry {currentName}
-                  <ChevronDownIcon className="size-3.5" />
-                </MenuTrigger>
-                <MenuPopup align="start" className="max-w-72">
-                  <MenuItem className="items-start" onClick={() => retryCurrent(true)}>
-                    <span className="flex min-w-0 flex-col gap-0.5">
-                      <MenuItemLabel>Retry from step start</MenuItemLabel>
-                      <span className="text-xs text-muted-foreground">
-                        Undo this step's file changes, then run it again. Commits stay on the
-                        branch.
-                      </span>
-                    </span>
-                  </MenuItem>
-                  <MenuItem onClick={() => retryCurrent(false)}>
-                    <MenuItemLabel>Retry with current files</MenuItemLabel>
-                  </MenuItem>
-                </MenuPopup>
-              </Menu>
-            ) : actions.retry ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || !canRetry}
-                onClick={() => retryCurrent(false)}
-              >
-                Retry {currentName}
-              </Button>
-            ) : null}
-            {actions.skip ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || !canSkip}
-                onClick={() =>
-                  void perform("skip", "Could not skip step", () =>
-                    skipStep({ environmentId, input: stepAction }),
-                  )
-                }
-              >
-                Skip {currentName}
-              </Button>
-            ) : null}
-            {actions.cancel ? (
-              <Button
-                size="sm"
-                variant="destructive-outline"
-                disabled={busy || !canCancel}
-                onClick={() => void confirmCancel()}
-              >
-                Cancel run
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-      </header>
-
-      <section aria-label="Starting prompt" className="flex flex-col items-end gap-1">
-        <div className="min-w-0 max-w-[80%] rounded-2xl bg-message px-4 py-3 text-message-foreground">
-          <ChatMarkdown
-            text={run.input}
-            cwd={props.cwd}
-            environmentId={environmentId}
-            isStreaming={false}
-            headingLevelOffset={3}
-          />
+                </Button>
+              ) : null}
+              {actions.skip ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || !canSkip}
+                  onClick={() =>
+                    void perform("skip", "Could not skip step", () =>
+                      skipStep({ environmentId, input: stepAction }),
+                    )
+                  }
+                >
+                  Skip {currentName}
+                </Button>
+              ) : null}
+              {actions.cancel ? (
+                <Button
+                  size="sm"
+                  variant="destructive-outline"
+                  disabled={busy || !canCancel}
+                  onClick={() => void confirmCancel()}
+                >
+                  Cancel run
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-      </section>
+      ) : null}
+      {props.expanded ? (
+        <div className="scrollbar-gutter-both max-h-[45vh] overflow-y-auto">
+          <div className="chat-content-lane flex flex-col gap-6 py-3">
+            <section aria-label="Starting prompt" className="flex flex-col items-end gap-1">
+              <div className="min-w-0 max-w-[80%] rounded-2xl bg-message px-4 py-3 text-message-foreground">
+                <ChatMarkdown
+                  text={run.input}
+                  cwd={props.cwd}
+                  environmentId={environmentId}
+                  isStreaming={false}
+                  headingLevelOffset={3}
+                />
+              </div>
+            </section>
 
-      <ol className="m-0 flex list-none flex-col gap-2 p-0" aria-label="Pipeline steps">
-        {run.steps.map((step) => (
-          <PipelineStepRow
-            key={step.index}
-            environmentId={environmentId}
-            run={run}
-            step={step}
-            providerEntries={providerEntries}
-            cwd={props.cwd}
-            canTogglePauseBefore={
-              canSetPause &&
-              !busy &&
-              step.status === "pending" &&
-              actions.canTogglePauseBefore(step.index)
-            }
-            canRerun={canRerun && !busy && actions.rerunFrom(step.index)}
-            onRerun={() => void confirmRerun(step.index)}
-            onPauseBeforeChange={(pauseBefore) =>
-              void perform(`pause:${step.index}`, "Could not update pause", () =>
-                setPauseBefore({
-                  environmentId,
-                  input: { runId: run.id, stepId: step.stepId, pauseBefore },
-                }),
-              )
-            }
-          />
-        ))}
-      </ol>
-    </div>
+            <ol className="m-0 flex list-none flex-col gap-2 p-0" aria-label="Pipeline steps">
+              {run.steps.map((step) => (
+                <PipelineStepRow
+                  key={step.index}
+                  environmentId={environmentId}
+                  run={run}
+                  step={step}
+                  providerEntries={providerEntries}
+                  cwd={props.cwd}
+                  canTogglePauseBefore={
+                    canSetPause &&
+                    !busy &&
+                    step.status === "pending" &&
+                    actions.canTogglePauseBefore(step.index)
+                  }
+                  canRerun={canRerun && !busy && actions.rerunFrom(step.index)}
+                  onRerun={() => void confirmRerun(step.index)}
+                  canSendFeedback={canRevise && !busy && actions.revise(step.index)}
+                  onSendFeedback={() => setFeedbackStepIndex(step.index)}
+                  onPauseBeforeChange={(pauseBefore) =>
+                    void perform(`pause:${step.index}`, "Could not update pause", () =>
+                      setPauseBefore({
+                        environmentId,
+                        input: { runId: run.id, stepId: step.stepId, pauseBefore },
+                      }),
+                    )
+                  }
+                />
+              ))}
+            </ol>
+          </div>
+        </div>
+      ) : null}
+      {feedbackStepIndex === null ? null : (
+        <PipelineFeedbackDialog
+          environmentId={environmentId}
+          run={run}
+          stepIndex={feedbackStepIndex}
+          onClose={() => setFeedbackStepIndex(null)}
+          onRevised={setCommandRun}
+        />
+      )}
+    </>
   );
 }
 
 /** Between steps the run reads `running` with the next step still `pending`. */
-function RunStatusLabel(props: {
-  readonly environmentId: EnvironmentId;
-  readonly run: PipelineRun;
-}) {
-  const feeding = pipelineFeedingStep(props.run);
+function useRunStatusLabel(environmentId: EnvironmentId, run: PipelineRun | null): string | null {
+  const feeding = run === null ? null : pipelineFeedingStep(run);
   const shell = useQuietThreadShell(
-    feeding === null ? null : scopeThreadRef(props.environmentId, feeding.childThreadId),
+    feeding === null ? null : scopeThreadRef(environmentId, feeding.childThreadId),
   );
-  return (
-    <p className="text-sm text-muted-foreground" role="status">
-      {pipelineRunStatusLabel(
-        props.run,
-        feeding !== null && pipelineChildLiveState(shell) === "working",
-      )}
-    </p>
+  if (run === null) return null;
+  return pipelineRunStatusLabel(
+    run,
+    feeding !== null && pipelineChildLiveState(shell) === "working",
   );
 }
 
@@ -389,6 +420,8 @@ function PipelineStepRow(props: {
   readonly onPauseBeforeChange: (pauseBefore: boolean) => void;
   readonly canRerun: boolean;
   readonly onRerun: () => void;
+  readonly canSendFeedback: boolean;
+  readonly onSendFeedback: () => void;
 }) {
   const { environmentId, run, step } = props;
   const [outputOpen, setOutputOpen] = useState(false);
@@ -498,7 +531,12 @@ function PipelineStepRow(props: {
         </div>
       ) : null}
 
-      {childThreadId !== null || step.status === "pending" || props.canRerun ? (
+      <PipelineStepFeedback run={run} stepIndex={step.index} />
+
+      {childThreadId !== null ||
+      step.status === "pending" ||
+      props.canRerun ||
+      props.canSendFeedback ? (
         <div className="flex items-center justify-between gap-2 ps-6">
           {childThreadId === null ? (
             <span />
@@ -513,6 +551,17 @@ function PipelineStepRow(props: {
               Open thread
             </Button>
           )}
+          {props.canSendFeedback ? (
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              aria-label={`Send feedback to ${stepName(run, step.index)}`}
+              onClick={props.onSendFeedback}
+            >
+              <MessageSquareIcon className="size-3" />
+              Send feedback…
+            </Button>
+          ) : null}
           {props.canRerun ? (
             <Button
               size="xs"
@@ -539,5 +588,46 @@ function PipelineStepRow(props: {
         </div>
       ) : null}
     </li>
+  );
+}
+
+/** Why this step reran: the feedback sent to it, newest last. */
+function PipelineStepFeedback(props: { readonly run: PipelineRun; readonly stepIndex: number }) {
+  const [open, setOpen] = useState(false);
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const revisions = props.run.revisions.filter(
+    (revision) => revision.stepIndex === props.stepIndex,
+  );
+  if (revisions.length === 0) return null;
+  return (
+    <div className="ps-4">
+      <CollapsibleSectionHeader
+        expanded={open}
+        aria-label={`${open ? "Collapse" : "Expand"} feedback on ${stepName(props.run, props.stepIndex)}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        Feedback ({revisions.length})
+      </CollapsibleSectionHeader>
+      {open ? (
+        <ul className="m-0 flex list-none flex-col gap-2 px-2 pb-1 text-sm">
+          {revisions.map((revision) => (
+            <li key={revision.createdAt} className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">
+                {pipelineRevisionAuthorLabel(revision.author)} ·{" "}
+                <time dateTime={revision.createdAt}>
+                  {formatDayAwareTimestamp(revision.createdAt, timestampFormat)}
+                </time>
+              </span>
+              {revision.quote ? (
+                <blockquote className="m-0 border-s-2 border-border ps-2 text-xs text-muted-foreground">
+                  {revision.quote}
+                </blockquote>
+              ) : null}
+              <p className="m-0 whitespace-pre-wrap">{revision.feedback}</p>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }

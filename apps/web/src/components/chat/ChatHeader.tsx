@@ -10,7 +10,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, MessageSquareIcon } from "lucide-react";
+import { Button } from "../ui/button";
 import {
   memo,
   useEffect,
@@ -52,6 +53,9 @@ interface ChatHeaderProps {
   activeProject: EnvironmentProject | null;
   parentThreadLink: { threadId: ThreadId; title: string } | null;
   onOpenThread: (threadId: ThreadId) => void;
+  /** Set in a pipeline step's thread: opens the run's coordinator chat beside it. */
+  onOpenCoordinator?: (() => void) | undefined;
+  coordinatorUnread?: boolean | undefined;
   rightPanelOpen: boolean;
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
@@ -77,6 +81,8 @@ export const ChatHeader = memo(function ChatHeader({
   activeProject,
   parentThreadLink,
   onOpenThread,
+  onOpenCoordinator,
+  coordinatorUnread = false,
   rightPanelOpen,
   onNewThreadInProject,
   onOpenProjectSettings,
@@ -393,6 +399,21 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {onOpenCoordinator ? (
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          className="relative shrink-0"
+          aria-label={coordinatorUnread ? "Coordinator (new reply)" : "Coordinator"}
+          onClick={onOpenCoordinator}
+        >
+          <MessageSquareIcon className="size-3" />
+          Coordinator
+          {coordinatorUnread ? (
+            <span aria-hidden className="absolute end-0.5 top-0.5 size-1.5 rounded-full bg-info" />
+          ) : null}
+        </Button>
+      ) : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );

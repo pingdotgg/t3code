@@ -23,7 +23,12 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
-import { PipelinePauseReason, PipelineRunStatus, PipelineRunStepStatus } from "./pipeline.ts";
+import {
+  PipelinePauseReason,
+  PipelineRevisionAuthor,
+  PipelineRunStatus,
+  PipelineRunStepStatus,
+} from "./pipeline.ts";
 import {
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
@@ -823,6 +828,20 @@ export const OrchestratorMcpRerunPipelineInput = Schema.Struct({
 });
 export type OrchestratorMcpRerunPipelineInput = typeof OrchestratorMcpRerunPipelineInput.Type;
 
+export const OrchestratorMcpRevisePipelineStepInput = Schema.Struct({
+  runId: PipelineRunId,
+  stepIndex: NonNegativeInt.annotate({
+    description:
+      "The step to send feedback to: one before `currentStepIndex`, or the current one once it has stopped or ended without handing off.",
+  }),
+  feedback: OrchestratorMcpPrompt.annotate({
+    description:
+      "The user's feedback, as they gave it. Include any quoted text they pointed at. It goes to that step's own thread.",
+  }),
+});
+export type OrchestratorMcpRevisePipelineStepInput =
+  typeof OrchestratorMcpRevisePipelineStepInput.Type;
+
 export const OrchestratorMcpHandoffPipelineStepInput = Schema.Struct({
   output: OrchestratorMcpPrompt.annotate({
     description:
@@ -854,6 +873,15 @@ export const OrchestratorMcpPipelineStep = Schema.Struct({
 });
 export type OrchestratorMcpPipelineStep = typeof OrchestratorMcpPipelineStep.Type;
 
+export const OrchestratorMcpPipelineRevision = Schema.Struct({
+  stepIndex: NonNegativeInt,
+  stepId: PipelineStepId,
+  feedback: Schema.String,
+  author: PipelineRevisionAuthor,
+  createdAt: IsoDateTime,
+});
+export type OrchestratorMcpPipelineRevision = typeof OrchestratorMcpPipelineRevision.Type;
+
 export const OrchestratorMcpPipelineRun = Schema.Struct({
   runId: PipelineRunId,
   pipelineId: Schema.NullOr(PipelineId),
@@ -866,6 +894,7 @@ export const OrchestratorMcpPipelineRun = Schema.Struct({
   error: Schema.NullOr(Schema.String),
   currentStepIndex: NonNegativeInt,
   steps: Schema.Array(OrchestratorMcpPipelineStep),
+  revisions: Schema.Array(OrchestratorMcpPipelineRevision),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   completedAt: Schema.NullOr(IsoDateTime),

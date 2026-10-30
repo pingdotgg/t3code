@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -25,6 +26,7 @@ export const PIPELINE_MAX_STEPS = 12;
 export const PIPELINE_OUTPUT_PREVIEW_CHARS = 2_000;
 export const PIPELINE_NAME_MAX_LENGTH = 80;
 export const PIPELINE_STEP_SKILLS_MAX = 8;
+const PIPELINE_REVISION_QUOTE_MAX_CHARS = 4_000;
 
 /** The name part of a `$skill` mention, as the composer parses it. */
 export const PIPELINE_SKILL_NAME_PATTERN =
@@ -249,6 +251,25 @@ export const PipelineRunStep = Schema.Struct({
 });
 export type PipelineRunStep = typeof PipelineRunStep.Type;
 
+export const PipelineRevisionAuthor = Schema.Literals(["user", "coordinator", "agent"]);
+export type PipelineRevisionAuthor = typeof PipelineRevisionAuthor.Type;
+
+/** Feedback sent to an earlier step; later steps redid their work because of it. */
+export const PipelineRevision = Schema.Struct({
+  stepIndex: NonNegativeInt,
+  stepId: PipelineStepId,
+  feedback: Schema.String,
+  quote: Schema.NullOr(Schema.String).annotate({
+    description: "The excerpt the feedback is about, when it was sent from a message.",
+  }),
+  sourceStepId: Schema.NullOr(PipelineStepId).annotate({
+    description: "The step whose thread the feedback was written in, when there was one.",
+  }),
+  author: PipelineRevisionAuthor,
+  createdAt: IsoDateTime,
+});
+export type PipelineRevision = typeof PipelineRevision.Type;
+
 export const PipelineRun = Schema.Struct({
   id: PipelineRunId,
   pipelineId: Schema.NullOr(PipelineId),
@@ -262,6 +283,7 @@ export const PipelineRun = Schema.Struct({
   error: Schema.NullOr(Schema.String),
   currentStepIndex: NonNegativeInt,
   steps: Schema.Array(PipelineRunStep),
+  revisions: Schema.Array(PipelineRevision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdBy: OrchestrationV2Actor,
   creationSource: OrchestrationV2CreationSource,
   createdAt: IsoDateTime,
@@ -307,6 +329,23 @@ export const PipelineRunRerunInput = Schema.Struct({
   }),
 });
 export type PipelineRunRerunInput = typeof PipelineRunRerunInput.Type;
+
+/**
+ * Sends feedback to an earlier step: it fixes its work in its own thread, then every later step
+ * redoes theirs. A later step that is running is stopped.
+ */
+export const PipelineRunReviseInput = Schema.Struct({
+  runId: PipelineRunId,
+  stepIndex: NonNegativeInt.annotate({
+    description: "A step before the run's current step, or the current one once it has stopped.",
+  }),
+  feedback: TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  quote: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(PIPELINE_REVISION_QUOTE_MAX_CHARS)),
+  ),
+  sourceStepId: Schema.optional(PipelineStepId),
+});
+export type PipelineRunReviseInput = typeof PipelineRunReviseInput.Type;
 
 export const PipelineRunCancelInput = Schema.Struct({ runId: PipelineRunId });
 export type PipelineRunCancelInput = typeof PipelineRunCancelInput.Type;

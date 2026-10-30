@@ -1660,73 +1660,74 @@ it.effect("replays a thread.create receipt without changing the thread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("exposes a thread's pipeline on the thread and shell, and keeps parents read-only", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const runId = PipelineRunId.make("pipeline-run:read-only");
-    const stepId = PipelineStepId.make("step-a");
-    const projectId = ProjectId.make("project:pipeline-read-only");
-    const parentId = ThreadId.make("thread:pipeline-parent");
-    const childId = ThreadId.make("thread:pipeline-child");
-    const plainId = ThreadId.make("thread:pipeline-plain");
-    const create = (
-      threadId: ThreadId,
-      pipeline?: { runId: typeof runId; stepId: typeof stepId | null },
-    ) =>
-      orchestrator.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make(`create:${threadId}`),
-        threadId,
-        projectId,
-        title: "Pipeline",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        ...(pipeline === undefined ? {} : { pipeline }),
-        createdBy: "user",
-        creationSource: "web",
-      });
-    yield* create(parentId, { runId, stepId: null });
-    yield* create(childId, { runId, stepId });
-    yield* create(plainId);
+it.effect(
+  "exposes a thread's pipeline on the thread and shell, and keeps the run title on parents",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const runId = PipelineRunId.make("pipeline-run:read-only");
+      const stepId = PipelineStepId.make("step-a");
+      const projectId = ProjectId.make("project:pipeline-read-only");
+      const parentId = ThreadId.make("thread:pipeline-parent");
+      const childId = ThreadId.make("thread:pipeline-child");
+      const plainId = ThreadId.make("thread:pipeline-plain");
+      const create = (
+        threadId: ThreadId,
+        pipeline?: { runId: typeof runId; stepId: typeof stepId | null },
+      ) =>
+        orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create:${threadId}`),
+          threadId,
+          projectId,
+          title: "Pipeline",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          ...(pipeline === undefined ? {} : { pipeline }),
+          createdBy: "user",
+          creationSource: "web",
+        });
+      yield* create(parentId, { runId, stepId: null });
+      yield* create(childId, { runId, stepId });
+      yield* create(plainId);
 
-    assert.deepEqual((yield* projections.getThread(parentId)).pipeline, { runId, stepId: null });
-    assert.deepEqual((yield* projections.getThread(childId)).pipeline, { runId, stepId });
-    assert.isUndefined((yield* projections.getThread(plainId)).pipeline);
-    assert.deepEqual((yield* projections.getThreadShell(parentId))?.pipeline, {
-      runId,
-      stepId: null,
-    });
-    assert.deepEqual((yield* projections.getThreadShell(childId))?.pipeline, { runId, stepId });
-    assert.isUndefined((yield* projections.getThreadShell(plainId))?.pipeline);
-
-    const send = (threadId: ThreadId, name: string) =>
-      orchestrator.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make(`send:${name}`),
-        threadId,
-        messageId: MessageId.make(`message:${name}`),
-        text: "Hello",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        createdBy: "user",
-        creationSource: "web",
+      assert.deepEqual((yield* projections.getThread(parentId)).pipeline, { runId, stepId: null });
+      assert.deepEqual((yield* projections.getThread(childId)).pipeline, { runId, stepId });
+      assert.isUndefined((yield* projections.getThread(plainId)).pipeline);
+      assert.deepEqual((yield* projections.getThreadShell(parentId))?.pipeline, {
+        runId,
+        stepId: null,
       });
-    const before = yield* orchestrator.getThreadEventSequence(parentId);
-    const refused = yield* send(parentId, "pipeline-parent").pipe(Effect.flip);
-    assert.equal(refused._tag, "OrchestratorPipelineThreadReadOnlyError");
-    assert.equal(
-      refused.message,
-      "This is a pipeline thread; open a step's thread to talk to its agent.",
-    );
-    assert.equal(yield* orchestrator.getThreadEventSequence(parentId), before);
-    yield* send(childId, "pipeline-child");
-    yield* send(plainId, "pipeline-plain");
-    assert.lengthOf((yield* orchestrator.getThreadProjection(childId)).runs, 1);
-  }).pipe(Effect.provide(layerTest)),
+      assert.deepEqual((yield* projections.getThreadShell(childId))?.pipeline, { runId, stepId });
+      assert.isUndefined((yield* projections.getThreadShell(plainId))?.pipeline);
+
+      const send = (threadId: ThreadId, name: string) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`send:${name}`),
+          threadId,
+          messageId: MessageId.make(`message:${name}`),
+          text: "Hello",
+          titleSeed: "Hello",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      // The parent is the run's coordinator chat, so it takes messages like any provider thread.
+      yield* send(parentId, "pipeline-parent");
+      assert.lengthOf((yield* orchestrator.getThreadProjection(parentId)).runs, 1);
+      yield* send(childId, "pipeline-child");
+      yield* send(plainId, "pipeline-plain");
+      // The first message retitles a plain thread but never a run's page.
+      assert.equal((yield* projections.getThread(parentId)).title, "Pipeline");
+      assert.equal((yield* projections.getThread(plainId)).title, "Hello");
+      assert.lengthOf((yield* orchestrator.getThreadProjection(childId)).runs, 1);
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("explicit settle clears snooze atomically and stays idempotent after re-snoozing", () =>

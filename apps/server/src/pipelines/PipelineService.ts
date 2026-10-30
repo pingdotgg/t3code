@@ -12,7 +12,9 @@ import {
   type PipelineRunCancelInput,
   type PipelineRunId,
   type PipelineRunResult,
+  type PipelineRevisionAuthor,
   type PipelineRunRerunInput,
+  type PipelineRunReviseInput,
   type ThreadId,
   type PipelineRunRetryInput,
   type PipelineRunSetPauseBeforeInput,
@@ -91,6 +93,10 @@ export class PipelineService extends Context.Service<
     }) => Effect.Effect<PipelineRunResult, PipelineError>;
     readonly rerunFromStep: (
       input: PipelineRunRerunInput,
+    ) => Effect.Effect<PipelineRunResult, PipelineError>;
+    /** Feedback to an earlier step; later steps redo their work. See the runner for the rules. */
+    readonly reviseStep: (
+      input: PipelineRunReviseInput & { readonly author: PipelineRevisionAuthor },
     ) => Effect.Effect<PipelineRunResult, PipelineError>;
     readonly cancel: (
       input: PipelineRunCancelInput,
@@ -377,6 +383,7 @@ export const layerWithStarters = (
         skipStep: runner.skipStep,
         handoffStep: runner.handoffStep,
         rerunFromStep: runner.rerunFromStep,
+        reviseStep: runner.reviseStep,
         cancel: runner.cancel,
         setStepPauseBefore: runner.setStepPauseBefore,
       });

@@ -4,7 +4,8 @@ import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thr
 import { memo, use, useState } from "react";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
 import ChatMarkdown from "../ChatMarkdown";
-import { GitForkIcon } from "lucide-react";
+import { GitForkIcon, MessageSquareIcon } from "lucide-react";
+import { feedbackQuoteExcerpt } from "@t3tools/client-runtime/pipeline-run-presentation";
 import { Button } from "../ui/button";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
@@ -190,6 +191,9 @@ function AssistantMessageMeta({
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
+      {ctx.onSendFeedback && !message.streaming && (message.text ?? "").trim() !== "" ? (
+        <AssistantFeedbackButton text={message.text ?? ""} onSendFeedback={ctx.onSendFeedback} />
+      ) : null}
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -201,6 +205,33 @@ function AssistantMessageMeta({
         </Tooltip>
       )}
     </div>
+  );
+}
+
+function AssistantFeedbackButton({
+  text,
+  onSendFeedback,
+}: {
+  text: string;
+  onSendFeedback: (quote: string) => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            aria-label="Send feedback"
+            onClick={() => onSendFeedback(feedbackQuoteExcerpt(text))}
+          />
+        }
+      >
+        <MessageSquareIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Send feedback</TooltipPopup>
+    </Tooltip>
   );
 }
 

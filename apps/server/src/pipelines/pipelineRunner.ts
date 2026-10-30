@@ -12,7 +12,9 @@ import {
   type PipelinePauseReason,
   type PipelineRun,
   type PipelineRunCancelInput,
+  type PipelineRevision,
   type PipelineRunRerunInput,
+  type PipelineRunReviseInput,
   type PipelineRunResult,
   type PipelineRunRetryInput,
   type PipelineRunSetPauseBeforeInput,
@@ -22,6 +24,7 @@ import {
   type PipelineRunStepStatus,
   type PipelineStep,
   type ProjectId,
+  type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -49,7 +52,14 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PipelineStore from "./PipelineStore.ts";
-import { pipelineHandoffInstructions, renderPipelinePrompt } from "./pipelineTemplate.ts";
+import {
+  pipelineHandoffInstructions,
+  pipelineReferencedStepIndexes,
+  pipelineRevisionMessage,
+  pipelineRevisionSection,
+  pipelineUpstreamChangedMessage,
+  renderPipelinePrompt,
+} from "./pipelineTemplate.ts";
 import { makePipelineWorkspace } from "./pipelineWorkspace.ts";
 
 const WAIT_TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -241,7 +251,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     run: PipelineRun,
     step: PipelineRunStep,
     threadId: ThreadId,
-    action: "cancel" | "retry" | "skip" | "rerun",
+    action: "cancel" | "retry" | "skip" | "rerun" | "revise" | "superseded",
   ) =>
     bestEffort(
       "Could not stop pipeline step thread",
@@ -254,7 +264,11 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
             ? "The pipeline run was stopped."
             : action === "rerun"
               ? "The pipeline was rerun from an earlier step."
-              : `The pipeline step was ${action === "retry" ? "retried" : "skipped"}.`,
+              : action === "revise"
+                ? "An earlier step of the pipeline was revised."
+                : action === "superseded"
+                  ? "The pipeline run moved on while this step's message was sent."
+                  : `The pipeline step was ${action === "retry" ? "retried" : "skipped"}.`,
       }),
     );
 
@@ -267,7 +281,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
   };
 
   /** A failed, stopped or paused step's thread can still be worked on by hand, so always stop it. */
-  const stopCurrentChild = (run: PipelineRun, action: "retry" | "skip" | "rerun") => {
+  const stopCurrentChild = (run: PipelineRun, action: "retry" | "skip" | "rerun" | "revise") => {
     const step = run.steps[run.currentStepIndex];
     if (step === undefined || step.childThreadId === null) return Effect.void;
     return stopThread(run, step, step.childThreadId, action);
@@ -347,12 +361,15 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     function* (
       projectId: ProjectId,
       threadId: ThreadId,
+      /** A reused thread already has finished runs; only the run this message started counts. */
+      runId?: RunId,
     ): Effect.fn.Return<SettledStep, ThreadManagementService.ThreadManagementError> {
       const waited = yield* Effect.gen(function* () {
         while (true) {
           const result = yield* threads.waitForThread({
             projectId,
             threadId,
+            ...(runId === undefined ? {} : { runId }),
             timeoutMs: WAIT_TIMEOUT_MS,
             untilDelegatedWorkSettled: true,
           });
@@ -386,9 +403,17 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     }),
   );
 
+  const handoffFor = (run: PipelineRun, cursor: number) =>
+    pipelineHandoffInstructions({
+      stepNumber: cursor + 1,
+      stepCount: run.definition.steps.length,
+      stepName: run.definition.steps[cursor]?.name ?? `Step ${cursor + 1}`,
+    });
+
   const buildLaunch = Effect.fn("PipelineRunner.buildLaunch")(function* (
     run: PipelineRun,
     cursor: number,
+    options?: { readonly withRevisions?: boolean },
   ): Effect.fn.Return<BuiltLaunch, PipelineError | OrchestratorV2Error> {
     const outputs = yield* store.getStepOutputs(run.id);
     const rendered = renderPipelinePrompt({
@@ -400,11 +425,14 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
         output: outputs.get(step.index) ?? null,
       })),
     });
-    const prompt = `${rendered.prompt}\n\n${pipelineHandoffInstructions({
-      stepNumber: cursor + 1,
-      stepCount: run.definition.steps.length,
-      stepName: run.definition.steps[cursor]?.name ?? `Step ${cursor + 1}`,
-    })}`;
+    const catchUp =
+      options?.withRevisions === true
+        ? pipelineRevisionSection(
+            run.revisions,
+            run.definition.steps.map((step) => step.name),
+          )
+        : "";
+    const prompt = `${rendered.prompt}${catchUp === "" ? "" : `\n\n${catchUp}`}\n\n${handoffFor(run, cursor)}`;
     // Earlier steps' threads share one workspace. Retrying the first step reuses its previous
     // attempt's: re-running the original strategy would try to create the same worktree again.
     const earlier = run.steps.slice(0, cursor).filter((step) => step.childThreadId !== null);
@@ -502,6 +530,141 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     }
   });
 
+  const threadUsable = (threadId: ThreadId) =>
+    threads.getThreadShell(threadId).pipe(
+      // A message to an archived thread is refused, so the step launches fresh instead.
+      Effect.map(
+        (shell) => shell !== null && shell.deletedAt === null && shell.archivedAt === null,
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+
+  /**
+   * Tells a later step, in its own thread, that an earlier step was revised. Only outputs its
+   * template reads are included, or the revised step's when it reads none that are ready.
+   */
+  const pingStep = Effect.fn("PipelineRunner.pingStep")(function* (
+    run: PipelineRun,
+    cursor: number,
+    pendingExpect: StepExpectation,
+  ) {
+    const revised = run.revisions.at(-1);
+    if (revised === undefined) return;
+    const outputs = yield* store.getStepOutputs(run.id);
+    const ready = (index: number) => run.steps[index]?.status === "completed";
+    // Steps before every revised one did not change. Chained revisions can leave this step behind
+    // more than the latest, so the earliest bounds what is new; an older one included is harmless.
+    const earliest = Math.min(...run.revisions.map((revision) => revision.stepIndex));
+    const referenced = pipelineReferencedStepIndexes(run.definition, cursor, ready).filter(
+      (index) => index >= earliest && ready(index) && outputs.has(index),
+    );
+    const wanted = referenced.length > 0 ? referenced : [revised.stepIndex];
+    const text = pipelineUpstreamChangedMessage({
+      revised,
+      history: run.revisions,
+      stepNames: run.definition.steps.map((step) => step.name),
+      outputs: wanted.flatMap((stepIndex) => {
+        const output = outputs.get(stepIndex);
+        return output === undefined ? [] : [{ stepIndex, output }];
+      }),
+      handoff: handoffFor(run, cursor),
+    });
+    if (text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+      yield* endStep(
+        run.id,
+        pendingExpect,
+        "failed",
+        `The message is ${text.length} characters, over the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS} limit. Shorten the earlier output or the feedback, then retry.`,
+      );
+      return;
+    }
+    yield* withGuard(run.id, pendingExpect, (_run, now) =>
+      store.updateRunWithSteps(run.id, { updatedAt: now, pauseReason: null, error: null }, [
+        {
+          index: cursor,
+          patch: {
+            status: "running",
+            attempt: pendingExpect.attempt + 1,
+            prompt: text,
+            output: null,
+            handedOff: false,
+            revising: true,
+            error: null,
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+      ]),
+    );
+  });
+
+  /** Sends the saved revision message into the step's existing thread, then settles on its run. */
+  const resumeRunning = Effect.fn("PipelineRunner.resumeRunning")(function* (
+    run: PipelineRun,
+    step: PipelineRunStep,
+    childThreadId: ThreadId,
+  ) {
+    const expect: StepExpectation = {
+      cursor: step.index,
+      attempt: step.attempt,
+      stepStatus: "running",
+    };
+    const saved = yield* store.getStepLaunch(run.id, step.index);
+    if (saved === null) {
+      yield* endStep(run.id, expect, "failed", "The step's message was not saved. Retry the step.");
+      return;
+    }
+    const feedback = run.revisions.at(-1);
+    // Feedback for this step is sent as its author; a downstream step's catch-up as the run.
+    const sender: Pick<
+      ThreadManagementService.ThreadManagementSendInput,
+      "createdBy" | "creationSource"
+    > =
+      feedback === undefined || feedback.stepIndex !== step.index
+        ? { createdBy: run.createdBy, creationSource: run.creationSource }
+        : feedback.author === "user"
+          ? { createdBy: "user", creationSource: run.creationSource }
+          : { createdBy: "agent", creationSource: "mcp" };
+    // Sending and the check that the attempt is still current are one unit, like a launch.
+    const sentRunId = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        // Same ids as a launch's first message, so a replay after a restart sends nothing twice.
+        const sent = yield* Effect.result(
+          threads.sendToThread({
+            projectId: run.projectId,
+            commandId: commandIdFor(run.id, "revise-message", step.stepId, step.attempt),
+            threadId: childThreadId,
+            messageId: MessageId.make(
+              `pipeline-run-message:${run.id}:${step.stepId}:${step.attempt}`,
+            ),
+            text: saved.prompt,
+            attachments: [],
+            mode: "auto",
+            ...sender,
+          }),
+        );
+        if (Result.isFailure(sent)) {
+          yield* endStep(
+            run.id,
+            expect,
+            "failed",
+            failureMessage(sent.failure, "The step's thread could not be reached."),
+          );
+          return null;
+        }
+        // A stop that landed while the message was in flight missed its turn; a cancel's id is
+        // already used, so this stop needs its own.
+        if (!(yield* withGuard(run.id, expect, () => Effect.void))) {
+          yield* stopThread(run, step, childThreadId, "superseded");
+          return null;
+        }
+        return sent.success.run.id;
+      }),
+    );
+    if (sentRunId === null) return;
+    yield* settleRunning(run, step.index, childThreadId, step.attempt, sentRunId);
+  });
+
   const launchPending = Effect.fn("PipelineRunner.launchPending")(function* (
     run: PipelineRun,
     cursor: number,
@@ -540,7 +703,19 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
       attempt: current.attempt,
       stepStatus: "pending",
     };
-    const built = yield* buildLaunch(fresh, cursor);
+    const revising = yield* store.isStepRevising(run.id, cursor);
+    // Only a step after the revised one catches up in its thread; a retried revised step relaunches.
+    const upstreamRevised = (fresh.revisions.at(-1)?.stepIndex ?? cursor) < cursor;
+    if (
+      revising &&
+      upstreamRevised &&
+      current.childThreadId !== null &&
+      (yield* threadUsable(current.childThreadId))
+    ) {
+      yield* pingStep(fresh, cursor, pendingExpect);
+      return;
+    }
+    const built = yield* buildLaunch(fresh, cursor, { withRevisions: revising });
     if (built._tag === "invalid") {
       yield* endStep(run.id, pendingExpect, "failed", built.message);
       return;
@@ -567,6 +742,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
             workspaceStrategy: built.workspaceStrategy,
             output: null,
             handedOff: false,
+            revising: false,
             error: null,
             startedAt: now,
             completedAt: null,
@@ -583,8 +759,9 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     cursor: number,
     childThreadId: ThreadId,
     attempt: number,
+    runId?: RunId,
   ) {
-    const settled = yield* waitSettled(run.projectId, childThreadId);
+    const settled = yield* waitSettled(run.projectId, childThreadId, runId);
     const expect: StepExpectation = { cursor, attempt, stepStatus: "running" };
     const settling = run.steps[cursor];
     if (settling !== undefined && settled._tag !== "deleted") {
@@ -665,6 +842,8 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
             } else {
               yield* launchStep(run, cursor, step.attempt, saved);
             }
+          } else if (yield* store.isStepRevising(runId, cursor)) {
+            yield* resumeRunning(run, step, step.childThreadId);
           } else {
             yield* settleRunning(run, cursor, step.childThreadId, step.attempt);
           }
@@ -1000,7 +1179,10 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
           }
           // Re-wait the same thread and take its latest result.
           yield* store.updateRunWithSteps(run.id, resumed, [
-            { index: step.index, patch: { status: "running", error: null, completedAt: null } },
+            {
+              index: step.index,
+              patch: { status: "running", error: null, completedAt: null, revising: false },
+            },
           ]);
         } else {
           yield* store.updateRun(run.id, resumed);
@@ -1057,6 +1239,11 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
               });
             }
             const now = yield* nowIso;
+            // After a revision the relaunch keeps the feedback. A first step keeps its thread: it
+            // is the workspace donor, and launchPending relaunches a revised step instead of pinging.
+            const revised = current.revisions.some(
+              (revision) => revision.stepIndex <= current.currentStepIndex,
+            );
             yield* store.updateRunWithSteps(
               current.id,
               {
@@ -1069,7 +1256,14 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
               [
                 {
                   index: current.currentStepIndex,
-                  patch: { status: "pending", error: null, output: null, completedAt: null },
+                  patch: {
+                    status: "pending",
+                    error: null,
+                    output: null,
+                    completedAt: null,
+                    revising: revised,
+                    ...(revised && current.currentStepIndex > 0 ? { childThreadId: null } : {}),
+                  },
                 },
               ],
             );
@@ -1111,7 +1305,8 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
           yield* store.updateRunWithSteps(
             run.id,
             { updatedAt: now, status: "running", pauseReason: null, error: null },
-            [{ index: step.index, patch: handedOff }],
+            // The thread may have gone on since the revision message; wait for its latest run.
+            [{ index: step.index, patch: { ...handedOff, revising: false } }],
           );
           yield* wake(run.id);
         } else if (
@@ -1182,6 +1377,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
                     status: "pending",
                     output: null,
                     handedOff: false,
+                    revising: false,
                     error: null,
                     startedAt: null,
                     completedAt: null,
@@ -1190,6 +1386,210 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
                     ...(step.index > input.stepIndex ? { childThreadId: null } : {}),
                   },
                 })),
+            );
+            yield* notifyRunChanged(current.id);
+            yield* wake(current.id);
+          }),
+        );
+      }),
+    );
+    return yield* result(input.runId);
+  });
+
+  const requireRevisable = Effect.fn("PipelineRunner.requireRevisable")(function* (
+    run: PipelineRun,
+    stepIndex: number,
+  ): Effect.fn.Return<void, PipelineError> {
+    const step = run.steps[stepIndex];
+    if (step === undefined) {
+      return yield* pipelineError(`Step ${stepIndex + 1} is not part of the run.`, {
+        runId: run.id,
+      });
+    }
+    if (stepIndex > run.currentStepIndex || step.attempt === 0) {
+      return yield* pipelineError(`Step ${stepIndex + 1} has not run yet.`, { runId: run.id });
+    }
+    if (stepIndex === run.currentStepIndex) {
+      const awaitingHandoff =
+        run.status === "paused" &&
+        run.pauseReason === "awaiting_handoff" &&
+        step.status === "running";
+      if (step.status === "running" && !awaitingHandoff) {
+        return yield* pipelineError(
+          `Step ${stepIndex + 1} is running right now. Send it in the step's thread instead.`,
+          { runId: run.id },
+        );
+      }
+      if (step.status === "pending") {
+        return yield* pipelineError(`Step ${stepIndex + 1} has not started yet.`, {
+          runId: run.id,
+        });
+      }
+    }
+    yield* requireParent(run);
+  });
+
+  /** The message the revised step receives in its own thread, with the run's feedback so far. */
+  const revisionMessage = (
+    run: PipelineRun,
+    revision: PipelineRevision,
+    revisions: ReadonlyArray<PipelineRevision>,
+  ) =>
+    pipelineRevisionMessage({
+      revision: {
+        ...revision,
+        sourceStepName:
+          revision.sourceStepId === null
+            ? null
+            : (run.definition.steps.find((step) => step.id === revision.sourceStepId)?.name ??
+              null),
+      },
+      history: revisions,
+      stepNames: run.definition.steps.map((step) => step.name),
+      handoff: handoffFor(run, revision.stepIndex),
+    });
+
+  /**
+   * Sends feedback to an earlier step. It fixes its work in its own thread; every later step then
+   * redoes theirs, in their own threads where they still have one. A later step that is running
+   * is stopped first. The currently running step is steered in its thread instead.
+   */
+  const reviseStep = Effect.fn("PipelineRunner.reviseStep")(function* (
+    input: PipelineRunReviseInput & { readonly author: PipelineRevision["author"] },
+  ) {
+    yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const run = yield* readRun(input.runId);
+        yield* requireRevisable(run, input.stepIndex);
+        const target = run.steps[input.stepIndex];
+        if (target === undefined) return;
+        if (
+          input.sourceStepId !== undefined &&
+          !run.steps.some((step) => step.stepId === input.sourceStepId)
+        ) {
+          return yield* pipelineError("The source step is not part of the run.", {
+            runId: run.id,
+          });
+        }
+        const newRevision = (createdAt: string): PipelineRevision => ({
+          stepIndex: input.stepIndex,
+          stepId: target.stepId,
+          feedback: input.feedback,
+          quote: input.quote === undefined || input.quote.trim() === "" ? null : input.quote,
+          sourceStepId: input.sourceStepId ?? null,
+          author: input.author,
+          createdAt,
+        });
+        const reuse = target.childThreadId !== null && (yield* threadUsable(target.childThreadId));
+        // Checked before anything is stopped, so a rejected revision changes nothing.
+        const preview = revisionMessage(run, newRevision(run.updatedAt), [
+          ...run.revisions,
+          newRevision(run.updatedAt),
+        ]);
+        if (preview.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+          return yield* pipelineError(
+            `The message to the step would be ${preview.length} characters, over the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS} limit. Shorten the feedback.`,
+            { runId: run.id },
+          );
+        }
+        if (run.currentStepIndex > input.stepIndex) {
+          const running = run.steps[run.currentStepIndex];
+          // Its launch is in flight: there is no thread to stop yet, and the launch would outlive this.
+          if (running?.status === "running" && running.childThreadId === null) {
+            return yield* pipelineError(
+              "The running step is still starting. Try again in a moment.",
+              { runId: run.id },
+            );
+          }
+          yield* stopCurrentChild(run, "revise");
+          // Two step agents must never write to the shared workspace at once.
+          if (
+            running?.status === "running" &&
+            running.childThreadId !== null &&
+            !(yield* workspace.waitUntilThreadIdle(running.childThreadId))
+          ) {
+            return yield* pipelineError(
+              "The running step is still stopping. Try again in a moment.",
+              { runId: run.id },
+            );
+          }
+        }
+        yield* section(
+          Effect.gen(function* () {
+            const current = yield* readRun(input.runId);
+            yield* requireRevisable(current, input.stepIndex);
+            // What was stopped and checked above must still be what runs; the stop's own result
+            // may have changed the step's status.
+            const latest = current.steps[input.stepIndex];
+            if (
+              latest === undefined ||
+              current.currentStepIndex !== run.currentStepIndex ||
+              current.steps[current.currentStepIndex]?.attempt !==
+                run.steps[run.currentStepIndex]?.attempt ||
+              current.steps[current.currentStepIndex]?.childThreadId !==
+                run.steps[run.currentStepIndex]?.childThreadId ||
+              latest.attempt !== target.attempt ||
+              latest.childThreadId !== target.childThreadId
+            ) {
+              return yield* pipelineError("The run moved on. Try again.", { runId: current.id });
+            }
+            const now = yield* nowIso;
+            const revision = newRevision(now);
+            const revisions = [...current.revisions, revision];
+            const targetPatch: PipelineStore.PipelineStepPatch = reuse
+              ? {
+                  status: "running",
+                  attempt: latest.attempt + 1,
+                  prompt: revisionMessage(current, revision, revisions),
+                  handedOff: false,
+                  revising: true,
+                  error: null,
+                  startedAt: now,
+                  completedAt: null,
+                }
+              : {
+                  // No thread to continue in: the driver launches it fresh with the feedback. With
+                  // no earlier step's thread, the old one is the workspace donor, as in a retry.
+                  status: "pending",
+                  ...(current.steps
+                    .slice(0, input.stepIndex)
+                    .some((step) => step.childThreadId !== null)
+                    ? { childThreadId: null }
+                    : {}),
+                  output: null,
+                  handedOff: false,
+                  revising: true,
+                  error: null,
+                  startedAt: null,
+                  completedAt: null,
+                };
+            yield* store.updateRunWithSteps(
+              current.id,
+              {
+                updatedAt: now,
+                status: "running",
+                pauseReason: null,
+                error: null,
+                currentStepIndex: input.stepIndex,
+                completedAt: null,
+                revisions,
+              },
+              [
+                { index: input.stepIndex, patch: targetPatch },
+                ...current.steps
+                  .filter((step) => step.index > input.stepIndex)
+                  .map((step) => ({
+                    index: step.index,
+                    patch: {
+                      status: "pending",
+                      handedOff: false,
+                      revising: true,
+                      error: null,
+                      startedAt: null,
+                      completedAt: null,
+                    } satisfies PipelineStore.PipelineStepPatch,
+                  })),
+              ],
             );
             yield* notifyRunChanged(current.id);
             yield* wake(current.id);
@@ -1393,6 +1793,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     skipStep,
     handoffStep,
     rerunFromStep,
+    reviseStep,
     cancel,
     setStepPauseBefore,
     startRecovery,

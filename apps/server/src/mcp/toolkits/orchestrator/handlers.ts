@@ -183,6 +183,15 @@ const handlers = {
       }),
     { refusedWhenLinked: "rerun this environment's pipelines" },
   ),
+  revise_pipeline_step: McpToolAccess.writes(
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.revisePipelineStep(scope, input);
+      }),
+    { refusedWhenLinked: "send feedback to this environment's pipelines" },
+  ),
   handoff_pipeline_step: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

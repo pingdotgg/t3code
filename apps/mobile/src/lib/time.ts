@@ -30,3 +30,16 @@ export function msUntilRelativeTimeChange(
   // Far-future timestamps must not overflow setTimeout's signed 32-bit delay.
   return Math.min(nextChangeMs - nowMs, 86_400_000);
 }
+
+const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+export function formatMessageTime(input: string): string {
+  const timestamp = Date.parse(input);
+  if (Number.isNaN(timestamp)) {
+    return "";
+  }
+  return MESSAGE_TIME_FORMATTER.format(timestamp);
+}

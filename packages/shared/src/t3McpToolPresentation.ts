@@ -181,6 +181,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Rerun", "Rerunning", "Reran", "a pipeline step"],
     "pipeline-continue",
   ),
+  revise_pipeline_step: tool(
+    ["Send feedback to", "Sending feedback to", "Sent feedback to", "a pipeline step"],
+    "pipeline-continue",
+  ),
   handoff_pipeline_step: tool(
     ["Hand off", "Handing off", "Handed off", "a pipeline step"],
     "pipeline-continue",

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import type {
   EnvironmentId,
   PipelineRun,
@@ -7,9 +8,11 @@ import type {
 } from "@t3tools/contracts";
 import {
   availablePipelineActions,
-  pipelineRunStatusLabel,
+  pipelineRevisionAuthorLabel,
+  pipelineRunStateLabel,
   pipelineStepPosition,
   pipelineStepStatusLabel,
+  stepName,
 } from "@t3tools/client-runtime/pipeline-run-presentation";
 import {
   isAtomCommandInterrupted,
@@ -17,21 +20,22 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { formatModelSlugName } from "@t3tools/shared/model";
-import { useRef, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { useRef, useState, type ReactNode } from "react";
+import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 
 import { StatusPill, type StatusTone } from "../../components/StatusPill";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
-import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
-import { useThreadShell } from "../../state/entities";
+import { formatMessageTime } from "../../lib/time";
+import { useQuietThreadShell } from "../../state/entities";
+import { threadHasUnseenCompletion } from "./threadListV2";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { pipelineStepTone, type PipelineStepTone } from "./pipeline-run-view";
+import { pipelineStepTone, stepRevisions, type PipelineStepTone } from "./pipeline-run-view";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 const SYNC_LOCK_MAX_MS = 5_000;
@@ -69,21 +73,69 @@ function runTone(run: PipelineRun): StatusTone {
   }
 }
 
-/** Shown in place of the feed and composer on a pipeline run's parent thread. */
+/** Compact "Step n/N" label for the step the run is at. */
+function runProgressLabel(run: PipelineRun): string {
+  const total = run.definition.steps.length;
+  return `Step ${Math.min(run.currentStepIndex + 1, total)}/${total}`;
+}
+
+/**
+ * Compact run header for the coordinator sheet: step n/N, name and status. It reads the run
+ * without a panel, so the sheet's body stays the coordinator's own chat.
+ */
+export function PipelineRunSummaryHeader(props: {
+  readonly environmentId: EnvironmentId;
+  readonly runId: PipelineRunId;
+  readonly topInset: number;
+  readonly contentMaxWidth: number | undefined;
+}) {
+  const runQuery = useEnvironmentQuery(
+    serverEnvironment.pipelineRunLive({
+      environmentId: props.environmentId,
+      input: { runId: props.runId },
+    }),
+  );
+  const run = runQuery.data?.run ?? null;
+  if (run === null) return <View style={{ paddingTop: props.topInset }} />;
+  const tone = runTone(run);
+  const stepIndex = Math.min(run.currentStepIndex, run.steps.length - 1);
+  return (
+    <View
+      className="border-b border-border-subtle px-4 pb-2"
+      style={{ paddingTop: props.topInset + 4 }}
+    >
+      <View
+        className="w-full flex-row items-center gap-3 self-center"
+        style={{ maxWidth: props.contentMaxWidth }}
+      >
+        <Text numberOfLines={1} className="min-w-0 flex-1 font-t3-medium text-sm text-foreground">
+          {runProgressLabel(run)} · {stepName(run, stepIndex)}
+        </Text>
+        <StatusPill {...tone} size="compact" />
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Collapsible run overview above a pipeline parent thread's chat (the coordinator). The header
+ * and the run actions stay visible; the starting prompt and the steps expand below.
+ */
 export function PipelineRunPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly runId: PipelineRunId;
-  /** Space the native header covers when UIKit does not inset the scroll view itself. */
+  /** Space the native header covers; the feed below is laid out without automatic insets. */
   readonly topInset: number;
-  readonly automaticInsets: boolean;
-  readonly bottomInset: number;
   readonly contentMaxWidth: number | undefined;
 }) {
   const { environmentId } = props;
+  const navigation = useNavigation();
+  const { height: windowHeight } = useWindowDimensions();
   const runQuery = useEnvironmentQuery(
     serverEnvironment.pipelineRunLive({ environmentId, input: { runId: props.runId } }),
   );
   const run = runQuery.data?.run ?? null;
+  const [expanded, setExpanded] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const openThread = useOpenLinkedThread();
 
@@ -93,6 +145,9 @@ export function PipelineRunPanel(props: {
   const canRetry = useAtomValue(serverEnvironment.retryPipelineStep.permissionAtom(environmentId));
   const canSkip = useAtomValue(serverEnvironment.skipPipelineStep.permissionAtom(environmentId));
   const canCancel = useAtomValue(serverEnvironment.cancelPipelineRun.permissionAtom(environmentId));
+  const canRevise = useAtomValue(
+    serverEnvironment.revisePipelineStep.permissionAtom(environmentId),
+  );
   const canSetPause = useAtomValue(
     serverEnvironment.setPipelineStepPauseBefore.permissionAtom(environmentId),
   );
@@ -151,48 +206,170 @@ export function PipelineRunPanel(props: {
     }
   };
 
-  const content = (() => {
-    if (run === null) {
-      return (
-        <View className="gap-3 px-1 pt-2">
-          <Text textRole="body" className="text-foreground-muted">
-            {runQuery.error ?? "Loading pipeline…"}
+  const wrap = (children: ReactNode) => (
+    <View
+      className="border-b border-border-subtle px-4 pb-2"
+      style={{ paddingTop: props.topInset }}
+    >
+      <View
+        className="w-full gap-2 self-center rounded-[20px] border border-border-subtle bg-card-alt"
+        style={{ maxWidth: props.contentMaxWidth }}
+      >
+        {children}
+      </View>
+    </View>
+  );
+
+  if (run === null) {
+    return wrap(
+      <View className="gap-3 p-4">
+        <Text textRole="body" className="text-foreground-muted">
+          {runQuery.error ?? "Loading pipeline…"}
+        </Text>
+        {runQuery.error !== null ? <Button label="Try again" onPress={runQuery.refresh} /> : null}
+      </View>,
+    );
+  }
+
+  const actions = availablePipelineActions(run);
+  const stepIndex = run.currentStepIndex;
+  const tone = runTone(run);
+  const stepInput = { runId: run.id, stepIndex };
+  const currentStepName = stepName(run, Math.min(stepIndex, run.steps.length - 1));
+  const actionsVisible = actions.continue || actions.retry || actions.skip || actions.cancel;
+
+  return wrap(
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={expanded ? "Collapse pipeline steps" : "Expand pipeline steps"}
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((value) => !value)}
+        className="gap-1 px-4 pt-3 active:opacity-70"
+      >
+        <View className="flex-row items-center justify-between gap-3">
+          <Text
+            textRole="body"
+            className="min-w-0 shrink font-t3-bold text-foreground"
+            numberOfLines={1}
+          >
+            {run.definition.name}
           </Text>
-          {runQuery.error !== null ? <Button label="Try again" onPress={runQuery.refresh} /> : null}
-        </View>
-      );
-    }
-    const actions = availablePipelineActions(run);
-    const stepIndex = run.currentStepIndex;
-    const tone = runTone(run);
-    return (
-      <>
-        <View className="gap-3 rounded-[20px] border border-border-subtle bg-card-alt p-4">
-          <View className="flex-row items-center justify-between gap-3">
-            <Text
-              textRole="body"
-              className="min-w-0 shrink font-t3-bold text-foreground"
-              numberOfLines={2}
-            >
-              {run.definition.name}
-            </Text>
+          <View className="flex-row items-center gap-2">
             <StatusPill {...tone} size="compact" />
+            <SymbolView
+              name={expanded ? "chevron.up" : "chevron.down"}
+              size={13}
+              tintColorClassName="accent-icon-muted"
+            />
           </View>
-          <Text textRole="footnote" className="text-foreground-secondary">
-            {pipelineRunStatusLabel(run)}
-          </Text>
-          {run.error ? (
-            <Text textRole="footnote" className="text-danger-text">
-              {run.error}
-            </Text>
+        </View>
+        <Text textRole="footnote" className="text-foreground-secondary" numberOfLines={1}>
+          {runProgressLabel(run)} · {currentStepName} · {pipelineRunStateLabel(run)}
+        </Text>
+      </Pressable>
+      {run.error ? (
+        <Text textRole="footnote" className="px-4 text-danger-text">
+          {run.error}
+        </Text>
+      ) : null}
+      {actionsVisible ? (
+        <View className="flex-row flex-wrap items-center gap-2 px-4">
+          {actions.continue ? (
+            <Button
+              label="Continue"
+              tone="primary"
+              accessibilityHint={`Runs ${currentStepName}`}
+              disabled={!canContinue || busy !== null}
+              loading={busy === "continue"}
+              onPress={() =>
+                void perform("continue", "Could not continue the pipeline", () =>
+                  continueRun({ environmentId, input: stepInput }),
+                )
+              }
+            />
           ) : null}
+          {actions.retry ? (
+            <Button
+              label="Retry step"
+              accessibilityHint={`Runs ${currentStepName} again`}
+              disabled={!canRetry || busy !== null}
+              loading={busy === "retry"}
+              onPress={() => {
+                const retry = (restoreWorkspace: boolean) =>
+                  void perform("retry", "Could not retry the step", () =>
+                    retryStep({
+                      environmentId,
+                      input: restoreWorkspace ? { ...stepInput, restoreWorkspace } : stepInput,
+                    }),
+                  );
+                if (run.steps[stepIndex]?.canRestoreWorkspace !== true) {
+                  retry(false);
+                  return;
+                }
+                Dialog.alert(
+                  `Retry ${currentStepName}`,
+                  "Retry from step start undoes this step's file changes, then runs it again. Commits stay on the branch.",
+                  [
+                    { text: "Retry from step start", onPress: () => retry(true) },
+                    { text: "Retry with current files", onPress: () => retry(false) },
+                    { text: "Cancel", style: "cancel" },
+                  ],
+                );
+              }}
+            />
+          ) : null}
+          {actions.skip ? (
+            <Button
+              label="Skip step"
+              accessibilityHint={`Moves past ${currentStepName} without running it`}
+              disabled={!canSkip || busy !== null}
+              loading={busy === "skip"}
+              onPress={() =>
+                void perform("skip", "Could not skip the step", () =>
+                  skipStep({ environmentId, input: stepInput }),
+                )
+              }
+            />
+          ) : null}
+          {actions.cancel ? (
+            <Button
+              label="Cancel run"
+              tone="text"
+              disabled={!canCancel || busy !== null}
+              loading={busy === "cancel"}
+              onPress={() =>
+                Dialog.confirm({
+                  title: "Cancel this pipeline?",
+                  message:
+                    "The current step is stopped and the remaining steps will not run. Finished steps keep their threads.",
+                  confirmText: "Cancel run",
+                  cancelText: "Keep running",
+                  destructive: true,
+                  onConfirm: () =>
+                    void perform("cancel", "Could not cancel the pipeline", () =>
+                      cancelRun({ environmentId, input: { runId: run.id } }),
+                    ),
+                })
+              }
+            />
+          ) : null}
+        </View>
+      ) : null}
+      {expanded ? (
+        <ScrollView
+          nestedScrollEnabled
+          style={{ maxHeight: windowHeight * 0.45 }}
+          contentContainerClassName="gap-3 px-3 pb-3"
+          showsVerticalScrollIndicator={false}
+        >
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={
               promptExpanded ? "Collapse starting prompt" : "Expand starting prompt"
             }
-            onPress={() => setPromptExpanded((expanded) => !expanded)}
-            className="gap-1 active:opacity-70"
+            onPress={() => setPromptExpanded((value) => !value)}
+            className="gap-1 px-1 active:opacity-70"
           >
             <Text textRole="footnote" className="font-t3-medium text-foreground-muted">
               Starting prompt
@@ -200,15 +377,12 @@ export function PipelineRunPanel(props: {
             <Text
               textRole="body"
               className="text-foreground"
-              numberOfLines={promptExpanded ? undefined : 6}
+              numberOfLines={promptExpanded ? undefined : 4}
               selectable={promptExpanded}
             >
               {run.input}
             </Text>
           </Pressable>
-        </View>
-
-        <View className="gap-2">
           {run.steps.map((step) => (
             <PipelineStepRow
               key={step.stepId}
@@ -219,8 +393,16 @@ export function PipelineRunPanel(props: {
               pauseBeforeEditable={
                 canSetPause && actions.canTogglePauseBefore(step.index) && busy === null
               }
+              canSendFeedback={canRevise && actions.revise(step.index)}
               onOpenThread={(threadId) =>
                 openThread({ environmentId: String(environmentId), threadId: String(threadId) })
+              }
+              onSendFeedback={() =>
+                navigation.navigate("PipelineFeedback", {
+                  environmentId: String(environmentId),
+                  runId: String(run.id),
+                  stepIndex: step.index,
+                })
               }
               onTogglePauseBefore={(pauseBefore) =>
                 void perform(`pause:${step.stepId}`, "Could not update the pipeline", () =>
@@ -232,127 +414,10 @@ export function PipelineRunPanel(props: {
               }
             />
           ))}
-        </View>
-      </>
-    );
-  })();
-
-  const actionBar =
-    run === null
-      ? null
-      : (() => {
-          const actions = availablePipelineActions(run);
-          const stepIndex = run.currentStepIndex;
-          const stepInput = { runId: run.id, stepIndex };
-          const stepName = run.definition.steps[stepIndex]?.name ?? `Step ${stepIndex + 1}`;
-          const visible = actions.continue || actions.retry || actions.skip || actions.cancel;
-          if (!visible) return null;
-          return (
-            <View
-              className="flex-row flex-wrap items-center gap-2 border-t border-border-subtle bg-screen px-4 pt-3"
-              style={{ paddingBottom: props.bottomInset + 8 }}
-            >
-              {actions.continue ? (
-                <Button
-                  label="Continue"
-                  tone="primary"
-                  accessibilityHint={`Runs ${stepName}`}
-                  disabled={!canContinue || busy !== null}
-                  loading={busy === "continue"}
-                  onPress={() =>
-                    void perform("continue", "Could not continue the pipeline", () =>
-                      continueRun({ environmentId, input: stepInput }),
-                    )
-                  }
-                />
-              ) : null}
-              {actions.retry ? (
-                <Button
-                  label="Retry step"
-                  accessibilityHint={`Runs ${stepName} again`}
-                  disabled={!canRetry || busy !== null}
-                  loading={busy === "retry"}
-                  onPress={() => {
-                    const retry = (restoreWorkspace: boolean) =>
-                      void perform("retry", "Could not retry the step", () =>
-                        retryStep({
-                          environmentId,
-                          input: restoreWorkspace ? { ...stepInput, restoreWorkspace } : stepInput,
-                        }),
-                      );
-                    if (run.steps[stepIndex]?.canRestoreWorkspace !== true) {
-                      retry(false);
-                      return;
-                    }
-                    Dialog.alert(
-                      `Retry ${stepName}`,
-                      "Retry from step start undoes this step's file changes, then runs it again. Commits stay on the branch.",
-                      [
-                        { text: "Retry from step start", onPress: () => retry(true) },
-                        { text: "Retry with current files", onPress: () => retry(false) },
-                        { text: "Cancel", style: "cancel" },
-                      ],
-                    );
-                  }}
-                />
-              ) : null}
-              {actions.skip ? (
-                <Button
-                  label="Skip step"
-                  accessibilityHint={`Moves past ${stepName} without running it`}
-                  disabled={!canSkip || busy !== null}
-                  loading={busy === "skip"}
-                  onPress={() =>
-                    void perform("skip", "Could not skip the step", () =>
-                      skipStep({ environmentId, input: stepInput }),
-                    )
-                  }
-                />
-              ) : null}
-              {actions.cancel ? (
-                <Button
-                  label="Cancel run"
-                  tone="text"
-                  disabled={!canCancel || busy !== null}
-                  loading={busy === "cancel"}
-                  onPress={() =>
-                    Dialog.confirm({
-                      title: "Cancel this pipeline?",
-                      message:
-                        "The current step is stopped and the remaining steps will not run. Finished steps keep their threads.",
-                      confirmText: "Cancel run",
-                      cancelText: "Keep running",
-                      destructive: true,
-                      onConfirm: () =>
-                        void perform("cancel", "Could not cancel the pipeline", () =>
-                          cancelRun({ environmentId, input: { runId: run.id } }),
-                        ),
-                    })
-                  }
-                />
-              ) : null}
-            </View>
-          );
-        })();
-
-  return (
-    <View className="flex-1">
-      <ScrollView
-        className="flex-1"
-        contentInsetAdjustmentBehavior={
-          props.automaticInsets && Platform.OS === "ios" ? "automatic" : "never"
-        }
-        contentContainerClassName="gap-4 px-4 pb-6 self-center w-full"
-        contentContainerStyle={{
-          maxWidth: props.contentMaxWidth,
-          paddingTop: props.automaticInsets && Platform.OS === "ios" ? 12 : props.topInset + 12,
-        }}
-        showsVerticalScrollIndicator={false}
-      >
-        {content}
-      </ScrollView>
-      {actionBar}
-    </View>
+        </ScrollView>
+      ) : null}
+      <View className="h-1" />
+    </>,
   );
 }
 
@@ -362,6 +427,8 @@ function PipelineStepRow(props: {
   readonly step: PipelineRun["steps"][number];
   readonly current: boolean;
   readonly pauseBeforeEditable: boolean;
+  readonly canSendFeedback: boolean;
+  readonly onSendFeedback: () => void;
   readonly onOpenThread: (
     threadId: NonNullable<PipelineRun["steps"][number]["childThreadId"]>,
   ) => void;
@@ -372,10 +439,11 @@ function PipelineStepRow(props: {
   const name = definition?.name ?? `Step ${step.index + 1}`;
   const [outputExpanded, setOutputExpanded] = useState(false);
   const childThreadId = step.childThreadId;
-  const childShell = useThreadShell(
+  const childShell = useQuietThreadShell(
     childThreadId === null ? null : { environmentId: props.environmentId, threadId: childThreadId },
   );
   const tone = STEP_TONES[pipelineStepTone(step.status)];
+  const revisions = stepRevisions(run, step.index);
   const needsInput = childShell?.runtime?.status === "waiting";
   const details = [
     definition ? formatModelSlugName(definition.modelSelection.model) : null,
@@ -453,6 +521,43 @@ function PipelineStepRow(props: {
           </Text>
         </Pressable>
       ) : null}
+      {revisions.length > 0 ? (
+        <View className="gap-2">
+          <Text textRole="footnote" className="font-t3-medium text-foreground-muted">
+            Feedback
+          </Text>
+          {revisions.map((revision) => (
+            <View
+              key={`${revision.createdAt}:${revision.author}`}
+              className="gap-1 border-l-2 border-border pl-3"
+            >
+              <Text textRole="footnote" className="font-t3-medium text-foreground-secondary">
+                {pipelineRevisionAuthorLabel(revision.author)} ·{" "}
+                {formatMessageTime(revision.createdAt)}
+              </Text>
+              {revision.quote ? (
+                <Text textRole="footnote" className="text-foreground-muted" numberOfLines={2}>
+                  “{revision.quote}”
+                </Text>
+              ) : null}
+              <Text textRole="footnote" className="text-foreground-secondary" selectable>
+                {revision.feedback}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {props.canSendFeedback ? (
+        <View className="flex-row">
+          <Button
+            label="Send feedback"
+            tone="secondary"
+            icon="text.bubble"
+            accessibilityHint={`Later steps redo their work after ${name}`}
+            onPress={props.onSendFeedback}
+          />
+        </View>
+      ) : null}
       {props.pauseBeforeEditable || step.pauseBefore ? (
         <View className="flex-row items-center justify-between gap-3">
           <Text textRole="footnote" className="text-foreground-secondary">
@@ -483,13 +588,18 @@ export function PipelineStepParentBar(props: {
     }),
   );
   const openThread = useOpenLinkedThread();
+  const navigation = useNavigation();
   const run = runQuery.data?.run ?? null;
+  const parentShell = useQuietThreadShell(
+    run === null ? null : { environmentId: props.environmentId, threadId: run.parentThreadId },
+  );
+  const coordinatorUnread = parentShell !== null && threadHasUnseenCompletion(parentShell);
   const position = run === null ? null : pipelineStepPosition(run, props.stepId);
   const label =
     position === null ? "Pipeline" : `Pipeline · step ${position.number}/${position.total}`;
 
   return (
-    <View className="flex-row items-center gap-3 rounded-[20px] border border-border-subtle bg-card-alt py-2 pe-2 ps-4">
+    <View className="flex-row items-center gap-2 rounded-[20px] border border-border-subtle bg-card-alt py-2 pe-2 ps-4">
       <View accessible accessibilityLabel={label} className="min-w-0 flex-1 gap-0.5">
         <Text numberOfLines={1} className="font-t3-bold text-sm text-foreground">
           {label}
@@ -501,16 +611,41 @@ export function PipelineStepParentBar(props: {
         )}
       </View>
       {run === null ? null : (
-        <Button
-          label="Open pipeline"
-          tone="secondary"
-          onPress={() =>
-            openThread({
-              environmentId: String(props.environmentId),
-              threadId: String(run.parentThreadId),
-            })
-          }
-        />
+        <>
+          <View>
+            <Button
+              label="Coordinator"
+              tone="secondary"
+              accessibilityHint={
+                coordinatorUnread ? "The coordinator replied" : "Chat with the pipeline coordinator"
+              }
+              onPress={() =>
+                navigation.navigate("PipelineCoordinator", {
+                  environmentId: String(props.environmentId),
+                  threadId: String(run.parentThreadId),
+                })
+              }
+            />
+            {coordinatorUnread ? (
+              <View
+                pointerEvents="none"
+                accessibilityElementsHidden
+                className="absolute right-0 top-0 size-2.5 rounded-full bg-update"
+              />
+            ) : null}
+          </View>
+          <Button
+            label="Open"
+            tone="text"
+            accessibilityLabel="Open pipeline"
+            onPress={() =>
+              openThread({
+                environmentId: String(props.environmentId),
+                threadId: String(run.parentThreadId),
+              })
+            }
+          />
+        </>
       )}
     </View>
   );

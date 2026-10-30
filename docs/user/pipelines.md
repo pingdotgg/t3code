@@ -70,10 +70,41 @@ instead.
 - **Cancel** stops the active step.
 - **Pause** a step that has not started yet if you want to check the result before it runs.
 
-An agent cannot move past a pause on a run you started. Continue those yourself.
+Agents cannot move past a pause on a run you started, with one exception: the run's coordinator
+(below) can continue it when you ask it to in its chat.
+
+### Give feedback to an earlier step
+
+When you notice an earlier step got something wrong, send it feedback instead of starting over.
+Use **Send feedback…** on a step in the run page, or **Send feedback** on an assistant message
+(or on selected text) in any step's thread. The step receives your feedback in its own thread,
+fixes its work and hands off again. Every later step then gets a message in its own thread saying
+what changed, and redoes its work against the new result, including the feedback given earlier in
+the run. A later step that is running is stopped first. Steps that never ran, or whose thread was
+archived or deleted, start fresh instead. Pauses before later steps still apply. If a step fails
+while redoing its work, **Retry** keeps the feedback.
+
+This differs from **Rerun from here**, which starts the step and everything after it again in new
+threads with the original prompts. Use rerun for a clean start, and feedback to correct what is
+there. Feedback is text only. To talk to the step that is running right now, just write in its
+thread.
+
+### Coordinator
+
+A run's page is a chat with its coordinator, an agent that knows the run and can check on it,
+send feedback to steps, continue past a pause when you ask it to, rerun or cancel. It only acts
+when you message it, and it does not edit files itself. Change its model in the composer like in
+any thread. The step list stays pinned above the chat, where each step's feedback is listed.
+
+From a step's thread, click **Coordinator** in the header (or run **Open pipeline coordinator**
+from the command palette) to chat with it beside the step. On a message, **Send feedback** lets
+the coordinator decide where it goes, or sends it straight to one step. On mobile, tap
+**Coordinator** on the bar above a step's composer to chat in a sheet, and the speech bubble below
+an assistant message to send feedback.
 
 ### Shared workspace
 
 Every step works in the first step's workspace, including its worktree and branch. If you chat in
 an earlier step while a later one is running, two agents edit the same files. Wait for the later
-step to finish before steering an earlier one.
+step to finish before steering an earlier one. Sending feedback stops the running step first, which
+can leave its files half changed for the step you sent the feedback to.

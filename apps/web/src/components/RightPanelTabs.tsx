@@ -44,6 +44,7 @@ import {
   Files,
   Globe2,
   MessagesSquare,
+  MessageSquare as MessageSquareIcon,
   Plus,
   TerminalSquare,
   Volume2Icon,
@@ -590,6 +591,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "pipeline-coordinator":
+      return "Coordinator";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "side-chat":
@@ -684,6 +687,8 @@ function SurfaceIcon({
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
+    case "pipeline-coordinator":
+      return <MessageSquareIcon className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />

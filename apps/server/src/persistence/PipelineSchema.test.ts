@@ -31,9 +31,36 @@ describe("Pipeline schema", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("adds handed_off to a step table created before it existed", () =>
+  it.effect("adds later columns to run and step tables created before they existed", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        CREATE TABLE pipeline_runs (
+          run_id TEXT PRIMARY KEY,
+          pipeline_id TEXT,
+          definition_json TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          parent_thread_id TEXT NOT NULL UNIQUE,
+          input TEXT NOT NULL,
+          workspace_strategy_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          pause_reason TEXT,
+          error TEXT,
+          current_step_index INTEGER NOT NULL,
+          created_by TEXT NOT NULL,
+          creation_source TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          completed_at TEXT
+        )
+      `;
+      yield* sql`
+        INSERT INTO pipeline_runs (
+          run_id, definition_json, project_id, parent_thread_id, input, workspace_strategy_json,
+          status, current_step_index, created_by, creation_source, created_at, updated_at
+        )
+        VALUES ('run-1', '{}', 'project-1', 'parent-1', 'Fix', '{}', 'running', 0, 'user', 'web', 'now', 'now')
+      `;
       yield* sql`
         CREATE TABLE pipeline_run_steps (
           run_id TEXT NOT NULL,
@@ -59,10 +86,14 @@ describe("Pipeline schema", () => {
       `;
       yield* runMigrations();
       yield* runMigrations();
-      const rows = yield* sql<{ readonly handed_off: number }>`
-        SELECT handed_off FROM pipeline_run_steps
+      const steps = yield* sql<{ readonly handed_off: number; readonly revising: number }>`
+        SELECT handed_off, revising FROM pipeline_run_steps
       `;
-      assert.deepStrictEqual(rows, [{ handed_off: 0 }]);
+      assert.deepStrictEqual(steps, [{ handed_off: 0, revising: 0 }]);
+      const runs = yield* sql<{ readonly revisions_json: string }>`
+        SELECT revisions_json FROM pipeline_runs
+      `;
+      assert.deepStrictEqual(runs, [{ revisions_json: "[]" }]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

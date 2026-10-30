@@ -1,4 +1,4 @@
-import type { PipelineRunStep } from "@t3tools/contracts";
+import type { PipelineRun, PipelineRunStep } from "@t3tools/contracts";
 
 export type PipelineStepTone = "active" | "success" | "danger" | "muted";
 
@@ -13,4 +13,9 @@ export function pipelineStepTone(status: PipelineRunStep["status"]): PipelineSte
     default:
       return "muted";
   }
+}
+
+/** The feedback history of one step, oldest first. */
+export function stepRevisions(run: PipelineRun, stepIndex: number): PipelineRun["revisions"] {
+  return run.revisions.filter((revision) => revision.stepIndex === stepIndex);
 }

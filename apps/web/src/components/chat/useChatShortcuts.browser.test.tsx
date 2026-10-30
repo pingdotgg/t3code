@@ -1,4 +1,5 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -17,6 +18,11 @@ const shortcutContext = {
   isDesktop: false,
   modelPickerOpen: false,
 };
+
+const keybindings = compileResolvedKeybindingsConfig([
+  { key: "ctrl+b", command: "rightPanel.toggle" },
+  { key: "ctrl+.", command: "thread.stop" },
+]);
 
 const focusOnMount = (element: HTMLElement | null) => element?.focus();
 
@@ -47,10 +53,15 @@ function Launcher(props: { keys: string; received: string[] }) {
 
 // The chat's shortcut listener registers when the chat mounts, so a launcher that opens
 // later registers after it. Tests mount the chat first and add the launcher by rerendering.
-function Chat(props: { composerKeys: string[]; launcher?: { keys: string; received: string[] } }) {
+function Chat(props: {
+  composerKeys: string[];
+  launcher?: { keys: string; received: string[] };
+  embeddedChatFocused?: boolean;
+  commandsRun?: string[];
+}) {
   useChatShortcuts({
     enabled: true,
-    keybindings: [],
+    keybindings,
     scriptKeybindings: [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
@@ -65,9 +76,19 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
     },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
-    commands: {},
+    commands: {
+      "rightPanel.toggle": () => void props.commandsRun?.push("rightPanel.toggle"),
+      "thread.stop": () => void props.commandsRun?.push("thread.stop"),
+    },
     fallback: () => undefined,
   });
+  if (props.embeddedChatFocused) {
+    return (
+      <div data-embedded-chat="true">
+        <div ref={focusOnMount} tabIndex={0} aria-label="Embedded chat" />
+      </div>
+    );
+  }
   return props.launcher ? <Launcher {...props.launcher} /> : null;
 }
 
@@ -186,4 +207,30 @@ it("runs a side chat's composer chords only from its composer, and never thread 
 
   expect(toggles).toEqual(["model"]);
   expect(stops).toEqual([]);
+});
+
+it("leaves typing and the focused chat's commands to an embedded chat", async () => {
+  const composerKeys: string[] = [];
+  const commandsRun: string[] = [];
+  await using _screen = await render(
+    <Chat composerKeys={composerKeys} commandsRun={commandsRun} embeddedChatFocused />,
+    options,
+  );
+
+  await userEvent.keyboard("a{Control>}.{/Control}");
+
+  expect(composerKeys).toEqual([]);
+  expect(commandsRun).toEqual([]);
+});
+
+it("still runs page commands such as the right panel toggle from an embedded chat", async () => {
+  const commandsRun: string[] = [];
+  await using _screen = await render(
+    <Chat composerKeys={[]} commandsRun={commandsRun} embeddedChatFocused />,
+    options,
+  );
+
+  await userEvent.keyboard("{Control>}b{/Control}");
+
+  expect(commandsRun).toEqual(["rightPanel.toggle"]);
 });

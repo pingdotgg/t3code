@@ -75,6 +75,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pipelineRunsRetryStep]: AuthOrchestrationOperateScope,
   [WS_METHODS.pipelineRunsSkipStep]: AuthOrchestrationOperateScope,
   [WS_METHODS.pipelineRunsRerunFromStep]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pipelineRunsRevise]: AuthOrchestrationOperateScope,
   [WS_METHODS.pipelineRunsCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.pipelineRunsSetPauseBefore]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,

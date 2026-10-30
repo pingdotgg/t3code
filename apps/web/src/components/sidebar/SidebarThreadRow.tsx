@@ -27,9 +27,7 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
-  type PipelineProgressStatus,
   type PipelineStepStatus,
-  countFinishedPipelineSegments,
   mergePipelineParentStatus,
 } from "@t3tools/client-runtime/state/pipeline-nesting";
 import {
@@ -128,6 +126,7 @@ import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { PipelineProgressBar } from "../PipelineProgressBar";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 
@@ -535,30 +534,8 @@ function PipelineStepConnector(props: { last: boolean }) {
   );
 }
 
-const PIPELINE_PROGRESS_SEGMENT_CLASS: Record<PipelineProgressStatus, string> = {
-  completed: "bg-success",
-  running: "bg-info",
-  attention: "bg-indigo-500 dark:bg-indigo-400",
-  failed: "bg-destructive",
-  stopped:
-    "bg-[repeating-linear-gradient(135deg,currentColor_0_2px,transparent_2px_4px)] text-muted-foreground/70",
-  skipped: "bg-muted-foreground/35",
-  pending: "bg-muted-foreground/15",
-};
-
-const PIPELINE_PROGRESS_STATUS_LABEL: Record<PipelineProgressStatus, string> = {
-  completed: "Done",
-  running: "Running",
-  attention: "Needs you",
-  failed: "Failed",
-  stopped: "Stopped",
-  skipped: "Skipped",
-  pending: "Pending",
-};
-
 /**
- * A pipeline parent's progress: one segment per step, coloured by its status.
- * The chevron shows or hides the step rows; a started step's segment opens it.
+ * A pipeline parent's progress: the shared step bar. The chevron shows or hides the step rows.
  */
 function SidebarPipelineProgress(props: {
   threadKey: string;
@@ -570,9 +547,6 @@ function SidebarPipelineProgress(props: {
   onOpenStep: (threadId: ThreadId) => void;
   className?: string;
 }) {
-  const { segments } = props;
-  const finished = countFinishedPipelineSegments(segments);
-  const summary = `${finished} of ${segments.length} steps done`;
   const handleToggleClick = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -596,62 +570,7 @@ function SidebarPipelineProgress(props: {
           />
         </button>
       ) : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={<div role="img" aria-label={summary} className="flex min-w-0 flex-1 gap-0.5" />}
-        >
-          {segments.map((segment) => {
-            const threadId = segment.threadId;
-            return (
-              <span
-                key={segment.stepId}
-                aria-hidden
-                className={cn("flex min-w-0 flex-1 py-1.5", threadId !== null && "cursor-pointer")}
-                onClick={
-                  threadId === null
-                    ? undefined
-                    : (event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        props.onOpenStep(threadId);
-                      }
-                }
-              >
-                <span
-                  className={cn(
-                    "h-1 w-full rounded-full",
-                    PIPELINE_PROGRESS_SEGMENT_CLASS[segment.status],
-                  )}
-                />
-              </span>
-            );
-          })}
-        </TooltipTrigger>
-        <TooltipPopup side="right">
-          <ol className="flex flex-col gap-0.5 text-xs">
-            {segments.map((segment, index) => (
-              <li key={segment.stepId} className="flex items-center gap-2">
-                <span
-                  aria-hidden
-                  className={cn(
-                    "h-1 w-3 shrink-0 rounded-full",
-                    PIPELINE_PROGRESS_SEGMENT_CLASS[segment.status],
-                  )}
-                />
-                <span className="min-w-0 flex-1 truncate">
-                  {index + 1}. {segment.label}
-                </span>
-                <span className="text-muted-foreground">
-                  {PIPELINE_PROGRESS_STATUS_LABEL[segment.status]}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </TooltipPopup>
-      </Tooltip>
-      <span aria-hidden className="shrink-0 text-2xs text-secondary-label tabular-nums">
-        {finished}/{segments.length}
-      </span>
+      <PipelineProgressBar segments={props.segments} onOpenStep={props.onOpenStep} />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   PIPELINE_OUTPUT_PREVIEW_CHARS,
   PipelineDefinition,
   PipelineError,
+  PipelineRevision,
   PipelineRun,
   PipelineRunStep,
   PipelineSnapshot,
@@ -23,7 +24,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 /** A run before its steps are attached; steps are inserted separately with it. */
-export type NewPipelineRun = Omit<PipelineRun, "steps">;
+export type NewPipelineRun = Omit<PipelineRun, "steps" | "revisions">;
 
 /** Every step starts pending with attempt 0; only identity and the pause override are supplied. */
 export type NewPipelineRunStep = Pick<PipelineRunStep, "index" | "stepId" | "pauseBefore">;
@@ -40,6 +41,7 @@ export interface PipelineRunPatch {
   readonly currentStepIndex?: number;
   readonly completedAt?: string | null;
   readonly definition?: PipelineSnapshot;
+  readonly revisions?: ReadonlyArray<PipelineRevision>;
 }
 
 export interface PipelineStepPatch {
@@ -58,6 +60,12 @@ export interface PipelineStepPatch {
   readonly error?: string | null;
   readonly startedAt?: string | null;
   readonly completedAt?: string | null;
+  /**
+   * A revision is waiting to reach the step. With a thread, the step continues in it and `prompt`
+   * is the message to send there; without one it launches fresh with the feedback history.
+   * Cleared whenever the step is launched, retried or taken over by hand.
+   */
+  readonly revising?: boolean;
 }
 
 export interface StepLaunch {
@@ -130,6 +138,11 @@ export class PipelineStore extends Context.Service<
       runId: PipelineRunId,
       stepIndex: number,
     ) => Effect.Effect<StepLaunch | null, PipelineError>;
+    /** Whether a revision is waiting to reach the step (see `PipelineStepPatch.revising`). */
+    readonly isStepRevising: (
+      runId: PipelineRunId,
+      stepIndex: number,
+    ) => Effect.Effect<boolean, PipelineError>;
     /** The step's saved starting snapshot, or null when none was recorded. */
     readonly getStepStartCheckpoint: (
       runId: PipelineRunId,
@@ -167,6 +180,7 @@ interface PipelineRunRow {
   readonly created_at: string;
   readonly updated_at: string;
   readonly completed_at: string | null;
+  readonly revisions_json: string;
 }
 
 interface PipelineRunStepRow {
@@ -187,6 +201,9 @@ interface PipelineRunStepRow {
 const decodeDefinition = Schema.decodeUnknownEffect(PipelineDefinition);
 const decodeRun = Schema.decodeUnknownEffect(PipelineRun);
 const encodeStepsJson = Schema.encodeSync(Schema.fromJsonString(PipelineDefinition.fields.steps));
+const encodeRevisionsJson = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Array(PipelineRevision)),
+);
 const encodeSnapshotJson = Schema.encodeSync(Schema.fromJsonString(PipelineSnapshot));
 const workspaceStrategyJson = Schema.fromJsonString(OrchestrationV2ThreadLaunchWorkspaceStrategy);
 const encodeWorkspaceStrategyJson = Schema.encodeSync(workspaceStrategyJson);
@@ -235,6 +252,7 @@ const decodeRunRow = Effect.fnUntraced(function* (
 ) {
   const definition = yield* parseJson(row.definition_json);
   const workspaceStrategy = yield* parseJson(row.workspace_strategy_json);
+  const revisions = yield* parseJson(row.revisions_json);
   return yield* decodeRun({
     id: row.run_id,
     pipelineId: row.pipeline_id,
@@ -247,6 +265,7 @@ const decodeRunRow = Effect.fnUntraced(function* (
     pauseReason: row.pause_reason,
     error: row.error,
     currentStepIndex: row.current_step_index,
+    revisions,
     steps: stepRows.map((step) => ({
       index: step.step_index,
       stepId: step.step_id,
@@ -282,6 +301,8 @@ const runColumns = (patch: PipelineRunPatch) =>
     completed_at: patch.completedAt,
     definition_json:
       patch.definition === undefined ? undefined : encodeSnapshotJson(patch.definition),
+    revisions_json:
+      patch.revisions === undefined ? undefined : encodeRevisionsJson(patch.revisions),
   });
 
 const stepColumns = (patch: PipelineStepPatch) =>
@@ -304,6 +325,7 @@ const stepColumns = (patch: PipelineStepPatch) =>
     error: patch.error,
     started_at: patch.startedAt,
     completed_at: patch.completedAt,
+    revising: patch.revising === undefined ? undefined : patch.revising ? 1 : 0,
   });
 
 export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Layer.effect(
@@ -588,6 +610,16 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       return { prompt: row.prompt, workspaceStrategy };
     });
 
+    const isStepRevising: PipelineStore["Service"]["isStepRevising"] = Effect.fn(
+      "PipelineStore.isStepRevising",
+    )(function* (runId, stepIndex) {
+      const rows = yield* sql<{ readonly revising: number }>`
+        SELECT revising FROM pipeline_run_steps
+        WHERE run_id = ${runId} AND step_index = ${stepIndex}
+      `.pipe(NodeSqliteClient.readOnly, storageError("Could not read step revising.", { runId }));
+      return rows[0]?.revising === 1;
+    });
+
     const getStepStartCheckpoint: PipelineStore["Service"]["getStepStartCheckpoint"] = Effect.fn(
       "PipelineStore.getStepStartCheckpoint",
     )(function* (runId, stepIndex) {
@@ -630,6 +662,7 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
       updateStep,
       updateRunWithSteps,
       getStepLaunch,
+      isStepRevising,
       getStepStartCheckpoint,
       getStepOutputs,
     });

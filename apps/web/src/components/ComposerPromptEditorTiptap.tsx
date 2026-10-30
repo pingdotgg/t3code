@@ -1551,7 +1551,9 @@ function ComposerPromptEditorTiptapInner(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the controlled value and cursor into the Tiptap document before paint
   useLayoutEffect(() => {
     latestValueRef.current = value;
-    if (!editor) return;
+    // A Suspense boundary revealing again re-runs this against an editor `useEditor` already
+    // destroyed; the replacement editor reruns it once it exists.
+    if (!editor?.isInitialized) return;
     const initialSelection = !hasAppliedControlledSelectionRef.current;
     hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampEditorCursor(value, cursor);
@@ -1653,8 +1655,9 @@ function ComposerPromptEditorTiptapInner(
       scrollTiptapCaretIntoView(editor);
     }
     return () => {
-      // Capture focus before the keyed editor's DOM is removed.
-      restoreFocusRef.current = editor.view.hasFocus();
+      // Capture focus before the keyed editor's DOM is removed. A hiding Suspense boundary may
+      // already have destroyed the editor, which leaves no view to read.
+      restoreFocusRef.current = editor.isInitialized && editor.view.hasFocus();
     };
   }, [editor, restoreFocusRef]);
 
