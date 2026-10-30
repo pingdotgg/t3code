@@ -650,7 +650,8 @@ const make = Effect.gen(function* () {
     }));
 
   const layoutSize = async (tab: ServerTab) => {
-    if (tab.desktop) return measureDesktopViewport(tab);
+    // A dialog blocks page script; its close measures again.
+    if (tab.desktop) return tab.dialog ? tab.desktopViewport : measureDesktopViewport(tab);
     const size = tab.page.viewportSize();
     if (!size) return size;
     return {
@@ -857,8 +858,11 @@ const make = Effect.gen(function* () {
         if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
       };
       cdp.on("Page.frameResized", remeasure);
-      // A dialog blocks size reads, and closing one resizes nothing.
-      cdp.on("Page.javascriptDialogClosed", remeasure);
+      // Closing a dialog resizes nothing, and the host can close it without us.
+      cdp.on("Page.javascriptDialogClosed", () => {
+        tab.dialog = null;
+        return remeasure();
+      });
       await cdp.send("Page.enable");
     }
     const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>

@@ -1214,7 +1214,7 @@ it.effect(
           };
         };
         deferReads();
-        const { viewer, cdp } = yield* openDesktopViewer;
+        const { viewer, cdp, context } = yield* openDesktopViewer;
         const answer = (width: number, height: number) => ({
           result: { value: { width, height } },
         });
@@ -1222,6 +1222,14 @@ it.effect(
         // An alert open on attach blocks the first read, which gives up with no size to send.
         const blocked = yield* Queue.take(reads);
         yield* TestClock.adjust("1 second");
+        // While it stays open nothing reads again; the host closing it clears it.
+        context.page.emit("dialog", {
+          type: () => "alert",
+          message: () => "",
+          defaultValue: () => "",
+        });
+        yield* Effect.promise(resized);
+        expect(yield* Queue.size(reads)).toBe(0);
         // Closing it resizes nothing, so the close itself remeasures.
         desktopSizeAnswer = null;
         yield* Effect.promise(() => cdp.emitAsync("Page.javascriptDialogClosed"));
