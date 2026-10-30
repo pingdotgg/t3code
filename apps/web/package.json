@@ -61,6 +61,7 @@
     "hast-util-to-html": "^9.0.5",
     "hast-util-to-jsx-runtime": "^2.3.6",
     "heic-to": "^1.5.2",
+    "html-url-attributes": "^3.0.1",
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",
     "jszip": "3.10.1",
@@ -76,6 +77,7 @@
     "remark-gfm": "catalog:",
     "remark-math": "6.0.0",
     "remark-parse": "catalog:",
+    "remark-rehype": "catalog:",
     "saxes": "6.0.0",
     "sql.js": "1.15.0",
     "tailwind-merge": "^3.4.0",
@@ -83,6 +85,7 @@
     "unbash": "^5.0.0",
     "unified": "catalog:",
     "use-sync-external-store": "^1.6.0",
+    "vfile": "^6.0.3",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
@@ -92,6 +95,7 @@
     "@tanstack/router-plugin": "^1.161.0",
     "@types/compression": "^1.8.1",
     "@types/culori": "^4.0.1",
+    "@types/hast": "^3.0.4",
     "@types/mdast": "^4.0.4",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",

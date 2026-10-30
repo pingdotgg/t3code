@@ -1150,6 +1150,9 @@ importers:
       heic-to:
         specifier: ^1.5.2
         version: 1.5.2
+      html-url-attributes:
+        specifier: ^3.0.1
+        version: 3.0.1
       jose:
         specifier: 'catalog:'
         version: 6.2.2
@@ -1195,6 +1198,9 @@ importers:
       remark-parse:
         specifier: 'catalog:'
         version: 11.0.0(supports-color@8.1.1)
+      remark-rehype:
+        specifier: 'catalog:'
+        version: 11.1.2
       saxes:
         specifier: 6.0.0
         version: 6.0.0
@@ -1216,6 +1222,9 @@ importers:
       use-sync-external-store:
         specifier: ^1.6.0
         version: 1.6.0(react@19.3.0)
+      vfile:
+        specifier: ^6.0.3
+        version: 6.0.3
       zustand:
         specifier: ^5.0.11
         version: 5.0.14(@types/react@19.3.0)(react@19.3.0)(use-sync-external-store@1.6.0(react@19.3.0))
@@ -1238,6 +1247,9 @@ importers:
       '@types/culori':
         specifier: ^4.0.1
         version: 4.0.1
+      '@types/hast':
+        specifier: ^3.0.4
+        version: 3.0.5
       '@types/mdast':
         specifier: ^4.0.4
         version: 4.0.4
