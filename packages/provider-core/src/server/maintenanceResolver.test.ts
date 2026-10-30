@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
 import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -1232,6 +1233,110 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 });
+
+for (const fixture of [
+  { layout: "legacy", config: '{"shimMode":"system_first"}', external: true, version: "1.3.0" },
+  { layout: "legacy", config: '{"shimMode":"system_first"}', external: true, version: "unknown" },
+  { layout: "xdg", config: '{"shimMode":"system_first"}', external: true },
+  { layout: "legacy", config: '{"shimMode":"system_first"}', external: true },
+  { layout: "override", config: '{"shimMode":"system_first"}', external: true },
+  { layout: "xdg", config: '{"shimMode":"managed"}', external: true },
+  { layout: "xdg", config: '{"shimMode":', external: true },
+  { layout: "xdg", config: "{}", external: true },
+  { layout: "xdg", config: '{"shimMode":"system_first"}', external: false },
+]) {
+  it.live.skipIf(windowsHost || !symlinksSupported)(
+    `updates the install a system_first Vite+ shim delegates to on PATH (${fixture.layout}, ${fixture.config}, external=${fixture.external}, version=${"version" in fixture ? fixture.version : "0.3.0"})`,
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-vite-plus-system-first");
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+        const vpHome =
+          fixture.layout === "legacy"
+            ? NodePath.join(tempDir, ".vite-plus")
+            : NodePath.join(tempDir, ".local", "share", "vite-plus");
+        const version = "version" in fixture ? fixture.version : "0.3.0";
+        const vp = NodePath.join(vpHome, version, "bin", "vp");
+        const shim = NodePath.join(vpHome, "bin", "opencode");
+        const native = NodePath.join(tempDir, ".opencode", "bin", "opencode");
+        const target = NodePath.join(tempDir, "node_modules", ".bin", "opencode");
+        const configHome = NodePath.join(tempDir, ".config");
+        const configDir =
+          fixture.layout === "xdg" ? NodePath.join(configHome, "vite-plus") : vpHome;
+        NodeFS.mkdirSync(configDir, { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(configDir, "config.json"), fixture.config);
+        writeExecutable(vp);
+        NodeFS.symlinkSync(version, NodePath.join(vpHome, "current"));
+        const delegates =
+          version === "0.3.0" &&
+          fixture.external &&
+          fixture.config === '{"shimMode":"system_first"}';
+        // Model Vite+'s system_first dispatch and managed fallback.
+        NodeFS.writeFileSync(
+          vp,
+          delegates
+            ? '#!/bin/sh\nPATH=${PATH#*:}\nexport PATH\nexec opencode "$@"\n'
+            : "#!/bin/sh\necho 2.1.2\n",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(shim), { recursive: true });
+        NodeFS.symlinkSync(vp, shim);
+        writeExecutable(target);
+        NodeFS.writeFileSync(
+          target,
+          '#!/bin/sh\ncase "$1" in\n--version) echo 2.1.1;;\nupgrade) echo "updated delegated install";;\n*) exit 1;;\nesac\n',
+        );
+        writeExecutable(native);
+        NodeFS.writeFileSync(native, `#!/bin/sh\nexec '${target.replaceAll("'", "'\\''")}' "$@"\n`);
+        const env = {
+          HOME: tempDir,
+          XDG_CONFIG_HOME: configHome,
+          VP_HOME: fixture.layout === "override" ? vpHome : "",
+          PATH: [
+            NodePath.dirname(shim),
+            ...(fixture.external ? [NodePath.dirname(native)] : []),
+          ].join(NodePath.delimiter),
+        };
+        expect(
+          NodeChildProcess.execFileSync(shim, ["--version"], { env, encoding: "utf8" }).trim(),
+        ).toBe(delegates ? "2.1.1" : "2.1.2");
+
+        const resolver = makePackageManagedProviderMaintenanceResolver({
+          provider: driver("opencode"),
+          npmPackageName: "@opencode/cli",
+          nativeUpdate: {
+            args: ["upgrade"],
+            isCommandPath: isNativeTestCommandPath("/.opencode/bin/opencode"),
+          },
+        });
+        const { update } = yield* resolveProviderMaintenanceCapabilitiesEffect(resolver, {
+          binaryPath: "opencode",
+          env,
+        });
+
+        if (!delegates) {
+          expect(update).toMatchObject({
+            executable: "vp",
+            args: ["i", "-g", "@opencode/cli"],
+            lockKey: "vite-plus-global",
+          });
+          return;
+        }
+        expect(update).toMatchObject({
+          executable: native,
+          args: ["upgrade"],
+          lockKey: "opencode-native",
+        });
+        expect(
+          NodeChildProcess.execFileSync(update!.executable, [...update!.args], {
+            env,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("updated delegated install");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
 
 it("pins only owned package-manager installs and preserves their execution context", () => {
   const capabilities = makeProviderMaintenanceCapabilities({

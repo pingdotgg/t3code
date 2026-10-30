@@ -36,6 +36,7 @@ import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_MAX_BYTES = 256 * 1_024;
+const VITE_PLUS_CONFIG_MAX_BYTES = 64 * 1_024;
 const MISE_WRAPPER_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
@@ -225,6 +226,91 @@ function isVitePlusGlobalCommandPath(commandPath: string): boolean {
     normalizeCommandPath(commandPath),
   );
 }
+
+const decodeVitePlusConfig = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ shimMode: Schema.optional(Schema.String) })),
+);
+
+const resolveVitePlusDelegatedCommand = Effect.fn("resolveVitePlusDelegatedCommand")(function* (
+  context: ProviderMaintenanceResolutionContext,
+) {
+  if (!isVitePlusGlobalCommandPath(context.resolvedCommandPath)) return context;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Vite+ 1.x ignores legacy shimMode settings and always runs managed packages.
+  // Read the shim's resolved version directory; bare `vp` can select a project CLI.
+  const vpBin = path.dirname(context.realCommandPath);
+  const vpVersion = path.basename(path.dirname(vpBin));
+  if (
+    !["vp", "vp.exe"].includes(path.basename(context.realCommandPath)) ||
+    path.basename(vpBin) !== "bin" ||
+    !/^0\.\d+\.\d+$/.test(vpVersion)
+  ) {
+    return context;
+  }
+  const env = { ...(yield* HostProcess.Environment), ...context.env };
+  const home = env.HOME ?? env.USERPROFILE ?? (yield* HostProcess.HomeDirectory);
+  const legacyHome = path.join(home, ".vite-plus");
+  const vpHome = env.VP_HOME && path.isAbsolute(env.VP_HOME) ? env.VP_HOME : null;
+  const legacyInstall = yield* fileSystem.stat(path.join(legacyHome, "current")).pipe(
+    Effect.map(() => true),
+    Effect.orElseSucceed(() => false),
+  );
+  const configDir =
+    vpHome ??
+    (legacyInstall
+      ? legacyHome
+      : context.platform === "win32"
+        ? path.join(env.APPDATA ?? path.join(home, "AppData", "Roaming"), "vite-plus")
+        : path.join(
+            env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME)
+              ? env.XDG_CONFIG_HOME
+              : path.join(home, ".config"),
+            "vite-plus",
+          ));
+  const configPath = path.join(configDir, "config.json");
+  const configSize = yield* fileSystem.stat(configPath).pipe(
+    Effect.map((info) => Number(info.size)),
+    Effect.orElseSucceed(() => Infinity),
+  );
+  if (configSize > VITE_PLUS_CONFIG_MAX_BYTES) return context;
+  const config = yield* fileSystem.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
+  if (
+    config.length > VITE_PLUS_CONFIG_MAX_BYTES ||
+    Option.getOrUndefined(decodeVitePlusConfig(config))?.shimMode !== "system_first"
+  ) {
+    return context;
+  }
+
+  // `vp env which` reports package metadata even when the shim runs a system
+  // install. Follow dispatch's PATH search instead, excluding the shim itself.
+  const pathValue =
+    context.env.PATH ??
+    context.env.Path ??
+    context.env.path ??
+    env.PATH ??
+    env.Path ??
+    env.path ??
+    "";
+  const delimiter = context.platform === "win32" ? ";" : ":";
+  const basename = path.basename(context.resolvedCommandPath);
+  const extension = path.extname(basename);
+  const command =
+    context.platform === "win32" && [".cmd", ".exe", ".bat"].includes(extension.toLowerCase())
+      ? basename.slice(0, -extension.length)
+      : basename;
+  for (const entry of pathValue.split(delimiter)) {
+    const directory = entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry;
+    if (!directory) continue;
+    const candidate = yield* resolveCommandPath(path.join(directory, command), { env });
+    if (!candidate || isVitePlusGlobalCommandPath(candidate)) continue;
+    const real = yield* fileSystem.realPath(candidate).pipe(Effect.orElseSucceed(() => null));
+    if (!real || real === context.realCommandPath) continue;
+    return { ...context, resolvedCommandPath: candidate, realCommandPath: real };
+  }
+  // system_first falls back to the managed package when no external tool exists.
+  return context;
+});
 
 function isBunGlobalCommandPath(commandPath: string): boolean {
   return normalizeCommandPath(commandPath).includes("/.bun/bin/");
@@ -738,13 +824,14 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   if (!realCommandPath) {
     return yield* resolver.resolve(null);
   }
-  return yield* resolver.resolve({
+  const context = yield* resolveVitePlusDelegatedCommand({
     binaryPath,
     resolvedCommandPath,
     realCommandPath,
     env,
     platform: yield* HostProcess.Platform,
   });
+  return yield* resolver.resolve(context);
 });
 
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
