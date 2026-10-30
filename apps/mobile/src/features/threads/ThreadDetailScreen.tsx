@@ -70,6 +70,7 @@ import {
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type { QueuedRunEdit } from "../../state/queued-run-edit";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import * as Haptics from "expo-haptics";
@@ -453,6 +454,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     threadId: props.selectedThread.id,
   });
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const transcriptView = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.transcriptView ?? "normal")
+    : "normal";
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
@@ -1382,6 +1387,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 isProviderSubagent || pendingMessageEditBlocked ? null : handleEditPendingMessage
               }
               contentPresentation={props.contentPresentation}
+              transcriptView={transcriptView}
               threadTitle={props.selectedThread.title}
               latestRun={props.activityRun}
               activeWorkStartedAt={props.activeWorkStartedAt}

@@ -90,9 +90,6 @@ import {
   transcriptRowsStartOpen,
   withDisclosureOpen,
 } from "@t3tools/client-runtime/work-log/disclosure";
-import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/reactivity";
-import { mobilePreferencesAtom } from "../../state/preferences";
 import {
   renderCodexInlineDirectivesAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
@@ -359,6 +356,7 @@ export interface ThreadFeedProps {
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
+  readonly transcriptView: TranscriptView;
   readonly latestRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
   readonly runlessWorkActive?: boolean;
@@ -2607,10 +2605,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   });
   const { copiedRowId } = interactionState;
   let { expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
-  const preferences = useAtomValue(mobilePreferencesAtom);
-  const transcriptView: TranscriptView = AsyncResult.isSuccess(preferences)
-    ? (preferences.value.transcriptView ?? "normal")
-    : "normal";
+  const { transcriptView } = props;
   const foldsStartOpen = transcriptFoldsStartOpen(transcriptView);
   const rowsStartOpen = transcriptRowsStartOpen(transcriptView);
   // Switching the view starts every disclosure from the new default.
