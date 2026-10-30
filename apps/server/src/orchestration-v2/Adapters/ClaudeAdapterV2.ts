@@ -3373,7 +3373,6 @@ export function claudeApprovalPresentation(input: {
 
 // The SDK forwards the CLI's decision_reason_type and requires_user_interaction (since 0.3.288)
 // without declaring them. The CLI sends requires_user_interaction only as true, never false.
-// Asks raised by ask rules and hooks carry other types.
 function isClaudeSafetyCheckAsk(options: Parameters<CanUseTool>[2]): boolean {
   return (
     "decisionReasonType" in options &&
