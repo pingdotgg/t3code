@@ -30,6 +30,7 @@ import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubHttpClient from "./GitHubHttpClient.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
+import { driver } from "./driver.ts";
 
 const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
   enabled: false,
@@ -128,18 +129,42 @@ describe("GitHubRest", () => {
       const server = NodeHttp.createServer(async (request, response) => {
         const chunks: Array<Buffer> = [];
         for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const body = Buffer.concat(chunks).toString();
         requests.push({
           method: request.method,
           path: request.url,
           headers: request.headers,
-          body: Buffer.concat(chunks).toString(),
+          body,
         });
         response.setHeader("content-type", "application/json");
         response.end(
           JSON.stringify(
-            request.url?.endsWith("graphql")
-              ? { data: { repository: { pullRequest: { additions: 3, deletions: 1 } } } }
-              : { login: "proxy-user" },
+            body.includes("query PullRequestByNumber")
+              ? {
+                  data: {
+                    repository: {
+                      pullRequest: {
+                        number: 7,
+                        title: "Socket request",
+                        url: "https://github.com/acme/web/pull/7",
+                        baseRefName: "main",
+                        headRefName: "feature",
+                        headRefOid: "f".repeat(40),
+                        state: "OPEN",
+                        isDraft: false,
+                        mergedAt: null,
+                        closedAt: null,
+                        updatedAt: "2026-01-02T00:00:00Z",
+                        isCrossRepository: false,
+                        headRepository: { name: "web", nameWithOwner: "acme/web" },
+                        headRepositoryOwner: { __typename: "User", login: "acme" },
+                      },
+                    },
+                  },
+                }
+              : request.url?.endsWith("graphql")
+                ? { data: { repository: { pullRequest: { additions: 3, deletions: 1 } } } }
+                : { login: "proxy-user" },
           ),
         );
       });
@@ -225,12 +250,33 @@ describe("GitHubRest", () => {
             number: 7,
           });
         }
+        const instance = yield* driver.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              host,
+              fallback,
+              NodeServices.layer,
+              NodeCrypto.layer,
+              SourceControlRateLimit.layer,
+            ),
+          ),
+        );
+        const reference = yield* instance.sourceControl.getChangeRequest({
+          cwd: directory,
+          reference: "https://github.com/acme/web/pull/7",
+        });
+        expect(reference.number).toBe(7);
+        expect(requests.at(-1)?.body).toContain("query PullRequestByNumber");
         yield* Effect.promise(() => NodeFSP.unlink(socketPath));
         const error = yield* Effect.flip(
           rest.rest({ host: "github.com", operation: "user", path: "user" }),
         );
         expect(error._tag).toBe("GitHubApiRequestError");
         expect(directRequests).toEqual([]);
+        const mediaUrl = "https://objects.githubusercontent.com/proof.png";
+        const media = yield* instance.fetchMedia!({ url: mediaUrl, headers: {} });
+        expect(media?.status).toBe(401);
+        expect(directRequests).toEqual([mediaUrl]);
       }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
     }).pipe(Effect.scoped),
   );
