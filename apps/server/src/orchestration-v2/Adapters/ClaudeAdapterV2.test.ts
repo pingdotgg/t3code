@@ -3566,6 +3566,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const restricted = yield* open;
         assert.equal(restricted.permissionMode, "default");
         assert.isUndefined(restricted.allowDangerouslySkipPermissions);
+        yield* fileSystem.writeFileString(
+          remoteFile,
+          JSON.stringify({
+            permissions: { disableBypassPermissionsMode: false, disableAutoMode: false },
+            disableAutoMode: false,
+            managedSourcesBehavior: "merge",
+          }),
+        );
+        const unrestricted = yield* open;
+        assert.equal(unrestricted.permissionMode, "bypassPermissions");
+        assert.equal(unrestricted.allowDangerouslySkipPermissions, true);
+        yield* fileSystem.writeFileString(
+          remoteFile,
+          JSON.stringify({
+            permissions: { disableBypassPermissionsMode: "disable", disableAutoMode: "disable" },
+            disableAutoMode: false,
+          }),
+        );
+        const mixed = yield* open;
+        assert.equal(mixed.permissionMode, "default");
+        assert.isUndefined(mixed.allowDangerouslySkipPermissions);
+        yield* fileSystem.writeFileString(
+          remoteFile,
+          JSON.stringify({ permissions: { disableBypassPermissionsMode: true } }),
+        );
+        assert.equal((yield* open).permissionMode, "auto");
         yield* fileSystem.remove(remoteFile);
         assert.equal((yield* open).permissionMode, "bypassPermissions");
         const launchRestricted = yield* openWith(
@@ -3578,6 +3604,77 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* fileSystem.remove(remoteFile);
         yield* fileSystem.makeDirectory(remoteFile);
         assert.equal((yield* open).permissionMode, "auto");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("drops false bypass switches from --settings before they reach the SDK", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-launch-" });
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-launch-cwd-" });
+        const sdk = yield* Effect.promise(() =>
+          vi.importActual<typeof ClaudeSdk>("@anthropic-ai/claude-agent-sdk"),
+        );
+        vi.mocked(ClaudeSdk.resolveSettings).mockImplementation(sdk.resolveSettings);
+        const openWith = (settings: Record<string, unknown>) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const harness = yield* makeWakeHarnessWithOptions({
+                settings: {
+                  ...DEFAULT_CLAUDE_SETTINGS,
+                  homePath: home,
+                  launchArgs: `--settings '${JSON.stringify(settings)}'`,
+                },
+              });
+              yield* harness.runtime.startTurn(
+                makeClaudeTestTurnInput({
+                  threadId: harness.threadId,
+                  providerThread: harness.providerThread,
+                  now: yield* DateTime.now,
+                  attemptId: RunAttemptId.make("attempt-launch-arg-settings"),
+                  text: "Run git status.",
+                  attachments: [],
+                  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    cwd,
+                  }),
+                }),
+              );
+              const options = harness.getOpenedOptions()!;
+              return {
+                permissionMode: options.permissionMode,
+                settings: options.settings as {
+                  disableAutoMode?: unknown;
+                  permissions?: Record<string, unknown>;
+                  env?: Record<string, unknown>;
+                },
+              };
+            }),
+          );
+        const unrestricted = yield* openWith({
+          disableAutoMode: false,
+          permissions: { disableBypassPermissionsMode: false, disableAutoMode: false, allow: [] },
+          env: { KEPT: "1" },
+        });
+        assert.equal(unrestricted.permissionMode, "bypassPermissions");
+        assert.notProperty(unrestricted.settings, "disableAutoMode");
+        assert.deepEqual(unrestricted.settings.permissions, { allow: [] });
+        assert.equal(unrestricted.settings.env?.KEPT, "1");
+        const restricted = yield* openWith({
+          disableAutoMode: false,
+          permissions: { disableBypassPermissionsMode: "disable", disableAutoMode: "disable" },
+        });
+        assert.equal(restricted.permissionMode, "default");
+        assert.notProperty(restricted.settings, "disableAutoMode");
+        assert.deepEqual(restricted.settings.permissions, {
+          disableBypassPermissionsMode: "disable",
+          disableAutoMode: "disable",
+        });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
