@@ -523,8 +523,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       : null;
 
   const forceStop = useForceStopThread(environmentId);
+  // A draft has no server thread yet; subscribing would record it as missing for good.
   const anyRunStop = useAtomValue(
-    activeThreadRef ? environmentThreadDetails.runStopAtom(activeThreadRef) : NO_RUN_STOP_ATOM,
+    activeThreadRef && activeThreadShell
+      ? environmentThreadDetails.runStopAtom(activeThreadRef)
+      : NO_RUN_STOP_ATOM,
   );
   // A background Stop matters only while that work is still pending.
   const runStop = anyRunStop?.background && activeBackgroundTasks.length === 0 ? null : anyRunStop;
