@@ -972,6 +972,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       inboxId: string,
       text: string,
     ) {
+      // Like a wake's first report, the first prompt is where its history begins for fork and rollback.
+      if (isWakeTurn(turn.providerTurn)) {
+        turn.providerTurn = { ...turn.providerTurn, nativeTurnRef: ref(inboxId, "weak") };
+      }
       const now = yield* DateTime.now;
       const base = {
         ...itemBase(state, turn, inboxId, "completed", now, now, now),
@@ -2457,8 +2461,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (turn !== undefined && turn.steers.delete(event.data.inboxID)) {
           turn.settledInbox.add(event.data.inboxID);
           if (event.type === "session.inbox.cancelled") yield* endIfSettled(state, turn);
-        }
-        if (
+        } else if (
           event.type === "session.inbox.delivered" &&
           external !== undefined &&
           turn !== undefined
@@ -2467,10 +2470,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         return;
       }
+      // No T3 turn existed while a wake held these, so its user items came from another client.
       if (
         event.type === "session.inbox.enqueued" &&
         event.data.item.type === "user" &&
-        state.active === undefined
+        (state.active === undefined || (held && state.subagent === undefined))
       ) {
         const text = event.data.item.payload.text;
         if (state.subagent === undefined) state.externalPrompts.set(event.data.inboxID, text);
