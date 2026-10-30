@@ -87,7 +87,7 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
   const events = new NodeEvents.EventEmitter();
   return {
     on: vi.fn((name: string, listener: () => void) => events.on(name, listener)),
-    emit: (name: string) => events.emit(name),
+    emit: (name: string, ...args: unknown[]) => events.emit(name, ...args),
     detach: vi.fn(async () => {}),
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
@@ -222,27 +222,60 @@ function makeEncoderPage() {
     width: 0,
     height: 0,
     getContext: () => ({ drawImage() {}, fillRect() {} }),
-    captureStream: (frameRate?: number) => ({ frameRate, getTracks: () => [] }),
+    captureStream: (frameRate?: number) => ({
+      frameRate,
+      getTracks: () => [],
+      getVideoTracks: () => [{ requestFrame() {} }],
+    }),
+  };
+  const video = {
+    play: async () => {},
+    pause() {},
+    requestVideoFrameCallback: (callback: () => void) => queueMicrotask(callback),
   };
   class FakeMediaRecorder {
     static isTypeSupported = (type: string) => type === "video/webm";
     onstart: (() => void) | null = null;
+    onstop: (() => void) | null = null;
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    state = "inactive";
+    mimeType = "video/webm";
+    readonly stream: { frameRate?: number };
     constructor(stream: { frameRate?: number }, options: { videoBitsPerSecond: number }) {
+      this.stream = stream;
       encoderStreams.push({
         frameRate: stream.frameRate,
         bitsPerSecond: options.videoBitsPerSecond,
       });
     }
     start() {
+      this.state = "recording";
       this.onstart?.();
+    }
+    stop() {
+      this.state = "inactive";
+      encodedAtStop = [...decoded];
+      this.ondataavailable?.({ data: new Blob(["video"]) });
+      this.onstop?.();
     }
   }
   const sandbox: Record<string, unknown> = {
-    document: { createElement: () => canvas },
+    document: { createElement: (tag: string) => (tag === "video" ? video : canvas) },
     Path2D: function Path2D() {},
     MediaRecorder: FakeMediaRecorder,
-    createImageBitmap: async () => ({ width: 1280, height: 800, close() {} }),
-    atob,
+    createImageBitmap: async (blob: Blob) => {
+      const decoding = blob.text();
+      await decodeGate?.promise;
+      decoded.push(await decoding);
+      if (decoded.length === decodedTarget?.count) decodedTarget.reached.resolve();
+      return { width: 1280, height: 800, close() {} };
+    },
+    Uint8Array: class extends Uint8Array {
+      // Chrome 156 has Uint8Array.fromBase64; Node 26 does not without a flag.
+      static override fromBase64 = (base64: string) =>
+        new Uint8Array(Buffer.from(base64, "base64"));
+    },
+    btoa,
     Blob,
     performance,
   };
@@ -262,6 +295,10 @@ const contexts: ReturnType<typeof makeContext>[] = [];
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
+let decodeGate: PromiseWithResolvers<void> | null = null;
+const decoded: Array<string> = [];
+let decodedTarget: { count: number; reached: PromiseWithResolvers<void> } | null = null;
+let encodedAtStop: Array<string> | null = null;
 let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
@@ -373,6 +410,10 @@ beforeEach(() => {
   encoderStreams.length = 0;
   contextRequests.length = 0;
   contextGate = null;
+  decodeGate = null;
+  decoded.length = 0;
+  decodedTarget = null;
+  encodedAtStop = null;
   contextFailure = null;
   initialNavigation = null;
   pageCopy = "";
@@ -570,6 +611,71 @@ it.live.each([
         expect(encoderStreams).toEqual([{ frameRate, bitsPerSecond }]);
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+// Chrome stops sending screencast frames while too many are unacked.
+it.live("recordings keep receiving screencast frames while the encoder decodes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+      const session = contexts[0]!.sessions.find((candidate) =>
+        candidate.send.mock.calls.some(([method]) => method === "Page.startScreencast"),
+      )!;
+      decodeGate = Promise.withResolvers<void>();
+      decodedTarget = { count: decoded.length + 2, reached: Promise.withResolvers<void>() };
+      for (const [sessionId, data] of [
+        [1, "first"],
+        [2, "stale"],
+        [3, "latest"],
+      ] as const) {
+        session.emit("Page.screencastFrame", {
+          data: Buffer.from(data).toString("base64"),
+          sessionId,
+          metadata: { deviceWidth: 1280 },
+        });
+      }
+      expect(
+        session.send.mock.calls.filter(([method]) => method === "Page.screencastFrameAck"),
+      ).toHaveLength(3);
+      decodeGate.resolve();
+      yield* Effect.promise(() => decodedTarget!.reached.promise);
+      expect(decoded.slice(-2)).toEqual(["first", "latest"]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("stopping a recording encodes the newest frame still waiting on the encoder", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+      const session = contexts[0]!.sessions.find((candidate) =>
+        candidate.send.mock.calls.some(([method]) => method === "Page.startScreencast"),
+      )!;
+      const gate = Promise.withResolvers<void>();
+      decodeGate = gate;
+      const send = session.send.getMockImplementation()!;
+      session.send.mockImplementation(async (method, input) => {
+        // A stop that skips the encoder finishes on microtasks, before this runs.
+        if (method === "Page.stopScreencast") setImmediate(gate.resolve);
+        return send(method, input);
+      });
+      for (const [sessionId, data] of [
+        [1, "decoding"],
+        [2, "stale"],
+        [3, "latest"],
+      ] as const) {
+        session.emit("Page.screencastFrame", {
+          data: Buffer.from(data).toString("base64"),
+          sessionId,
+          metadata: { deviceWidth: 1280 },
+        });
+      }
+      yield* broker.invoke({ scope, tabId, operation: "recordingStop", input: {} });
+      expect(encodedAtStop?.slice(-2)).toEqual(["decoding", "latest"]);
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.live("enforces provider ownership and explicit targets when a session has multiple tabs", () =>

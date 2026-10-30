@@ -272,7 +272,7 @@ interface Recording {
   readonly encoder: Page;
   readonly session: CDPSession;
   readonly startedAt: string;
-  readonly framesInFlight: Set<Promise<void>>;
+  readonly drained: () => Promise<void>;
 }
 
 interface ServerTab {
@@ -1500,26 +1500,34 @@ const make = Effect.gen(function* () {
         );
         const opened = await tab.page.context().newCDPSession(tab.page);
         session = opened;
-        const framesInFlight = new Set<Promise<void>>();
+        // Acks never wait on the encoder, or Chrome throttles the screencast to its
+        // decode latency. A decode in progress keeps only the newest frame waiting.
+        let pending: { readonly data: string; readonly cssWidth: number } | null = null;
+        let delivering: Promise<void> | null = null;
+        const deliver = async () => {
+          while (pending) {
+            const { data, cssWidth } = pending;
+            pending = null;
+            const accepted = await encoder
+              .evaluate(
+                ([data, width]) =>
+                  (globalThis as unknown as EncoderWindow).__t3Recorder.frame(data, width),
+                [data, cssWidth] as const,
+              )
+              .catch(() => true);
+            if (!accepted) await opened.send("Page.stopScreencast").catch(constVoid);
+          }
+          delivering = null;
+        };
         opened.on("Page.screencastFrame", (frame) => {
-          const cssWidth = tab.page.viewportSize()?.width ?? frame.metadata.deviceWidth;
-          const delivered: Promise<void> = encoder
-            .evaluate(
-              ([data, width]) =>
-                (globalThis as unknown as EncoderWindow).__t3Recorder.frame(data, width),
-              [frame.data, cssWidth] as const,
-            )
-            .then(async (accepted) => {
-              if (!accepted) await opened.send("Page.stopScreencast");
-            })
-            .catch(constVoid)
-            .finally(() => {
-              framesInFlight.delete(delivered);
-              void opened
-                .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
-                .catch(constVoid);
-            });
-          framesInFlight.add(delivered);
+          void opened
+            .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
+            .catch(constVoid);
+          pending = {
+            data: frame.data,
+            cssWidth: tab.page.viewportSize()?.width ?? frame.metadata.deviceWidth,
+          };
+          delivering ??= deliver();
         });
         await opened.send("Page.startScreencast", RECORDING_SCREENCAST);
         if (tab.closing) throw new Error("The tab closed while the recording started.");
@@ -1527,7 +1535,7 @@ const make = Effect.gen(function* () {
           encoder,
           session: opened,
           startedAt: new Date().toISOString(),
-          framesInFlight,
+          drained: () => delivering ?? Promise.resolve(),
         };
         tab.recording = recording;
         return recording;
@@ -1578,7 +1586,7 @@ const make = Effect.gen(function* () {
       const chunks: Array<Buffer> = [];
       try {
         await recording.session.send("Page.stopScreencast").catch(constVoid);
-        await Promise.all(recording.framesInFlight);
+        await recording.drained();
         await recording.session.detach().catch(constVoid);
         const stopped = await recording.encoder.evaluate(() =>
           (globalThis as unknown as EncoderWindow).__t3Recorder.stop(),
