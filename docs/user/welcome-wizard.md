@@ -79,10 +79,11 @@ Imported projects include Codex and Claude conversations active within the last
 
 Conversation import is best effort. T3 Code keeps the first user prompt and the
 newest remaining visible user and assistant messages, with 200 messages total.
-It omits tool activity and attachments. For Codex, it omits generated setup
-context only when a canonical user event and a valid shared turn ID identify the
-same user turn. Ambiguous legacy or response-only context stays in the imported
-conversation so T3 Code does not remove user text. It reads one conversation at
+It omits tool activity and attachments. For Codex, it shows the user messages
+Codex itself shows, without the generated setup and IDE context, and answered
+questions as question and answer. Older Codex conversations that never recorded
+those messages keep their setup context. For Claude, slash commands appear as
+typed and their local output is omitted. It reads one conversation at
 a time and skips files larger than 4 GiB. It also skips a conversation when the
 message text and metadata it keeps need more than 32 MiB of memory. Tool output
 does not count toward that limit. It ignores malformed records and skips
