@@ -49,12 +49,7 @@ import {
   type ReactNode,
 } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, TextInput, View } from "react-native";
-import Animated, {
-  FadeIn,
-  FadeOut,
-  LinearTransition,
-  useReducedMotion,
-} from "react-native-reanimated";
+import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -65,6 +60,7 @@ import { IconButton } from "../../components/ui/IconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
+import { useReduceMotionEnabled } from "../../lib/appState";
 import {
   buildModelOptions,
   groupByProvider,
@@ -944,9 +940,8 @@ function ThreadSettingsMainContent(props: {
     });
   };
   const [listLoaded, setListLoaded] = useState(false);
-  // With Android's Remove animations on, Reanimated can leave a row at FadeIn's zero
-  // opacity, so rows mounted while scrolling stay invisible but tappable.
-  const reducedMotion = useReducedMotion();
+  // Android can drop the first frame of a reduced-motion fade, leaving rows invisible.
+  const reducedMotion = useReduceMotionEnabled();
   const animationsReady = listLoaded && !reducedMotion;
   const catalogItems = buildThreadSettingsCatalogItems(session);
   const hasActiveCatalogFilter =

@@ -513,6 +513,21 @@ function pendingTaskApproval(
   return approval;
 }
 
+/** Every task `directAppOwnedChildTasks` can return, so callers load only those. */
+function directChildTaskIds(
+  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  returnedRunIds: ReadonlySet<RunId | null>,
+): ReadonlyArray<NodeId> {
+  const ids = new Set<NodeId>();
+  if (target.thread.forkedFrom?.type === "node") ids.add(target.thread.forkedFrom.nodeId);
+  for (const run of target.runs) {
+    if (returnedRunIds.has(run.id) && run.delegatedTaskId !== undefined) {
+      ids.add(run.delegatedTaskId);
+    }
+  }
+  return [...ids];
+}
+
 function directAppOwnedChildTasks(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents">,
   target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
@@ -1016,7 +1031,6 @@ const make = Effect.gen(function* () {
         [
           "runs",
           "messages",
-          "subagents",
           "providerThreads",
           "providerTurns",
           "runtimeRequests",
@@ -1033,6 +1047,15 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+
+  // A dispatcher thread holds thousands of tasks, each with its full prompt; read only the ones named.
+  const loadTasks = (threadId: ThreadId, taskIds: ReadonlyArray<NodeId>) =>
+    threadManagement.getThreadRecords(threadId, ["subagents"], { subagentIds: taskIds }).pipe(
+      Effect.map(({ subagents }) => subagents),
+      Effect.mapError((error) =>
+        failure("orchestration_error", `Unable to read thread ${threadId}: ${errorMessage(error)}`),
+      ),
+    );
 
   // Task waits read on every wake of a parent that may hold thousands of
   // tasks, so they read only the task they watch and what its status needs.
@@ -2385,7 +2408,7 @@ const make = Effect.gen(function* () {
       const childThreadId = current.childThreadId;
       if (childThreadId === null) {
         // The task runs in a linked environment: its thread there is stopped through the link.
-        const { subagents } = yield* loadProjection(scope.thread.threadId);
+        const subagents = yield* loadTasks(scope.thread.threadId, [input.taskId]);
         const remoteTask = subagents.find(
           (task) =>
             task.id === input.taskId &&
@@ -2428,7 +2451,7 @@ const make = Effect.gen(function* () {
         }
       });
       yield* assertStoppable(childThreadId);
-      const parentTask = parentProjection.subagents.find(
+      const parentTask = (yield* loadTasks(scope.thread.threadId, [input.taskId])).find(
         (task) => task.id === input.taskId && task.origin === "app_owned",
       );
       const disposeCompletionDelivery =
@@ -2548,9 +2571,11 @@ const make = Effect.gen(function* () {
           runId: parentTask.runId,
           subagentId: parentTask.id,
         });
-        const { subagents } = yield* threadManagement.getThreadRecords(scope.thread.threadId, [
-          "subagents",
-        ]);
+        const { subagents } = yield* threadManagement.getThreadRecords(
+          scope.thread.threadId,
+          ["subagents"],
+          { subagentIds: [input.taskId] },
+        );
         return subagents.some((task) => task.id === input.taskId && task.status === "cancelled");
       }).pipe(Effect.mapError(threadManagementFailure));
       if (isTerminalTaskStatus(current.status)) {
@@ -2782,7 +2807,11 @@ const make = Effect.gen(function* () {
           ),
         );
       const nowMs = yield* Clock.currentTimeMillis;
-      const statuses = input.statuses === undefined ? null : new Set(input.statuses);
+      // An empty list is no filter: clients that fill every optional field send `[]`.
+      const statuses =
+        input.statuses === undefined || input.statuses.length === 0
+          ? null
+          : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
       const filtered = projectThreads
         .filter(
@@ -2847,7 +2876,19 @@ const make = Effect.gen(function* () {
         page.filter((row) => row.sourceThreadId === target.thread.id).map((row) => row.item.runId),
       );
       const tasks =
-        parent === undefined ? [] : directAppOwnedChildTasks(parent, target, returnedRunIds);
+        parent === undefined
+          ? []
+          : directAppOwnedChildTasks(
+              {
+                thread: parent.thread,
+                subagents: yield* loadTasks(
+                  parent.thread.id,
+                  directChildTaskIds(target, returnedRunIds),
+                ),
+              },
+              target,
+              returnedRunIds,
+            );
       if (
         parent !== undefined &&
         scope.thread !== undefined &&
@@ -2978,14 +3019,16 @@ const make = Effect.gen(function* () {
       const ownedTask =
         result.timedOut &&
         status !== "waiting" &&
-        parent?.subagents.some(
+        parent !== undefined &&
+        taskId !== undefined &&
+        (yield* loadTasks(parent.thread.id, [taskId])).some(
           (task) =>
             task.id === taskId &&
             task.origin === "app_owned" &&
             task.threadId === parent.thread.id &&
             task.childThreadId === input.threadId &&
             task.completionDelivery?.state !== "disposed",
-        ) === true;
+        );
       // A child waiting on a question or approval needs an answer, not a wake.
       const childRequests = ownedTask
         ? (yield* threadManagement
