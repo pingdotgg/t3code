@@ -238,6 +238,34 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  it.effect("advertises the current LAN address after the network changes", () => {
+    const networkInterfaces: Record<
+      string,
+      readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[] | undefined
+    > = { ...lanNetworkInterfaces };
+
+    return withHarness(
+      networkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setMode("network-accessible");
+
+        networkInterfaces.en0 = [{ address: "10.0.0.5", family: "IPv4", internal: false }];
+
+        const state = yield* serverExposure.getState;
+        assert.equal(state.advertisedHost, "10.0.0.5");
+        assert.equal(state.endpointUrl, "http://10.0.0.5:4173");
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://10.0.0.5:4173/"],
+        );
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "0.0.0.0");
+      }),
+    );
+  });
+
   it.effect("persists tailscale serve preferences atomically and reports no-op updates", () =>
     withHarness(
       emptyNetworkInterfaces,
