@@ -12,6 +12,7 @@ it("maps current Codex model capability fields", () => {
     id: "gpt-test",
     isDefault: true,
     model: "gpt-test",
+    availableAccessPrograms: { cyber: ["standard", "daybreakBlue", "daybreakRed"] },
     defaultServiceTier: "flex",
     serviceTiers: [
       {
@@ -61,6 +62,17 @@ it("maps current Codex model capability fields", () => {
       ],
       currentValue: "flex",
     },
+    {
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      options: [
+        { id: "default", label: "Automatic", isDefault: true },
+        { id: "daybreakBlue", label: "Daybreak Blue" },
+        { id: "daybreakRed", label: "Daybreak Red" },
+      ],
+      currentValue: "default",
+    },
   ]);
 });
 
@@ -75,6 +87,7 @@ it("uses standard routing when the catalog has no default service tier", () => {
     id: "gpt-test",
     isDefault: true,
     model: "gpt-test",
+    availableAccessPrograms: { cyber: ["standard"] },
     serviceTiers: [
       {
         id: "priority",

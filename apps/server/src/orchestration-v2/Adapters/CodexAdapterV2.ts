@@ -696,6 +696,7 @@ const decodeTurnSandboxPolicy = Schema.decodeUnknownEffect(
 const decodeTurnReasoningEffort = Schema.decodeUnknownEffect(
   Schema.Union([CodexSchema.V2TurnStartParams__ReasoningEffort, Schema.Null]),
 );
+const isTurnCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 
 const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
@@ -703,6 +704,8 @@ const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.
     additionalContext: Schema.optionalKey(
       Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),
     ),
+    // Experimental field the generated schema omits; Codex still enforces authorization.
+    cyberAccessProgram: Schema.optionalKey(CodexSchema.V2TurnStartParams__CyberAccessProgram),
   }),
 );
 type CodexTurnStartParamsWithCollaborationMode =
@@ -786,6 +789,13 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       input.omitServiceTier === true
         ? undefined
         : getCodexServiceTierOptionValue(input.modelSelection);
+    const selectedCyberAccessProgram = getModelSelectionStringOptionValue(
+      input.modelSelection,
+      "cyberAccessProgram",
+    );
+    const cyberAccessProgram = isTurnCyberAccessProgram(selectedCyberAccessProgram)
+      ? selectedCyberAccessProgram
+      : undefined;
     // MCP-written app context must be quoted user input, not developer instructions.
     const appContext = Object.fromEntries(
       (input.appContext ?? []).map((entry) => [
@@ -821,6 +831,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
       ...(effort === undefined ? {} : { effort }),
       ...(serviceTier === undefined ? {} : { serviceTier }),
+      ...(cyberAccessProgram === undefined ? {} : { cyberAccessProgram }),
       // Codex supplies its own mode instructions; send both modes to clear Plan on exit.
       collaborationMode: {
         mode: input.runtimePolicy.interactionMode,
