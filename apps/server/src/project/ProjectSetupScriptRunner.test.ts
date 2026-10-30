@@ -1,6 +1,11 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
-import { ProjectId, type TerminalEvent, type TerminalSessionSnapshot } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type TerminalEvent,
+  type TerminalOpenInput,
+  type TerminalSessionSnapshot,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -35,17 +40,23 @@ const openSnapshot = (history: string): TerminalSessionSnapshot => ({
 
 const makeHarness = Effect.fn(function* (options: {
   readonly history?: string;
+  readonly trigger?: "setup" | "settle";
   readonly opening?: Deferred.Deferred<void>;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
+  const opens: TerminalOpenInput[] = [];
   const writes = yield* Queue.unbounded<string>();
   const outputLines = yield* Queue.unbounded<string>();
   const terminals = Layer.mock(TerminalManager.TerminalManager)({
-    open: () =>
-      (options.opening
-        ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
-        : Effect.void
-      ).pipe(Effect.as(openSnapshot(options.history ?? ""))),
+    open: (input) =>
+      Effect.sync(() => opens.push(input)).pipe(
+        Effect.andThen(
+          options.opening
+            ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+        ),
+        Effect.as(openSnapshot(options.history ?? "")),
+      ),
     subscribe: (listener) =>
       Effect.sync(() => {
         listeners.add(listener);
@@ -71,6 +82,7 @@ const makeHarness = Effect.fn(function* (options: {
   );
   const start = runner.runForThread({
     threadId,
+    trigger: options.trigger ?? "setup",
     worktreePath: "/repo/.t3/worktrees/feature",
     observeCompletion: { onOutputLine: (line) => Queue.offer(outputLines, line) },
     project: {
@@ -83,13 +95,14 @@ const makeHarness = Effect.fn(function* (options: {
           command: "vp i",
           icon: "configure",
           runOnWorktreeCreate: true,
+          runOnSettle: true,
         },
       ],
     },
   });
   const emit = (terminalEvent: TerminalEvent) =>
     Effect.forEach([...listeners], (listener) => listener(terminalEvent), { discard: true });
-  return { start, listeners, writes, outputLines, emit };
+  return { start, listeners, writes, outputLines, emit, opens };
 });
 
 const setup = Effect.fn(function* (options: { readonly history?: string } = {}) {
@@ -101,6 +114,15 @@ const setup = Effect.fn(function* (options: { readonly history?: string } = {}) 
 });
 
 describe("ProjectSetupScriptRunner", () => {
+  it.effect.each(["setup", "settle"] as const)(
+    "keeps %s scripts independent of the interactive shell preference",
+    (trigger) =>
+      Effect.gen(function* () {
+        const { start, opens } = yield* makeHarness({ trigger });
+        yield* start;
+        expect(opens[0]?.env?.T3CODE_TERMINAL_SHELL).toBe("");
+      }),
+  );
   it.effect("shows a startup prompt and types only once the line editor starts", () =>
     Effect.gen(function* () {
       const { result, writes, outputLines, emit } = yield* setup();
