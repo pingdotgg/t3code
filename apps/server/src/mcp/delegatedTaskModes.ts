@@ -89,15 +89,25 @@ export function resolveInteractionMode(
     : Effect.succeed(resolved);
 }
 
-/** A child may keep its parent's cyber access program but not choose another; only the user can. */
+/**
+ * A child may keep its parent's cyber access program on the same instance and model, but not
+ * choose another; only the user can. Codex grants programs per account and model.
+ */
 export function resolveCyberAccessProgram(
   parentSelection: ModelSelection | undefined,
-  requested: ReadonlyArray<ProviderOptionSelection>,
+  requested: Pick<ModelSelection, "instanceId" | "model"> & {
+    readonly options?: ReadonlyArray<ProviderOptionSelection> | undefined;
+  },
 ): Effect.Effect<void, OrchestratorMcpFailure> {
+  const sameModel =
+    parentSelection?.instanceId === requested.instanceId &&
+    parentSelection.model === requested.model;
   const parentValue =
-    getModelSelectionStringOptionValue(parentSelection, "cyberAccessProgram") ?? "default";
+    (sameModel
+      ? getModelSelectionStringOptionValue(parentSelection, "cyberAccessProgram")
+      : undefined) ?? "default";
   // Check every entry: a later duplicate would win wherever options are merged.
-  const chosen = requested.find(
+  const chosen = (requested.options ?? []).find(
     (selection) =>
       selection.id === "cyberAccessProgram" &&
       selection.value !== "default" &&
@@ -108,7 +118,7 @@ export function resolveCyberAccessProgram(
     : Effect.fail(
         new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: `Cyber access program ${String(chosen.value)} differs from this thread's ${parentValue}. Omit it; the user chooses one in the composer's model options.`,
+          message: `Cyber access program ${String(chosen.value)} was requested for ${requested.model}, but this thread's program for that model is ${parentValue}. Omit it; the user chooses one in the composer's model options.`,
         }),
       );
 }
