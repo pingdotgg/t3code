@@ -87,6 +87,23 @@ it("marks the current mode as checked and closes on Escape", async () => {
   await expect.element(screen.getByRole("button", { name: "Effort" })).toHaveFocus();
 });
 
+it("explains hovered permissions while keeping the selected mode in the header", async () => {
+  await using screen = await render(<EffortMenu />, { router: false }); // no routes involved
+  await userEvent.click(screen.getByRole("button", { name: "Effort" }));
+  await userEvent.hover(page.getByRole("menuitemradio", { name: "Supervised" }));
+  await expect
+    .element(
+      page.getByRole("tooltip").getByText("Ask before commands and file changes.", { exact: true }),
+    )
+    .toBeVisible();
+  await expect
+    .element(page.getByRole("menu").getByText("Full access", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByRole("menuitemradio", { name: "Full access" }))
+    .toHaveAttribute("aria-checked", "true");
+});
+
 // The real composer menu focus rule (useComposerMenuProps), with a stub composer handle.
 function withComposer(children: ReactNode) {
   const handle = { focusAtEnd: vi.fn() };
