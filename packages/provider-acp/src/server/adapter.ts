@@ -4926,6 +4926,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     existing,
                   );
                   context.subagentsBySessionId.set(notification.sessionId, existing);
+                  const buffered =
+                    context.pendingSubagentNotifications.get(notification.sessionId) ?? [];
+                  context.pendingSubagentNotifications.delete(notification.sessionId);
+                  for (const pending of buffered) {
+                    yield* projectSubagentNotification(existing, pending);
+                  }
                 }
                 yield* emitSubagent(context, flavor.adoptChildSession(notification.sessionId));
                 subagent = context.subagentsBySessionId.get(notification.sessionId);
@@ -4951,6 +4957,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* emitSubagent(context, subagentUpdate);
                   }
                   continue;
+                }
+                if (
+                  flavor.adoptChildSession !== undefined &&
+                  adoptedSubagents.get(notification.sessionId)?.subagent === subagent &&
+                  acpSubagentStatusIsTerminal(subagent.task.status) &&
+                  (toolCall.status === "inProgress" ||
+                    toolCall.status === "pending" ||
+                    toolCall.status === "requiresAction")
+                ) {
+                  // A completion-only late update must not reopen a settled child.
+                  subagent.task = { ...subagent.task, status: "running", completedAt: null };
+                  subagent.terminalStatusProjected = false;
+                  yield* emitSubagent(context, flavor.adoptChildSession(notification.sessionId));
                 }
                 yield* projectSubagentTool(subagent, notification.sessionId, toolCall);
               }
