@@ -26,4 +26,16 @@ describe("PR attachments", () => {
       },
     ]);
   });
+
+  it("collects videos from a before/after table", () => {
+    const media = splitPullRequestBody(
+      "<table>\n<tr><th>Before</th><th>After</th></tr>\n<tr><td>\n\nhttps://drop.example.com/before.mp4\n\n</td><td>\n\nhttps://drop.example.com/after.mp4\n\n</td></tr>\n</table>",
+    );
+    expect(
+      pullRequestDescriptionContent({ type: "root" } as MarkdownNode, media).attachments,
+    ).toEqual([
+      { uri: "https://drop.example.com/before.mp4", caption: "Video", kind: "video" },
+      { uri: "https://drop.example.com/after.mp4", caption: "Video", kind: "video" },
+    ]);
+  });
 });

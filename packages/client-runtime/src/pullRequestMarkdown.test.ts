@@ -124,6 +124,78 @@ describe("media on custom hosts", () => {
   });
 });
 
+describe("media tables", () => {
+  const before = "https://github.com/user-attachments/assets/c69c7c1c-ef2f-47dd-97e8-fe42e40712eb";
+  const after = "https://github.com/user-attachments/assets/1867b6ec-4f88-4248-b2df-6b0f9808105b";
+  const video = "https://example.com/a.mp4";
+
+  it("keeps GitHub's before/after video table together, splitting each cell on its own", () => {
+    const segments = splitPullRequestBody(
+      `Intro\n\n<table>\n<tr><th>Before</th><th>After</th></tr>\n<tr>\n<td>\n\n${before}\n\n</td>\n<td>\n\n${after}\n\n</td>\n</tr>\n</table>\n\nOutro`,
+    );
+    expect(segments.map((segment) => segment.kind)).toEqual(["markdown", "table", "markdown"]);
+    expect(segments[0]).toMatchObject({ text: "Intro" });
+    expect(segments[2]).toMatchObject({ text: "Outro" });
+    const table = segments[1]!;
+    if (table.kind !== "table") throw new Error("expected a table segment");
+    expect(
+      table.rows.map((row) =>
+        row.map((cell) =>
+          cell.segments.map((segment) =>
+            segment.kind === "attachment" ? `attachment:${segment.url}` : segment,
+          ),
+        ),
+      ),
+    ).toEqual([
+      [
+        [{ id: "markdown:0", kind: "markdown", text: "Before" }],
+        [{ id: "markdown:0", kind: "markdown", text: "After" }],
+      ],
+      [[`attachment:${before}`], [`attachment:${after}`]],
+    ]);
+  });
+
+  it("keeps a quoted `>` inside a cell's attributes out of its text", () => {
+    const [table] = splitPullRequestBody(
+      `<table>\n<tr><td title="Before > after">Caption</td><td>\n\n${video}\n\n</td></tr>\n</table>`,
+    );
+    expect(table).toMatchObject({
+      kind: "table",
+      rows: [[{ segments: [{ kind: "markdown", text: "Caption" }] }, {}]],
+    });
+  });
+
+  it("leaves a table without media links as markdown", () => {
+    const body = "<table>\n<tr><td>a</td><td>b</td></tr>\n</table>";
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body },
+    ]);
+  });
+
+  it.each([
+    ["a caption", "<table>\n<caption>Before upgrading</caption>\n<tr><td>", "</td></tr>\n</table>"],
+    ["text outside cells", "<table>\nBefore upgrading\n<tr><td>", "</td></tr>\n</table>"],
+    [
+      "text inside a row but outside cells",
+      "<table>\n<tr>Before upgrading<td>",
+      "</td></tr>\n</table>",
+    ],
+    [
+      "a table nested in another",
+      "<table>\n<tr><td>\n<table>\n<tr><td>",
+      "</td></tr>\n</table>\n</td></tr>\n</table>",
+    ],
+    ["an unclosed table", "<table>\n<tr><td>", ""],
+    ["a spanning cell", '<table>\n<tr><td colspan="2">', "</td></tr>\n</table>"],
+  ])("splits a media table with %s line by line, as before", (_name, open, close) => {
+    expect(splitPullRequestBody(`${open}\n\n${video}\n\n${close}`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: open },
+      { id: "attachment:1", kind: "attachment", url: video, media: "video" },
+      ...(close ? [{ id: "markdown:2", kind: "markdown", text: close }] : []),
+    ]);
+  });
+});
+
 describe("change request reference autolinks", () => {
   const urls = (provider: string, url: string, text: string) =>
     changeRequestReferenceAutolinker({ provider, url })?.(text).map((link) => link.url) ?? null;

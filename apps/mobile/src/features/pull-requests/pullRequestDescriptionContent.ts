@@ -28,7 +28,11 @@ export function pullRequestDescriptionContent(
     if (node.type === "break") text.push(" ");
   };
   visit(document);
-  for (const segment of media) {
+  const collect = (segment: PullRequestBodySegment) => {
+    if (segment.kind === "table") {
+      segment.rows.flat().forEach((cell) => cell.segments.forEach(collect));
+      return;
+    }
     if (segment.kind === "attachment" && !attachments.has(segment.url)) {
       const name = new URL(segment.url).pathname.split("/").pop();
       attachments.set(segment.url, {
@@ -37,6 +41,7 @@ export function pullRequestDescriptionContent(
         kind: segment.media,
       });
     }
-  }
+  };
+  media.forEach(collect);
   return { preview: text.join("").trim(), attachments: [...attachments.values()] };
 }
