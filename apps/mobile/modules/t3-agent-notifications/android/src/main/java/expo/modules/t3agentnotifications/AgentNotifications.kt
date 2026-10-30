@@ -127,8 +127,8 @@ object AgentNotifications {
     if (registered && fresh && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
       channels(context)
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
-      showAlert(context, prefs, scheme, data)
-      updateActivity(context, prefs, scheme, data, updatedAt)
+      val alerted = showAlert(context, prefs, scheme, data)
+      updateActivity(context, prefs, data, updatedAt, alerted)
     }
   }
 
@@ -137,7 +137,7 @@ object AgentNotifications {
     prefs: SharedPreferences,
     scheme: String,
     data: Map<String, String>
-  ) {
+  ): Boolean {
     // Queue retries carry the same alert id. Keep a bounded history even when
     // notification A is retried after notification B has already arrived.
     val alertId = data["alert_id"]
@@ -157,7 +157,14 @@ object AgentNotifications {
         "seenAlertsOrdered",
         (seen.takeLast(63) + alertId).joinToString("\n")
       ).apply()
+      // Android drops posts to a blocked channel, so that alert shows nothing.
+      return !onScreen && (
+        Build.VERSION.SDK_INT < 26 ||
+          manager(context).getNotificationChannel(ALERT_CHANNEL)?.importance !=
+          NotificationManager.IMPORTANCE_NONE
+        )
     }
+    return false
   }
 
   private fun postAlert(
@@ -215,9 +222,9 @@ object AgentNotifications {
   private fun updateActivity(
     context: Context,
     prefs: SharedPreferences,
-    scheme: String,
     data: Map<String, String>,
-    updatedAt: Long
+    updatedAt: Long,
+    alerted: Boolean
   ) {
     if (updatedAt < prefs.getLong("lastUpdate", 0)) return
     prefs.edit().putLong("lastUpdate", updatedAt).apply()
@@ -237,7 +244,13 @@ object AgentNotifications {
     // Dismissing a run includes its finished card. A new run, or toggling
     // activity off/on, arms it again; terminal replays stay dismissed.
     if (active && !wasActive) prefs.edit().putBoolean("dismissed", false).apply()
-    if (!prefs.getBoolean("dismissed", false)) {
+    // The posted alert already shows this finish, so a finished card would
+    // duplicate it. Dismissing keeps later replays from bringing the card back.
+    if (alerted && !active) prefs.edit().putBoolean("dismissed", true).apply()
+    if (prefs.getBoolean("dismissed", false)) {
+      cancelActivity(context)
+    } else {
+      val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
       showActivity(context, scheme, data, active, remainingMs)
     }
   }
