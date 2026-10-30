@@ -2,6 +2,8 @@ import type { DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  parseGatewayHeaders,
+  resolveGatewayOrigin,
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
@@ -121,5 +123,43 @@ describe("selectQrEndpointOption", () => {
     expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(
       "tailscale-ip:http://100.84.12.7:4780",
     );
+  });
+});
+
+describe("parseGatewayHeaders", () => {
+  it("reads one header per line and keeps colons inside values", () => {
+    expect(
+      parseGatewayHeaders(
+        "\n CF-Access-Client-Id: id.access \r\nCF-Access-Client-Secret: a:b:c\n\n",
+      ),
+    ).toEqual([
+      { name: "CF-Access-Client-Id", value: "id.access" },
+      { name: "CF-Access-Client-Secret", value: "a:b:c" },
+    ]);
+  });
+
+  it.each([
+    ["a line without a name", "just-a-secret", 'Write each gateway header as "Name: value".'],
+    ["a header T3 Code sets", "Authorization: Bearer x", "T3 Code sets Authorization itself"],
+    ["a browser-owned header", "Sec-WebSocket-Key: x", "T3 Code sets Sec-WebSocket-Key itself"],
+    ["an empty value", "P-Access-Token:", "Gateway header P-Access-Token needs"],
+    ["an invalid name", "Bad Name: x", "Gateway header Bad Name needs"],
+  ])("rejects %s without echoing the line", (_label, text, message) => {
+    expect(() => parseGatewayHeaders(text)).toThrow(message);
+  });
+});
+
+describe("resolveGatewayOrigin", () => {
+  it.each([
+    ["code.example.com", "https://code.example.com"],
+    ["https://code.example.com/pair?token=x#y", "https://code.example.com"],
+    ["wss://code.example.com:8443/ws", "https://code.example.com:8443"],
+    ["http://192.168.1.4:3773", "http://192.168.1.4:3773"],
+  ])("resolves %s to %s", (host, origin) => {
+    expect(resolveGatewayOrigin(host)).toBe(origin);
+  });
+
+  it("rejects non-http addresses", () => {
+    expect(() => resolveGatewayOrigin("ftp://code.example.com")).toThrow("http or https");
   });
 });

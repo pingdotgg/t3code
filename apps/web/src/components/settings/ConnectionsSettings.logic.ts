@@ -1,4 +1,5 @@
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
@@ -15,6 +16,10 @@ import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   type DesktopBridge,
+  type DesktopGatewayHeader,
+  type DesktopGatewayHeadersInput,
+  DesktopGatewayHeaderSchema,
+  isReservedGatewayHeaderName,
   type DesktopServerExposureState,
   type DesktopSshEnvironmentTarget,
   type DesktopUpdateState,
@@ -263,6 +268,68 @@ export function parseRemotePairingFields(input: {
     throw new Error("Enter a pairing code.");
   }
   return { host, pairingCode };
+}
+
+const isGatewayHeader = Schema.is(DesktopGatewayHeaderSchema);
+
+/** The origin gateway headers are saved for. A bare host means https, as it does when pairing. */
+export function resolveGatewayOrigin(host: string): string {
+  const trimmed = host.trim().replace(/^\/+/u, "");
+  if (trimmed.length === 0) throw new Error("Enter the environment address.");
+  let url: URL;
+  try {
+    url = new URL(/^[a-z][a-z\d+-]*:\/\//iu.test(trimmed) ? trimmed : `https://${trimmed}`);
+  } catch {
+    throw new Error("Enter a valid environment address.");
+  }
+  if (url.protocol === "ws:") url.protocol = "http:";
+  else if (url.protocol === "wss:") url.protocol = "https:";
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("The environment address must use http or https.");
+  }
+  return url.origin;
+}
+
+/** Reads one `Name: value` header per line. Errors never echo a line, since it may be a secret. */
+export function parseGatewayHeaders(text: string): ReadonlyArray<DesktopGatewayHeader> {
+  const headers: Array<DesktopGatewayHeader> = [];
+  for (const line of text.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const colon = trimmed.indexOf(":");
+    if (colon <= 0) throw new Error('Write each gateway header as "Name: value".');
+    const name = trimmed.slice(0, colon).trim();
+    const header = { name, value: trimmed.slice(colon + 1).trim() };
+    if (isReservedGatewayHeaderName(name)) {
+      throw new Error(`T3 Code sets ${name} itself, so it cannot be a gateway header.`);
+    }
+    if (!isGatewayHeader(header)) {
+      throw new Error(`Gateway header ${name} needs a valid name and a value.`);
+    }
+    headers.push(header);
+  }
+  return headers;
+}
+
+/** `origin` is set when replacing a saved origin's headers; otherwise `host` names it. */
+export function resolveGatewayHeadersInput(input: {
+  readonly origin: string | null;
+  readonly host: string;
+  readonly headersText: string;
+}): DesktopGatewayHeadersInput {
+  const headers = parseGatewayHeaders(input.headersText);
+  if (headers.length === 0) throw new Error("Enter at least one gateway header.");
+  return { origin: input.origin ?? resolveGatewayOrigin(input.host), headers };
+}
+
+export function formatDesktopBridgeError(error: unknown, fallback: string): string {
+  const rawMessage = error instanceof Error ? error.message : fallback;
+  return (
+    rawMessage
+      .replace(/^Error invoking remote method '[^']+':\s*/u, "")
+      .replace(/^[A-Za-z]+Error:\s*/u, "")
+      .trim() || fallback
+  );
 }
 
 export function formatDesktopSshConnectionError(error: unknown): string {

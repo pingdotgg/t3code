@@ -6,6 +6,11 @@ import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import { getConnectionCatalog, setConnectionCatalog } from "./methods/connectionCatalog.ts";
 import {
+  getGatewayHeaders,
+  removeGatewayHeaders,
+  setGatewayHeaders,
+} from "./methods/gatewayHeaders.ts";
+import {
   getLocalEnvironmentEnabled,
   setLocalEnvironmentEnabled,
 } from "./methods/localEnvironment.ts";
@@ -115,6 +120,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(dismissSnapShotAnimation);
   yield* ipc.handle(acknowledgeSnapShot);
   yield* ipc.handle(setConnectionCatalog);
+  yield* ipc.handle(getGatewayHeaders);
+  yield* ipc.handle(setGatewayHeaders);
+  yield* ipc.handle(removeGatewayHeaders);
 
   yield* ipc.handle(discoverSshHosts);
   yield* ipc.handle(resolveSshHost);

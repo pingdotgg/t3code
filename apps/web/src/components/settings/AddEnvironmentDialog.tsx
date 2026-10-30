@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import { cn } from "../../lib/utils";
 import { formatDesktopSshTarget } from "./EnvironmentRow";
 import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import { CommandShortcut } from "../ui/command";
 import {
   Autocomplete,
@@ -59,11 +60,16 @@ import {
   threadJumpIndexFromCommand,
 } from "../../keybindings";
 import {
+  formatDesktopBridgeError,
+  parseGatewayHeaders,
   parseManualDesktopSshTarget,
   parsePairingUrlFields,
   parseRemotePairingFields,
   formatDesktopSshConnectionError,
+  resolveGatewayOrigin,
 } from "./ConnectionsSettings.logic";
+import { GATEWAY_HEADERS_PLACEHOLDER } from "./GatewayHeadersSettings";
+import { refreshDesktopGatewayHeadersState } from "~/state/desktopGatewayHeaders";
 
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
@@ -112,6 +118,7 @@ export function AddEnvironmentDialog({
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
+  const [savedBackendGatewayHeaders, setSavedBackendGatewayHeaders] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
@@ -199,11 +206,13 @@ export function AddEnvironmentDialog({
     setIsAddingSavedBackend(true);
     onErrorChange(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
+    let gatewayHeaders: ReturnType<typeof parseGatewayHeaders> = [];
     try {
       remotePairingInput = parseRemotePairingFields({
         host: savedBackendHost,
         pairingCode: savedBackendPairingCode,
       });
+      if (desktopBridge) gatewayHeaders = parseGatewayHeaders(savedBackendGatewayHeaders);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to add backend.";
       onErrorChange(message);
@@ -216,6 +225,20 @@ export function AddEnvironmentDialog({
       );
       setIsAddingSavedBackend(false);
       return;
+    }
+
+    if (desktopBridge && gatewayHeaders.length > 0) {
+      try {
+        await desktopBridge.setGatewayHeaders({
+          origin: resolveGatewayOrigin(remotePairingInput.host),
+          headers: gatewayHeaders,
+        });
+        refreshDesktopGatewayHeadersState();
+      } catch (error) {
+        onErrorChange(formatDesktopBridgeError(error, "Could not save the gateway headers."));
+        setIsAddingSavedBackend(false);
+        return;
+      }
     }
 
     const result = await connectPairing({
@@ -241,6 +264,7 @@ export function AddEnvironmentDialog({
 
     setSavedBackendHost("");
     setSavedBackendPairingCode("");
+    setSavedBackendGatewayHeaders("");
     setSavedBackendSshHost("");
     setSavedBackendSshUsername("");
     setSavedBackendSshPort("");
@@ -407,6 +431,26 @@ export function AddEnvironmentDialog({
           Paste a full pairing URL here to fill both fields automatically.
         </span>
       </div>
+      {desktopBridge ? (
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium text-foreground">
+            Access gateway headers (optional)
+          </span>
+          <Textarea
+            size="sm"
+            value={savedBackendGatewayHeaders}
+            onChange={(event) => setSavedBackendGatewayHeaders(event.target.value)}
+            placeholder={GATEWAY_HEADERS_PLACEHOLDER}
+            disabled={isAddingSavedBackend}
+            spellCheck={false}
+            autoComplete="off"
+          />
+          <span className="mt-1 block text-2xs text-muted-foreground">
+            For a host behind Cloudflare Access or another access proxy. Saved encrypted on this
+            device and sent with every request to the host.
+          </span>
+        </label>
+      ) : null}
     </div>
   );
   const relayRouteOffer =

@@ -133,6 +133,7 @@ import {
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
+import { GatewayHeadersSettings } from "./GatewayHeadersSettings";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -1515,6 +1516,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
           savedEnvironments={savedEnvironments}
         />
       </SettingsSection>
+      {desktopBridge ? <GatewayHeadersSettings /> : null}
       {hasCloudPublicConfig() ? (
         <RemoveT3ConnectEnvironmentDialog
           environmentLabel={pendingT3ConnectRemoval?.label ?? null}
