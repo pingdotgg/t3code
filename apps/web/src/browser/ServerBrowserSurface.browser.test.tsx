@@ -25,7 +25,7 @@ vi.mock(import("@t3tools/client-runtime/preview/server-browser-stream"), async (
   createPreviewStreamClient: (_options, events) => {
     mocks.events = events;
     mocks.connect();
-    return { send: mocks.send, stop: () => undefined } as never;
+    return { send: mocks.send, accessibility: () => undefined, stop: () => undefined } as never;
   },
 }));
 
