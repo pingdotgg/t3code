@@ -941,6 +941,7 @@ interface ActiveCursorTurn {
   turnEnded: boolean;
   /** Bumps when new work starts so a pending idle finalize is ignored. */
   idleFinalizeGeneration: number;
+  idleCancelFailed: boolean;
   /** Set when `sdkRun.wait` has finished (success, failure, or interrupt). */
   readonly runWaitSettled: Deferred.Deferred<void, never>;
 }
@@ -2148,7 +2149,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ) {
                 return;
               }
-              const released = yield* awaitCursorRunReleaseBeforeIdleFinalize(context);
+              let released = yield* awaitCursorRunReleaseBeforeIdleFinalize(context);
+              if (!released) {
+                // A cancelled wait that settled before the cancel failed deferred to this path.
+                context.idleCancelFailed = true;
+                released = yield* Deferred.isDone(context.runWaitSettled);
+              }
               if (
                 !released ||
                 context.finalized ||
@@ -2283,6 +2289,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
 
         const shouldDeferWaitFinalizeToIdlePath = (context: ActiveCursorTurn, result: RunResult) =>
           !context.interrupted &&
+          !context.idleCancelFailed &&
           context.turnEnded &&
           !cursorTurnHasActiveWork(context) &&
           result.status === "cancelled";
@@ -2535,6 +2542,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               finalized: false,
               turnEnded: false,
               idleFinalizeGeneration: 0,
+              idleCancelFailed: false,
               runWaitSettled,
             };
             yield* Ref.set(activeTurn, context);
