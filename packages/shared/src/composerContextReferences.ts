@@ -132,6 +132,29 @@ export function collectComposerContextReferences(
 export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
 
+/** Claude's ultrathink effort sends the prompt as `Ultrathink:\n<prompt>`. */
+export function isAttachmentOnlyBootstrapPrompt(text: string): boolean {
+  return text.replace(/^Ultrathink:\s*/i, "") === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
+}
+
+export function stripAttachmentOnlyBootstrapPrompt(text: string): string {
+  return isAttachmentOnlyBootstrapPrompt(text)
+    ? text.slice(0, -ATTACHMENT_ONLY_BOOTSTRAP_PROMPT.length).trimEnd()
+    : text;
+}
+
+export function restoreAttachmentOnlyBootstrapPrompt(
+  text: string,
+  hasAttachments: boolean,
+): string {
+  if (!hasAttachments) return text;
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
+  return /^Ultrathink:\s*$/i.test(trimmed)
+    ? `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`
+    : text;
+}
+
 export function isImageReferencesOnly(text: string): boolean {
   const references = collectComposerContextReferences(text);
   return (

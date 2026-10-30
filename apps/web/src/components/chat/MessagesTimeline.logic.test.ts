@@ -1390,6 +1390,74 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("stacks back-to-back steers as one burst with a single steer label", () => {
+    const runId = RunId.make("double-steer-run");
+    const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+    const message = (
+      id: string,
+      second: number,
+      role: "user" | "assistant",
+      inputIntent?: "turn_start" | "steer",
+    ): TimelineEntry => ({
+      kind: "message",
+      id,
+      createdAt: time(second),
+      message: {
+        id: MessageId.make(id),
+        role,
+        text: id,
+        runId,
+        ...(inputIntent ? { inputIntent } : {}),
+        createdAt: time(second),
+        updatedAt: time(second),
+        streaming: false,
+      },
+    });
+    const prompt = message("prompt", 0, "user", "turn_start");
+    const work: TimelineEntry = {
+      kind: "work",
+      id: "work",
+      createdAt: time(4),
+      entry: { id: "work", createdAt: time(4), runId, label: "Ran command", tone: "tool" },
+    };
+    const firstSteer = message("first-steer", 10, "user", "steer");
+    const deriveRows = (timelineEntries: TimelineEntry[]) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(30) },
+        isWorking: false,
+        expandedRunIds: new Set(),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+    // The second steer arrives while the first message object is reused, as live updates do.
+    const before = computeStableMessagesTimelineRows(deriveRows([prompt, work, firstSteer]), {
+      result: [],
+      byId: new Map(),
+    });
+    const rows = computeStableMessagesTimelineRows(
+      deriveRows([
+        prompt,
+        work,
+        firstSteer,
+        message("second-steer", 12, "user", "steer"),
+        message("final", 30, "assistant"),
+      ]),
+      before,
+    ).result;
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get("prompt")).not.toHaveProperty("groupedWithNext");
+    expect(byId.get("first-steer")).toMatchObject({
+      groupedWithNext: true,
+      continuesSteer: false,
+    });
+    expect(byId.get("second-steer")).toMatchObject({
+      groupedWithNext: false,
+      continuesSteer: true,
+    });
+  });
+
   it("keeps the previous turn folded while a newly sent message awaits its turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -1841,10 +1909,10 @@ describe("deriveMessagesTimelineRows", () => {
     const settled = rows({ resume: "completed", working: false });
     expect(shape(settled)).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:Worked for 8s",
       "assistant:launch-answer",
       "user:resume",
-      "fold:Worked for 8.0s",
+      "fold:Worked for 8s",
       "assistant:resume-answer",
     ]);
 
@@ -1857,17 +1925,17 @@ describe("deriveMessagesTimelineRows", () => {
     });
     expect(shape(expanded)).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:Worked for 8s",
       "work-toggle",
       "assistant:launch-answer",
       "user:resume",
-      "fold:Worked for 8.0s",
+      "fold:Worked for 8s",
       "assistant:resume-answer",
     ]);
 
     expect(shape(rows({ resume: "running", working: true }))).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:Worked for 8s",
       "assistant:launch-answer",
       "user:resume",
       "working",
@@ -1876,7 +1944,7 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(shape(rows({ resume: "failed", working: false }))).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:Worked for 8s",
       "assistant:launch-answer",
       "user:resume",
       "work",

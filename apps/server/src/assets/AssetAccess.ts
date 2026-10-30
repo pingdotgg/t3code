@@ -659,7 +659,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           ? inlinePreviewMimeTypeForExtension(extension)
           : undefined;
       if (!isGenericFile) {
-        imageDimensions = yield* readImageDimensionsFromHeader(attachmentPath);
+        imageDimensions = yield* fileSystem.realPath(attachmentPath).pipe(
+          Effect.flatMap(readImageDimensionsFromHeader),
+          Effect.orElseSucceed(() => null),
+        );
       }
       claims = {
         version: 1,

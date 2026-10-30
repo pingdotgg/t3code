@@ -24,6 +24,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -32,6 +33,7 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
+import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -125,6 +127,63 @@ const layerSession = Layer.mergeAll(
   McpProviderSessions.layer,
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
+
+describe("AntigravityAdapterV2 session open", () => {
+  it.effect.each([
+    {
+      name: "browser sign-in",
+      cause: new EffectAcpErrors.AcpTransportError({
+        detail: ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
+        cause: undefined,
+      }),
+      requiresSignIn: true,
+    },
+    {
+      name: "ACP authentication required",
+      cause: EffectAcpErrors.AcpRequestError.authRequired(),
+      requiresSignIn: true,
+    },
+    {
+      name: "transport failure",
+      cause: new EffectAcpErrors.AcpTransportError({
+        detail: "Connection closed",
+        cause: undefined,
+      }),
+      requiresSignIn: undefined,
+    },
+  ] as const)("classifies $name during session open", ({ cause, requiresSignIn }) =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("antigravity-sign-in-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: () => Effect.fail(cause),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const threadId = ThreadId.make("thread-antigravity-sign-in");
+      const error = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-sign-in"),
+          modelSelection: { instanceId, model: "gemini-test-low" },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "ProviderAdapterOpenSessionError");
+      assert.equal(
+        error._tag === "ProviderAdapterOpenSessionError" && error.requiresSignIn,
+        requiresSignIn,
+      );
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
 
 describe("AntigravityAdapterV2 client file system", () => {
   it.effect("serves confined reads and leaves edits to the agent's diff tools", () =>
