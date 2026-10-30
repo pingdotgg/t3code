@@ -1956,8 +1956,6 @@ function renderFeedEntry(
               className="min-w-0 rounded-[20px]"
               style={{
                 backgroundColor: userBubbleColor,
-                borderTopEndRadius: props.userMessageGrouping.groupedWithPrevious ? 6 : 20,
-                borderBottomEndRadius: props.userMessageGrouping.groupedWithNext ? 6 : 20,
                 maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
                 ...(!bubbleBodyVisible
                   ? null
