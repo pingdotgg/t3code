@@ -18,6 +18,8 @@ import {
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
+import { Kbd } from "../ui/kbd";
+import { isCiteSelectionShortcut } from "./composerFocusRedirect";
 
 export function AssistantSelectionToolbar({
   viewport,
@@ -143,30 +145,33 @@ export function AssistantSelectionToolbar({
       onDismiss: clear,
     });
     actionsRef.current = actions;
-    const focusActions = (event: KeyboardEvent) => {
+    const handleShortcut = (event: KeyboardEvent) => {
       const toolbar = toolbarRef.current;
       if (
-        event.key !== "Tab" ||
-        event.shiftKey ||
+        !toolbar ||
+        toolbar.disabled ||
         event.altKey ||
         event.ctrlKey ||
         event.metaKey ||
         event.isComposing ||
-        event.defaultPrevented ||
-        !toolbar ||
-        toolbar.contains(event.target as Node)
+        event.defaultPrevented
       ) {
         return;
       }
-      if (toolbar.disabled) return;
-      event.preventDefault();
-      event.stopPropagation();
-      toolbar.focus({ preventScroll: true });
+      if (event.key === "Tab" && !event.shiftKey && !toolbar.contains(event.target as Node)) {
+        event.preventDefault();
+        event.stopPropagation();
+        toolbar.focus({ preventScroll: true });
+      } else if (isCiteSelectionShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        toolbar.click();
+      }
     };
-    document.addEventListener("keydown", focusActions, true);
+    document.addEventListener("keydown", handleShortcut, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
     return () => {
-      document.removeEventListener("keydown", focusActions, true);
+      document.removeEventListener("keydown", handleShortcut, true);
       document.removeEventListener("selectionchange", actions.selectionChanged);
       actions.dispose();
       actionsRef.current = null;
@@ -193,6 +198,8 @@ export function AssistantSelectionToolbar({
       variant="glass"
       disabled={tooLong}
       aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
+      aria-keyshortcuts={tooLong ? undefined : "R"}
+      data-cite-selection-action=""
       className="fixed z-50 max-w-[calc(100vw-1rem)]"
       style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
@@ -207,6 +214,7 @@ export function AssistantSelectionToolbar({
     >
       <QuoteIcon aria-hidden="true" className="size-3.5" />
       {tooLong ? "Shorten selection" : "Cite"}
+      {tooLong ? null : <Kbd>R</Kbd>}
     </Button>,
     document.body,
   );

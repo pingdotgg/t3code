@@ -69,12 +69,20 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   return true;
 }
 
+export function isCiteSelectionShortcut(event: KeyboardEvent): boolean {
+  return (
+    event.key.toLowerCase() === "r" &&
+    document.querySelector("button[data-cite-selection-action]:enabled") !== null
+  );
+}
+
 export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.isComposing) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
   if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
   if (isSurfaceLauncherKey(event)) return false;
+  if (isCiteSelectionShortcut(event)) return false;
 
   return true;
 }
