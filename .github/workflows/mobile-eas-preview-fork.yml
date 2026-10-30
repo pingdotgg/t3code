@@ -1,0 +1,145 @@
+name: Mobile EAS Preview (Fork)
+
+# EAS previews for fork PRs. This runs the PR's code with an Expo token: the
+# app config and plugins run on this runner, and native builds run on EAS
+# with preview signing credentials. The label is the maintainer's sign-off
+# that they reviewed that code, so it covers exactly the commit it was applied
+# to: this pins that commit and consumes the label before running anything. A
+# later push deploys nothing until the label is applied again.
+#
+# Same-repo PRs deploy on every push while labeled, via mobile-eas-preview.yml.
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    name: EAS Preview
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository &&
+      github.event.label.name == '🚀 Mobile Continuous Deployment'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    concurrency:
+      group: mobile-eas-preview-fork-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      APP_VARIANT: preview
+      NODE_OPTIONS: --max-old-space-size=8192
+      MOBILE_VERSION_POLICY: fingerprint
+    steps:
+      # If a maintainer removed the label first, that removal wins.
+      - id: consume
+        name: Consume the deployment label
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                name: context.payload.label.name,
+              });
+              core.setOutput("consumed", "true");
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info("The label was removed before this run could consume it. Skipping.");
+              core.setOutput("consumed", "false");
+            }
+
+      - id: expo-token
+        name: Check for EXPO_PREVIEW_TOKEN
+        if: steps.consume.outputs.consumed == 'true'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+        run: |
+          if [ -n "$EXPO_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "EXPO_PREVIEW_TOKEN is not set; skipping EAS preview."
+          fi
+
+      # The head SHA from the label event, not the branch, so a push after the
+      # label cannot swap in unreviewed code. No credentials stay in .git for
+      # the PR's scripts to read.
+      - name: Checkout reviewed commit
+        if: steps.expo-token.outputs.present == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          # No sparse-checkout: see mobile-eas-preview.yml.
+
+      # No caches: pull_request_target saves them under main's scope, where
+      # trusted workflows with other secrets would restore what PR code wrote.
+      - name: Setup Vite+
+        if: steps.expo-token.outputs.present == 'true'
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Expose pnpm
+        if: steps.expo-token.outputs.present == 'true'
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
+          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
+          "$vp_pnpm_bin/pnpm" --version
+
+      - name: Setup EAS
+        if: steps.expo-token.outputs.present == 'true'
+        uses: expo/expo-github-action@v8
+        with:
+          # Pinned and installed with npm for the same reasons as mobile-eas-preview.yml.
+          eas-version: 21.8.0
+          eas-cache: false
+          token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+          packager: npm
+
+      - name: Pull preview environment variables
+        if: steps.expo-token.outputs.present == 'true'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+        run: |
+          eas env:pull preview --non-interactive
+          # See mobile-eas-preview.yml: keeps Android build and OTA fingerprints matching.
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { parseEnv } from "node:util";
+          const env = parseEnv(readFileSync(".env.local", "utf8"));
+          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
+          if (googleServicesFile) {
+            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
+          }
+          NODE
+
+      - name: Deploy with fingerprint check
+        if: steps.expo-token.outputs.present == 'true'
+        uses: expo/expo-github-action/continuous-deploy-fingerprint@main
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+          RUNNER_DEBUG: "1"
+          # The action only comments for pull_request events; this hook gives
+          # it the PR under pull_request_target. Without it, it skips the comment.
+          EXPO_TEST_GITHUB_PULL: ${{ github.event.pull_request.number }}
+        with:
+          profile: preview:dev
+          branch: pr-${{ github.event.pull_request.number }}
+          platform: all
+          environment: preview
+          working-directory: apps/mobile
+          github-token: ${{ secrets.GITHUB_TOKEN }}
