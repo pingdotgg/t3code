@@ -98,6 +98,8 @@ export class GitHubCredentials extends Context.Service<
     >;
     readonly fingerprint: (host: string, token: string) => Effect.Effect<string>;
     readonly invalidate: (host: string) => Effect.Effect<void>;
+    /** The Unix socket gh sends `host`'s requests through (`http_unix_socket`), if it has one. */
+    readonly unixSocket: (host: string) => Effect.Effect<Option.Option<string>>;
   }
 >()("@t3tools/source-control-github/server/GitHubCredentials") {}
 
@@ -249,6 +251,27 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const unixSockets = yield* Cache.make({
+    capacity: 32,
+    timeToLive: TOKEN_TTL,
+    lookup: (host: string) =>
+      process
+        .run({
+          operation: "GitHubCredentials.unixSocket",
+          command: "gh",
+          args: ["config", "get", "http_unix_socket", "--host", host],
+          cwd: workingDirectory,
+          env: { GH_PROMPT_DISABLED: "1" },
+          timeoutMs: 10_000,
+          concurrency: GH_PROCESS_CONCURRENCY,
+        })
+        .pipe(
+          Effect.map((output) => Option.liftPredicate(output.stdout.trim(), (path) => path !== "")),
+          // Without gh, or without the setting, requests go straight to the host.
+          Effect.orElseSucceed(() => Option.none<string>()),
+        ),
+  });
+
   return GitHubCredentials.of({
     get: Effect.fn("GitHubCredentials.get")(function* (rawHost) {
       const host = normalizeHost(rawHost);
@@ -264,6 +287,9 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
       );
     }),
+    unixSocket: Effect.fn("GitHubCredentials.unixSocket")((host: string) =>
+      Cache.get(unixSockets, normalizeHost(host)),
+    ),
   });
 });
 

@@ -1,13 +1,23 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- A real listener on a Unix socket stands in for gh's proxy.
+import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
+
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessTimeoutError } from "@t3tools/contracts";
-import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientResponse,
+  type HttpClientRequest,
+} from "effect/http";
 
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -46,6 +56,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
         }),
       saved: () => Effect.succeedNone,
       fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
+      unixSocket: () => Effect.succeedNone,
       invalidate: () =>
         Effect.sync(() => {
           invalidations++;
@@ -98,6 +109,61 @@ describe("environmentToken", () => {
 });
 
 describe("GitHubRest", () => {
+  it.live("sends through gh's http_unix_socket as plain HTTP for GitHub's API host", () =>
+    Effect.gen(function* () {
+      const socket = `${NodeOS.tmpdir()}/gh-${yield* Random.nextInt}.sock`;
+      const seen: Array<Record<string, string | undefined>> = [];
+      const server = NodeHttp.createServer((request, response) => {
+        const { host, authorization } = request.headers;
+        seen.push({ method: request.method, url: request.url, host, authorization });
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ login: "octocat" }));
+      });
+      yield* Effect.promise(() => new Promise<void>((resolve) => server.listen(socket, resolve)));
+      const credentials = Layer.succeed(
+        GitHubCredentials.GitHubCredentials,
+        GitHubCredentials.GitHubCredentials.of({
+          get: (host) =>
+            Effect.succeed({
+              host,
+              token: Redacted.make("placeholder"),
+              source: "gh" as const,
+              fingerprint: `${host}:placeholder`,
+            }),
+          saved: () => Effect.succeedNone,
+          fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
+          unixSocket: () => Effect.succeedSome(socket),
+          invalidate: () => Effect.void,
+        }),
+      );
+      const layer = GitHubRest.layer.pipe(
+        Layer.provide(Layer.mergeAll(credentials, FetchHttpClient.layer, appSignedOut)),
+        Layer.provideMerge(GitHubQuota.layer),
+        Layer.provideMerge(SourceControlRateLimit.layer),
+      );
+      const answer = yield* Effect.flatMap(GitHubRest.GitHubRest, (api) =>
+        api.rest({ host: "github.com", operation: "viewer", path: "user" }),
+      ).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.promise(() => {
+            server.closeAllConnections();
+            return new Promise<void>((resolve) => server.close(() => resolve()));
+          }),
+        ),
+      );
+      expect(seen).toEqual([
+        {
+          method: "GET",
+          url: "/user",
+          host: "api.github.com",
+          authorization: "Bearer placeholder",
+        },
+      ]);
+      expect(JSON.parse(answer.body)).toEqual({ login: "octocat" });
+    }),
+  );
+
   it.effect("traces the operation, path and quota, never the query string or the token", () => {
     const spans: Array<Tracer.NativeSpan> = [];
     const tracer = Tracer.make({

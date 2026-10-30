@@ -40,6 +40,7 @@ function harness(
         }),
       saved: () => Effect.succeedNone,
       fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
+      unixSocket: () => Effect.succeedNone,
       invalidate: () =>
         Effect.sync(() => {
           invalidations++;

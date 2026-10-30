@@ -1,3 +1,7 @@
+import * as NodeModule from "node:module";
+import * as NodeNet from "node:net";
+
+import type * as Undici from "undici";
 import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -9,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { FetchHttpClient } from "effect/http";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import * as Option from "effect/Option";
@@ -255,6 +260,30 @@ function refusedToApp<A>(answer: GitHubAnswer<A>): boolean {
   }
 }
 
+// undici is external to the server bundle; single executables can load it only with require.
+const requireUndici = NodeModule.createRequire(import.meta.url);
+const unixSocketDispatchers = new Map<string, Undici.Dispatcher>();
+
+/**
+ * Sends over gh's `http_unix_socket` the way gh does: plain HTTP on the socket even for an https
+ * URL, so whatever listens there (a proxy that adds the credential) reads the host and path.
+ */
+function unixSocketDispatcher(path: string): Undici.Dispatcher {
+  let dispatcher = unixSocketDispatchers.get(path);
+  if (dispatcher === undefined) {
+    const undici = requireUndici("undici") as typeof Undici;
+    dispatcher = new undici.Agent({
+      connect: (_options, callback) => {
+        const socket = NodeNet.connect(path);
+        socket.once("connect", () => callback(null, socket));
+        socket.once("error", (error) => callback(error, null));
+      },
+    });
+    unixSocketDispatchers.set(path, dispatcher);
+  }
+  return dispatcher;
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const credentials = yield* GitHubCredentials.GitHubCredentials;
@@ -409,12 +438,20 @@ export const make = Effect.gen(function* () {
                   }),
                 ),
               );
+            const socket = yield* credentials.unixSocket(host);
             // One deadline covers the headers and the body: a host that answers headers and then
             // stalls must not hold a shared slot for undici's own five-minute body timeout.
             const answer = yield* send(
               { ...REQUEST_HEADERS, authorization: `Bearer ${Redacted.value(held.token)}` },
               held.source,
             ).pipe(
+              (sending) =>
+                Option.isNone(socket)
+                  ? sending
+                  : // Node's fetch takes the npm undici Dispatcher; its bundled undici-types lag it.
+                    Effect.provideService(sending, FetchHttpClient.RequestInit, {
+                      dispatcher: unixSocketDispatcher(socket.value),
+                    } as unknown as RequestInit),
               Effect.timeoutOrElse({
                 duration: input.timeout ?? DEFAULT_TIMEOUT,
                 orElse: () =>
