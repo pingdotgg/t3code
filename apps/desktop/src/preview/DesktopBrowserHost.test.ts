@@ -493,20 +493,21 @@ describe("DesktopBrowserHost", () => {
         params: { sessionId: "t3-preview-page-1" },
       });
       expect(yield* Queue.take(replies)).toBe(3);
-      expect(painting).toEqual([true, false]);
+      expect(painting).toEqual([true]);
 
       // The agent's screenshot waits its turn; painting lets the abandoned one finish first.
       yield* command(host, 4, "Page.captureScreenshot");
       yield* settle;
-      expect(painting).toEqual([true, false, true]);
+      expect(painting).toEqual([true]);
       debuggee.release();
       expect(yield* Queue.take(replies)).toBe(2);
       yield* settle;
       expect(debuggee.sent).toEqual([undefined, 4]);
+      expect(painting).toEqual([true]);
       debuggee.release();
       expect(yield* Queue.take(replies)).toBe(4);
       yield* settle;
-      expect(painting).toEqual([true, false, true, false]);
+      expect(painting).toEqual([true, false]);
     }).pipe(Effect.scoped),
   );
 
@@ -531,14 +532,19 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(2);
       yield* raw({ id: 3, method: "Page.captureScreenshot", sessionId: "t3-preview-page-1" });
       yield* settle;
-      expect(painting).toEqual([true, false, true]);
+      expect(painting).toEqual([true]);
       yield* raw({
         id: 4,
         method: "Target.detachFromTarget",
         params: { sessionId: "t3-preview-page-1" },
       });
       expect(yield* Queue.take(replies)).toBe(4);
-      expect(painting).toEqual([true, false, true, false]);
+
+      // The agent's answers late; the viewer's is dropped unsent, so nothing is left to paint.
+      debuggee.release();
+      yield* settle;
+      expect(debuggee.sent).toEqual([1]);
+      expect(painting).toEqual([true, false]);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
     }).pipe(Effect.scoped),
@@ -568,7 +574,7 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("stops painting for a screenshot still queued when the agent's turn ends", () =>
+  it.effect("holds no focus for a screenshot still queued when the agent's turn ends", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
@@ -583,15 +589,18 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       yield* turn(false);
       yield* settle;
-      expect(painting).toEqual([true, false]);
+      expect(painting).toEqual([true]);
 
-      // The first answers late; the second still goes in turn, but holds nothing.
+      // The first answers late; the second still goes in turn, painting but holding no focus.
       debuggee.releaseFirst();
       yield* settle;
       expect(debuggee.sent).toEqual([1, 2]);
-      expect(painting).toEqual([true, false]);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
+      expect(painting).toEqual([true]);
+      debuggee.release();
+      yield* settle;
+      expect(painting).toEqual([true, false]);
     }).pipe(Effect.scoped),
   );
 
@@ -838,7 +847,7 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("stops painting for a screenshot Chromium never answers", () =>
+  it.effect("stops painting for a screenshot Chromium never answers once its document goes", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
@@ -847,37 +856,83 @@ describe("DesktopBrowserHost", () => {
       const turn = (active: boolean) =>
         host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
 
-      // The server gave up on it, and the agent's turn ends.
+      // The server gave up on it, and the agent's turn ends; Chromium still holds the capture.
       yield* turn(true);
       yield* command(host, 1, "Page.captureScreenshot");
       yield* settle;
       yield* turn(false);
       yield* settle;
-      expect(painting).toEqual([true, false]);
+      expect(painting).toEqual([true]);
 
       // The page loads a new document, which also frees the screenshot turn.
       debuggee.navigate();
+      expect(painting).toEqual([true, false]);
       yield* command(host, 2, "Page.captureScreenshot");
       yield* settle;
       debuggee.navigate();
       yield* settle;
       expect(painting).toEqual([true, false, true, false]);
 
-      // The server releases the relay.
+      // The server releases the relay; Chromium still holds the capture.
       yield* command(host, 3, "Page.captureScreenshot");
       yield* settle;
       yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
       yield* settle;
-      expect(painting).toEqual([true, false, true, false, true, false]);
+      expect(painting).toEqual([true, false, true, false, true]);
 
       // The guest detaches; a replacement starts with no screenshot pending.
       const replacement = makeDebuggee();
       host.attach(key, replacement.tab);
+      expect(painting).toEqual([true, false, true, false, true, false]);
       yield* command(host, 4, "Page.captureScreenshot");
       yield* settle;
       host.detach(key);
       yield* settle;
       expect(painting).toEqual([true, false, true, false, true, false, true, false]);
+    }).pipe(Effect.scoped),
+  );
+
+  // A capture Chromium was sent holds its wake lock until a painted frame answers it.
+  it.effect("paints for a screenshot already sent until Chromium answers it, past the turn", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const painting = yield* watchPainting(host);
+      const turn = (active: boolean) =>
+        host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
+
+      yield* turn(true);
+      yield* command(host, 1, "Page.captureScreenshot");
+      yield* settle;
+      expect(debuggee.sent).toEqual([1]);
+      yield* turn(false);
+      yield* settle;
+      expect(painting).toEqual([true]);
+
+      debuggee.release();
+      yield* settle;
+      expect(painting).toEqual([true, false]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("paints for a screenshot already sent until Chromium answers it, past a release", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const painting = yield* watchPainting(host);
+
+      yield* command(host, 1, "Page.captureScreenshot");
+      yield* settle;
+      expect(debuggee.sent).toEqual([1]);
+      yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+      yield* settle;
+      expect(painting).toEqual([true]);
+
+      debuggee.release();
+      yield* settle;
+      expect(painting).toEqual([true, false]);
     }).pipe(Effect.scoped),
   );
 
