@@ -53,12 +53,14 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  if (previous?.unavailable?.reason === "unsupported") {
     return previous;
   }
+  const continuesOnCredits = (update.continuesOnCredits ?? previous?.continuesOnCredits) === true;
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
   // Codex repeats unchanged limits on token ticks; avoid allocating snapshots for no-ops.
-  let changed = false;
+  let changed =
+    previous !== undefined && continuesOnCredits !== (previous.continuesOnCredits === true);
   for (const window of update.windows) {
     const existing = merged.get(window.id);
     const next: ServerProviderUsageWindow = {
@@ -76,7 +78,7 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  if (!changed && previous !== undefined) {
+  if (!changed) {
     return previous;
   }
   const unavailable =
@@ -84,9 +86,7 @@ export function applyUsageLimitsUpdate(input: {
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
-    ...(previous?.continuesOnCredits !== undefined
-      ? { continuesOnCredits: previous.continuesOnCredits }
-      : {}),
+    ...(continuesOnCredits ? { continuesOnCredits } : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
   };
 }

@@ -81,6 +81,32 @@ describe("applyUsageLimitsUpdate", () => {
       continuesOnCredits: true,
     });
   });
+
+  it("drops credit spending when an update says the account can no longer spend", () => {
+    const previous = { ...published, continuesOnCredits: true };
+    const checkedAtNext = "2026-09-03T12:00:05.000Z";
+    expect(
+      applyUsageLimitsUpdate({
+        previous,
+        checkedAt: checkedAtNext,
+        update: { windows: [], continuesOnCredits: false },
+      }),
+    ).toEqual({ checkedAt: checkedAtNext, windows: [session, weekly] });
+    expect(
+      applyUsageLimitsUpdate({
+        previous,
+        checkedAt: checkedAtNext,
+        update: { windows: [{ ...weekly }], continuesOnCredits: false },
+      }),
+    ).toEqual({ checkedAt: checkedAtNext, windows: [session, weekly] });
+    expect(
+      applyUsageLimitsUpdate({
+        previous,
+        checkedAt: checkedAtNext,
+        update: { windows: [], continuesOnCredits: true },
+      }),
+    ).toBe(previous);
+  });
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {

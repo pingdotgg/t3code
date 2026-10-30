@@ -139,7 +139,10 @@ describe("Codex fallback routing", () => {
       primary: { usedPercent: 12, resetsAt: 1_784_000_000, windowDurationMins: 300 },
       secondary: { usedPercent: 100, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
     } satisfies V2GetAccountRateLimitsResponse__RateLimitSnapshot;
-    const exhaustedWindow = (snapshot: V2GetAccountRateLimitsResponse__RateLimitSnapshot) =>
+    const exhaustedWindow = (
+      snapshot: V2GetAccountRateLimitsResponse__RateLimitSnapshot,
+      topLevel: V2GetAccountRateLimitsResponse__RateLimitSnapshot = snapshot,
+    ) =>
       exhaustedUsageWindow(
         {
           instanceId: ProviderInstanceId.make("codex"),
@@ -153,7 +156,11 @@ describe("Codex fallback routing", () => {
           models: [],
           slashCommands: [],
           skills: [],
-          usageLimits: codexRateLimitsToLimits({ checkedAt, snapshot }),
+          usageLimits: codexRateLimitsToLimits({
+            checkedAt,
+            snapshot: topLevel,
+            rateLimitsByLimitId: { codex: snapshot },
+          }),
         } satisfies ServerProvider,
         now,
         "gpt-6-luna",
@@ -181,6 +188,36 @@ describe("Codex fallback routing", () => {
         spendControlReached: false,
       }),
       "weekly allowance used up but credits are unlimited",
+    ).toBeUndefined();
+    for (const rateLimitReachedType of [
+      "workspace_owner_credits_depleted",
+      "workspace_member_credits_depleted",
+      "workspace_owner_usage_limit_reached",
+      "workspace_member_usage_limit_reached",
+    ] as const) {
+      expect(
+        exhaustedWindow({
+          ...exhaustedWeek,
+          credits,
+          spendControlReached: null,
+          rateLimitReachedType,
+        })?.id,
+        rateLimitReachedType,
+      ).toBe("secondary");
+    }
+    expect(
+      exhaustedWindow({
+        ...exhaustedWeek,
+        secondary: { ...exhaustedWeek.secondary, usedPercent: 40 },
+        individualLimit: { limit: "50", used: "50", remainingPercent: 0, resetsAt: 1_784_500_000 },
+        credits,
+        spendControlReached: null,
+      })?.id,
+      "monthly credit limit used up",
+    ).toBe("individual");
+    expect(
+      exhaustedWindow(exhaustedWeek, { ...exhaustedWeek, credits, spendControlReached: null }),
+      "credits reported only on the top-level snapshot",
     ).toBeUndefined();
   });
 });
@@ -226,6 +263,31 @@ describe("codexRateLimitsToUpdate", () => {
       ],
     });
     expect(codexRateLimitsToUpdate({ planType: "plus" })).toBeUndefined();
+  });
+
+  it("states credit eligibility only when a notification changes it", () => {
+    const credits = { hasCredits: true, unlimited: false };
+    const eligible = { secondary: { usedPercent: 100, windowDurationMins: 10080 }, credits };
+    expect(codexRateLimitsToUpdate(eligible)?.continuesOnCredits).toBe(true);
+    expect(codexRateLimitsToUpdate(structuredClone(eligible), eligible)).toBeUndefined();
+    expect(codexRateLimitsToUpdate({ spendControlReached: true }, eligible)).toEqual({
+      windows: [],
+      continuesOnCredits: false,
+    });
+    expect(
+      codexRateLimitsToUpdate(
+        { rateLimitReachedType: "workspace_member_usage_limit_reached" },
+        eligible,
+      )?.continuesOnCredits,
+    ).toBe(false);
+    expect(
+      codexRateLimitsToUpdate({ credits: { hasCredits: false, unlimited: false } }, eligible)
+        ?.continuesOnCredits,
+    ).toBe(false);
+    expect(codexRateLimitsToUpdate({ spendControlReached: false }, eligible)).toBeUndefined();
+    expect(
+      codexRateLimitsToUpdate({ secondary: { usedPercent: 100, windowDurationMins: 10080 } }),
+    ).not.toHaveProperty("continuesOnCredits");
   });
 
   it("ignores Spark notifications so they cannot overwrite the main allowance", () => {

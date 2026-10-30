@@ -19,18 +19,21 @@ interface CodexRateLimitWindow {
 export interface CodexRateLimitSnapshot {
   readonly limitId?: string | null;
   readonly planType?: string | null;
-  readonly rateLimitReachedType?: string | null;
+  readonly rateLimitReachedType?: string | null | undefined;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
   readonly individualLimit?: {
     readonly remainingPercent: number;
     readonly resetsAt: number;
   } | null;
-  readonly credits?: {
-    readonly hasCredits: boolean;
-    readonly unlimited: boolean;
-  } | null;
-  readonly spendControlReached?: boolean | null;
+  readonly credits?:
+    | {
+        readonly hasCredits: boolean;
+        readonly unlimited: boolean;
+      }
+    | null
+    | undefined;
+  readonly spendControlReached?: boolean | null | undefined;
 }
 
 export interface CodexResetCreditsSummary {
@@ -118,6 +121,19 @@ function codexResetCreditsToContract(
   };
 }
 
+/** Undefined when the snapshot says nothing about credits; workspace reasons block spending regardless of spend control. */
+function codexContinuesOnCredits(snapshot: CodexRateLimitSnapshot): boolean | undefined {
+  if (
+    snapshot.spendControlReached === true ||
+    snapshot.rateLimitReachedType?.startsWith("workspace_") ||
+    (snapshot.individualLimit && snapshot.individualLimit.remainingPercent <= 0)
+  ) {
+    return false;
+  }
+  if (snapshot.credits === undefined) return undefined;
+  return snapshot.credits?.hasCredits === true || snapshot.credits?.unlimited === true;
+}
+
 export function codexRateLimitsToLimits(input: {
   readonly snapshot: CodexRateLimitSnapshot;
   readonly rateLimitsByLimitId?:
@@ -129,9 +145,14 @@ export function codexRateLimitsToLimits(input: {
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
   const snapshot = input.rateLimitsByLimitId?.codex ?? input.snapshot;
+  // No fixture shows whether Codex reports credits on the bucket or the top-level snapshot.
   const continuesOnCredits =
-    (snapshot.credits?.hasCredits === true || snapshot.credits?.unlimited === true) &&
-    snapshot.spendControlReached !== true;
+    codexContinuesOnCredits({
+      ...snapshot,
+      credits: snapshot.credits ?? input.snapshot.credits,
+      spendControlReached: snapshot.spendControlReached ?? input.snapshot.spendControlReached,
+      rateLimitReachedType: snapshot.rateLimitReachedType ?? input.snapshot.rateLimitReachedType,
+    }) === true;
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
@@ -158,6 +179,12 @@ export function codexRateLimitsToUpdate(
       existing.windowDurationMins !== window.windowDurationMins
     );
   });
+  const next = mergeCodexRateLimits(previous, snapshot);
+  const continuesOnCredits = next && codexContinuesOnCredits(next);
+  const eligibilityChanged =
+    continuesOnCredits !== undefined &&
+    continuesOnCredits !== (previous && codexContinuesOnCredits(previous));
+  if (eligibilityChanged) return { windows, continuesOnCredits };
   return windows.length > 0 ? { windows } : undefined;
 }
 
@@ -192,6 +219,10 @@ export function mergeCodexRateLimits(
     ...(update.primary !== undefined ? { primary: update.primary } : {}),
     ...(update.secondary !== undefined ? { secondary: update.secondary } : {}),
     ...(update.individualLimit !== undefined ? { individualLimit: update.individualLimit } : {}),
+    ...(update.credits !== undefined ? { credits: update.credits } : {}),
+    ...(update.spendControlReached !== undefined
+      ? { spendControlReached: update.spendControlReached }
+      : {}),
   };
 }
 
