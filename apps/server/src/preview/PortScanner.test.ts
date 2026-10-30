@@ -185,10 +185,11 @@ effectIt.effect("preserves explicit loopback hosts and bounds wildcard rewrites"
 effectIt.effect("projects configured paths independently for simultaneous subscribers", () => {
   const docsUrl = `http://localhost:${LSOF_TEST_PORT}/docs`;
   const adminUrl = `http://localhost:${LSOF_TEST_PORT}/admin`;
+  let ready = true;
   const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
     const url = String(input);
     return Promise.resolve(
-      url === docsUrl || url === adminUrl
+      ready && (url === docsUrl || url === adminUrl)
         ? new Response("app", { headers: { "content-type": "text/html" } })
         : new Response("not found", { status: 404 }),
     );
@@ -196,7 +197,7 @@ effectIt.effect("projects configured paths independently for simultaneous subscr
   const layer = layerLsofScanner({ pid: () => 1234, fetch: fetchFn });
 
   return Effect.gen(function* () {
-    const scanner = yield* PortScanner.PortDiscovery;
+    const scanner = yield* ownedScanner();
     const docsSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
     const adminSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
     yield* scanner.subscribe({ configuredUrls: [docsUrl], initialSnapshot: [] }, (servers) =>
@@ -207,6 +208,11 @@ effectIt.effect("projects configured paths independently for simultaneous subscr
     );
     yield* scanner.retain;
 
+    expect(docsSnapshots.at(-1)?.[0]?.url).toBe(docsUrl);
+    expect(adminSnapshots.at(-1)?.[0]?.url).toBe(adminUrl);
+
+    ready = false;
+    yield* TestClock.adjust(Duration.seconds(15));
     expect(docsSnapshots.at(-1)?.[0]?.url).toBe(docsUrl);
     expect(adminSnapshots.at(-1)?.[0]?.url).toBe(adminUrl);
   }).pipe(Effect.scoped, Effect.provide(layer));
@@ -300,25 +306,43 @@ effectIt.effect("uses the current configured fragment when readiness comes from 
   }).pipe(Effect.provide(layer));
 });
 
-effectIt.effect("probes only a configured HTTPS URL and does not follow its redirects", () => {
-  const configuredUrl = `https://localhost:${LSOF_TEST_PORT}/app`;
-  const requests: Array<readonly [string, string | undefined]> = [];
-  const fetchFn = (async (
-    input: Parameters<typeof globalThis.fetch>[0],
-    init?: Parameters<typeof globalThis.fetch>[1],
-  ) => {
-    requests.push([String(input), init?.redirect]);
-    return new Response(null, { status: 302, headers: { location: "https://example.com" } });
-  }) as typeof globalThis.fetch;
-  const layer = layerLsofScanner({ pid: () => 1234, fetch: fetchFn });
+effectIt.effect(
+  "probes only a configured HTTPS URL, keeps it for an owned listener when the check fails, and does not follow redirects",
+  () => {
+    const configuredUrl = `https://localhost:${LSOF_TEST_PORT}/app`;
+    const requests: Array<readonly [string, string | undefined]> = [];
+    let respond = async () =>
+      new Response(null, { status: 302, headers: { location: "https://example.com" } });
+    const fetchFn = (async (
+      input: Parameters<typeof globalThis.fetch>[0],
+      init?: Parameters<typeof globalThis.fetch>[1],
+    ) => {
+      requests.push([String(input), init?.redirect]);
+      return respond();
+    }) as typeof globalThis.fetch;
+    const layer = layerLsofScanner({ pid: () => 1234, fetch: fetchFn });
 
-  return Effect.gen(function* () {
-    const scanner = yield* ownedScanner();
-    const servers = yield* scanner.scan([configuredUrl]);
-    expect(servers).toMatchObject([{ pid: 1234, url: configuredUrl }]);
-    expect(requests).toEqual([[configuredUrl, "manual"]]);
-  }).pipe(Effect.provide(layer));
-});
+    return Effect.gen(function* () {
+      const scanner = yield* ownedScanner();
+      expect(yield* scanner.scan([configuredUrl])).toMatchObject([
+        { pid: 1234, url: configuredUrl },
+      ]);
+
+      respond = async () => new Response("unavailable", { status: 503 });
+      yield* TestClock.adjust(Duration.seconds(15));
+      expect(yield* scanner.scan([configuredUrl])).toMatchObject([
+        { pid: 1234, url: configuredUrl },
+      ]);
+
+      respond = () => Promise.reject(new TypeError("fetch failed"));
+      yield* TestClock.adjust(Duration.seconds(15));
+      expect(yield* scanner.scan([configuredUrl])).toMatchObject([
+        { pid: 1234, url: configuredUrl },
+      ]);
+      expect(requests).toEqual(Array.from({ length: 3 }, () => [configuredUrl, "manual"]));
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 effectIt.effect("discovers owned listeners without sending HTTP or TLS probes", () => {
   const owned = `p1234\ncnode\nn[::1]:${LSOF_TEST_PORT}\n`;

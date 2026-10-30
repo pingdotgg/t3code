@@ -192,17 +192,22 @@ const projectWebProbeSnapshot = (
   configuredUrls: ReadonlyArray<string>,
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const visibleByServer = new Map<string, DiscoveredLocalServer>();
+  const firstConfiguredByServer = new Map<string, string>();
   for (const raw of normalizeConfiguredUrls(configuredUrls)) {
     const url = new URL(raw);
     const port = urlPort(url);
     const serverKey = localServerKey(url.hostname, port);
+    if (!firstConfiguredByServer.has(serverKey)) firstConfiguredByServer.set(serverKey, raw);
     if (visibleByServer.has(serverKey)) continue;
     const configured = snapshot.configured.get(webProbeCacheKey(raw));
     if (configured) visibleByServer.set(serverKey, { ...configured, url: raw });
   }
+  // An owned listener whose configured check failed still opens at this caller's configured URL.
   for (const server of snapshot.discovered) {
     const key = localServerKey(server.host, server.port);
-    if (!visibleByServer.has(key)) visibleByServer.set(key, server);
+    if (visibleByServer.has(key)) continue;
+    const configuredUrl = firstConfiguredByServer.get(key);
+    visibleByServer.set(key, configuredUrl ? { ...server, url: configuredUrl } : server);
   }
   return [...visibleByServer.values()].toSorted((left, right) => left.port - right.port);
 };
