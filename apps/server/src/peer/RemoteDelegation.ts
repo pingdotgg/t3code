@@ -28,7 +28,6 @@ import type * as Tool from "effect/ai/Tool";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
-  resolveCyberAccessProgram,
   resolveInteractionMode,
   resolveRuntimeMode,
   taskPrompt,
@@ -232,12 +231,23 @@ const make = Effect.gen(function* () {
           message: "Pass target.model from orchestrator_capabilities with this environmentId.",
         });
       }
-      if (target.options !== undefined) yield* resolveCyberAccessProgram(inherited, target.options);
-      const options =
+      // A cyber access program belongs to this machine's account; a task there runs with Automatic.
+      if (
+        target.options?.some(
+          (selection) => selection.id === "cyberAccessProgram" && selection.value !== "default",
+        )
+      )
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "A cyber access program stays on this machine. Omit cyberAccessProgram for a task in another environment.",
+        });
+      const options = (
         target.options ??
         (instanceId === inherited.instanceId && model === inherited.model
           ? inherited.options
-          : undefined);
+          : undefined)
+      )?.filter((selection) => selection.id !== "cyberAccessProgram");
       // Modes asked for are checked against this thread. Omitted ones are left
       // to the other side, which inherits this thread's modes capped by the
       // link's access, so a narrower link still takes the task.
