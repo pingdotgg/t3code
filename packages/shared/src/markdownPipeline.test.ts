@@ -86,3 +86,40 @@ it("keeps an image on its own line under a label but leaves inline images inline
   expect(render("Built [![CI](/ci.svg)](/ci)\nand wrapped")).toBe("Built <img>\nand wrapped");
   expect(render("Hard-wrapped\nprose")).toBe("Hard-wrapped\nprose");
 });
+
+it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { type: string; tagName?: string; properties?: object; children?: Node[] };
+  const tags = (node: Node): string[] => [
+    ...(node.tagName ? [node.tagName] : []),
+    ...(node.children ?? []).flatMap(tags),
+  ];
+  const images = (node: Node): Node[] =>
+    node.tagName === "img" ? [node] : (node.children ?? []).flatMap(images);
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "<picture>",
+        '  <source media="(prefers-color-scheme: dark)" srcset="docs/dark.webp 1x, docs/dark@2x.webp 2x">',
+        '  <source media="(min-width: 600px)" srcset="docs/wide.webp">',
+        '  <img src="docs/light.webp" alt="Studio">',
+        "</picture>",
+        "",
+        '<picture><source media="(prefers-color-scheme: light)" srcset="javascript:alert(1)"><img src="docs/dark.webp"></picture>',
+        "",
+        String.raw`<picture><source media="(prefers-color-scheme: dark)" srcset="C:\shots\dark.png"><img src="C:\shots\light.png"></picture>`,
+      ].join("\n"),
+    ),
+  ) as Node;
+
+  expect(tags(tree)).toEqual(["picture", "img", "p", "picture", "img", "p", "picture", "img"]);
+  expect(images(tree).map((image) => image.properties)).toEqual([
+    { src: "docs/light.webp", alt: "Studio", dataDarkSrc: "docs/dark.webp" },
+    { src: "docs/dark.webp" },
+    { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
+  ]);
+});
