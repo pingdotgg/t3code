@@ -55,7 +55,10 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
 }
 
 type InboxSendSortInput = InboxThreadInput &
-  Pick<EnvironmentThreadShell, "latestUserMessageAt" | "latestUserAuthoredMessageAt">;
+  Pick<
+    EnvironmentThreadShell,
+    "latestUserMessageAt" | "latestUserAuthoredMessageAt" | "latestRunCompletedAt"
+  >;
 
 /**
  * Newest first by the last message the user sent. Agent activity never moves
@@ -77,10 +80,13 @@ export function sortInboxThreadsBySend<T extends InboxSendSortInput>(
             ? thread.latestUserMessageAt
             : thread.latestUserAuthoredMessageAt) ?? undefined,
         ) ?? 0,
-        // With the Working section, a finished run is a return; the stored time survives reloads.
-        observedReturnAt === undefined
-          ? 0
-          : (toSortableTimestamp(thread.latestRun?.completedAt ?? undefined) ?? 0),
+        // With the Working section, runs mark returns; the stored times survive reloads.
+        ...(observedReturnAt === undefined
+          ? []
+          : [
+              toSortableTimestamp(thread.latestRun?.requestedAt ?? undefined) ?? 0,
+              toSortableTimestamp(thread.latestRunCompletedAt ?? undefined) ?? 0,
+            ]),
         observedReturnAt?.(thread) ?? 0,
       ),
     ]),
