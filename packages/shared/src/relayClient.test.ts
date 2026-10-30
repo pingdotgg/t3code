@@ -654,7 +654,7 @@ describe("RelayClient", () => {
             yield* writeExecutable(managed);
             versions[managed] = "2026.10.0";
             versions[oldPath] = "2026.10.2";
-            versions[newPath] = RelayClient.CLOUDFLARED_MIN_VERSION;
+            versions[newPath] = "2026.10.3";
             const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
             const env = { PATH: `${baseDir}/old:${baseDir}/new` };
             expect(
