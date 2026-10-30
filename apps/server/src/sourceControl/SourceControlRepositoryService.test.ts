@@ -2,12 +2,15 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   GitCommandError,
@@ -288,6 +291,65 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
       error.detail,
       "fatal: early EOF fatal: unable to access 'https://github.com/octocat/t3code.git/': could not resolve host",
     );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("says a clone that ran out of time timed out, not git's last remote line", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-clone-timeout-",
+    });
+    const started = yield* Deferred.make<void>();
+    const clone = yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* Effect.flip(
+        service.cloneRepository({
+          remoteUrl: CLONE_URLS.url,
+          destinationPath: path.join(parent, "t3code"),
+        }),
+      );
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            // Like the real driver: the transfer outlives its deadline and git's last line is
+            // a remote summary.
+            execute: (input) =>
+              Effect.gen(function* () {
+                yield* (
+                  input.progress?.onStderrLine?.(
+                    "remote: Total 4 (delta 0), reused 0 (delta 0), pack-reused 0",
+                  ) ?? Effect.void
+                );
+                yield* Deferred.succeed(started, undefined);
+                return yield* Effect.never;
+              }).pipe(
+                Effect.timeoutOrElse({
+                  duration: input.timeoutMs ?? Infinity,
+                  orElse: () =>
+                    Effect.fail(
+                      new GitCommandError({
+                        operation: input.operation,
+                        command: "git",
+                        cwd: input.cwd,
+                        detail: "Git command timed out.",
+                      }),
+                    ),
+                }),
+              ),
+          },
+        }),
+      ),
+      Effect.forkChild,
+    );
+
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("2 minutes");
+    const error = yield* Fiber.join(clone);
+
+    assert.match(error.detail, /timed out/i);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
