@@ -8565,7 +8565,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const now = yield* DateTime.now;
     const updatedTask: OrchestrationV2Subagent = {
       ...task,
-      remoteChild,
+      remoteChild:
+        command.resultModel === undefined
+          ? remoteChild
+          : { ...remoteChild!, resultModel: command.resultModel },
       status: command.status,
       result: command.result,
       completedAt: now,
