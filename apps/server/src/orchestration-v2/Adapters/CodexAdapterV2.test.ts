@@ -1096,6 +1096,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const changes = yield* makeChangeSignal;
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
+      const handledNotifications: Array<string> = [];
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
         open: (openInput) =>
           Layer.build(CodexReplay.layerReplay(transcript)).pipe(
@@ -1119,6 +1120,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       request: (method, params) =>
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
+                        ),
+                      handleServerNotification: (method, handler) =>
+                        client.handleServerNotification(method, (payload) =>
+                          handler(payload).pipe(
+                            Effect.ensuring(
+                              Effect.sync(() => {
+                                handledNotifications.push(method);
+                              }).pipe(Effect.andThen(changes.notify)),
+                            ),
+                          ),
                         ),
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
                 ),
@@ -1200,6 +1211,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         serverConfig,
         events,
         continuationRequests,
+        handledNotifications,
         terminalEvents,
         subagentUpdates,
         hasPendingBackgroundWork,
@@ -7606,6 +7618,87 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           harness.terminalEvents().map((event) => event.status),
           ["interrupted"],
         );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    // regression: #21865 goal turns Codex continues after a server restart ran with no UI
+    it.effect("pauses a goal turn Codex starts on a resumed thread", () =>
+      Effect.gen(function* () {
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-turn-after-resume",
+          entries: [
+            ...sessionStart,
+            ...request(
+              3,
+              "thread/resume",
+              {
+                threadId: nativeThreadId,
+                excludeTurns: true,
+                config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+              },
+              { thread: { id: nativeThreadId, updatedAt: 1782622450 } },
+            ),
+            notification("goal resumed", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: null,
+              goal: codexGoal("active", 10),
+            }),
+            notification("goal continuation", "turn/started", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "orphan-goal-turn", status: "inProgress" }),
+            }),
+            ...request(
+              4,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "paused" },
+              { goal: codexGoal("paused", 10) },
+            ),
+            ...request(
+              5,
+              "turn/interrupt",
+              { threadId: nativeThreadId, turnId: "orphan-goal-turn" },
+              {},
+            ),
+            notification("interrupted", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "orphan-goal-turn", status: "interrupted" }),
+            }),
+          ],
+        });
+        const requests: Array<[string, unknown]> = [];
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method, params) =>
+            Effect.sync(() => {
+              requests.push([method, params]);
+            }),
+        );
+        yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        // The replay emits turn/completed only after the pause and interrupt it expects.
+        yield* harness.until(() => harness.handledNotifications.includes("turn/completed"));
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_thread.updated"
+              ? [event.providerThread.goal?.status ?? null]
+              : [],
+          ),
+          ["active"],
+          "the resumed thread's active goal is unknown to the adapter, so its goal turn runs unowned",
+        );
+        assert.deepEqual(requests.slice(-2), [
+          ["thread/goal/set", { threadId: nativeThreadId, status: "paused" }],
+          ["turn/interrupt", { threadId: nativeThreadId, turnId: "orphan-goal-turn" }],
+        ]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
