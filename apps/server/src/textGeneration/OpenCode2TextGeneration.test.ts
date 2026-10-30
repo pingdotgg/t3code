@@ -1,8 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import { TestClock } from "effect/testing";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as OpenCode2AdapterV2Testkit from "../orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts";
@@ -117,6 +120,72 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
         .pipe(Effect.flip);
       assert.equal(failure.detail, "OpenCode could not generate the text.");
       assert.deepEqual(failure.cause, refusal);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("times out when the prompt request and its interrupt never answer", () =>
+    Effect.gen(function* () {
+      const [subscribe, connected, create, created] = OPENCODE2_TITLE_GENERATION;
+      const sessionId = "ses_f0ec85cf6ffebfalpvV2E9nocu";
+      const prompted = yield* Deferred.make<void>();
+      const server = yield* OpenCode2AdapterV2Testkit.replayServer(
+        {
+          provider: "opencode",
+          protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
+          version: "2.0.18",
+          scenario: "opencode2_title_generation_stalled",
+          entries: [
+            subscribe!,
+            connected!,
+            create!,
+            created!,
+            {
+              type: "expect_outbound",
+              frame: { type: "session.prompt", input: { sessionID: sessionId, text: "<any>" } },
+            },
+            {
+              type: "emit_inbound",
+              frame: { type: "sdk.response", operation: "session.prompt", data: "<hang>" },
+            },
+            {
+              type: "expect_outbound",
+              frame: { type: "session.interrupt", input: { sessionID: sessionId } },
+            },
+            {
+              type: "emit_inbound",
+              frame: { type: "sdk.response", operation: "session.interrupt", data: "<hang>" },
+            },
+            {
+              type: "expect_outbound",
+              frame: { type: "session.remove", input: { sessionID: sessionId } },
+            },
+            {
+              type: "emit_inbound",
+              frame: { type: "sdk.response", operation: "session.remove", data: null },
+            },
+            { type: "runtime_exit", status: "success" },
+          ],
+        },
+        { onPrompt: () => Deferred.doneUnsafe(prompted, Effect.void) },
+      );
+      const textGeneration = yield* OpenCode2TextGeneration.make().pipe(
+        Effect.provideService(OpenCode2Server.OpenCode2Server, server),
+      );
+      const generation = yield* textGeneration
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "fix the login redirect loop after oauth",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "opencode/big-pickle",
+          },
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(prompted);
+      yield* TestClock.adjust("3 minutes");
+      yield* TestClock.adjust("5 seconds");
+      const failure = yield* Fiber.join(generation);
+      assert.equal(failure.detail, "OpenCode did not finish generating in time.");
     }).pipe(Effect.scoped),
   );
 });
