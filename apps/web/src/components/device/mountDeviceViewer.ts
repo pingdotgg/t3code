@@ -87,7 +87,7 @@ export function mountDeviceViewer<V extends MountableViewer>(
       options.onFrameListener(mounted.frame);
       mounted.frame();
       trackpad = bindPhoneTrackpad(canvas, interaction, mounted.pinch);
-      stopTrackpadEnd = window.desktopBridge?.onTrackpadScrollEnd?.(() => trackpad?.endOrbit());
+      stopTrackpadEnd = window.desktopBridge?.onTrackpadScrollEnd(() => trackpad?.endOrbit());
     })
     .catch(() => {
       if (!disposed) options.onUnavailable();

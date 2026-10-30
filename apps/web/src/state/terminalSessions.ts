@@ -159,8 +159,9 @@ const attachedTerminalSessionFamily = Atom.family((key: string) => {
           )
         : null;
     const metadata = canRead
-      ? Option.getOrNull(
-          AsyncResult.value(get(terminalEnvironment.metadata({ environmentId, input: null }))),
+      ? AsyncResult.getOrElse(
+          get(terminalEnvironment.metadata({ environmentId, input: null })),
+          () => null,
         )
       : null;
     const summary =
@@ -172,7 +173,7 @@ const attachedTerminalSessionFamily = Atom.family((key: string) => {
     const buffer =
       attach === null
         ? EMPTY_TERMINAL_BUFFER_STATE
-        : Option.getOrElse(AsyncResult.value(attach), () => EMPTY_TERMINAL_BUFFER_STATE);
+        : AsyncResult.getOrElse(attach, () => EMPTY_TERMINAL_BUFFER_STATE);
     const state = combineTerminalSessionState(summary, buffer);
     return attach?._tag === "Failure"
       ? { ...state, error: formatEnvironmentQueryError(attach.cause), status: "error" }

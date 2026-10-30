@@ -7,10 +7,10 @@ import * as NodeModule from "node:module";
 
 import type { Plugin } from "vite-plus";
 
-export const THIRD_PARTY_LICENSES_FILE_NAME = "third-party-licenses.json";
+const THIRD_PARTY_LICENSES_FILE_NAME = "third-party-licenses.json";
 const SPDX_LICENSE_LIST_VERSION = "v3.28.0";
 const SPDX_LICENSE_LIST_REVISION = "c4a7237ec8f4654e867546f9f409749300f1bf4c";
-const GENERATED_NOTICE_CACHE_DIRECTORY = ".generated/third-party-licenses/spdx";
+const SPDX_TEMPLATE_DIRECTORY = "third-party-licenses/spdx";
 
 export interface ThirdPartyLicenseEntry {
   readonly bundles: ReadonlyArray<string>;
@@ -312,10 +312,10 @@ async function readConfig(configFile: string | URL | undefined): Promise<{
   };
 }
 
-function spdxLicenseCachePath(configDirectory: string, licenseId: string): string {
+function spdxTemplatePath(configDirectory: string, licenseId: string): string {
   return NodePath.join(
     configDirectory,
-    GENERATED_NOTICE_CACHE_DIRECTORY,
+    SPDX_TEMPLATE_DIRECTORY,
     SPDX_LICENSE_LIST_VERSION,
     `${licenseId}.json`,
   );
@@ -333,12 +333,12 @@ function decodeSpdxLicenseDetails(value: unknown, expectedLicenseId: string): Sp
   return { licenseId: expectedLicenseId, licenseText: value.licenseText.trim() };
 }
 
-async function readCachedSpdxLicense(
+async function readSpdxLicense(
   configDirectory: string,
   licenseId: string,
 ): Promise<SpdxLicenseDetails | null> {
   try {
-    const source = await NodeFSP.readFile(spdxLicenseCachePath(configDirectory, licenseId), "utf8");
+    const source = await NodeFSP.readFile(spdxTemplatePath(configDirectory, licenseId), "utf8");
     return decodeSpdxLicenseDetails(JSON.parse(source) as unknown, licenseId);
   } catch (error) {
     const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
@@ -347,10 +347,7 @@ async function readCachedSpdxLicense(
   }
 }
 
-async function downloadSpdxLicense(
-  configDirectory: string,
-  licenseId: string,
-): Promise<SpdxLicenseDetails> {
+async function downloadSpdxLicense(configDirectory: string, licenseId: string): Promise<void> {
   const url = `https://raw.githubusercontent.com/spdx/license-list-data/${SPDX_LICENSE_LIST_REVISION}/json/details/${encodeURIComponent(licenseId)}.json`;
   const response = await fetch(url);
   if (!response.ok) {
@@ -359,20 +356,9 @@ async function downloadSpdxLicense(
     );
   }
   const details = decodeSpdxLicenseDetails((await response.json()) as unknown, licenseId);
-  const cachePath = spdxLicenseCachePath(configDirectory, licenseId);
-  await NodeFSP.mkdir(NodePath.dirname(cachePath), { recursive: true });
-  await NodeFSP.writeFile(cachePath, `${JSON.stringify(details)}\n`, "utf8");
-  return details;
-}
-
-async function resolveSpdxLicense(
-  configDirectory: string,
-  licenseId: string,
-  allowMissing: boolean,
-): Promise<SpdxLicenseDetails | null> {
-  const cached = await readCachedSpdxLicense(configDirectory, licenseId);
-  if (cached || allowMissing) return cached;
-  return downloadSpdxLicense(configDirectory, licenseId);
+  const templatePath = spdxTemplatePath(configDirectory, licenseId);
+  await NodeFSP.mkdir(NodePath.dirname(templatePath), { recursive: true });
+  await NodeFSP.writeFile(templatePath, `${JSON.stringify(details, null, 2)}\n`, "utf8");
 }
 
 function renderGeneratedNotice(config: GeneratedNoticeConfigEntry, licenseText: string): string {
@@ -397,17 +383,19 @@ function renderGeneratedNotice(config: GeneratedNoticeConfigEntry, licenseText: 
 async function generatedNoticeText(
   configs: ReadonlyArray<GeneratedNoticeConfigEntry>,
   configDirectory: string,
-  allowMissing: boolean,
-): Promise<string | null> {
+): Promise<string> {
   const sections = await Promise.all(
     configs.map(async (config) => {
-      const details = await resolveSpdxLicense(configDirectory, config.licenseId, allowMissing);
-      return details ? renderGeneratedNotice(config, details.licenseText) : null;
+      const details = await readSpdxLicense(configDirectory, config.licenseId);
+      if (!details) {
+        throw new Error(
+          `SPDX license template ${config.licenseId} is missing. Run \`vp run licenses:sync\` and commit ${SPDX_TEMPLATE_DIRECTORY}.`,
+        );
+      }
+      return renderGeneratedNotice(config, details.licenseText);
     }),
   );
-  return sections.some((section) => section === null)
-    ? null
-    : (sections as ReadonlyArray<string>).join("\n\n---\n\n");
+  return sections.join("\n\n---\n\n");
 }
 
 function configuredGeneratedNotices(
@@ -426,7 +414,13 @@ async function syncConfiguredGeneratedNotices(
   const licenseIds = [
     ...new Set(configuredGeneratedNotices(config).map((notice) => notice.licenseId)),
   ].sort((left, right) => left.localeCompare(right));
-  await Promise.all(licenseIds.map((licenseId) => resolveSpdxLicense(directory, licenseId, false)));
+  await Promise.all(
+    licenseIds.map(async (licenseId) => {
+      if (!(await readSpdxLicense(directory, licenseId))) {
+        await downloadSpdxLicense(directory, licenseId);
+      }
+    }),
+  );
 }
 
 export async function syncThirdPartyLicenseNotices(configFile: string | URL): Promise<void> {
@@ -844,8 +838,7 @@ async function packageEntry(
   configDirectory: string,
   packageNotices: Map<string, Promise<string | null>>,
   repositoryNotices: ReadonlyMap<string, string>,
-  allowMissingGeneratedNotices: boolean,
-): Promise<ThirdPartyLicenseEntry | null> {
+): Promise<ThirdPartyLicenseEntry> {
   const name =
     typeof collected.packageJson.name === "string"
       ? collected.packageJson.name
@@ -867,11 +860,7 @@ async function packageEntry(
 
   const repositoryKey = repositoryNoticeKey(collected.packageJson, license);
   const noticeText = override?.generatedNotices
-    ? await generatedNoticeText(
-        override.generatedNotices,
-        configDirectory,
-        allowMissingGeneratedNotices,
-      )
+    ? await generatedNoticeText(override.generatedNotices, configDirectory)
     : override?.noticeFile
       ? (
           await NodeFSP.readFile(NodePath.resolve(configDirectory, override.noticeFile), "utf8")
@@ -879,7 +868,6 @@ async function packageEntry(
       : ((await packageNoticeText(collected.packageRoot, packageNotices)) ??
         (repositoryKey ? repositoryNotices.get(repositoryKey) : undefined));
   if (!noticeText) {
-    if (override?.generatedNotices && allowMissingGeneratedNotices) return null;
     throw new Error(
       `${name}@${version} does not include a license or notice file. Add a package override with "noticeFile" or "generatedNotice" in the third-party license config.`,
     );
@@ -900,7 +888,6 @@ async function customEntries(
   config: ThirdPartyLicensesConfig,
   configDirectory: string,
   includedBundles: ReadonlySet<string>,
-  allowMissingGeneratedNotices: boolean,
 ): Promise<ReadonlyArray<ThirdPartyLicenseEntry>> {
   const deviceToolVersions: unknown = JSON.parse(
     await NodeFSP.readFile(
@@ -920,11 +907,7 @@ async function customEntries(
       )
       .map(async (notice) => {
         const noticeText = notice.generatedNotices
-          ? await generatedNoticeText(
-              notice.generatedNotices,
-              configDirectory,
-              allowMissingGeneratedNotices,
-            )
+          ? await generatedNoticeText(notice.generatedNotices, configDirectory)
           : (
               await Promise.all(
                 notice.noticeFiles!.map(async (noticeFile) => {
@@ -938,10 +921,6 @@ async function customEntries(
                 }),
               )
             ).join("\n\n---\n\n");
-        if (noticeText === null) {
-          if (allowMissingGeneratedNotices) return null;
-          throw new Error(`Could not generate custom third-party notice "${notice.name}".`);
-        }
         if (noticeText.length === 0) {
           throw new Error(`Custom third-party notice "${notice.name}" is empty.`);
         }
@@ -961,7 +940,7 @@ async function customEntries(
         };
       }),
   );
-  return entries.flatMap((entry) => (entry ? [entry] : []));
+  return entries;
 }
 
 function entrySort(left: ThirdPartyLicenseEntry, right: ThirdPartyLicenseEntry): number {
@@ -990,15 +969,11 @@ export async function generateThirdPartyLicenseManifest(input: {
   readonly packageManifests: ReadonlyArray<ThirdPartyLicensePackageManifest>;
   readonly bundledModuleIds?: ReadonlyArray<string>;
   readonly bundleName?: string;
-  readonly allowMissingGeneratedNotices?: boolean;
 }): Promise<ThirdPartyLicenseManifest> {
   const [{ config, directory }, collection] = await Promise.all([
     readConfig(input.configFile),
     collectProductionDependencyPackages(input.packageManifests),
   ]);
-  if (!(input.allowMissingGeneratedNotices ?? false)) {
-    await syncConfiguredGeneratedNotices(config, directory);
-  }
   if (input.bundledModuleIds && input.bundleName) {
     await addBundledModulePackages(collection, input.bundledModuleIds, input.bundleName);
   }
@@ -1008,14 +983,7 @@ export async function generateThirdPartyLicenseManifest(input: {
 
   const packageEntryResults = await Promise.allSettled(
     [...collection.byIdentity.values()].map((collected) =>
-      packageEntry(
-        collected,
-        config,
-        directory,
-        packageNotices,
-        repositoryNotices,
-        input.allowMissingGeneratedNotices ?? false,
-      ),
+      packageEntry(collected, config, directory, packageNotices, repositoryNotices),
     ),
   );
   const failures = packageEntryResults.flatMap((result) =>
@@ -1029,16 +997,11 @@ export async function generateThirdPartyLicenseManifest(input: {
     );
   }
   const packageEntries = packageEntryResults.flatMap((result) =>
-    result.status === "fulfilled" && result.value ? [result.value] : [],
+    result.status === "fulfilled" ? [result.value] : [],
   );
   const includedBundles = new Set(input.packageManifests.map((manifest) => manifest.bundle));
   if (input.bundleName) includedBundles.add(input.bundleName);
-  const manualEntries = await customEntries(
-    config,
-    directory,
-    includedBundles,
-    input.allowMissingGeneratedNotices ?? false,
-  );
+  const manualEntries = await customEntries(config, directory, includedBundles);
   const entries = [...packageEntries, ...manualEntries].sort(entrySort);
   assertUniqueEntries(entries);
   return {
@@ -1074,7 +1037,6 @@ export function thirdPartyLicensesPlugin(options: ThirdPartyLicensesPluginOption
         manifestPromise ??= generateThirdPartyLicenseManifest({
           packageManifests: options.packageManifests,
           bundleName: options.bundleName,
-          allowMissingGeneratedNotices: true,
           ...(options.configFile !== undefined ? { configFile: options.configFile } : {}),
         }).catch((error: unknown) => {
           manifestPromise = null;

@@ -7,7 +7,7 @@ import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 import { observeResize } from "~/lib/observeResize";
 
 /**
- * Where a notice sits above the composer. The machine comes first, then what needs you; the
+ * Where a notice sits in the stack. The machine comes first, then what needs you; the
  * order is fixed so rows never trade places as notices come and go.
  */
 export type ComposerBannerGroup = "environment" | "attention";
@@ -27,23 +27,33 @@ export interface ComposerBannerStackItem {
 
 const GROUPS = ["environment", "attention"] as const;
 
+const FADE_IN =
+  "transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none";
+
 /**
  * Notices about sending from this composer, each its own attached card. Consecutive cards join
- * edge to edge, and the last joins the composer or the drawer below it.
+ * edge to edge, and the last joins the composer or the drawer below it. Detached cards stand
+ * apart instead, for layouts where the composer must not move when a notice appears.
  */
 export function ComposerBannerStack({
   items,
+  detached = false,
 }: {
   readonly items: ReadonlyArray<ComposerBannerStackItem>;
+  readonly detached?: boolean;
 }) {
-  return GROUPS.flatMap((group) =>
+  const ordered = GROUPS.flatMap((group) =>
     items.filter((item) => (item.group ?? "attention") === group),
-  ).map((item) => (
-    <ComposerBanner.Attachment
-      key={item.id}
-      data-composer-banner-stack="true"
-      className="transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
-    >
+  );
+  if (detached) {
+    return ordered.map((item) => (
+      <div key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
+        <NoticeCard item={item} detached />
+      </div>
+    ));
+  }
+  return ordered.map((item) => (
+    <ComposerBanner.Attachment key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
       <NoticeCard item={item} />
     </ComposerBanner.Attachment>
   ));
@@ -62,6 +72,7 @@ export function NoticeText({
   const detailsRef = useRef<HTMLButtonElement>(null);
   const [showDetails, setShowDetails] = useState(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures text overflow in the DOM via ResizeObserver and MutationObserver to show the details button
   useLayoutEffect(() => {
     const text = textRef.current;
     if (!text) return;
@@ -124,11 +135,18 @@ export function NoticeText({
   );
 }
 
-function NoticeCard({ item }: { readonly item: ComposerBannerStackItem }) {
+function NoticeCard({
+  item,
+  detached = false,
+}: {
+  readonly item: ComposerBannerStackItem;
+  readonly detached?: boolean;
+}) {
   return (
     <ComposerBanner.Root
       role={item.variant === "error" || item.variant === "warning" ? "alert" : undefined}
       variant={item.variant}
+      detached={detached}
       density="comfortable"
       data-chat-composer-collapsed-controls="true"
     >

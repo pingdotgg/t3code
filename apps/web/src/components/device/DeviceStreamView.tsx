@@ -1,6 +1,5 @@
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useId, useRef, useState, type ReactNode } from "react";
 
@@ -94,6 +93,8 @@ export function DeviceStreamView(props: {
   readonly axOverlay?: boolean;
   /** Lets a parent read this view's own stream state, such as its screen size. */
   readonly viewId?: string;
+  /** The host serves only serve-sim's stream and input socket (Simlock). */
+  readonly serveSimOnly?: boolean;
 }) {
   const model = deviceModel(props.platform, props.deviceName ?? "");
   const isDuo = model?.id === "iphone-duo";
@@ -119,6 +120,7 @@ export function DeviceStreamView(props: {
           platform: props.platform,
           deviceId: props.deviceId,
           access,
+          serveSimOnly: props.serveSimOnly === true,
           viewId,
         })
       : NO_SESSION_ATOM,
@@ -197,7 +199,7 @@ export function DeviceStreamView(props: {
       ? deviceAxElementsAtom({ access, platform: props.platform, deviceId: props.deviceId })
       : NO_AX_ATOM,
   );
-  const axElements = Option.getOrElse(AsyncResult.value(axResult), () => NO_AX_ELEMENTS);
+  const axElements = AsyncResult.getOrElse(axResult, () => NO_AX_ELEMENTS);
 
   const pointerActive = useRef(false);
   const normalizedPoint = (event: React.PointerEvent<HTMLElement>) => {

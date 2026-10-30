@@ -1,6 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
   GitCommandError,
   ProjectId,
@@ -858,14 +857,6 @@ describe("asking about a change rather than working on it", () => {
     });
     expect(submission).toEqual({ text: draftText, interactionMode: "plan" });
     expect(context?.records[0]).toMatchObject({ pullRequest: base });
-    const legacyText = serializeLegacyContextMessage({
-      text: submission.text,
-      records: context!.records,
-    });
-    expect(legacyText).toContain(base.url);
-    expect(legacyText).toContain(prose);
-    expect(legacyText).not.toContain("PLEASE IMPLEMENT THIS PLAN");
-    expect(legacyText).not.toContain("t3-context://");
   });
 
   it("puts the reader's request in the composer and the selected lines in chips", () => {

@@ -5,8 +5,8 @@ import {
   type DeviceDetail,
   type DeviceDetailInput,
   type DeviceError,
-  type DeviceHostId,
-  type DeviceId,
+  DeviceHostId,
+  DeviceId,
   DeviceHostUnavailableError,
   DeviceNotFoundError,
   DeviceOperationError,
@@ -20,8 +20,12 @@ import {
   type DeviceEasAccount,
   DeviceEasAccountError,
   type DeviceEasAccountInput,
+  type DeviceSimlockIdentity,
+  DeviceSimlockIdentityError,
+  type DeviceSimlockIdentityInput,
   type DeviceHostConfig,
   type EasDeviceHostConfig,
+  type SimlockDeviceHostConfig,
   type SshDeviceHostConfig,
   type DeviceHostSummary,
   LOCAL_DEVICE_HOST_ID,
@@ -33,6 +37,12 @@ import * as FileSystem from "effect/FileSystem";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
 import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
+import {
+  agentDeviceCloseOutcome,
+  bindAgentDeviceLauncher,
+  ensureAgentDeviceShim,
+  pruneAgentDeviceLaunchers,
+} from "./AgentDeviceShim.ts";
 import * as ServerConfig from "../config.ts";
 import {
   agentDeviceConfigPath,
@@ -44,7 +54,9 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -59,6 +71,8 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
+import * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { makeExpoApi, resolveExpoCredential } from "./ExpoApi.ts";
 import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
@@ -101,10 +115,30 @@ export interface DeviceAgentReadiness extends DeviceReadiness {
   readonly agentDevice: DeviceHost.AgentDeviceEndpoint | null;
 }
 
+const DeviceHostName = Schema.Struct({ id: DeviceHostId, label: Schema.optional(Schema.String) });
+const hostName = (host: typeof DeviceHostName.Type) => host.label ?? `host ${host.id}`;
+
+export class DeviceHostAmbiguousError extends Schema.TaggedError<DeviceHostAmbiguousError>()(
+  "DeviceHostAmbiguousError",
+  { deviceId: DeviceId, hosts: Schema.Array(DeviceHostName) },
+) {
+  override get message(): string {
+    return `Device ${this.deviceId} is on more than one host: ${this.hosts.map(hostName).join(", ")}.`;
+  }
+}
+
+export class DeviceOnOtherHostError extends Schema.TaggedError<DeviceOnOtherHostError>()(
+  "DeviceOnOtherHostError",
+  { deviceId: DeviceId, host: DeviceHostName, hosts: Schema.Array(DeviceHostName) },
+) {
+  override get message(): string {
+    return `Device ${this.deviceId} is not on ${hostName(this.host)}. It is on ${this.hosts.map(hostName).join(", ")}.`;
+  }
+}
+
 export class DeviceService extends Context.Service<
   DeviceService,
   {
-    readonly agentCli: Effect.Effect<string, DeviceError>;
     readonly testHost: (
       config: SshDeviceHostConfig,
     ) => Effect.Effect<DeviceHostSummary, DeviceError>;
@@ -112,6 +146,10 @@ export class DeviceService extends Context.Service<
     readonly easAccount: (
       input: DeviceEasAccountInput,
     ) => Effect.Effect<DeviceEasAccount, DeviceEasAccountError>;
+    /** Who a Simlock agent token is; without a gateway or token, this machine's agent-device's. */
+    readonly simlockIdentity: (
+      input: DeviceSimlockIdentityInput,
+    ) => Effect.Effect<DeviceSimlockIdentity, DeviceSimlockIdentityError>;
     /**
      * The agent-device flags that reach the device: its config and session,
      * and the id agent-device selects it by, which can differ from its id here.
@@ -121,9 +159,24 @@ export class DeviceService extends Context.Service<
       hostId: DeviceHostId;
       deviceId: DeviceId;
     }) => Effect.Effect<
-      { readonly agentDeviceId: string; readonly args: ReadonlyArray<string> },
+      {
+        readonly agentDeviceId: string | null;
+        readonly session: string;
+        readonly args: ReadonlyArray<string>;
+        readonly installDirectory?: string | undefined;
+      },
       DeviceError
     >;
+    /**
+     * The command agents run for one agent-device session; it is removed when the session ends.
+     * None when the session closed before it could be bound.
+     */
+    readonly agentLauncher: (input: {
+      readonly threadId: ThreadId;
+      readonly hostId: DeviceHostId;
+      readonly deviceId: DeviceId;
+      readonly targetArgs: ReadonlyArray<string>;
+    }) => Effect.Effect<Option.Option<string>, DeviceError>;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
     readonly configure: (
@@ -145,6 +198,27 @@ export class DeviceService extends Context.Service<
       readonly hostId?: DeviceHostId | undefined;
       readonly deviceId: DeviceId;
     }) => Effect.Effect<DeviceScreenshot, DeviceError>;
+    /**
+     * The device an id names in the last listing. Ids are unique per host, not across hosts (an
+     * Android AVD name can exist on two), so a hostId decides, and without one the id has to be
+     * on a single host.
+     */
+    readonly locateDevice: (input: {
+      readonly hostId?: DeviceHostId | undefined;
+      readonly deviceId: DeviceId;
+    }) => Effect.Effect<
+      Option.Option<DeviceSummary>,
+      DeviceHostAmbiguousError | DeviceOnOtherHostError
+    >;
+    /** As `locateDevice`, among the devices a thread has open. */
+    readonly locateSession: (input: {
+      readonly threadId: ThreadId;
+      readonly hostId?: DeviceHostId | undefined;
+      readonly deviceId: DeviceId;
+    }) => Effect.Effect<
+      Option.Option<DeviceSession>,
+      DeviceHostAmbiguousError | DeviceOnOtherHostError
+    >;
     readonly readiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness, DeviceError>;
     readonly readinessIfSupported: (
       hostId?: DeviceHostId,
@@ -161,6 +235,17 @@ interface ServiceState {
   readonly state: DeviceServiceState;
 }
 
+export interface AgentDeviceLaunchers {
+  readonly bind: (input: {
+    readonly session: string;
+    readonly targetArgs: ReadonlyArray<string>;
+  }) => Effect.Effect<string, DeviceError>;
+  /** Removes every launcher whose session is not in `live`. */
+  readonly prune: (live: ReadonlySet<string>) => Effect.Effect<void>;
+  /** Ends the agent-device session behind a launcher, which releases its claim on the device. */
+  readonly release?: (launcher: string) => Effect.Effect<void>;
+}
+
 export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
   hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>,
   testHost: DeviceService["Service"]["testHost"] = (host) =>
@@ -173,7 +258,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     ),
   configureAgent: (
     hostId: DeviceHostId,
-    endpoint: DeviceHost.AgentDaemonEndpoint,
+    endpoint: DeviceHost.AgentDaemonEndpoint & { readonly stateDir?: string | undefined },
     deviceId?: DeviceId,
   ) => Effect.Effect<string, DeviceError> = (hostId) =>
     Effect.fail(
@@ -183,6 +268,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       }),
     ),
   installTool?: (tool: "hub" | "agent") => Effect.Effect<unknown, DeviceError>,
+  launchers?: AgentDeviceLaunchers,
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
@@ -209,6 +295,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       supportsToolUpdate: installTool !== undefined,
       supportsToolInspection: true,
       supportsEasHosts: true,
+      supportsSimlockHosts: true,
       hosts: initialHosts,
       hostStatus: initialSettings.enabled ? "idle" : "disabled",
       hostStatuses: {},
@@ -221,11 +308,49 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   });
 
+  const launcherLock = yield* Semaphore.make(1);
+  /** Launchers bound since startup, by agent-device session. */
+  const boundLaunchers = new Map<string, string>();
+  /** Launchers on a session the host leases to every thread; the host ends it, not a retiring thread. */
+  const hostSessionLaunchers = new Set<string>();
+  // Binding and pruning read sessions under the lock, so neither acts on a session list the other has outdated.
+  // A retired session's agent-device session ends before its launcher goes, and a reopen of the same
+  // device waits for the lock, so the close cannot end the reopened session.
+  const pruneLaunchers = launcherLock.withPermit(
+    Effect.gen(function* () {
+      if (!launchers) return;
+      const { state } = yield* SynchronizedRef.get(stateRef);
+      const live = new Set(
+        yield* Effect.forEach(state.sessions, (session) =>
+          agentDeviceSession(session.threadId, session.hostId, session.deviceId),
+        ).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+      );
+      const retired = [...boundLaunchers].filter(([session]) => !live.has(session));
+      for (const [session] of retired) boundLaunchers.delete(session);
+      const ending = retired.filter(([session]) => !hostSessionLaunchers.delete(session));
+      const release = launchers.release;
+      if (release)
+        yield* Effect.forEach(ending, ([, launcher]) => release(launcher), {
+          concurrency: "unbounded",
+          discard: true,
+        });
+      yield* launchers.prune(live);
+    }),
+  );
+
+  // Uninterruptible so a committed retirement always prunes, even if its caller is cancelled.
   const publish = (update: (state: DeviceServiceState) => DeviceServiceState) =>
-    SynchronizedRef.updateAndGetEffect(stateRef, ({ state }) => {
+    SynchronizedRef.modifyEffect(stateRef, ({ state }) => {
       const next = { ...update(state), revision: state.revision + 1 };
-      return PubSub.publish(statePubSub, next).pipe(Effect.as({ state: next }));
-    }).pipe(Effect.map(({ state }) => state));
+      const retired = state.sessions.some((session) => !next.sessions.includes(session));
+      return PubSub.publish(statePubSub, next).pipe(
+        Effect.as([{ next, retired }, { state: next }] as const),
+      );
+    }).pipe(
+      Effect.tap(({ retired }) => (retired ? pruneLaunchers : Effect.void)),
+      Effect.map(({ next }) => next),
+      Effect.uninterruptible,
+    );
 
   const resolveHost = Effect.fn("DeviceService.resolveHost")(function* (
     hostId: DeviceHostId | undefined,
@@ -593,7 +718,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       if (!device) {
         return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
       }
-      if (device.platform === "android" && !device.physical) {
+      // Hosts that route their own streams never encode emulator video with serve-emu's ffmpeg.
+      if (device.platform === "android" && !device.physical && !ready.upstream) {
         // Resolve the override on the device host the way its hub does.
         const encoders = yield* ready.run(ready.nodePath, [
           "-e",
@@ -727,9 +853,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           (input.deviceId === undefined || session.deviceId === input.deviceId),
       );
       if (closing.length === 0) return;
+      // Powering off ends every session on the device, so all of them retire, and release, while it is on.
+      const ending = (session: DeviceSession) =>
+        closing.includes(session) ||
+        (input.shutdown === true &&
+          closing.some(
+            (closed) => closed.hostId === session.hostId && closed.deviceId === session.deviceId,
+          ));
       yield* publish((current) => ({
         ...current,
-        sessions: current.sessions.filter((session) => !closing.includes(session)),
+        sessions: current.sessions.filter((session) => !ending(session)),
       }));
       if (input.shutdown) {
         yield* Effect.forEach(
@@ -741,16 +874,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   );
 
+  // Sessions retire before the power-off, while their agent-device sessions can still close the app;
+  // agent-device keeps a claim whose app close fails.
   const shutdown: DeviceService["Service"]["shutdown"] = Effect.fn("DeviceService.shutdown")(
     function* (input) {
       const host = yield* resolveHost(input.hostId);
-      yield* shutdownDevice(host.id, input.deviceId, input.platform);
       yield* publish((current) => ({
         ...current,
         sessions: current.sessions.filter(
           (session) => !(session.hostId === host.id && session.deviceId === input.deviceId),
         ),
       }));
+      yield* shutdownDevice(host.id, input.deviceId, input.platform);
     },
   );
 
@@ -801,6 +936,64 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       Effect.map(({ state }) => state.sessions.filter((session) => session.threadId === threadId)),
     );
 
+  const locate = <T extends { readonly hostId: DeviceHostId }>(
+    state: DeviceServiceState,
+    input: { readonly hostId?: DeviceHostId | undefined; readonly deviceId: DeviceId },
+    matches: ReadonlyArray<T>,
+  ): Effect.Effect<Option.Option<T>, DeviceHostAmbiguousError | DeviceOnOtherHostError> => {
+    const named = (id: DeviceHostId) => ({
+      id,
+      label: state.hosts.find((host) => host.id === id)?.label,
+    });
+    const onHost = matches.filter(
+      (match) => input.hostId === undefined || match.hostId === input.hostId,
+    );
+    const hostIds = [...new Set(onHost.map((match) => match.hostId))];
+    if (hostIds.length === 1) return Effect.succeedSome(onHost.at(-1)!);
+    if (hostIds.length > 1) {
+      return Effect.fail(
+        new DeviceHostAmbiguousError({ deviceId: input.deviceId, hosts: hostIds.map(named) }),
+      );
+    }
+    const elsewhere = [...new Set(matches.map((match) => match.hostId))];
+    return input.hostId !== undefined && elsewhere.length > 0
+      ? Effect.fail(
+          new DeviceOnOtherHostError({
+            deviceId: input.deviceId,
+            host: named(input.hostId),
+            hosts: elsewhere.map(named),
+          }),
+        )
+      : Effect.succeedNone;
+  };
+
+  const locateDevice: DeviceService["Service"]["locateDevice"] = Effect.fn(
+    "DeviceService.locateDevice",
+  )(function* (input) {
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    return yield* locate(
+      state,
+      input,
+      state.devices.filter((device) => device.id === input.deviceId),
+    );
+  });
+
+  const locateSession: DeviceService["Service"]["locateSession"] = Effect.fn(
+    "DeviceService.locateSession",
+  )(function* (input) {
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    return yield* locate(
+      state,
+      input,
+      state.sessions.filter(
+        (session) => session.threadId === input.threadId && session.deviceId === input.deviceId,
+      ),
+    );
+  });
+
+  // Sessions live in memory, so this removes every launcher a previous run left behind.
+  yield* pruneLaunchers;
+
   return {
     ...DeviceService.of({
       testHost,
@@ -827,12 +1020,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           }),
         );
       }),
-      agentCli: Effect.fail(
-        new DeviceHostUnavailableError({
-          hostId: LOCAL_DEVICE_HOST_ID,
-          reason: "Agent CLI installation is unavailable in this device service.",
-        }),
-      ),
+      simlockIdentity: Effect.fn("DeviceService.simlockIdentity")(function () {
+        return Effect.fail(
+          new DeviceSimlockIdentityError({
+            reason: "Simlock hosts are unavailable in this device service.",
+          }),
+        );
+      }),
       agentTarget: Effect.fn("DeviceService.agentTarget")(function* (input) {
         const host = yield* resolveHost(input.hostId);
         const ready = yield* agentReadinessIfSupported(input.hostId);
@@ -843,39 +1037,83 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             reason:
               "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
           });
-        const { configPath, agentDeviceId } = yield* lifecycleLock.withPermit(
-          Effect.gen(function* () {
-            if (hosts.get(host.id) !== host)
-              return yield* new DeviceHostUnavailableError({
-                hostId: host.id,
-                hostLabel: host.label,
-                reason: "Host configuration changed. Retry the operation.",
-              });
-            if (ready.devices.agentEndpoint) {
-              const endpoint = yield* ready.devices.agentEndpoint(input.deviceId);
+        const { configPath, agentDeviceId, boundSession, installDirectory } =
+          yield* lifecycleLock.withPermit(
+            Effect.gen(function* () {
+              if (hosts.get(host.id) !== host)
+                return yield* new DeviceHostUnavailableError({
+                  hostId: host.id,
+                  hostLabel: host.label,
+                  reason: "Host configuration changed. Retry the operation.",
+                });
+              if (ready.devices.agentEndpoint) {
+                const endpoint = yield* ready.devices.agentEndpoint(input.deviceId);
+                return {
+                  configPath: yield* configureAgent(input.hostId, endpoint, input.deviceId),
+                  agentDeviceId: endpoint.agentDeviceId,
+                  boundSession: endpoint.session,
+                  installDirectory: endpoint.installDirectory,
+                };
+              }
+              if (!ready.agentDevice)
+                return yield* new DeviceHostUnavailableError({
+                  hostId: host.id,
+                  hostLabel: host.label,
+                  reason: "This host has no agent-device daemon.",
+                });
               return {
-                configPath: yield* configureAgent(input.hostId, endpoint, input.deviceId),
-                agentDeviceId: endpoint.agentDeviceId,
+                configPath: yield* configureAgent(input.hostId, ready.agentDevice),
+                agentDeviceId: input.deviceId,
+                boundSession: undefined,
+                installDirectory: undefined,
               };
-            }
-            if (!ready.agentDevice)
-              return yield* new DeviceHostUnavailableError({
-                hostId: host.id,
-                hostLabel: host.label,
-                reason: "This host has no agent-device daemon.",
-              });
-            return {
-              configPath: yield* configureAgent(input.hostId, ready.agentDevice),
-              agentDeviceId: input.deviceId,
-            };
-          }),
-        );
-        const session = yield* agentDeviceSession(
+            }),
+          );
+        const ownSession = yield* agentDeviceSession(
           input.threadId,
           input.hostId,
           input.deviceId,
         ).pipe(Effect.provideService(Crypto.Crypto, crypto));
-        return { agentDeviceId, args: ["--config", configPath, "--session", session] };
+        if (boundSession) hostSessionLaunchers.add(ownSession);
+        const session = boundSession ?? ownSession;
+        return {
+          agentDeviceId,
+          session,
+          args: ["--config", configPath, "--session", session],
+          installDirectory,
+        };
+      }),
+      agentLauncher: Effect.fn("DeviceService.agentLauncher")(function* ({
+        targetArgs,
+        ...target
+      }) {
+        if (!launchers)
+          return yield* new DeviceHostUnavailableError({
+            hostId: target.hostId,
+            reason: "Agent launchers are unavailable in this device service.",
+          });
+        const session = yield* agentDeviceSession(
+          target.threadId,
+          target.hostId,
+          target.deviceId,
+        ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+        return yield* launcherLock.withPermit(
+          Effect.gen(function* () {
+            const { state } = yield* SynchronizedRef.get(stateRef);
+            if (
+              !state.sessions.some(
+                (live) =>
+                  live.threadId === target.threadId &&
+                  live.hostId === target.hostId &&
+                  live.deviceId === target.deviceId,
+              )
+            )
+              return Option.none();
+            const launcher = yield* launchers.bind({ session, targetArgs });
+            boundLaunchers.set(session, launcher);
+            return Option.some(launcher);
+          }),
+        );
       }),
       state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
       subscribe: PubSub.subscribe(statePubSub),
@@ -887,6 +1125,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       detail,
       action,
       screenshot,
+      locateDevice,
+      locateSession,
       readiness,
       readinessIfSupported,
       agentReadinessIfSupported,
@@ -934,7 +1174,7 @@ export const make = Effect.gen(function* () {
   const configureAgent = Effect.fn("DeviceService.configureAgent")(
     function* (
       hostId: DeviceHostId,
-      endpoint: DeviceHost.AgentDaemonEndpoint,
+      endpoint: DeviceHost.AgentDaemonEndpoint & { readonly stateDir?: string | undefined },
       deviceId?: DeviceId,
     ) {
       const file = yield* configPath(hostId, deviceId);
@@ -952,6 +1192,94 @@ export const make = Effect.gen(function* () {
         }),
     ),
   );
+  const agentCli = resolveNodeExecutable("Device automation").pipe(
+    Effect.andThen(ensureAgentDevice(config.baseDir)),
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    Effect.map((tool) => tool.entryPath),
+    Effect.mapError((error) =>
+      error._tag === "NodeRuntimeUnavailableError"
+        ? new DeviceHostUnavailableError({
+            hostId: LOCAL_DEVICE_HOST_ID,
+            hostLabel: LOCAL_DEVICE_HOST_LABEL,
+            reason: nodeRuntimeUnavailableMessage("Device automation"),
+            cause: error,
+          })
+        : new DeviceOperationError({
+            operation: "install agent CLI",
+            reason: "command_failed",
+            cause: error,
+          }),
+    ),
+  );
+  const launchers: AgentDeviceLaunchers = {
+    bind: Effect.fn("DeviceService.bindLauncher")(
+      function* (input) {
+        const entryPath = yield* agentCli;
+        // The unbound launcher stays current for agents that still call it with flags.
+        yield* ensureAgentDeviceShim({ entryPath, stateDir: config.stateDir });
+        return yield* bindAgentDeviceLauncher({ entryPath, stateDir: config.stateDir, ...input });
+      },
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.catchTags({
+        NodeRuntimeUnavailableError: (cause) =>
+          Effect.fail(
+            new DeviceHostUnavailableError({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              hostLabel: LOCAL_DEVICE_HOST_LABEL,
+              reason: nodeRuntimeUnavailableMessage("Device automation"),
+              cause,
+            }),
+          ),
+        PlatformError: (cause) =>
+          Effect.fail(
+            new DeviceHostUnavailableError({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              hostLabel: LOCAL_DEVICE_HOST_LABEL,
+              reason: "Could not prepare the agent-device launcher.",
+              cause,
+            }),
+          ),
+      }),
+    ),
+    prune: (live) =>
+      pruneAgentDeviceLaunchers({ stateDir: config.stateDir, live }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      ),
+    // Best effort: an unreachable host fails fast in the launcher's connection check, and the
+    // launcher goes either way. Only a failed or timed-out close can leave the device claimed.
+    release: (launcher) =>
+      resolveNodeExecutable("Device automation").pipe(
+        Effect.flatMap((node) =>
+          runner.run({
+            command: node,
+            args: [path.join(path.dirname(launcher), "agent-device-launcher.mjs"), "close"],
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+            timeout: "15 seconds",
+            timeoutBehavior: "timedOutResult",
+          }),
+        ),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.flatMap((result) => {
+          const outcome = agentDeviceCloseOutcome(result);
+          return outcome === "failed" || outcome === "timed-out"
+            ? Effect.logWarning("Could not end the agent-device session", {
+                launcher,
+                outcome,
+                stderr: result.stderr.slice(-500),
+              })
+            : Effect.void;
+        }),
+        Effect.tapError((cause) =>
+          Effect.logWarning("Could not end the agent-device session", { launcher, cause }),
+        ),
+        Effect.ignore,
+      ),
+  };
   const probeContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.probe>>>();
   const localTargetContext =
@@ -991,11 +1319,29 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    launchers,
   );
   const hostContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
   const easContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof EasDeviceHost.make>>>();
+  const simlockContext =
+    yield* Effect.context<Effect.Services<ReturnType<typeof SimlockDeviceHost.make>>>();
+  const simlockAgentCli = Effect.fn("DeviceService.simlockAgentCli")(
+    function* (hostId: string) {
+      const nodePath = yield* resolveNodeExecutable("Device automation");
+      const tool = yield* ensureAgentDevice(config.baseDir).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeviceHost.DeviceHostError({ hostId, step: "installing agent tools", cause }),
+        ),
+      );
+      return { nodePath, entryPath: tool.entryPath };
+    },
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.provideService(ProcessRunner.ProcessRunner, runner),
+  );
   const configured = new Map<string, { config: DeviceHostConfig; scope: Scope.Closeable }>();
   const unchanged = (current: DeviceHostConfig, previous: DeviceHostConfig) =>
     current.kind === "ssh" && previous.kind === "ssh"
@@ -1040,6 +1386,24 @@ export const make = Effect.gen(function* () {
           if (configured.has(host.id)) continue;
           added = true;
           const hostScope = yield* Scope.fork(scope);
+          if (host.kind === "simlock") {
+            // Closing this scope releases the host's leases back to the pool.
+            const instance = yield* SimlockDeviceHost.make(host, simlockAgentCli(host.id)).pipe(
+              Effect.provideService(Scope.Scope, hostScope),
+              Effect.provide(simlockContext),
+            );
+            hosts.set(host.id, instance);
+            configured.set(host.id, { config: host, scope: hostScope });
+            // Ask the gateway now, so a refused token shows in Settings before anyone opens a device.
+            if ((yield* settings.getSettings).enableDeviceSupport)
+              yield* instance
+                .platformAvailability("ios")
+                .pipe(
+                  Effect.andThen(service.withLifecycleLock(service.refreshHosts)),
+                  Effect.forkIn(hostScope),
+                );
+            continue;
+          }
           if (host.kind === "eas") {
             // Closing this scope stops the host's running sessions, so a changed
             // limit or token never leaves a billed session behind.
@@ -1081,14 +1445,22 @@ export const make = Effect.gen(function* () {
     );
   });
   const changes = yield* settings.subscribeChanges;
-  // Settings keep EAS hosts apart from SSH hosts; an id both lists use stays the SSH host's.
+  // Each kind has its own settings list; an id two lists share stays the first one's.
   const configuredHosts = (value: {
     readonly deviceHosts: ReadonlyArray<SshDeviceHostConfig>;
     readonly easDeviceHosts: ReadonlyArray<EasDeviceHostConfig>;
-  }): ReadonlyArray<DeviceHostConfig> => [
-    ...value.deviceHosts,
-    ...value.easDeviceHosts.filter((host) => !value.deviceHosts.some((ssh) => ssh.id === host.id)),
-  ];
+    readonly simlockDeviceHosts: ReadonlyArray<SimlockDeviceHostConfig>;
+    readonly simlockDeviceHostsEnabled: boolean;
+  }): ReadonlyArray<DeviceHostConfig> => {
+    const hosts: Array<DeviceHostConfig> = [...value.deviceHosts];
+    for (const host of [
+      ...value.easDeviceHosts,
+      ...(value.simlockDeviceHostsEnabled ? value.simlockDeviceHosts : []),
+    ]) {
+      if (!hosts.some((existing) => existing.id === host.id)) hosts.push(host);
+    }
+    return hosts;
+  };
   yield* reconcile(configuredHosts(yield* settings.getSettings));
   yield* changes.pipe(
     Stream.runForEach((value) => reconcile(configuredHosts(value))),
@@ -1129,30 +1501,62 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const simlockIdentity: DeviceService["Service"]["simlockIdentity"] = Effect.fn(
+    "DeviceService.simlockIdentity",
+  )(
+    function* (input) {
+      const environment = yield* HostProcess.Environment;
+      const gatewayUrl = (
+        input.gatewayUrl || SimlockDeviceHost.machineSimlockToken(environment)?.gatewayUrl
+      )?.replace(/\/$/, "");
+      if (!gatewayUrl)
+        return yield* new DeviceSimlockIdentityError({
+          reason: "This machine's agent-device does not point at a Simlock gateway.",
+        });
+      const savedHost =
+        input.hostId === undefined
+          ? undefined
+          : (yield* settings.getSettings).simlockDeviceHosts.find(
+              (host) => host.id === input.hostId,
+            );
+      const token = input.agentToken
+        ? { agentToken: input.agentToken, source: "entered" as const }
+        : SimlockDeviceHost.resolveSimlockToken(gatewayUrl, savedHost, environment);
+      if (!token)
+        return yield* new DeviceSimlockIdentityError({
+          reason: savedHost?.agentToken
+            ? "The saved token is for another gateway. Enter one for this gateway."
+            : "No agent token for this gateway on this machine.",
+        });
+      const identity = yield* SimlockDeviceHost.simlockIdentity(gatewayUrl, token.agentToken).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeviceSimlockIdentityError({
+              reason: SimlockDeviceHost.describeGatewayFailure(
+                cause,
+                gatewayUrl,
+                token.source === "env" ? "this machine" : "this environment",
+              ),
+            }),
+        ),
+      );
+      if (identity.role !== "agent")
+        return yield* new DeviceSimlockIdentityError({
+          reason: `That is a ${identity.role} token. Create one with --role agent.`,
+        });
+      return { gatewayUrl, signedInAs: identity.name, tokenSource: token.source };
+    },
+    Effect.catchTags({
+      ServerSettingsError: () =>
+        Effect.fail(new DeviceSimlockIdentityError({ reason: "Could not read the saved token." })),
+    }),
+    Effect.provide(simlockContext),
+  );
+
   return {
     ...service,
     easAccount,
-    agentCli: resolveNodeExecutable("Device automation").pipe(
-      Effect.andThen(ensureAgentDevice(config.baseDir)),
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(ProcessRunner.ProcessRunner, runner),
-      Effect.map((tool) => tool.entryPath),
-      Effect.mapError((error) =>
-        error._tag === "NodeRuntimeUnavailableError"
-          ? new DeviceHostUnavailableError({
-              hostId: LOCAL_DEVICE_HOST_ID,
-              hostLabel: LOCAL_DEVICE_HOST_LABEL,
-              reason: nodeRuntimeUnavailableMessage("Device automation"),
-              cause: error,
-            })
-          : new DeviceOperationError({
-              operation: "install agent CLI",
-              reason: "command_failed",
-              cause: error,
-            }),
-      ),
-    ),
+    simlockIdentity,
   };
 });
 

@@ -20,6 +20,7 @@ export default function ProviderAuthTerminal({
   // The surface captures its callbacks once at creation.
   const respond = useStableCallback(onResponse);
   const offset = outputOffset ?? output.length;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes new auth output into the imperative Ghostty terminal surface
   useEffect(() => {
     if (!surface) return;
     const delta = offset - written.current;

@@ -43,13 +43,14 @@ export function GuestMessageAttachments(props: {
                     aria-label={`Preview ${image.name}`}
                     onClick={() => props.onOpenImage(image)}
                   >
+                    {/* Isolate the thumbnail raster from nearby activity repaints in Chromium. */}
                     <AttachmentImage
                       name={image.name}
                       mimeType={image.mimeType}
                       src={src}
                       alt={image.name}
                       decoding="async"
-                      className="block size-full object-cover"
+                      className="block size-full transform-gpu object-cover"
                     />
                   </button>
                 ) : (

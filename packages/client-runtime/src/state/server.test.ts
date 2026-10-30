@@ -666,16 +666,6 @@ describe("server state projection", () => {
       config: CONFIG,
     });
     expect(Option.getOrThrow(afterReconnect).config.environmentThemes).toEqual(themes);
-
-    const downgraded = applyServerConfigProjection(withThemes, {
-      version: 1,
-      type: "snapshot",
-      config: {
-        ...CONFIG,
-        environment: { capabilities: {} },
-      } as unknown as ServerConfig,
-    });
-    expect(Option.getOrThrow(downgraded).config.environmentThemes).toBeUndefined();
   });
 
   it("keeps a current welcome on ready and rejects a buffered welcome from the old session", () => {

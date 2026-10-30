@@ -193,7 +193,7 @@ import { prepareQueuedMessageAttachments } from "./threadOutboxDelivery";
 const environmentId = EnvironmentId.make("environment-1");
 const draftKey = "environment-1:thread-1";
 const draftsUri = "file:///documents/composer-drafts/drafts.json";
-const config = { environment: { capabilities: { attachmentUploads: true } } };
+const config = { environment: { capabilities: {} } };
 const image: DraftComposerAttachment = {
   id: "image-1",
   type: "image",
@@ -303,7 +303,7 @@ it.each(["decode", "write"] as const)(
     const message = queuedMessage();
     expect(message.attachments[0]?.uploadedAttachmentId).toBe("pending-1");
     await enqueueThreadOutboxMessage(message);
-    const prepared = await prepareQueuedMessageAttachments(message, true);
+    const prepared = await prepareQueuedMessageAttachments(message);
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") throw new Error("Outbox preparation abandoned");
     expect(prepared.prepared.pendingAttachmentIds).toEqual(["pending-1"]);

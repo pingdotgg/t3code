@@ -12,12 +12,12 @@ const RELEASE_DELAY_MS = 1_000;
 let playingCount = 0;
 let releaseTimer: ReturnType<typeof setTimeout> | undefined;
 
-export function mediaPlaybackStarted(): void {
+function mediaPlaybackStarted(): void {
   playingCount += 1;
 }
 
 /** expo-video never deactivates iOS playback, preventing interrupted apps from resuming. Include audio previews to avoid stopping them. */
-export function mediaPlaybackStopped(): void {
+function mediaPlaybackStopped(): void {
   playingCount -= 1;
   if (playingCount > 0 || Platform.OS !== "ios") return;
   clearTimeout(releaseTimer);
@@ -40,14 +40,14 @@ export function fullscreenVideoClosed(): void {
   for (const listener of fullscreenListeners) listener();
 }
 
-export function subscribeFullscreenVideo(listener: () => void): () => void {
+function subscribeFullscreenVideo(listener: () => void): () => void {
   fullscreenListeners.add(listener);
   return () => {
     fullscreenListeners.delete(listener);
   };
 }
 
-export function isFullscreenVideoOpen(): boolean {
+function isFullscreenVideoOpen(): boolean {
   return fullscreenCount > 0;
 }
 
@@ -56,6 +56,7 @@ export function useFullscreenVideoOpen(): boolean {
 }
 
 export function useMediaAudioSessionHold(active: boolean): void {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the shared native audio session while media plays and releases it on cleanup
   useEffect(() => {
     if (!active) return;
     mediaPlaybackStarted();

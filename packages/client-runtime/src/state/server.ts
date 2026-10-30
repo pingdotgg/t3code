@@ -257,8 +257,8 @@ export const waitForDesktopUpdateTarget = Effect.fn("waitForDesktopUpdateTarget"
   targetVersion: string,
   nextReady: Effect.Effect<ServerLifecycleStreamReadyEvent, EReady>,
   retryCommit: Effect.Effect<void, ECommit>,
-  maxCommitAttempts = 3,
 ): Effect.fn.Return<ServerLifecycleStreamReadyEvent, EReady | ECommit | ServerUpdateTerminalError> {
+  const maxCommitAttempts = 3;
   for (let attempt = 1; attempt <= maxCommitAttempts; attempt += 1) {
     const ready = yield* nextReady;
     if (ready.payload.environment.serverVersion === targetVersion) return ready;
@@ -792,8 +792,9 @@ export function createServerEnvironmentAtoms<R, E>(
     }
     let previousProviders: ServerConfig["providers"] | undefined;
     return Atom.make((get): ServerConfig | null => {
-      const projection = Option.getOrNull(
-        AsyncResult.value(get(configProjection({ environmentId, input: {} }))),
+      const projection = AsyncResult.getOrElse(
+        get(configProjection({ environmentId, input: {} })),
+        () => null,
       );
       const config = resolveServerConfigValue(
         projection,
@@ -967,6 +968,17 @@ export function createServerEnvironmentAtoms<R, E>(
             return updateResult;
           }),
         );
+
+        // A track switch's desktop host already on its track's newest build only saved the
+        // track; nothing restarts.
+        if (
+          result.method === "desktop-app" &&
+          result.desktopUpdateToken === undefined &&
+          result.targetVersion === fromVersion
+        ) {
+          atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
+          return result;
+        }
 
         yield* nudgeReconnectDuringUpdateRestart({
           stateChanges: environmentRegistry.stateChanges(target.environmentId),
@@ -1154,6 +1166,11 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRunStorageCleanup,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    prepareTriage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:prepare-triage",
+      tag: WS_METHODS.serverPrepareTriage,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     databaseStorage,
     databaseCompactionRecommendations,
     storageCleanupReport: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -1199,11 +1216,6 @@ export function createServerEnvironmentAtoms<R, E>(
       // OAuth must not be replayed when the connection recovers.
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.chatGptHandoffSubscribe>) =>
         runStream(WS_METHODS.chatGptHandoffSubscribe, input),
-      idleTtlMs: 0,
-    }),
-    codexAuthCallbackState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:codex:auth-callback",
-      tag: WS_METHODS.codexAuthCallbackSubscribe,
       idleTtlMs: 0,
     }),
     cancelProviderAuth: createEnvironmentRpcCommand(runtime, {
@@ -1305,7 +1317,8 @@ export function createServerEnvironmentAtoms<R, E>(
     searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:acp-registry:search",
       tag: WS_METHODS.serverSearchAcpRegistry,
-      // Reopening Add provider reuses recent results; submitting the same search refreshes it.
+      // Reopening Add provider reuses recent results. Submitting the same search asks the
+      // server again, which reuses a Registry index fetched in the last five minutes.
       staleTimeMs: 5 * 60_000,
     }),
     configProjection,

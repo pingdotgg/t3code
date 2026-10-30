@@ -37,9 +37,10 @@ vi.mock("./useUpdateEverything", () => ({
   useUpdateEverything: () => ({
     hasUpdates: mocks.hasUpdates,
     summary: "Update everything",
-    lines: [],
+    version: null,
+    providerCount: 0,
+    rows: [],
     restarts: [],
-    skipped: [],
   }),
 }));
 
@@ -80,7 +81,7 @@ function publish(update: DesktopUpdateState | null) {
   });
 }
 
-const releaseNotes = () => document.querySelector('[aria-label="Nightly update release notes"]');
+const releaseNotes = () => document.querySelector('[aria-label="Update release notes"]');
 
 describe("SidebarUpdatePill release notes", () => {
   it("closes when the release notes stop applying", async () => {

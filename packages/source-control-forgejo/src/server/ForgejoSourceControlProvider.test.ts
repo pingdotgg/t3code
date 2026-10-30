@@ -17,6 +17,7 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
+import { markRequiredForgejoChecks } from "./forgejoRequiredChecks.ts";
 
 const processOutput = TestSourceControlHost.processOutput;
 
@@ -139,6 +140,47 @@ it.effect.each([
     ),
   ),
 );
+
+it("matches many-wildcard required patterns against long check names without backtracking", () => {
+  const checks = ["a".repeat(200), `${"a".repeat(199)}b`, "x?y\nz"].map((name) => ({
+    name,
+    status: "success" as const,
+    description: null,
+    url: null,
+  }));
+  const marked = markRequiredForgejoChecks(checks, {
+    enable_status_check: true,
+    status_check_contexts: [`${"*a".repeat(12)}b`, "x*?y?z"],
+  });
+  assert.deepStrictEqual(
+    marked.map((check) => [check.name.slice(-3), check.required]),
+    [
+      ["aaa", undefined],
+      ["aab", true],
+      ["y\nz", true],
+    ],
+  );
+});
+
+it("treats a required pattern's `*` as a wildcard even when the check name has one", () => {
+  const checks = ["*build", "ci/*lint"].map((name) => ({
+    name,
+    status: "success" as const,
+    description: null,
+    url: null,
+  }));
+  const marked = markRequiredForgejoChecks(checks, {
+    enable_status_check: true,
+    status_check_contexts: ["*build", "ci/*"],
+  });
+  assert.deepStrictEqual(
+    marked.map((check) => [check.name, check.required]),
+    [
+      ["*build", true],
+      ["ci/*lint", true],
+    ],
+  );
+});
 
 const forgejoMergeProvider = (repository: Effect.Effect<string, ForgejoCli.ForgejoCliError>) => {
   const writes: Array<ForgejoCli.ForgejoApiInput> = [];

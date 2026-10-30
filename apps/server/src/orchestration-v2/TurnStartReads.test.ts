@@ -26,7 +26,7 @@ const layerDatabase = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect.each(["sqlite", "memory"] as const)(
+it.effect.each(["sqlite"] as const)(
   "loads startup state without obsolete transcript payloads in %s",
   (storage) =>
     Effect.gen(function* () {
@@ -360,18 +360,12 @@ it.effect.each(["sqlite", "memory"] as const)(
         yield* store.getTurnStartContext(ThreadId.make("missing"), runId).pipe(Effect.flip),
         ProjectionStore.ProjectionStoreThreadNotFoundError,
       );
-    }).pipe(
-      Effect.provide(
-        storage === "sqlite"
-          ? layerDatabase
-          : Layer.merge(SqlitePersistence.layerMemory, ProjectionStore.layerMemory),
-      ),
-    ),
+    }).pipe(Effect.provide(layerDatabase)),
 );
 
-it.effect.each(["sqlite", "memory"] as const)(
-  "counts a native fork's inherited history as conversation for its first /compact in %s",
-  (storage) =>
+it.effect(
+  "counts a native fork's inherited history as conversation for its first /compact in sqlite",
+  () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -507,11 +501,5 @@ it.effect.each(["sqlite", "memory"] as const)(
       yield* userMessage(forkId, forkRunId, "/compact");
 
       assert.isTrue((yield* store.getTurnStartContext(forkId, forkRunId)).hasConversation);
-    }).pipe(
-      Effect.provide(
-        storage === "sqlite"
-          ? layerDatabase
-          : Layer.merge(SqlitePersistence.layerMemory, ProjectionStore.layerMemory),
-      ),
-    ),
+    }).pipe(Effect.provide(layerDatabase)),
 );

@@ -40,7 +40,7 @@ const queuedRunEdits = makeQueuedRunEditStore<QueuedRunEdit>({
   label: "mobile-queued-run-edits",
 });
 
-export { isQueuedEditDraftKey, queuedEditDraftKey } from "./queued-edit-draft-key";
+export { queuedEditDraftKey } from "./queued-edit-draft-key";
 
 export const getQueuedRunEdit = queuedRunEdits.get;
 

@@ -986,18 +986,25 @@ export const make = Effect.gen(function* () {
 
   return BitbucketApi.of({
     request,
-    probeAuth: executeJson(
-      "probeAuth",
-      HttpClientRequest.get(apiUrl("/user")),
-      BitbucketUserSchema,
-    ).pipe(
-      Effect.map((user) => ({
-        status: "authenticated" as const,
-        account: nonEmpty(user.username ?? user.display_name ?? user.account_id),
-        host: Option.some("bitbucket.org"),
-        detail: Option.none<string>(),
-      })),
-      Effect.catch(() => currentCredential.pipe(Effect.map(authFromCredential))),
+    // Bitbucket answers anonymous /user with 401, so without a credential there is nothing to ask.
+    probeAuth: currentCredential.pipe(
+      Effect.flatMap((credential) =>
+        credential === null
+          ? Effect.succeed(authFromCredential(null))
+          : executeJson(
+              "probeAuth",
+              HttpClientRequest.get(apiUrl("/user")),
+              BitbucketUserSchema,
+            ).pipe(
+              Effect.map((user) => ({
+                status: "authenticated" as const,
+                account: nonEmpty(user.username ?? user.display_name ?? user.account_id),
+                host: Option.some("bitbucket.org"),
+                detail: Option.none<string>(),
+              })),
+              Effect.catch(() => currentCredential.pipe(Effect.map(authFromCredential))),
+            ),
+      ),
     ),
     listPullRequests: Effect.fn("BitbucketApi.listPullRequests")(function (input) {
       return resolveRepository(input).pipe(

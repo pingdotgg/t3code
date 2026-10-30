@@ -12,6 +12,14 @@ import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
+
+const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+  enabled: false,
+  token: () => Effect.succeedNone,
+  invalidate: () => Effect.void,
+});
 
 it.effect("keeps branch deletion on the credential that passed source repository permissions", () =>
   Effect.gen(function* () {
@@ -27,6 +35,8 @@ it.effect("keeps branch deletion on the credential that passed source repository
             source: "gh" as const,
             fingerprint: `${host}:${activeToken}`,
           })),
+        saved: () => Effect.succeedNone,
+        fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
         invalidate: () => Effect.void,
       }),
     );
@@ -101,10 +111,11 @@ it.effect("keeps branch deletion on the credential that passed source repository
     const provider = yield* GitHubPullRequestProvider.make.pipe(
       Effect.provide(
         GitHubPullRequestApi.layer.pipe(
+          Layer.provideMerge(GitHubAppAccess.layer),
           // GraphQL reads go over `http` too, through the same credential and quota as REST.
           Layer.provide(
             GitHubRest.layer.pipe(
-              Layer.provideMerge(Layer.mergeAll(credentials, http)),
+              Layer.provideMerge(Layer.mergeAll(credentials, http, appSignedOut)),
               Layer.provideMerge(GitHubQuota.layer),
               Layer.provideMerge(SourceControlRateLimit.layer),
             ),

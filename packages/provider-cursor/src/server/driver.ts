@@ -167,7 +167,6 @@ export const CursorDriver: ProviderDriver<
     let catalogModels: ReadonlyArray<ServerProviderModel> = [];
     const orchestrationAdapter = yield* makeCursorAdapterV2({
       instanceId,
-      settings: effectiveConfig,
       environment: processEnv,
       getModels: () => catalogModels,
     }).pipe(

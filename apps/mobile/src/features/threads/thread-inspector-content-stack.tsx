@@ -57,6 +57,7 @@ export function ThreadInspectorContentStack(props: {
     () => new Set([props.mode]),
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps opened UIKit inspector views mounted and prewarms the alternate inspector after a timer
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- Keeps opened inspector views mounted so UIKit keeps their focus and scroll.
     setMountedModes((current) => {

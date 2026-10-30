@@ -78,6 +78,7 @@ export function PullRequestGuideTab({
   const guide = data?.guide ?? null;
   const tourShown = active && guide !== null;
   const reportTourShown = useEffectEvent(() => onTourShown?.());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the parent once the loaded guide tour is on screen, which data arrival can cause
   useEffect(() => {
     if (tourShown) reportTourShown();
   }, [tourShown]);
