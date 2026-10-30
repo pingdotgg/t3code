@@ -2,9 +2,10 @@ import type {
   ProviderInstanceId,
   ServerProvider,
   ServerProviderUsageLimits,
+  UsageLimitSourceSnapshot,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
-import { collectProviderUsageLimits, limitsNotice } from "@t3tools/shared/usageLimits";
+import { accountKey, collectProviderUsageLimits, limitsNotice } from "@t3tools/shared/usageLimits";
 
 export interface ThreadDetailsLimits {
   readonly limits: ServerProviderUsageLimits;
@@ -34,19 +35,57 @@ export function resolveThreadDetailsLimits(
     provider?.usageLimits;
   if (own && limitsNotice(own) === null) return { limits: own, sourceLabel: null };
 
-  const hubAccounts = provider
-    ? sources.flatMap((source) =>
-        source.accounts
-          .filter(
-            (account) =>
-              account.driver === provider.driver && limitsNotice(account.usageLimits) === null,
-          )
-          .map((account) => ({ source, account })),
-      )
-    : [];
-  const [onlyHubAccount] = hubAccounts;
-  if (hubAccounts.length === 1 && onlyHubAccount) {
-    return { limits: onlyHubAccount.account.usageLimits, sourceLabel: onlyHubAccount.source.label };
-  }
+  const hub = provider ? onlyHubAccount(provider, sources) : null;
+  if (hub) return { limits: hub.account.usageLimits, sourceLabel: hub.source.label };
   return own ? { limits: own, sourceLabel: null } : null;
+}
+
+type SourceAccount = UsageLimitSourceSnapshot["accounts"][number];
+
+interface HubAccount {
+  readonly source: UsageLimitSourceSnapshot;
+  readonly account: SourceAccount;
+}
+
+/**
+ * The one usable hub account serving a driver, or null when none or several do.
+ * Accounts are counted the way Usage → Limits counts them (driver + email, else credential), so one
+ * login reported by two hubs is one account; its freshest snapshot wins.
+ */
+function onlyHubAccount(
+  provider: ServerProvider,
+  sources: UsageLimitSourceSnapshots,
+): HubAccount | null {
+  const candidates = sources.flatMap((source) =>
+    source.accounts
+      .filter((account) => canServeInstance(provider, account))
+      .map((account) => ({ source, account })),
+  );
+  const freshestByAccount = new Map<string, HubAccount>();
+  for (const candidate of candidates) {
+    const key = hubAccountKey(candidate);
+    const known = freshestByAccount.get(key);
+    if (!known || checkedAtMs(candidate) > checkedAtMs(known)) {
+      freshestByAccount.set(key, candidate);
+    }
+  }
+  const [only, ...rest] = freshestByAccount.values();
+  return only && rest.length === 0 ? only : null;
+}
+
+const hubAccountKey = ({ source, account }: HubAccount) =>
+  accountKey(account.driver, account.email, account.usageLimits) ?? `${source.id}:${account.id}`;
+
+const checkedAtMs = ({ account }: HubAccount) => Date.parse(account.usageLimits.checkedAt);
+
+const normalizeEmail = (email: string | undefined) => email?.trim().toLowerCase() || undefined;
+
+/** A usable hub account for the instance's driver, unless both sides name different logins. */
+function canServeInstance(provider: ServerProvider, account: SourceAccount): boolean {
+  if (account.driver !== provider.driver || limitsNotice(account.usageLimits) !== null) {
+    return false;
+  }
+  const own = normalizeEmail(provider.auth.email);
+  const hub = normalizeEmail(account.email);
+  return !own || !hub || own === hub;
 }
