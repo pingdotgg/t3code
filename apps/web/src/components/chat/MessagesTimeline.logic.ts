@@ -595,8 +595,7 @@ type MessagesTimelineRowContent =
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
-      /** Your messages sent back to back stack as one burst, like a chat app. */
-      groupedWithPrevious?: boolean;
+      /** Another of your messages follows directly, so the two sit closer together. */
       groupedWithNext?: boolean;
       /** Set when the message above is a steer too, so the label shows once. */
       continuesSteer?: boolean;
@@ -2146,16 +2145,13 @@ export function deriveMessagesTimelineRows(input: {
     }
     if (!timelineRowIsOwnUserMessage(row)) return row;
     const previous = result[index - 1];
-    const groupedWithPrevious = timelineRowIsOwnUserMessage(previous);
     const groupedWithNext = timelineRowIsOwnUserMessage(result[index + 1]);
-    if (!groupedWithPrevious && !groupedWithNext) return row;
-    return {
-      ...row,
-      groupedWithPrevious,
-      groupedWithNext,
-      continuesSteer:
-        groupedWithPrevious && messageIsSteer(row.message) && messageIsSteer(previous.message),
-    };
+    const continuesSteer =
+      timelineRowIsOwnUserMessage(previous) &&
+      messageIsSteer(row.message) &&
+      messageIsSteer(previous.message);
+    if (!groupedWithNext && !continuesSteer) return row;
+    return { ...row, groupedWithNext, continuesSteer };
   });
 }
 
@@ -2511,7 +2507,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
         a.revertTurnCount === bm.revertTurnCount &&
-        a.groupedWithPrevious === bm.groupedWithPrevious &&
         a.groupedWithNext === bm.groupedWithNext &&
         a.continuesSteer === bm.continuesSteer
       );

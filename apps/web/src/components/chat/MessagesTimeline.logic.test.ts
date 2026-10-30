@@ -1449,12 +1449,10 @@ describe("deriveMessagesTimelineRows", () => {
     const byId = new Map(rows.map((row) => [row.id, row]));
     expect(byId.get("prompt")).not.toHaveProperty("groupedWithNext");
     expect(byId.get("first-steer")).toMatchObject({
-      groupedWithPrevious: false,
       groupedWithNext: true,
       continuesSteer: false,
     });
     expect(byId.get("second-steer")).toMatchObject({
-      groupedWithPrevious: true,
       groupedWithNext: false,
       continuesSteer: true,
     });
