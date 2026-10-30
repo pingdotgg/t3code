@@ -39,6 +39,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { CreditVendorIcon } from "./CreditVendorIcon";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -408,7 +409,10 @@ export function UsageLimitsSection({
           {balances.map((balance) => (
             <div key={balance.key} className="rounded-xl border p-4">
               <div className="flex items-baseline justify-between gap-3">
-                <h3 className="font-medium">{balance.label}</h3>
+                <h3 className="flex items-center gap-2 font-medium">
+                  <CreditVendorIcon balance={balance} />
+                  {balance.label}
+                </h3>
                 <span className="text-xl font-semibold tabular-nums">
                   {balance.available === null
                     ? "Unknown"

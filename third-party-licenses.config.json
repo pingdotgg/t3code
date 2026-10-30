@@ -226,6 +226,32 @@
           ]
         }
       ]
+    },
+    {
+      "bundles": ["android", "desktop", "ios", "mobile", "web"],
+      "license": "CC0-1.0",
+      "name": "Simple Icons brand glyphs",
+      "sourceUrl": "https://github.com/simple-icons/simple-icons",
+      "generatedNotices": [
+        {
+          "licenseId": "CC0-1.0",
+          "preamble": [
+            "The OpenRouter, DeepSeek, OpenAI, Anthropic, Google Gemini, Mistral AI, Perplexity and Alibaba Cloud glyphs in packages/shared/src/usageCreditIcons.ts are from Simple Icons:\nhttps://github.com/simple-icons/simple-icons\n\nThe glyph paths are dedicated to the public domain under CC0 1.0 Universal. Brand names and logos remain the property of their respective owners."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["android", "desktop", "ios", "mobile", "web"],
+      "license": "MIT",
+      "name": "Lobe Icons brand glyphs",
+      "sourceUrl": "https://github.com/lobehub/lobe-icons",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2023 LobeHub"]
+        }
+      ]
     }
   ],
   "packageOverrides": [
@@ -321,7 +347,9 @@
       "version": "0.4.0",
       "license": "Apache-2.0 AND OFL-1.1",
       "generatedNotices": [
-        { "licenseId": "Apache-2.0" },
+        {
+          "licenseId": "Apache-2.0"
+        },
         {
           "licenseId": "OFL-1.1",
           "copyrights": [

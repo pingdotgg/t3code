@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./usageCreditIcons": {
+      "types": "./src/usageCreditIcons.ts",
+      "import": "./src/usageCreditIcons.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"

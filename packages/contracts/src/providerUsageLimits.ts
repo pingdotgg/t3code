@@ -73,6 +73,8 @@ export const UsageCreditBalance = Schema.Struct({
   checkedAt: IsoDateTime,
   partial: Schema.Boolean,
   detail: Schema.optional(TrimmedNonEmptyString),
+  /** Vendor glyph override, such as `openrouter`; clients otherwise infer it from the id and label. */
+  icon: Schema.optional(TrimmedNonEmptyString),
   accounts: Schema.Array(
     Schema.Struct({
       label: TrimmedNonEmptyString,

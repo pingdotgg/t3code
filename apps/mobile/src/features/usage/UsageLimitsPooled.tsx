@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { CreditVendorIcon } from "./CreditVendorIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
@@ -473,7 +474,10 @@ export function UsageLimitsSection({
     <View className="gap-6">
       {balances.map((balance) => (
         <View key={balance.key} className="gap-2 rounded-xl border border-border-subtle p-4">
-          <Text className="text-base font-t3-medium text-foreground">{balance.label}</Text>
+          <View className="flex-row items-center gap-2">
+            <CreditVendorIcon balance={balance} />
+            <Text className="text-base font-t3-medium text-foreground">{balance.label}</Text>
+          </View>
           <Text className="text-2xl font-t3-medium tabular-nums text-foreground">
             {balance.available === null
               ? "Unknown"
