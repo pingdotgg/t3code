@@ -30,6 +30,8 @@
         "knip-schemas.ts",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",
+        // Manual verification seeds a sandbox worktree with these fixtures.
+        "seed-markdown-scroll-fixtures.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "smoke-desktop-app.ts",
