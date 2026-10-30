@@ -25,6 +25,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -42,6 +43,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
+import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
@@ -1690,25 +1692,34 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       "restarted",
       "stopped",
       "overlapping",
+      "quota-completed",
+      "quota-stopped",
     ] as const;
     it.effect.each(outcomes)(
       "delivers a %s follow-up independently of the original task",
-      (outcome) =>
+      (scenario) =>
         Effect.gen(function* () {
+          const quotaRecovery = scenario === "quota-completed" || scenario === "quota-stopped";
+          const outcome =
+            scenario === "quota-completed"
+              ? "completed"
+              : scenario === "quota-stopped"
+                ? "stopped"
+                : scenario;
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const eventSink = yield* EventSink.EventSinkV2;
           const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
           const now = yield* DateTime.now;
-          const parentThreadId = ThreadId.make(`thread:followup-${outcome}`);
-          const projectId = ProjectId.make(`project:followup-${outcome}`);
-          const parentRunId = RunId.make(`run:followup-${outcome}`);
-          const rootNodeId = NodeId.make(`node:followup-${outcome}`);
+          const parentThreadId = ThreadId.make(`thread:followup-${scenario}`);
+          const projectId = ProjectId.make(`project:followup-${scenario}`);
+          const parentRunId = RunId.make(`run:followup-${scenario}`);
+          const rootNodeId = NodeId.make(`node:followup-${scenario}`);
           yield* seedParentWithTerminalTask({
             threadId: parentThreadId,
             projectId,
             runId: parentRunId,
             rootNodeId,
-            taskId: NodeId.make(`node:seed-${outcome}`),
+            taskId: NodeId.make(`node:seed-${scenario}`),
             deliveryState: "acknowledged",
             now,
           });
@@ -1717,7 +1728,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             projectId,
             parentRunId,
             rootNodeId,
-            name: `followup-child-${outcome}`,
+            name: `followup-child-${scenario}`,
             completionWake: "always",
             continuationPending: false,
             runStatus: "completed",
@@ -1729,7 +1740,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           assert.equal(firstWake.delegatedCompletion?.parentRunId, parentRunId);
           yield* orchestrator.dispatch({
             type: "delegated_task.completion-delivery.acknowledge",
-            commandId: CommandId.make(`command:followup-ack-${outcome}`),
+            commandId: CommandId.make(`command:followup-ack-${scenario}`),
             parentThreadId,
             taskId: child.taskId,
             observedByRunId: parentRunId,
@@ -1741,10 +1752,10 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             (run) => run.id === parentRunId,
           )!;
           yield* eventSink.write({
-            commandId: reconcileCommandId(`followup-parent-finished-${outcome}`),
+            commandId: reconcileCommandId(`followup-parent-finished-${scenario}`),
             events: [
               {
-                id: EventId.make(`event:followup-parent-finished-${outcome}`),
+                id: EventId.make(`event:followup-parent-finished-${scenario}`),
                 type: "run.updated",
                 threadId: parentThreadId,
                 runId: parentRunId,
@@ -1753,19 +1764,86 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               },
             ],
           });
-          const messageId = MessageId.make(`message:followup-${outcome}`);
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: outcome === "failed" ? "user" : "agent",
-            creationSource: outcome === "failed" ? "web" : "mcp",
-            commandId: CommandId.make(`command:followup-send-${outcome}`),
-            threadId: child.childThreadId,
-            senderThreadId: parentThreadId,
-            messageId,
-            text: "Check the same work again.",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-          });
+          if (quotaRecovery) {
+            const projection = yield* orchestrator.getThreadProjection(child.childThreadId);
+            const source = projection.runs.find((run) => run.id === child.childRunId)!;
+            const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+            yield* eventSink.write({
+              events: [
+                {
+                  ...runEvent({
+                    threadId: child.childThreadId,
+                    runId: source.id,
+                    ordinal: source.ordinal,
+                    status: "failed",
+                    now,
+                  }),
+                  payload: { ...source, status: "failed", completedAt: now },
+                },
+                {
+                  id: EventId.make(`event:quota-recovery:${scenario}`),
+                  type: "thread.metadata-updated",
+                  threadId: child.childThreadId,
+                  occurredAt: now,
+                  payload: {
+                    ...projection.thread,
+                    limitRecovery: { runId: source.id, resetAt, autoResume: true, snooze: false },
+                  },
+                },
+                {
+                  id: EventId.make(`event:quota-failure:${scenario}`),
+                  type: "turn-item.updated",
+                  threadId: child.childThreadId,
+                  occurredAt: now,
+                  payload: {
+                    id: TurnItemId.make(`item:quota-failure:${scenario}`),
+                    type: "error",
+                    threadId: child.childThreadId,
+                    runId: source.id,
+                    nodeId: source.rootNodeId,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 1,
+                    status: "failed",
+                    title: "Usage limit reached",
+                    startedAt: now,
+                    completedAt: now,
+                    updatedAt: now,
+                    failure: {
+                      class: "usage_limit",
+                      message: "Plan limit reached.",
+                      code: "usageLimitExceeded",
+                      retryable: null,
+                      resetAt,
+                    },
+                  },
+                },
+              ],
+            });
+            yield* TestClock.adjust("1 minute");
+          }
+          const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+            (thread) => thread.id === child.childThreadId,
+          )!;
+          const command = quotaRecovery
+            ? limitRecoveryCommand(shell, true, DateTime.toEpochMillis(yield* DateTime.now))
+            : ({
+                type: "message.dispatch",
+                createdBy: outcome === "failed" ? "user" : "agent",
+                creationSource: outcome === "failed" ? "web" : "mcp",
+                commandId: CommandId.make(`command:followup-send-${scenario}`),
+                threadId: child.childThreadId,
+                senderThreadId: parentThreadId,
+                messageId: MessageId.make(`message:followup-${scenario}`),
+                text: "Check the same work again.",
+                attachments: [],
+                dispatchMode: { type: "start_immediately" },
+              } as const);
+          assert(command?.type === "message.dispatch");
+          const messageId = command.messageId;
+          yield* orchestrator.dispatch(command);
           const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
           let run = childProjection.runs.find((row) => row.userMessageId === messageId)!;
           assert.isDefined(run.delegatedTaskId);
@@ -1840,14 +1918,14 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             yield* orchestrator.dispatch({
               type: "thread.stop",
               threadId: parentThreadId,
-              commandId: CommandId.make(`command:followup-stop-${outcome}`),
+              commandId: CommandId.make(`command:followup-stop-${scenario}`),
             });
           }
           yield* eventSink.write({
-            commandId: reconcileCommandId(`followup-finish-${outcome}`),
+            commandId: reconcileCommandId(`followup-finish-${scenario}`),
             events: [
               {
-                id: EventId.make(`event:followup-finish-${outcome}`),
+                id: EventId.make(`event:followup-finish-${scenario}`),
                 type: "run.updated",
                 threadId: child.childThreadId,
                 runId: run.id,
@@ -1920,7 +1998,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           yield* orchestrator.recoverDelegatedTasks;
           const recovered = yield* orchestrator.getThreadProjection(parentThreadId);
           assert.equal(recovered.contextTransfers.length, finished.contextTransfers.length);
-          if (outcome === "completed") {
+          if (scenario === "completed") {
             const automaticMessageId = MessageId.make("message:followup-automatic-wake");
             yield* orchestrator.dispatch({
               type: "message.dispatch",
