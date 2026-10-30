@@ -1,4 +1,5 @@
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -9,7 +10,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   type LimitAccount,
-  isUsageLimitsCommand,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -17,14 +17,12 @@ import {
   collectExternalUsageLinks,
   collectLimitNotices,
   collectLimitPools,
-  displayLimitWindows,
   elapsedShare,
-  formatResetsIn,
-  limitsNotice,
+  exhaustedUsageWindow,
   paceOf,
-  providersWithLimits,
-  remainingPercent,
+  paceRemainingPercent,
   usesChatGptSharing,
+  resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -55,91 +53,113 @@ function provider(overrides: Partial<ServerProvider>): ServerProvider {
   };
 }
 
-describe("pace", () => {
+describe("new thread model fallback", () => {
+  const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+  const fallback = { instanceId: ProviderInstanceId.make("claude"), model: "claude-fable-5-1" };
+  const limited = provider({
+    usageLimits: {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [{ ...window, usedPercent: 100 }],
+    },
+  });
+  const available = provider({
+    instanceId: fallback.instanceId,
+    driver: ProviderDriverKind.make("claudeAgent"),
+  });
+
+  const defaults = {
+    defaultSelection: selection,
+    fallbackSelection: fallback,
+    providers: [limited, available],
+    now,
+  };
   it.each([
-    ["2026-09-03T12:01:00.000Z", "resets in 1m"],
-    ["2026-09-03T12:00:59.999Z", "Resets momentarily"],
-    ["2026-09-03T12:00:00.001Z", "Resets momentarily"],
-    ["2026-09-03T12:00:00.000Z", "resets now"],
-    ["2026-09-03T11:59:59.999Z", "resets now"],
-  ])("formats the reset boundary at %s", (resetsAt, label) => {
-    expect(formatResetsIn({ ...window, resetsAt }, now)).toBe(label);
+    ["exhausted default", {}, fallback],
+    ["explicit selection", { explicitSelection: selection }, selection],
+    ["missing default", { defaultSelection: null }, null],
+    ["no fallback", { fallbackSelection: null }, selection],
+    ["expired window", { now: Date.parse("2026-09-04T00:00:00Z") }, selection],
+    [
+      "environment disabled",
+      {
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [fallback.instanceId]: { driver: available.driver, enabled: false, config: {} },
+          },
+        },
+      },
+      selection,
+    ],
+  ] as const)("resolves %s", (_name, overrides, expected) => {
+    expect(resolveNewThreadModelSelection({ ...defaults, ...overrides }).selection).toEqual(
+      expected,
+    );
   });
-
-  it("ignores invalid reset timestamps", () => {
-    expect(formatResetsIn({ ...window, resetsAt: "invalid" }, now)).toBeNull();
+  it.each([
+    { enabled: false },
+    { installed: false },
+    { auth: { status: "unauthenticated" as const } },
+    { availability: "unavailable" as const },
+    { usageLimits: limited.usageLimits },
+  ])("rejects an unusable fallback: %j", (overrides) => {
+    expect(
+      resolveNewThreadModelSelection({
+        ...defaults,
+        providers: [limited, { ...available, ...overrides }],
+      }).selection,
+    ).toEqual(selection);
   });
+  it.each([undefined, "invalid"])("treats an unknown reset as exhausted: %s", (resetsAt) => {
+    expect(
+      exhaustedUsageWindow(
+        provider({
+          usageLimits: {
+            checkedAt: limited.checkedAt,
+            windows: [{ ...window, usedPercent: 100, resetsAt }],
+          },
+        }),
+        now,
+      ),
+    ).toBeDefined();
+  });
+  it.each([
+    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false],
+    ["cursor", ["autoPercentUsed"], "composer-2.5", false],
+    ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true],
+    ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false],
+    ["antigravity", ["3p-weekly"], "claude-opus-5-5", true],
+    ["antigravity", ["gemini-weekly"], "antigravity-default", true],
+    ["opencode", ["go_weekly"], "opencode/big-pickle", false],
+    ["opencode", ["go_weekly"], "opencode-go/big-pickle", true],
+  ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback) => {
+    const defaultSelection = { ...selection, model };
+    expect(
+      resolveNewThreadModelSelection({
+        ...defaults,
+        defaultSelection,
+        providers: [
+          provider({
+            driver: ProviderDriverKind.make(driver),
+            usageLimits: {
+              checkedAt: limited.checkedAt,
+              windows: ids.map((id) => ({ ...window, id, usedPercent: 100 })),
+            },
+          }),
+          available,
+        ],
+      }).selection,
+    ).toEqual(usesFallback ? fallback : defaultSelection);
+  });
+});
 
+describe("pace", () => {
   it("places the clock three fifths through a five-hour window with two hours left", () => {
     expect(elapsedShare(window, now)).toBeCloseTo(0.6);
+    expect(paceRemainingPercent(window, now)).toBe(40);
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
-  });
-
-  it("has no pace without a reset or a duration", () => {
-    expect(paceOf({ ...window, resetsAt: undefined }, now)).toBeNull();
-    expect(paceOf({ ...window, windowDurationMins: undefined }, now)).toBeNull();
-    expect(formatResetsIn({ ...window, resetsAt: undefined }, now)).toBeNull();
-  });
-
-  it("phrases the reset as a countdown", () => {
-    expect(formatResetsIn(window, now)).toBe("resets in 2h 0m");
-    expect(formatResetsIn({ ...window, resetsAt: "2026-09-06T15:30:00.000Z" }, now)).toBe(
-      "resets in 3d 3h",
-    );
-    expect(formatResetsIn({ ...window, resetsAt: "2026-09-03T11:00:00.000Z" }, now)).toBe(
-      "resets now",
-    );
-  });
-});
-
-describe("limitsNotice", () => {
-  it("explains empty bars and passes provider messages through", () => {
-    const checkedAt = "2026-09-03T11:00:00.000Z";
-    expect(limitsNotice({ checkedAt, windows: [window] })).toBeNull();
-    expect(limitsNotice({ checkedAt, windows: [] })).toBe("No limits reported.");
-    expect(limitsNotice({ checkedAt, windows: [], unavailable: { reason: "unsupported" } })).toBe(
-      "This account has no subscription limits.",
-    );
-    expect(
-      limitsNotice({
-        checkedAt,
-        windows: [],
-        unavailable: { reason: "probeFailed", message: "Codex timed out." },
-      }),
-    ).toBe("Codex timed out.");
-  });
-});
-
-describe("providersWithLimits", () => {
-  it("keeps only usable providers whose driver reports limits at all", () => {
-    const limits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
-    const codex = provider({ usageLimits: limits });
-    expect(
-      providersWithLimits([
-        codex,
-        provider({
-          instanceId: ProviderInstanceId.make("cursor"),
-          driver: ProviderDriverKind.make("cursor"),
-        }),
-        provider({
-          instanceId: ProviderInstanceId.make("off"),
-          enabled: false,
-          usageLimits: limits,
-        }),
-        provider({
-          instanceId: ProviderInstanceId.make("gone"),
-          installed: false,
-          usageLimits: limits,
-        }),
-        provider({
-          instanceId: ProviderInstanceId.make("shadow"),
-          availability: "unavailable",
-          usageLimits: limits,
-        }),
-      ]),
-    ).toEqual([codex]);
   });
 });
 
@@ -405,44 +425,6 @@ describe("pools", () => {
     expect(account?.redeem).toEqual({ environmentId: "env-b", input: { instanceId: "codex" } });
   });
 
-  it("uses the freshest hub credit and its environment even when the account is also native", () => {
-    const native = provider({
-      auth: { status: "authenticated", email: "same@example.com" },
-      usageLimits: { checkedAt, windows: [window], resetCredits: { availableCount: 1 } },
-    });
-    const hubAccount = {
-      id: "codex-same.json",
-      driver: native.driver,
-      email: "same@example.com",
-      usageLimits: {
-        checkedAt: "2026-09-03T11:30:00.000Z",
-        windows: [window],
-        resetCredits: { availableCount: 2, nextCreditId: "credit-2" },
-      },
-    };
-    const input = new Map([
-      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [native] } }],
-      [
-        EnvironmentId.make("env-b"),
-        {
-          ...laptop,
-          serverConfig: {
-            providers: [],
-            usageLimitSources: [{ ...source, accounts: [hubAccount] }],
-          },
-        },
-      ],
-    ]);
-    const [account] = collectLimitAccounts(input);
-    expect(account?.limits.resetCredits?.availableCount).toBe(2);
-    expect(account?.redeem).toEqual({
-      environmentId: "env-b",
-      input: { sourceId: "hub", accountId: "codex-same.json", creditId: "credit-2" },
-    });
-    hubAccount.usageLimits.resetCredits.availableCount = 0;
-    expect(collectLimitAccounts(input)[0]?.limits.resetCredits?.availableCount).toBe(0);
-  });
-
   it("keeps distinct hub accounts redeemable through their own source", () => {
     const hubAccounts = ["first", "second"].map((id) => ({
       id,
@@ -622,27 +604,6 @@ describe("pools", () => {
     expect(collectLimitAccounts(withOther(unreadable)).map((account) => account.key)).toEqual([
       "env-a:codex",
       "hub:claude.json",
-    ]);
-  });
-
-  it("names an environment once however many of its instances share the account", () => {
-    const shared = provider({
-      auth: { status: "authenticated", email: "same@example.com" },
-      usageLimits: { checkedAt, windows: [window] },
-    });
-    const input = new Map([
-      [
-        EnvironmentId.make("env-a"),
-        {
-          ...laptop,
-          serverConfig: {
-            providers: [shared, { ...shared, instanceId: ProviderInstanceId.make("work") }],
-          },
-        },
-      ],
-    ]);
-    expect(collectLimitAccounts(input)[0]?.environments).toEqual([
-      { environmentId: "env-a", label: "Laptop" },
     ]);
   });
 
@@ -862,6 +823,64 @@ describe("pooled account columns", () => {
       row.columns.map((member) => (member.window ? member.account.key : null)),
     );
 
+  // regression: #20349 sessions stay visible while the weekly quota is exhausted
+  it.each([
+    ["claudeAgent", "13:00", 40, "14:00", 100],
+    ["codex", "14:00", 100, "14:00", 100],
+    ["claudeAgent", "15:00", 100, "15:00", 100],
+    ["codex", "15:00", 40, "14:00", 60],
+  ] as const)(
+    "%s session resetting at %s with %i percent spent becomes usable at %s with %i percent restored",
+    (driver, sessionReset, usedPercent, usableAt, restoresPercent) => {
+      const at = (time: string) => `2026-09-03T${time}:00.000Z`;
+      const a = {
+        ...account("a", [
+          {
+            ...window,
+            id: driver === "codex" ? "primary" : window.id,
+            usedPercent,
+            resetsAt: at(sessionReset),
+          },
+          {
+            ...weekly,
+            id: driver === "codex" ? "secondary" : weekly.id,
+            usedPercent: 100,
+            resetsAt: at("14:00"),
+          },
+        ]),
+        driver: ProviderDriverKind.make(driver),
+      };
+      const [session] = collectLimitPools([a], now)[0]!.windows;
+      expect.soft(session?.remainingPercent).toBe(0);
+      expect(session?.resets[0]).toMatchObject({
+        at: Date.parse(at(usableAt)),
+        restoresPercent,
+      });
+    },
+  );
+
+  it("excludes weekly-blocked sessions from the pool without changing snapshots or model allowances", () => {
+    const blocked = account("blocked", [
+      window,
+      { ...weekly, usedPercent: 100 },
+      { ...weekly, id: "seven_day_fable", usedPercent: 20 },
+    ]);
+    const accounts = [
+      blocked,
+      account("available", [
+        { ...window, usedPercent: 20 },
+        { ...weekly, usedPercent: 99 },
+        { ...weekly, id: "seven_day_fable", usedPercent: 40 },
+      ]),
+      { ...blocked, key: "cursor", driver: ProviderDriverKind.make("cursor") },
+    ];
+    const snapshot = structuredClone(accounts);
+    const [claude, cursor] = collectLimitPools(accounts, now);
+    expect.soft(claude?.windows.map((row) => row.remainingPercent)).toEqual([40, 1, 70]);
+    expect.soft(cursor?.windows.map((row) => row.remainingPercent)).toEqual([60, 0, 80]);
+    expect(accounts).toEqual(snapshot);
+  });
+
   it("keeps session columns across rows with opposite reset and usage orders", () => {
     const accounts = [
       account("a", [
@@ -882,6 +901,52 @@ describe("pooled account columns", () => {
     expect(pool!.windows[1]!.resets.map((reset) => reset.member.account.key)).toEqual(["a", "b"]);
     expect(pool!.windows[1]!.remainingPercent).toBe(50);
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual(keys(pool!));
+  });
+
+  it.each([undefined, "invalid", "2026-09-03T11:30:00.000Z"])(
+    "keeps blocked sessions empty without predicting a refill from a missing or stale clock (%s)",
+    (resetsAt) => {
+      const [pool] = collectLimitPools(
+        [
+          account("session-clock", [
+            { ...window, resetsAt },
+            { ...weekly, usedPercent: 100 },
+          ]),
+          account("weekly-clock", [window, { ...weekly, usedPercent: 100, resetsAt }]),
+        ],
+        now,
+      );
+      expect(pool!.windows[0]).toMatchObject({ remainingPercent: 0, pace: null, resets: [] });
+      expect(pool!.windows[0]!.columns.map((column) => column.window?.resetsAt)).toEqual([
+        undefined,
+        undefined,
+      ]);
+    },
+  );
+
+  it("orders by usable session refill and clears suppression after a fresh weekly reading", () => {
+    const blocked = account("blocked", [
+      { ...window, resetsAt: "2026-09-03T13:00:00.000Z" },
+      { ...weekly, usedPercent: 100, resetsAt: "2026-09-03T15:00:00.000Z" },
+    ]);
+    const available = account("available", [window]);
+    const [before] = collectLimitPools([blocked, available], now);
+    expect(before!.accounts.map((account) => account.key)).toEqual(["available", "blocked"]);
+    expect(before!.windows[0]!.remainingPercent).toBe(30);
+    const refreshed = {
+      ...blocked,
+      limits: {
+        checkedAt: "2026-09-03T12:00:00.000Z",
+        windows: [blocked.limits.windows[0]!, { ...weekly, usedPercent: 10 }],
+      },
+    };
+    const [after] = collectLimitPools([refreshed, available], now);
+    expect(after!.accounts.map((account) => account.key)).toEqual(["blocked", "available"]);
+    expect(after!.windows[0]!.remainingPercent).toBe(60);
+    expect(after!.windows[0]!.resets[0]).toMatchObject({
+      at: Date.parse("2026-09-03T13:00:00.000Z"),
+      restoresPercent: 20,
+    });
   });
 
   it("preserves gaps without counting missing windows toward pooled quota", () => {
@@ -914,119 +979,6 @@ describe("pooled account columns", () => {
       now,
     );
     expect(keys(pool!)).toEqual([["b", "a"]]);
-  });
-
-  it("sorts unknown resets last and breaks ties consistently", () => {
-    const accounts = [
-      account("z", [{ ...window, resetsAt: undefined }]),
-      account("b", [window]),
-      account("a", [window]),
-      account("y", [{ ...window, resetsAt: "invalid" }]),
-    ];
-    expect(keys(collectLimitPools(accounts, now)[0]!)).toEqual([["a", "b", "y", "z"]]);
-    expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual([["a", "b", "y", "z"]]);
-  });
-});
-
-describe("Cursor limit presentation", () => {
-  const cursorAccount: LimitAccount = {
-    key: "cursor",
-    driver: ProviderDriverKind.make("cursor"),
-    displayName: "Cursor",
-    email: undefined,
-    plan: undefined,
-    accentColor: undefined,
-    environments: [],
-    sourceLabel: "Cursor",
-    redeem: null,
-    limits: {
-      checkedAt: "2026-09-03T11:00:00.000Z",
-      windows: [
-        { id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 49 },
-        { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 9 },
-        { id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 15 },
-      ],
-    },
-  };
-
-  it("hides the combined percentage and orders the two pools", () => {
-    const [pool] = collectLimitPools([cursorAccount], now);
-    const display = displayLimitWindows(pool!);
-    expect(display.map((window) => window.id)).toEqual(["autoPercentUsed", "apiPercentUsed"]);
-  });
-
-  it("keeps the combined percentage as a card if either allowance is missing", () => {
-    const [pool] = collectLimitPools(
-      [
-        {
-          ...cursorAccount,
-          limits: {
-            ...cursorAccount.limits,
-            windows: cursorAccount.limits.windows.filter(
-              (window) => window.id !== "apiPercentUsed",
-            ),
-          },
-        },
-      ],
-      now,
-    );
-    const display = displayLimitWindows(pool!);
-    expect(display.map((window) => window.id)).toEqual(["totalPercentUsed", "autoPercentUsed"]);
-  });
-});
-
-describe("collectLimitNotices", () => {
-  const checkedAt = "2026-09-03T11:00:00.000Z";
-  const claude = ProviderDriverKind.make("claudeAgent");
-  const laptop = { entry: { target: { label: "Laptop" } } };
-  const hub = {
-    id: UsageLimitSourceId.make("hub"),
-    kind: "cliproxy" as const,
-    label: "hub",
-    checkedAt,
-    accounts: [],
-  };
-
-  it("names failures and silence, skips unsupported accounts, and labels environments only when several", () => {
-    const failed = provider({
-      instanceId: ProviderInstanceId.make("claude"),
-      driver: claude,
-      displayName: "Claude Max",
-      usageLimits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
-    });
-    const apiKey = provider({
-      instanceId: ProviderInstanceId.make("api"),
-      driver: claude,
-      usageLimits: { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
-    });
-    const silent = provider({ usageLimits: { checkedAt, windows: [] } });
-    const one = new Map([
-      [
-        EnvironmentId.make("env-a"),
-        {
-          ...laptop,
-          serverConfig: {
-            providers: [failed, apiKey, silent],
-            usageLimitSources: [
-              hub,
-              { ...hub, id: UsageLimitSourceId.make("down"), label: "down", error: "ECONNREFUSED" },
-            ],
-          },
-        },
-      ],
-    ]);
-    expect(collectLimitNotices(one)).toEqual([
-      "Claude Max: Could not read limits.",
-      "codex: No limits reported.",
-      "hub: No accounts reported.",
-      "down: ECONNREFUSED",
-    ]);
-
-    one.set(EnvironmentId.make("env-b"), {
-      entry: { target: { label: "Desktop" } },
-      serverConfig: { providers: [], usageLimitSources: [] },
-    });
-    expect(collectLimitNotices(one)[0]).toBe("Laptop · Claude Max: Could not read limits.");
   });
 });
 
@@ -1146,7 +1098,7 @@ describe("/usage-limits", () => {
     expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
   });
 
-  it("keeps accounts and custom instances separate, filtering by driver", () => {
+  it("keeps unidentified custom instances separate, filtering by driver", () => {
     const report = collectProviderUsageLimits(
       selected.instanceId,
       [
@@ -1185,6 +1137,93 @@ describe("/usage-limits", () => {
       plan: "Codex OSS",
     });
     expect(report?.notices).toEqual([]);
+  });
+
+  it("keeps the freshest usable native duplicate and the freshest native credits in either order", () => {
+    const failed = provider({
+      auth: selected.auth,
+      usageLimits: {
+        ...limits,
+        checkedAt: "2026-09-03T11:40:00.000Z",
+        unavailable: { reason: "probeFailed" },
+      },
+    });
+    const credited = provider({
+      instanceId: ProviderInstanceId.make("codex-credit"),
+      auth: selected.auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:20:00.000Z",
+        windows: [{ ...window, usedPercent: 50 }],
+        resetCredits: { availableCount: 2 },
+      },
+    });
+    const staleCredit = provider({
+      ...credited,
+      instanceId: ProviderInstanceId.make("codex-stale-credit"),
+      usageLimits: { ...limits, resetCredits: { availableCount: 3 } },
+    });
+    const freshest = provider({
+      instanceId: ProviderInstanceId.make("codex-fresh"),
+      auth: selected.auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 55 }],
+      },
+    });
+    const duplicates = [failed, staleCredit, credited, freshest];
+    for (const providers of [duplicates, duplicates.toReversed()]) {
+      const report = collectProviderUsageLimits(failed.instanceId, providers, sources, now);
+      expect(report?.accounts.map((account) => account.id)).toEqual(["codex-fresh", "hub:oss"]);
+      expect(report?.accounts[0]).toMatchObject({
+        limits: {
+          checkedAt: "2026-09-03T11:30:00.000Z",
+          windows: [{ usedPercent: 55 }],
+          resetCredits: { availableCount: 2 },
+        },
+        resetCreditInput: { instanceId: "codex-credit" },
+      });
+      expect(report?.accounts[0]?.limits.unavailable).toBeUndefined();
+    }
+  });
+
+  it("merges native workspace duplicates only while the workspace evidence is unambiguous", () => {
+    const known = provider({
+      ...selected,
+      instanceId: ProviderInstanceId.make("workspace-a"),
+      auth: { ...selected.auth, workspaceId: "ws-a" },
+    });
+    const fresh = provider({
+      ...known,
+      instanceId: ProviderInstanceId.make("workspace-a-fresh"),
+      usageLimits: { ...limits, checkedAt: "2026-09-03T11:30:00.000Z" },
+    });
+    const natives = [known, fresh, selected];
+    expect(
+      collectProviderUsageLimits(selected.instanceId, natives, [], now)?.accounts.map(
+        (account) => account.id,
+      ),
+    ).toEqual(["workspace-a-fresh"]);
+
+    const unreadable = provider({
+      instanceId: ProviderInstanceId.make("workspace-b"),
+      auth: { ...selected.auth, workspaceId: "ws-b" },
+    });
+    expect(
+      collectProviderUsageLimits(
+        selected.instanceId,
+        [...natives, unreadable],
+        [],
+        now,
+      )?.accounts.map((account) => account.id),
+    ).toEqual(["workspace-a-fresh", "codex"]);
+    expect(
+      collectProviderUsageLimits(
+        selected.instanceId,
+        [...natives, { ...unreadable, usageLimits: limits }],
+        [],
+        now,
+      )?.accounts.map((account) => account.id),
+    ).toEqual(["workspace-a-fresh", "codex", "workspace-b"]);
   });
 
   it("supports a source-only provider and keeps duplicates when the native probe failed", () => {
@@ -1302,24 +1341,6 @@ describe("sameUsageLimitCommandCoverage", () => {
   });
 });
 
-describe("remainingPercent", () => {
-  it("inverts and clamps the reported usage", () => {
-    expect(remainingPercent(window)).toBe(60);
-    expect(remainingPercent({ ...window, usedPercent: 0 })).toBe(100);
-    expect(remainingPercent({ ...window, usedPercent: 100 })).toBe(0);
-    expect(remainingPercent({ ...window, usedPercent: 33.4 })).toBe(67);
-  });
-});
-
-describe("isUsageLimitsCommand", () => {
-  it("recognizes only the standalone local action", () => {
-    expect(isUsageLimitsCommand("  /USAGE-LIMITS\n")).toBe(true);
-    expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
-    expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
-    expect(isUsageLimitsCommand("/usage")).toBe(false);
-  });
-});
-
 describe("external usage settings", () => {
   it("deduplicates destinations across accounts and environments without inventing quota pools", () => {
     const managed = provider({
@@ -1355,32 +1376,6 @@ describe("external usage settings", () => {
     expect(collectLimitAccounts(presentations)).toEqual([]);
     expect(collectLimitNotices(presentations)).toEqual([]);
   });
-  it("omits disabled, uninstalled and signed-out providers", () => {
-    const managed = provider({
-      usageLimits: {
-        checkedAt: "2026-09-03T11:00:00.000Z",
-        windows: [],
-        externalUsage: { label: "ChatGPT usage", url: "https://chatgpt.com/#settings/Usage" },
-      },
-    });
-    const presentations = new Map([
-      [
-        EnvironmentId.make("a"),
-        {
-          entry: { target: { label: "A" } },
-          serverConfig: {
-            providers: [
-              { ...managed, enabled: false },
-              { ...managed, installed: false },
-              { ...managed, auth: { status: "unauthenticated" as const } },
-              provider({}),
-            ],
-          },
-        },
-      ],
-    ]);
-    expect(collectExternalUsageLinks(presentations)).toEqual([]);
-  });
 });
 
 describe("ChatGPT sharing presentation", () => {
@@ -1396,63 +1391,5 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
-  });
-});
-
-describe("Antigravity limit presentation", () => {
-  it("keeps the shared Claude/GPT bucket separate from Gemini and pairs their windows", () => {
-    const antigravity = provider({
-      instanceId: ProviderInstanceId.make("antigravity"),
-      driver: ProviderDriverKind.make("antigravity"),
-      usageLimits: {
-        checkedAt: "2026-10-09T12:00:00.000Z",
-        windows: [
-          { ...window, id: "3p-5h", label: "Claude & GPT (shared) · 5-hour", usedPercent: 90 },
-          { ...window, id: "gemini-5h", label: "Gemini · 5-hour", usedPercent: 20 },
-          {
-            ...window,
-            id: "3p-weekly",
-            kind: "weekly",
-            label: "Claude & GPT (shared) · Weekly",
-            usedPercent: 100,
-          },
-          {
-            ...window,
-            id: "gemini-weekly",
-            kind: "weekly",
-            label: "Gemini · Weekly",
-            usedPercent: 10,
-          },
-        ],
-      },
-    });
-    const accounts = collectLimitAccounts(
-      new Map([
-        [
-          EnvironmentId.make("a"),
-          {
-            entry: { target: { label: "Local" } },
-            serverConfig: {
-              providers: [
-                provider({
-                  usageLimits: { checkedAt: "2026-10-09T12:00:00.000Z", windows: [window] },
-                }),
-                antigravity,
-              ],
-            },
-          },
-        ],
-      ]),
-    );
-    const pools = collectLimitPools(accounts, now);
-    expect(pools.map((pool) => pool.driver)).toEqual(["codex", "antigravity"]);
-    const windows = displayLimitWindows(pools[1]!);
-    expect(windows.map((window) => window.id)).toEqual([
-      "gemini-5h",
-      "gemini-weekly",
-      "3p-5h",
-      "3p-weekly",
-    ]);
-    expect(windows.map((window) => window.remainingPercent)).toEqual([80, 90, 10, 0]);
   });
 });

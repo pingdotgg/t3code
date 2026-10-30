@@ -45,9 +45,11 @@ export interface ProjectThreadAwarenessV2Input {
     | "activityRunStatus"
     | "id"
     | "lineage"
+    | "latestRunStopRequested"
     | "modelSelection"
     | "pendingBackgroundTasks"
     | "pendingRuntimeRequest"
+    | "settledOverride"
     | "status"
     | "title"
     | "updatedAt"
@@ -61,6 +63,15 @@ export function projectThreadAwarenessV2(
   if (thread.lineage.relationshipToParent === "subagent") return null;
   const phase = resolveThreadAwarenessPhaseV2(thread);
   if (phase === null) {
+    return null;
+  }
+  if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  // Resolve the phase first so live or waiting work stays visible after settlement.
+  if (
+    thread.settledOverride === "settled" &&
+    (phase === "completed" || phase === "failed") &&
+    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  ) {
     return null;
   }
   const detail =
@@ -86,16 +97,22 @@ export function projectThreadAwarenessV2(
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
 ): AgentAwarenessPhase | null {
-  if (thread.pendingRuntimeRequest?.kind === "user_input") {
+  const runStatus = thread.activityRunStatus ?? thread.status;
+  if (
+    thread.pendingRuntimeRequest?.kind === "user_input" &&
+    (thread.pendingRuntimeRequest.blocking !== false ||
+      !(runStatus === "preparing" || runStatus === "starting" || runStatus === "running"))
+  ) {
     return "waiting_for_input";
   }
   if (
     thread.pendingRuntimeRequest !== null &&
+    thread.pendingRuntimeRequest.kind !== "user_input" &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";
   }
-  switch (thread.activityRunStatus ?? thread.status) {
+  switch (runStatus) {
     case "preparing":
     case "starting":
       return "starting";

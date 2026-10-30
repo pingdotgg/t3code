@@ -1,8 +1,4 @@
-/**
- * Events go to the T3 Code ingest endpoint, which keeps a copy and forwards
- * them to PostHog. Each event carries a uuid, so PostHog can tell a retried
- * copy from a new event.
- */
+// T3 ingest retains events and forwards to PostHog; UUIDs deduplicate retries there.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ClientOs } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -24,7 +20,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
-import { getTelemetryIdentifier } from "./Identify.ts";
+import { getTelemetryIdentity, type TelemetryOwner } from "./Identify.ts";
 
 interface BufferedAnalyticsEvent {
   readonly uuid: string;
@@ -36,33 +32,30 @@ interface BufferedAnalyticsEvent {
 interface DeliveryState {
   readonly failedBatch: ReadonlyArray<BufferedAnalyticsEvent>;
   readonly batchAttempts: number;
+  readonly firstFailedAt: number;
   readonly failures: number;
   readonly retryAt: number;
 }
 
-// The background flush checks for work at this interval, so a retry delay
-// shorter than it waits for the next check.
+// Retry delays shorter than this still wait for the next background check.
 const FLUSH_INTERVAL_MS = 10_000;
 // A hung send would hold the flush lock, and with it the shutdown flush.
 const SEND_TIMEOUT = "10 seconds";
-const MAX_BATCH_ATTEMPTS = 5;
+// A failed batch is tried again until it has failed for this long. Ingest answers 503 when it
+// cannot store a batch, and a broken Cloudflare location can take about 5 minutes to fail over.
+// The waiting batch holds newer events back; `maxBufferedEvents` bounds them meanwhile.
+const MAX_BATCH_RETRY_MS = 30 * 60_000;
 const RETRY_BASE_DELAY_MS = 2_000;
+// Clients can report any number of owner ids; past this many per observer, new ones
+// are not sent. Each observer has its own cap, so client reports never crowd out the
+// server's own.
+const MAX_RECORDED_OWNERS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
-// The endpoint answers these when the batch itself is wrong (bad body, wrong
-// api_key, too large), so sending it again cannot help. 408 and 429 are not
-// here because a later send can succeed.
+// These statuses reject the batch itself; unlike 408/429, retrying cannot help.
 const REJECTED_BATCH_STATUSES = new Set([400, 401, 413]);
 
-/**
- * Release channel of this build. Release workflows set it for
- * pingdotgg/t3code builds (see apps/server/vite.config.ts); every other build
- * reports "dev". It is separate from `__T3CODE_BUILD_CHANNEL__`, which names
- * stable "latest" and preview "nightly" for the sign-in page.
- */
-declare const __T3CODE_TELEMETRY_CHANNEL__: "stable" | "nightly" | "preview" | "dev" | undefined;
-
 /** `random` is in [0, 1). */
-export function retryDelayMs(failures: number, random: number): number {
+function retryDelayMs(failures: number, random: number): number {
   const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failures - 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
 }
@@ -91,16 +84,18 @@ export class AnalyticsService extends Context.Service<
     ) => Effect.Effect<void>;
 
     readonly flush: Effect.Effect<void>;
+
+    /**
+     * Records `install.owner_observed` for each owner of this install that the
+     * server read itself or a connecting client reported. Each owner is sent once
+     * per server process, so reconnects and repeated reads are free.
+     */
+    readonly recordOwners: (
+      owners: ReadonlyArray<TelemetryOwner>,
+      observedBy: "server" | "client",
+    ) => Effect.Effect<void>;
   }
->()("t3/telemetry/AnalyticsService") {
-  static readonly layerTest = Layer.succeed(
-    AnalyticsService,
-    AnalyticsService.of({
-      record: () => Effect.void,
-      flush: Effect.void,
-    }),
-  );
-}
+>()("t3/telemetry/AnalyticsService") {}
 
 function serverOsFromNodePlatform(platform: string): ClientOs {
   switch (platform) {
@@ -118,25 +113,27 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
 }
 
 /** @public */
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const identifier = yield* getTelemetryIdentifier;
+  const { distinctId, installId } = yield* getTelemetryIdentity;
   const crypto = yield* Crypto.Crypto;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
   const deliveryRef = yield* Ref.make<DeliveryState>({
     failedBatch: [],
     batchAttempts: 0,
+    firstFailedAt: 0,
     failures: 0,
     retryAt: 0,
   });
+  const recordedOwnersRef = yield* Ref.make<
+    Readonly<Record<"server" | "client", ReadonlySet<string>>>
+  >({ server: new Set(), client: new Set() });
   // The background flush and the shutdown flush must not send the same batch at once.
   const flushLock = yield* Semaphore.make(1);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
-  const telemetryChannel =
-    typeof __T3CODE_TELEMETRY_CHANNEL__ === "undefined" ? "dev" : __T3CODE_TELEMETRY_CHANNEL__;
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
 
@@ -175,22 +172,23 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!telemetryConfig.enabled || !identifier) return;
+    if (!telemetryConfig.enabled || !distinctId) return;
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
       batch: events.map((event) => ({
         uuid: event.uuid,
         event: event.event,
-        distinct_id: identifier,
+        distinct_id: distinctId,
         properties: {
           ...event.properties,
+          ...(installId === null ? {} : { installId }),
           $process_person_profile: false,
           platform: hostPlatform,
           wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
           arch: hostArchitecture,
           t3CodeVersion: packageJson.version,
-          telemetryChannel,
+          telemetryChannel: ServerConfig.telemetryChannel,
           clientType,
           serverOs: serverOsFromNodePlatform(hostPlatform),
           serverArch: hostArchitecture,
@@ -215,8 +213,7 @@ export const make = Effect.gen(function* () {
     return [nextBatch, current.slice(nextBatch.length)] as const;
   });
 
-  // A rejected batch is dropped at once, but the next batch still waits for the
-  // backoff, so a wrong api_key does not send every batch as fast as it can.
+  // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
     while (true) {
       const delivery = yield* Ref.get(deliveryRef);
@@ -227,27 +224,47 @@ export const make = Effect.gen(function* () {
 
       const sent = yield* Effect.result(sendBatch(batch));
       if (Result.isSuccess(sent)) {
-        yield* Ref.set(deliveryRef, { failedBatch: [], batchAttempts: 0, failures: 0, retryAt: 0 });
+        yield* Ref.set(deliveryRef, {
+          failedBatch: [],
+          batchAttempts: 0,
+          firstFailedAt: 0,
+          failures: 0,
+          retryAt: 0,
+        });
         continue;
       }
 
+      const now = yield* Clock.currentTimeMillis;
       const failures = delivery.failures + 1;
       const batchAttempts = delivery.batchAttempts + 1;
-      const retryAt = (yield* Clock.currentTimeMillis) + retryDelayMs(failures, yield* Random.next);
+      const firstFailedAt = delivery.batchAttempts === 0 ? now : delivery.firstFailedAt;
+      const retryAt = now + retryDelayMs(failures, yield* Random.next);
       const error = sent.failure;
       const rejected =
         error._tag === "HttpClientError" &&
         error.reason._tag === "StatusCodeError" &&
         REJECTED_BATCH_STATUSES.has(error.reason.response.status);
-      if (!rejected && batchAttempts < MAX_BATCH_ATTEMPTS) {
-        yield* Ref.set(deliveryRef, { failedBatch: batch, batchAttempts, failures, retryAt });
+      if (!rejected && now - firstFailedAt < MAX_BATCH_RETRY_MS) {
+        yield* Ref.set(deliveryRef, {
+          failedBatch: batch,
+          batchAttempts,
+          firstFailedAt,
+          failures,
+          retryAt,
+        });
         yield* Effect.logDebug("Failed to send telemetry batch; will retry", {
           attempt: batchAttempts,
           cause: error,
         });
         return;
       }
-      yield* Ref.set(deliveryRef, { failedBatch: [], batchAttempts: 0, failures, retryAt });
+      yield* Ref.set(deliveryRef, {
+        failedBatch: [],
+        batchAttempts: 0,
+        firstFailedAt: 0,
+        failures,
+        retryAt,
+      });
       yield* Effect.logWarning(
         rejected
           ? "Dropped telemetry batch the endpoint rejected"
@@ -267,10 +284,9 @@ export const make = Effect.gen(function* () {
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
-      if (!telemetryConfig.enabled || !identifier) return;
+      if (!telemetryConfig.enabled || !distinctId) return;
 
-      // Telemetry is best effort: an event without a uuid is not sent. The
-      // Node implementation throws (a defect) rather than failing, so catch both.
+      // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
       const uuid = yield* Effect.exit(crypto.randomUUIDv7());
       if (Exit.isFailure(uuid)) return;
 
@@ -284,15 +300,36 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
+  const recordOwners: AnalyticsService["Service"]["recordOwners"] = Effect.fn(
+    "AnalyticsService.recordOwners",
+  )((owners, observedBy) =>
+    Effect.forEach(
+      owners,
+      ({ source, ownerId }) =>
+        Ref.modify(recordedOwnersRef, (recorded) => {
+          const key = `${source}:${ownerId}`;
+          const seen = recorded[observedBy];
+          return seen.has(key) || seen.size >= MAX_RECORDED_OWNERS
+            ? [false, recorded]
+            : [true, { ...recorded, [observedBy]: new Set(seen).add(key) }];
+        }).pipe(
+          Effect.flatMap((isNew) =>
+            isNew
+              ? record("install.owner_observed", { ownerSource: source, ownerId, observedBy })
+              : Effect.void,
+          ),
+        ),
+      { discard: true },
+    ),
+  );
+
+  yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.andThen(flushWhenDue)), {
     disableYield: true,
   }).pipe(Effect.forkScoped);
 
   yield* Effect.addFinalizer(() => flush);
 
-  return AnalyticsService.of({ record, flush });
+  return AnalyticsService.of({ record, flush, recordOwners });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);
-
-const layerTest = AnalyticsService.layerTest;

@@ -1,31 +1,12 @@
-import { ScheduledTaskId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+
+import { GuestMessageId } from "@t3tools/contracts";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import { resolveUserMessagePresentation } from "./userMessage.ts";
 
 describe("resolveUserMessagePresentation", () => {
   const legacyText = "[Triggered by schedule task: Daily audit]\n\nCheck for crashes.\n";
-
-  it("removes attribution from legacy scheduled prompts", () => {
-    expect(
-      resolveUserMessagePresentation({ role: "user", createdBy: "agent", text: legacyText }),
-    ).toEqual({
-      text: "Check for crashes.\n",
-      attribution: "automation",
-      scheduledTaskId: undefined,
-    });
-  });
-
-  it("uses task metadata without changing the prompt", () => {
-    expect(
-      resolveUserMessagePresentation({
-        role: "user",
-        createdBy: "agent",
-        scheduledTaskId: ScheduledTaskId.make("task-1"),
-        text: legacyText,
-      }),
-    ).toEqual({ text: legacyText, attribution: "automation", scheduledTaskId: "task-1" });
-  });
 
   it("preserves user-written and assistant-quoted schedule headers", () => {
     for (const message of [
@@ -41,18 +22,34 @@ describe("resolveUserMessagePresentation", () => {
     }
   });
 
-  it("leaves other agent prompts and embedded headers intact", () => {
+  it("hides the prompt that stands in for an attachment-only message", () => {
     for (const text of [
-      "Review this area",
-      `Quoted prompt:\n${legacyText}`,
-      "[Triggered by schedule task: Daily audit]",
+      ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
     ]) {
-      expect(resolveUserMessagePresentation({ role: "user", createdBy: "agent", text })).toEqual({
-        text,
-        attribution: "agent",
+      expect(resolveUserMessagePresentation({ role: "user", text })).toEqual({
+        text: "",
+        attribution: null,
         scheduledTaskId: undefined,
       });
     }
+  });
+
+  it("shows a guest's own words and name, not the attributed text the agent reads", () => {
+    expect(
+      resolveUserMessagePresentation({
+        role: "user",
+        createdBy: "user",
+        text: "Message from guest Sam, sent by the owner:\n\nWhy?",
+        context: {
+          guest: {
+            guestMessageId: GuestMessageId.make("guest-message:one"),
+            name: "Sam",
+            text: "Why?",
+          },
+        },
+      }),
+    ).toEqual({ text: "Why?", attribution: "guest", scheduledTaskId: undefined, guestName: "Sam" });
   });
 
   it("attributes older server-sent restart continuations to T3 Code, not another agent", () => {

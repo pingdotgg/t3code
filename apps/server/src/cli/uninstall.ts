@@ -1,7 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-// The Windows cleanup shell must outlive this process (it deletes the
-// directory this executable runs from), which Effect's scoped ChildProcess
-// cannot express: it kills the child when the scope closes.
+// Windows cleanup must outlive this executable to delete its directory; scoped ChildProcess kills children on exit.
 import * as NodeChildProcess from "node:child_process";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -14,10 +12,14 @@ import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
-import { pinnedRuntimeVersionsDir } from "../cloud/pinnedRuntime.ts";
+import {
+  launcherOwnsVersionsDir,
+  pinnedRuntimeVersionsDir,
+  windowsShimTarget,
+} from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
-import { findWindowsShim, launcherOwnsVersionsDir, resolveLauncherPath } from "./update.ts";
+import { findWindowsShim, resolveLauncherPath } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
   "CliUninstallError",
@@ -35,10 +37,7 @@ export interface UninstallPlan {
   readonly userdataDir: string;
 }
 
-/**
- * Only a launcher that points into this home's `runtime/versions` is claimed: a plain copy of the
- * executable, or a launcher for another home, is not ours to delete.
- */
+/** Delete only launchers targeting this home's runtime/versions. */
 export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(function* (input: {
   readonly launchedAs: string | undefined;
   readonly versionsDir: string;
@@ -51,7 +50,7 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
     const shimPath = yield* findWindowsShim(input.launchedAs);
     if (shimPath === undefined) return undefined;
     const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    const target = Option.isSome(contents) ? /^"([^"]+)"/m.exec(contents.value)?.[1] : undefined;
+    const target = Option.isSome(contents) ? windowsShimTarget(contents.value) : undefined;
     return target !== undefined && launcherOwnsVersionsDir(path, input.versionsDir, target)
       ? shimPath
       : undefined;
@@ -172,9 +171,7 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     yield* Console.log(`Removed ${plan.launcher}.`);
   }
   if (plan.runtimeDir !== undefined) {
-    // This process runs from inside runtimeDir. POSIX unlinks a running
-    // executable fine; Windows refuses, so the tree is removed after this
-    // process exits by a detached shell, and the user is told either way.
+    // Windows refuses to unlink this running executable; a detached shell removes it after exit.
     if (platform === "win32") {
       const runtimeDir = plan.runtimeDir;
       const comspec = environment["ComSpec"] ?? environment["COMSPEC"] ?? "cmd.exe";

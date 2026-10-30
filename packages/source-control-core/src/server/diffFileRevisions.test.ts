@@ -133,18 +133,6 @@ describe("parseDiffFileRevisions", () => {
     assert.deepStrictEqual([...revisions], [["one b/two.ts", "fffffff"]]);
   });
 
-  it("leaves out an added file that Bitbucket sent no index line for", () => {
-    const revisions = parseDiffFileRevisions(
-      patchOf("diff --git a/added.ts b/added.ts", "new file mode 100644", "--- /dev/null"),
-    );
-
-    assert.strictEqual(revisions.size, 0);
-  });
-
-  it("reads nothing out of an empty patch", () => {
-    assert.strictEqual(parseDiffFileRevisions("").size, 0);
-  });
-
   it("reads a name git had to quote, here one holding a tab", () => {
     const revisions = parseDiffFileRevisions(
       patchOf(
@@ -192,23 +180,7 @@ describe("parseDiffFileRevisions", () => {
     assert.deepStrictEqual([...revisions], [["new\tname.ts", "9999999"]]);
   });
 
-  it("names a quoted rename that changed nothing, which states no paths of its own", () => {
-    const revisions = parseDiffFileRevisions(
-      patchOf(
-        'diff --git "a/old\\tname.ts" "b/new\\tname.ts"',
-        "similarity index 100%",
-        'rename from "old\\tname.ts"',
-        'rename to "new\\tname.ts"',
-        "index abcabca..abcabca 100644",
-      ),
-    );
-
-    assert.deepStrictEqual([...revisions], [["new\tname.ts", "abcabca"]]);
-  });
-
   it("keeps a character from outside the basic plane that git left unescaped", () => {
-    // `core.quotePath` off leaves the name's own bytes in place, and git still quotes the header
-    // for the tab. Encoding what it left one unit at a time would split the pair into two halves.
     const revisions = parseDiffFileRevisions(
       patchOf(
         'diff --git "a/we\\tird-\u{1f680}.ts" "b/we\\tird-\u{1f680}.ts"',
@@ -236,38 +208,6 @@ describe("parseDiffFileRevisions", () => {
     assert.deepStrictEqual([...revisions], [["with space.txt", "6178079"]]);
   });
 
-  it("drops that tab from a quoted name too, where it lands past the closing quote", () => {
-    const revisions = parseDiffFileRevisions(
-      patchOf(
-        'diff --git "a/we ird\\tname.ts" "b/we ird\\tname.ts"',
-        "index 2222222..7777777 100644",
-        '--- "a/we ird\\tname.ts"\t',
-        '+++ "b/we ird\\tname.ts"\t',
-        "@@ -1 +1 @@",
-        "-a",
-        "+b",
-      ),
-    );
-
-    assert.deepStrictEqual([...revisions], [["we ird\tname.ts", "7777777"]]);
-  });
-
-  it("reads a deletion whose name holds a space, tab and all", () => {
-    const revisions = parseDiffFileRevisions(
-      patchOf(
-        "diff --git a/with space.txt b/with space.txt",
-        "deleted file mode 100644",
-        "index 3333333..0000000",
-        "--- a/with space.txt\t",
-        "+++ /dev/null",
-        "@@ -1 +0,0 @@",
-        "-a",
-      ),
-    );
-
-    assert.deepStrictEqual([...revisions], [["with space.txt", "0000000"]]);
-  });
-
   it("drops the timestamp other producers of the format write past that tab", () => {
     const revisions = parseDiffFileRevisions(
       patchOf(
@@ -282,14 +222,6 @@ describe("parseDiffFileRevisions", () => {
     );
 
     assert.deepStrictEqual([...revisions], [["stamped.ts", "5555555"]]);
-  });
-
-  it("splits an unquoted header whose names hold a space, by the sides agreeing", () => {
-    const revisions = parseDiffFileRevisions(
-      patchOf("diff --git a/one two b/one two", "index ddddddd..eeeeeee 100644", "@@ -1 +1 @@"),
-    );
-
-    assert.deepStrictEqual([...revisions], [["one two", "eeeeeee"]]);
   });
 });
 

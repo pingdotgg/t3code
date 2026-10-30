@@ -1,7 +1,5 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { type RefObject, useEffect, useSyncExternalStore } from "react";
-
-import { useStableCallback } from "../../hooks/useStableCallback";
+import { type RefObject, useEffect, useEffectEvent, useSyncExternalStore } from "react";
 
 export const THREAD_CONTEXT_DROP_EVENT = "t3-thread-context-drop";
 
@@ -11,10 +9,8 @@ export function useThreadContextDrop(
   targetKey: string,
   onDrop: (refs: ReadonlyArray<ScopedThreadRef>, isActive: () => boolean) => void,
 ) {
-  // useStableCallback, not useEffectEvent: callers are memoized (ChatComposer),
-  // and React 19.2 never refreshes an effect event's impl on memo fibers, which
-  // would leave this drop writing into the first mounted thread's draft.
-  const handleDrop = useStableCallback(onDrop);
+  const handleDrop = useEffectEvent(onDrop);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes the target element to thread-context drop events and marks old drops inactive
   useEffect(() => {
     const target = targetRef.current;
     if (!target) return;
@@ -31,7 +27,6 @@ export function useThreadContextDrop(
     environmentId,
     targetKey,
     targetRef,
-    handleDrop,
   ]);
 }
 

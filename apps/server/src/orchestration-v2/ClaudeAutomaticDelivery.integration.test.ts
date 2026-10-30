@@ -26,6 +26,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ClaudeAdapterV2 from "./Adapters/ClaudeAdapterV2.ts";
@@ -138,6 +139,7 @@ it.effect.each(deliveries)(
         const sdkMessages = yield* Queue.unbounded<SDKMessage>();
         const offers: SDKUserMessage[] = [];
         const nativeQueue: SDKUserMessage[] = [];
+        // @effect-diagnostics-next-line abortControllerInEffect:off - The fake SDK interrupts its batch independently of the test fiber.
         const batchAbort = new AbortController();
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: modelSelection.instanceId,
@@ -157,8 +159,7 @@ it.effect.each(deliveries)(
                   Effect.sync(() => {
                     offers.push(message);
                     nativeQueue.push(message);
-                    // Claude Code 2.1.289's queue watcher aborts when a now-priority
-                    // command arrives, including while Bash blocks pending reads.
+                    // Claude Code 2.1.289 aborts on now-priority commands even while Bash blocks reads.
                     if (nativeQueue.some((command) => command.priority === "now")) {
                       batchAbort.abort({ kind: "interrupt" });
                     }
@@ -330,6 +331,12 @@ it.effect.each(deliveries)(
                     }),
                   ),
                   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+                  Layer.provide(
+                    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                      namedProjectsRoot: "/projects",
+                      isScratchProject: () => Effect.succeed(false),
+                    }),
+                  ),
                   Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
                   Layer.provide(
                     CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
@@ -376,8 +383,6 @@ it.effect.each(deliveries)(
               queuedRunId: queuedRun.id,
               targetRunId: parent.id,
             });
-            // Promotion cancels the queued run and moves its message into the
-            // running run as a steer that remembers where it came from.
             const promoted = yield* orchestrator.getThreadProjection(threadId);
             assert.equal(promoted.runs.find((run) => run.id === queuedRun.id)?.status, "cancelled");
             assert.equal(

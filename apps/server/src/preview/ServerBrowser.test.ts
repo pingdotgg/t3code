@@ -1,8 +1,13 @@
 import * as NodeEvents from "node:events";
+import * as NodeVM from "node:vm";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Playwright download mocks perform real file operations outside the Effect runtime.
+import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
 import {
+  type BrowserRecordingFrameRate,
   EnvironmentId,
   PreviewTabId,
   ProviderInstanceId,
@@ -10,12 +15,12 @@ import {
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -27,6 +32,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
+import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
@@ -46,7 +52,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       return context as unknown as BrowserContext;
     }
     async scratchPage() {
-      return makeContext().page as unknown as Page;
+      return makeEncoderPage() as unknown as Page;
     }
     async connectDesktopPage(endpoint: string) {
       const context = makeContext();
@@ -69,6 +75,14 @@ function makeFrame() {
   return frame;
 }
 
+const PNG_HEADER = (() => {
+  const header = Buffer.alloc(24);
+  header.write("IHDR", 12);
+  header.writeUInt32BE(1280, 16);
+  header.writeUInt32BE(800, 20);
+  return header.toString("base64");
+})();
+
 function makeSession(frame?: ReturnType<typeof makeFrame>) {
   const events = new NodeEvents.EventEmitter();
   return {
@@ -78,9 +92,13 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
       if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
-      if (method === "Page.captureScreenshot") return { data: "ZnJhbWU=" };
+      if (method === "Page.captureScreenshot") {
+        // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
+        return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
+      }
+      // Snapshots shrink their screenshot in the page; the header stands in for the result.
+      if (method === "Runtime.callFunctionOn") return { result: { value: PNG_HEADER } };
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
-      // Snapshots read password fields from their own isolated world in each frame.
       if (method === "Page.createIsolatedWorld") {
         return {
           executionContextId: (input as { worldName?: string }).worldName === "t3-preview" ? 1 : 7,
@@ -148,6 +166,9 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
     goto: vi.fn(async (next: string) => {
       url = next;
       events.emit("load");
+      const pending = initialNavigation;
+      initialNavigation = null;
+      await pending?.();
     }),
     goBack: vi.fn(async () => {}),
     goForward: vi.fn(async () => {}),
@@ -195,13 +216,57 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
   return context;
 }
 
+// Runs the real encoder script against fake canvas and MediaRecorder globals.
+function makeEncoderPage() {
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: () => ({ drawImage() {}, fillRect() {} }),
+    captureStream: (frameRate?: number) => ({ frameRate, getTracks: () => [] }),
+  };
+  class FakeMediaRecorder {
+    static isTypeSupported = (type: string) => type === "video/webm";
+    onstart: (() => void) | null = null;
+    constructor(stream: { frameRate?: number }, options: { videoBitsPerSecond: number }) {
+      encoderStreams.push({
+        frameRate: stream.frameRate,
+        bitsPerSecond: options.videoBitsPerSecond,
+      });
+    }
+    start() {
+      this.onstart?.();
+    }
+  }
+  const sandbox: Record<string, unknown> = {
+    document: { createElement: () => canvas },
+    Path2D: function Path2D() {},
+    MediaRecorder: FakeMediaRecorder,
+    createImageBitmap: async () => ({ width: 1280, height: 800, close() {} }),
+    atob,
+    Blob,
+    performance,
+  };
+  sandbox.window = sandbox;
+  const context = NodeVM.createContext(sandbox);
+  return {
+    ...makeContext().page,
+    evaluate: vi.fn(async (script: string | ((arg: unknown) => unknown), arg?: unknown) =>
+      typeof script === "string"
+        ? NodeVM.runInContext(script, context)
+        : NodeVM.runInContext(`(${script.toString()})`, context)(arg),
+    ),
+  };
+}
+
 const contexts: ReturnType<typeof makeContext>[] = [];
+const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
+let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
 const desktopDetaches = new NodeEvents.EventEmitter();
 const desktopTabs = new Set<string>();
@@ -213,6 +278,7 @@ const desktopRenders = (tabId: string) => {
   return desktopTabs.has(tabId);
 };
 const releasedDesktopTabs: Array<string> = [];
+const desktopTurns = new NodeEvents.EventEmitter();
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
 const testThread = {
   threadId: ThreadId.make("browser-test-thread"),
@@ -273,7 +339,9 @@ const dependencies = Layer.mergeAll(
         Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
       ),
     pointer: () => Effect.void,
+    turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
   }),
+  PreviewAgentActivity.layer,
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
   Layer.provideMerge(NodeServices.layer),
@@ -291,13 +359,6 @@ const ready = Effect.gen(function* () {
   const tabId = PreviewTabId.make(opened.tabId!);
   return { browser, broker, tabId };
 });
-const stallViewer = (
-  viewer: ServerBrowser.ServerBrowserViewer,
-  item: ServerBrowser.ServerBrowserViewerOutput,
-) => {
-  const output = viewer.output as unknown as Queue.Queue<ServerBrowser.ServerBrowserViewerOutput>;
-  while (Queue.offerUnsafe(output, item));
-};
 const viewerInput = (tabId: string, canOperate: boolean) => ({
   threadId: scope.thread.threadId,
   tabId,
@@ -309,9 +370,11 @@ const viewerInput = (tabId: string, canOperate: boolean) => ({
 
 beforeEach(() => {
   contexts.length = 0;
+  encoderStreams.length = 0;
   contextRequests.length = 0;
   contextGate = null;
   contextFailure = null;
+  initialNavigation = null;
   pageCopy = "";
   keyCopy = "";
   focusedFrame = null;
@@ -320,6 +383,59 @@ beforeEach(() => {
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
 });
+
+it.live("tells the desktop once per thread when its agent turns start and end", () =>
+  Effect.gen(function* () {
+    yield* ServerBrowser.ServerBrowser;
+    const activity = yield* PreviewAgentActivity.PreviewAgentActivity;
+    const threadId = scope.thread.threadId;
+    const turns = yield* Queue.unbounded<readonly [string, boolean]>();
+    const record = (id: string, active: boolean) => Queue.offerUnsafe(turns, [id, active]);
+    desktopTurns.on("turn", record);
+    yield* Effect.addFinalizer(() => Effect.sync(() => desktopTurns.off("turn", record)));
+    const endFirst = yield* activity.begin(threadId);
+    // An overlapping turn on the same thread neither starts nor ends focus on its own.
+    const endSecond = yield* activity.begin(threadId);
+    expect(yield* Queue.take(turns)).toEqual([threadId, true]);
+    yield* endFirst;
+    yield* endFirst;
+    expect(yield* activity.active(threadId)).toBe(true);
+    yield* endSecond;
+    expect(yield* Queue.take(turns)).toEqual([threadId, false]);
+    expect(yield* Queue.size(turns)).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("preview_open reports its navigation timeout instead of the request budget", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      initialNavigation = async () => {
+        throw Object.assign(new Error("page.goto: Timeout 15000ms exceeded."), {
+          name: "TimeoutError",
+        });
+      };
+
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: {
+            url: "http://localhost:1337/",
+            reuseExistingTab: false,
+            show: false,
+          },
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "PreviewAutomationTimeoutError",
+        timeoutMs: 15_000,
+      });
+      expect(error.message).toBe("Preview automation open timed out after 15000ms.");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
 
 it.live.each(["desktop" as const, undefined])(
   "explicit desktop targets ($0 runtime) fail without creating a server tab",
@@ -347,7 +463,6 @@ it.live.each(["desktop" as const, undefined])(
         expect(error.message).toContain("cannot control");
         expect(yield* manager.list({ threadId: scope.thread.threadId })).toEqual(before);
         expect(contexts).toHaveLength(1);
-        // A rejected explicit target must not replace this session's working tab.
         const reused = yield* broker.invoke<PreviewAutomationStatus>({
           scope,
           operation: "open",
@@ -358,173 +473,103 @@ it.live.each(["desktop" as const, undefined])(
     ).pipe(Effect.provide(layer)),
 );
 
-it.live("an unknown explicit target fails without creating a server tab", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker } = yield* ready;
-      const manager = yield* Manager.PreviewManager;
-      const before = yield* manager.list({ threadId: scope.thread.threadId });
-      const error = yield* broker
-        .invoke<PreviewAutomationStatus>({
-          scope,
-          tabId: PreviewTabId.make("missing-tab"),
-          operation: "open",
-          input: { url: "https://example.com/replacement", open: true },
-        })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "PreviewAutomationTabNotFoundError",
-        tabId: "missing-tab",
-      });
-      expect(yield* manager.list({ threadId: scope.thread.threadId })).toEqual(before);
-      expect(contexts).toHaveLength(1);
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("an explicit server target reuses its ID and navigates without creating a tab", () =>
+it.effect("a tab the desktop does not draw is marked headless, so the desktop streams it", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker, tabId } = yield* ready;
       const manager = yield* Manager.PreviewManager;
-      const before = yield* manager.list({ threadId: scope.thread.threadId });
-      const opened = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "open",
-        input: { url: "https://example.com/reused", open: false },
-      });
-      expect(opened).toMatchObject({ tabId, url: "https://example.com/reused" });
-      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
-      expect(sessions.map((session) => session.tabId)).toEqual(
-        before.sessions.map((session) => session.tabId),
-      );
-      expect(contexts).toHaveLength(1);
-      expect(contexts[0]!.page.goto).toHaveBeenCalledWith(
-        "https://example.com/reused",
-        expect.anything(),
-      );
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("an unresolved implicit target still falls back to a new server tab", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const manager = yield* Manager.PreviewManager;
-      yield* manager.close({ threadId: scope.thread.threadId, tabId });
-      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+      desktopRendersNext = true;
+      const desktopTab = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         operation: "open",
-        input: { url: "https://example.com/fallback", open: false },
+        input: { reuseExistingTab: false, show: false },
       });
-      expect(opened.tabId).not.toBe(tabId);
-      expect(opened).toMatchObject({ available: true, url: "https://example.com/fallback" });
       const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
-      expect(sessions).toEqual([
-        expect.objectContaining({ tabId: opened.tabId, runtime: "server" }),
-      ]);
-    }),
-  ).pipe(Effect.provide(layer)),
-);
+      const headlessOf = (id: string | null) =>
+        sessions.find((session) => session.tabId === id)?.headless;
 
-it.live("readiness none responds immediately but takeover input waits for navigation commit", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, broker, tabId } = yield* ready;
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
-      const committed = Promise.withResolvers<void>();
-      const events: string[] = [];
-      contexts[0]!.page.goto.mockImplementationOnce(async () => {
-        await committed.promise;
-        events.push("navigation committed");
-      });
-      yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
-      const response = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "navigate",
-        input: { url: "http://localhost:5173/next", readiness: "none" },
-      });
-      expect(response.available).toBe(true);
-      expect(events).toEqual([]);
-      yield* Queue.clear(viewer.output);
-      const takeover = yield* viewer.input({ type: "takeControl" }).pipe(Effect.forkScoped);
-      let control = yield* Queue.take(viewer.output);
-      while (control._tag !== "control" || control.controller !== "you") {
-        control = yield* Queue.take(viewer.output);
-      }
-      const cdp = contexts[0]!.sessions.at(-1)!;
-      const send = cdp.send.getMockImplementation()!;
-      cdp.send.mockImplementation(async (operation, input) => {
-        if (operation === "Input.insertText") events.push("human typed");
-        return send(operation, input);
-      });
-      const typing = yield* viewer.input({ type: "text", text: "hello" }).pipe(Effect.forkScoped);
-      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
-      expect(events).toEqual([]);
-      committed.resolve();
-      yield* Fiber.join(takeover);
-      yield* Fiber.join(typing);
-      expect(events).toEqual(["navigation committed", "human typed"]);
+      expect(headlessOf(tabId)).toBe(true);
+      expect(headlessOf(desktopTab.tabId)).toBeUndefined();
     }),
   ).pipe(Effect.provide(layer)),
 );
 
 it.live.each([
-  { method: "goto" as const, message: { type: "navigate", url: "http://localhost:5173/next" } },
+  { method: "goto" as const, message: { type: "navigate", url: "http://10.255.255.1/" } },
   { method: "goBack" as const, message: { type: "history", delta: -1 } },
   { method: "goForward" as const, message: { type: "history", delta: 1 } },
   { method: "reload" as const, message: { type: "reload" } },
-])("release waits for viewer $method to commit before agent actions", ({ method, message }) =>
+])("a pending viewer $method allows a corrected URL and text input", ({ method, message }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { browser, broker, tabId } = yield* ready;
+      const { browser, tabId } = yield* ready;
       const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
       yield* viewer.input({ type: "takeControl" });
-      yield* Queue.clear(viewer.output);
       const started = Promise.withResolvers<void>();
       const committed = Promise.withResolvers<void>();
-      const events: string[] = [];
-      contexts[0]!.page[method].mockImplementationOnce(async () => {
+      const page = contexts[0]!.page;
+      page[method].mockImplementationOnce(() => {
         started.resolve();
-        await committed.promise;
-        events.push("navigation committed");
+        return committed.promise;
       });
-      const navigate = yield* viewer.input(message).pipe(Effect.forkScoped);
-      yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
+      const navigation = yield* viewer.input(message).pipe(Effect.forkScoped);
       yield* Effect.promise(() => started.promise);
-      const releasing = yield* viewer.input({ type: "releaseControl" }).pipe(Effect.forkScoped);
-      let control = yield* Queue.take(viewer.output);
-      while (control._tag !== "control" || control.controller !== "agent") {
-        control = yield* Queue.take(viewer.output);
-      }
-      const cdp = contexts[0]!.sessions[0]!;
+      const cdp = contexts[0]!.sessions.at(-1)!;
       const send = cdp.send.getMockImplementation()!;
+      const typed = Promise.withResolvers<void>();
       cdp.send.mockImplementation(async (operation, input) => {
-        if (operation === "Runtime.evaluate") events.push("agent acted");
+        if (operation === "Input.insertText") typed.resolve();
         return send(operation, input);
       });
-      const resumed = yield* broker
-        .invoke({
-          scope,
-          tabId,
-          operation: "evaluate",
-          input: { expression: "resumed()" },
-        })
-        .pipe(Effect.forkScoped);
-      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
-      expect(events).toEqual([]);
+      const correction = yield* Effect.gen(function* () {
+        yield* viewer.input({ type: "navigate", url: "http://localhost:5173/fixed" });
+        yield* viewer.input({ type: "text", text: "hello" });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
+      // The text reaches the page while the first navigation is still uncommitted.
+      yield* Effect.promise(() => typed.promise);
+      expect(page.goto).toHaveBeenLastCalledWith(
+        "http://localhost:5173/fixed",
+        expect.objectContaining({ waitUntil: "commit" }),
+      );
+      expect(contexts[0]!.sessions.at(-1)!.send).toHaveBeenCalledWith("Input.insertText", {
+        text: "hello",
+      });
       committed.resolve();
-      yield* Fiber.join(navigate);
-      yield* Fiber.join(releasing);
-      yield* Fiber.join(resumed);
-      expect(events).toEqual(["navigation committed", "agent acted"]);
-      const calls = contexts[0]!.page[method].mock.calls;
-      expect(calls[0]?.at(-1)).toMatchObject({ waitUntil: "commit", timeout: 15_000 });
+      yield* Fiber.join(navigation);
+      yield* Fiber.join(correction);
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+// The fake encoder decodes every frame at 1280x800, so 30 fps hits the bitrate floor.
+it.live.each([
+  { reports: [], frameRate: 30, bitsPerSecond: 2.5e6 },
+  { reports: [30], frameRate: 30, bitsPerSecond: 2.5e6 },
+  { reports: [60], frameRate: 60, bitsPerSecond: 1280 * 800 * 60 * 0.05 },
+  { reports: [60, undefined], frameRate: 60, bitsPerSecond: 1280 * 800 * 60 * 0.05 },
+  { reports: [60, 30], frameRate: 30, bitsPerSecond: 2.5e6 },
+] satisfies ReadonlyArray<{
+  reports: ReadonlyArray<BrowserRecordingFrameRate | undefined>;
+  frameRate: number;
+  bitsPerSecond: number;
+}>)(
+  "agent recordings encode at the last reported frame rate ($reports)",
+  ({ reports, frameRate, bitsPerSecond }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, broker, tabId } = yield* ready;
+        for (const recordingFrameRate of reports) {
+          yield* browser.reportProfiles({
+            profiles: [],
+            defaultProfileId: "default",
+            ...(recordingFrameRate === undefined ? {} : { recordingFrameRate }),
+          });
+        }
+        yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+        expect(encoderStreams).toEqual([{ frameRate, bitsPerSecond }]);
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live("enforces provider ownership and explicit targets when a session has multiple tabs", () =>
@@ -638,37 +683,6 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
       });
       expect(page.setViewportSize).toHaveBeenCalledWith({ width: 390, height: 844 });
       yield* operator.input({ type: "releaseControl" });
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("applies any client's viewport, appearance, and zoom to a headless tab", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { tabId } = yield* ready;
-      const manager = yield* Manager.PreviewManager;
-      const page = contexts[0]!.page;
-      const session = contexts[0]!.sessions[0]!;
-      const target = { threadId: scope.thread.threadId, tabId };
-      yield* manager.resize({ ...target, viewport: { _tag: "freeform", width: 390, height: 844 } });
-      yield* manager.adjust({ ...target, colorScheme: "dark", zoomFactor: 1.25 });
-      const reloaded = Promise.withResolvers<void>();
-      const send = session.send.getMockImplementation()!;
-      session.send.mockImplementation(async (method, input) => {
-        if (method === "Page.reload") reloaded.resolve();
-        return send(method, input);
-      });
-      yield* manager.adjust({ ...target, hardReload: true });
-      yield* Effect.promise(() => reloaded.promise);
-      expect(session.send).toHaveBeenCalledWith("Page.reload", { ignoreCache: true });
-      expect(page.setViewportSize).toHaveBeenCalledWith({ width: 390, height: 844 });
-      expect(page.emulateMedia).toHaveBeenCalledWith({ colorScheme: "dark" });
-      expect(session.send).toHaveBeenCalledWith("Emulation.setDeviceMetricsOverride", {
-        width: 312,
-        height: 675,
-        deviceScaleFactor: 2.5,
-        mobile: false,
-      });
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -813,101 +827,6 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("the owner can close a tab while an agent action waits on its dialog", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const page = contexts[0]!.page;
-      const started = Promise.withResolvers<void>();
-      const finish = Promise.withResolvers<Record<string, unknown>>();
-      contexts[0]!.sessions[0]!.send.mockImplementationOnce(async () => {
-        started.resolve();
-        return finish.promise;
-      });
-      page.on("close", () => finish.resolve({ result: { value: "closed" } }));
-      const running = yield* broker
-        .invoke({
-          scope,
-          tabId,
-          operation: "evaluate",
-          input: { expression: 'confirm("Delete?")' },
-        })
-        .pipe(Effect.forkScoped);
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => finish.resolve({ result: { value: "cleanup" } })),
-      );
-      yield* Effect.promise(() => started.promise);
-      page.emit("dialog", {
-        type: () => "confirm",
-        message: () => "Delete?",
-        defaultValue: () => "",
-        accept: vi.fn(),
-        dismiss: vi.fn(),
-      });
-      const foreign = yield* broker
-        .invoke<void>({
-          scope: asSession("agent-b"),
-          tabId,
-          operation: "close",
-          input: {},
-        })
-        .pipe(Effect.flip);
-      expect(foreign).toMatchObject({
-        _tag: "PreviewAutomationControlInterruptedError",
-        reason: "agentMismatch",
-      });
-      expect(page.close).not.toHaveBeenCalled();
-      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
-      expect(yield* Fiber.join(running)).toBe("closed");
-      expect(page.close).toHaveBeenCalled();
-      const manager = yield* Manager.PreviewManager;
-      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(0);
-      const afterClose = yield* broker
-        .invoke<void>({ scope, tabId, operation: "evaluate", input: { expression: "late()" } })
-        .pipe(Effect.flip);
-      expect(afterClose._tag).toBe("PreviewAutomationTabNotFoundError");
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("a popup becomes the agent's own tab and keeps its opener page", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const opener = contexts[0]!.page;
-      const popup = makeContext();
-      opener.emit("popup", popup.page);
-      const manager = yield* Manager.PreviewManager;
-      let sessions = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
-      while (sessions.length < 2) {
-        yield* Effect.sleep("5 millis");
-        sessions = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
-      }
-      const popupTab = sessions.find((session) => session.tabId !== tabId)!;
-      const opened = sessions.find((session) => session.tabId === tabId)!;
-      expect(popupTab).toMatchObject({ automationOwner: opened.automationOwner, reveal: false });
-      const status = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "status",
-        input: {},
-      });
-      expect(status.tabs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ tabId }),
-          expect.objectContaining({ tabId: popupTab.tabId, openerTabId: tabId }),
-        ]),
-      );
-      expect(opener.goto).not.toHaveBeenCalled();
-      expect(opener.close).not.toHaveBeenCalled();
-      yield* Effect.promise(() => popup.page.close());
-      while ((yield* manager.list({ threadId: scope.thread.threadId })).sessions.length > 1) {
-        yield* Effect.sleep("5 millis");
-      }
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
 it.live("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -920,7 +839,6 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
       const page = contexts[0]!.page;
       const pdf = "https://example.com/paper.pdf";
       const request = { url: () => pdf, method: () => "GET", isNavigationRequest: () => true };
-      // What Chromium reports when a navigation turns into a download.
       page.emit("requestfailed", {
         ...request,
         frame: () => page,
@@ -930,6 +848,15 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
       const written = Promise.withResolvers<void>();
       page.emit("download", {
         failure: async () => null,
+        delete: async () => {
+          // A new navigation during cleanup must not erase the settled download status.
+          page.emit("request", {
+            url: () => "https://example.com/next",
+            method: () => "GET",
+            isNavigationRequest: () => true,
+            frame: () => page,
+          });
+        },
         saveAs: (path: string) => {
           Queue.offerUnsafe(saved, path);
           return written.promise;
@@ -940,102 +867,26 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
       const fs = yield* FileSystem.FileSystem;
       yield* fs.writeFileString(yield* Queue.take(saved), "%PDF");
       written.resolve();
-      let status = yield* PubSub.take(events);
-      while (status.type !== "failed") status = yield* PubSub.take(events);
-      expect(status).toMatchObject({ url: pdf, download: { fileName: "paper.pdf" } });
+      const received = [];
+      let status;
+      do {
+        status = yield* PubSub.take(events);
+        received.push(status);
+      } while (
+        status.type !== "navigated" ||
+        status.snapshot.navStatus._tag !== "Loading" ||
+        status.snapshot.navStatus.url !== "https://example.com/next"
+      );
+      expect(received).toContainEqual(
+        expect.objectContaining({
+          type: "failed",
+          url: pdf,
+          download: { id: expect.any(String), fileName: "paper.pdf" },
+        }),
+      );
       expect((yield* Queue.clear(viewer.output)).some((item) => item._tag === "download")).toBe(
         false,
       );
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("a file a blank tab opened is offered to download if the tab moves on while it saves", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const browser = yield* ServerBrowser.ServerBrowser;
-      const manager = yield* Manager.PreviewManager;
-      yield* Effect.yieldNow;
-      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
-      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
-      yield* viewer.input({ type: "takeControl" });
-      const page = contexts[0]!.page;
-      const pdf = "https://example.com/paper.pdf";
-      const navigation = {
-        url: () => pdf,
-        method: () => "GET",
-        isNavigationRequest: () => true,
-        frame: () => page,
-        failure: () => ({ errorText: "net::ERR_ABORTED" }),
-      };
-      page.emit("request", navigation);
-      page.emit("requestfailed", navigation);
-      const saved = yield* Queue.unbounded<string>();
-      const written = Promise.withResolvers<void>();
-      page.emit("download", {
-        failure: async () => null,
-        saveAs: (path: string) => {
-          Queue.offerUnsafe(saved, path);
-          return written.promise;
-        },
-        suggestedFilename: () => "paper.pdf",
-        url: () => pdf,
-      });
-      const fs = yield* FileSystem.FileSystem;
-      yield* fs.writeFileString(yield* Queue.take(saved), "%PDF");
-      page.emit("request", {
-        url: () => "https://example.com/next",
-        method: () => "GET",
-        isNavigationRequest: () => true,
-        frame: () => page,
-      });
-      written.resolve();
-      let offered = yield* Queue.take(viewer.output);
-      while (offered._tag !== "download") offered = yield* Queue.take(viewer.output);
-      expect(offered).toMatchObject({ _tag: "download", fileName: "paper.pdf" });
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("a download from a superseded navigation leaves the newer navigation loading", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const page = contexts[0]!.page;
-      const pdf = "https://example.com/paper.pdf";
-      const navigation = {
-        url: () => pdf,
-        method: () => "GET",
-        isNavigationRequest: () => true,
-        frame: () => page,
-        failure: () => ({ errorText: "net::ERR_ABORTED" }),
-      };
-      page.emit("request", navigation);
-      page.emit("requestfailed", navigation);
-      const saved = yield* Queue.unbounded<string>();
-      const written = Promise.withResolvers<void>();
-      page.emit("download", {
-        failure: async () => null,
-        saveAs: (path: string) => {
-          Queue.offerUnsafe(saved, path);
-          return written.promise;
-        },
-        suggestedFilename: () => "paper.pdf",
-        url: () => pdf,
-      });
-      const fs = yield* FileSystem.FileSystem;
-      yield* fs.writeFileString(yield* Queue.take(saved), "%PDF");
-      page.emit("request", {
-        url: () => "https://example.com/next",
-        method: () => "GET",
-        isNavigationRequest: () => true,
-        frame: () => page,
-      });
-      written.resolve();
-      const status = () =>
-        broker.invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} });
-      while ((yield* status()).downloads?.length !== 1) yield* Effect.sleep("5 millis");
-      expect((yield* status()).loading).toBe(true);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1066,86 +917,6 @@ it.live(
         expect(status.loading).toBe(true);
       }),
     ).pipe(Effect.provide(layer)),
-);
-
-it.live("an aborted navigation that no download explains stops loading", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const page = contexts[0]!.page;
-      const navigation = {
-        url: () => "https://example.com/cancelled",
-        method: () => "GET",
-        isNavigationRequest: () => true,
-        frame: () => page,
-        failure: () => ({ errorText: "net::ERR_ABORTED" }),
-      };
-      const status = () =>
-        broker.invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} });
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      try {
-        page.emit("request", navigation);
-        page.emit("requestfailed", navigation);
-        expect((yield* status()).loading).toBe(true);
-        vi.advanceTimersByTime(5_000);
-      } finally {
-        vi.useRealTimers();
-      }
-      expect((yield* status()).loading).toBe(false);
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("a popup from a person's click is shown to that person, with its opener kept", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const browser = yield* ServerBrowser.ServerBrowser;
-      const manager = yield* Manager.PreviewManager;
-      yield* Effect.yieldNow;
-      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
-      const watcher = yield* browser.attachViewer(viewerInput(opened.tabId, false));
-      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
-      yield* viewer.input({ type: "takeControl" });
-      const opener = contexts[0]!.page;
-      const popup = makeContext();
-      opener.emit("popup", popup.page);
-      let shown = yield* Queue.take(viewer.output);
-      while (shown._tag !== "popup") shown = yield* Queue.take(viewer.output);
-      const sessions = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
-      expect(sessions.map((session) => session.tabId)).toEqual(
-        expect.arrayContaining([opened.tabId, shown.tabId]),
-      );
-      expect((yield* Queue.clear(watcher.output)).some((item) => item._tag === "popup")).toBe(
-        false,
-      );
-      expect(opener.close).not.toHaveBeenCalled();
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("closing a tab while a viewer is still opening it does not leave its page behind", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const browser = yield* ServerBrowser.ServerBrowser;
-      const manager = yield* Manager.PreviewManager;
-      yield* Effect.yieldNow;
-      contextFailure = new Error("first launch failed");
-      const snapshot = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
-      yield* Effect.sleep("10 millis");
-      contextFailure = null;
-      contextGate = Promise.withResolvers<void>();
-      const attaching = yield* browser
-        .attachViewer(viewerInput(snapshot.tabId, false))
-        .pipe(Effect.flip, Effect.forkScoped);
-      yield* Effect.sleep("10 millis");
-      yield* manager.close({ threadId: scope.thread.threadId, tabId: snapshot.tabId });
-      yield* Effect.sleep("10 millis");
-      contextGate.resolve();
-      expect((yield* Fiber.join(attaching))._tag).toBe("ServerBrowserTabNotFoundError");
-      expect(contexts).toHaveLength(1);
-      expect(contexts[0]!.page.close).toHaveBeenCalled();
-    }),
-  ).pipe(Effect.provide(layer)),
 );
 
 it.live("only the controlling viewer's copy and cut keys reach its clipboard", () =>
@@ -1185,90 +956,128 @@ it.live("only the controlling viewer's copy and cut keys reach its clipboard", (
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("copy keys reach the viewer from a frame in its own process", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, tabId } = yield* ready;
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
-      yield* viewer.input({ type: "takeControl" });
-      const copy = () =>
-        viewer.input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 }).pipe(
-          Effect.andThen(Queue.clear(viewer.output)),
-          Effect.map((items) => items.filter((item) => item._tag === "clipboard")),
-        );
-      const frame = makeFrame();
-      contexts[0]!.page.emit("framenavigated", frame);
-      yield* Effect.promise(() => frame.recording.promise);
-      const frameSession = contexts[0]!.sessions.at(-1)!;
-      focusedFrame = frame;
-      keyCopy = "framed";
-      expect(yield* copy()).toEqual([{ _tag: "clipboard", text: "framed" }]);
-      frame.copy = "left over";
-      focusedFrame = null;
-      keyCopy = "";
-      expect(yield* copy()).toEqual([]);
-      expect(frame.copy).toBe("");
-      frame.detached = true;
-      frame.copy = "gone";
-      frameSession.emit("close");
-      expect(yield* copy()).toEqual([]);
-      expect(frame.copy).toBe("gone");
-    }),
-  ).pipe(Effect.provide(layer)),
+it.live.each([false, true])(
+  "a page download is saved, offered to the controller, and listed for the agent (delete fails: %s)",
+  (deleteFails) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, broker, tabId } = yield* ready;
+        const page = contexts[0]!.page;
+        const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+        yield* viewer.input({ type: "takeControl" });
+        yield* Queue.clear(viewer.output);
+        const fs = yield* FileSystem.FileSystem;
+        const original = `${yield* fs.makeTempDirectoryScoped()}/chromium-download`;
+        yield* fs.writeFileString(original, "a,b");
+        const released = Promise.withResolvers<void>();
+        page.emit("download", {
+          failure: async () => null,
+          delete: async () => {
+            try {
+              if (deleteFails) throw new Error("context closed");
+              await NodeFSP.rm(original);
+            } finally {
+              released.resolve();
+            }
+          },
+          saveAs: (path: string) => NodeFSP.copyFile(original, path),
+          suggestedFilename: () => "report.csv",
+          url: () => 'data:text/csv;charset="a,b",a b\'c',
+        });
+        let offered = yield* Queue.take(viewer.output);
+        while (offered._tag !== "download") offered = yield* Queue.take(viewer.output);
+        expect(offered).toMatchObject({ _tag: "download", fileName: "report.csv", sizeBytes: 3 });
+        yield* Effect.promise(() => released.promise);
+        expect(yield* fs.exists(original)).toBe(deleteFails);
+        const file = yield* browser.openDownload({
+          threadId: scope.thread.threadId,
+          tabId,
+          downloadId: offered.id,
+        });
+        expect(Option.isSome(file) && file.value.fileName).toBe("report.csv");
+        expect(yield* fs.readFileString(Option.getOrThrow(file).path)).toBe("a,b");
+        if ((yield* HostProcess.Platform) !== "win32") {
+          expect((yield* fs.stat(Option.getOrThrow(file).path)).mode & 0o777).toBe(0o600);
+        }
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(status.downloads).toEqual([
+          expect.objectContaining({
+            fileName: "report.csv",
+            sizeBytes: 3,
+            url: "data:text/csv,…",
+          }),
+        ]);
+        expect(
+          Option.isNone(
+            yield* browser.openDownload({
+              threadId: scope.thread.threadId,
+              tabId,
+              downloadId: "guess",
+            }),
+          ),
+        ).toBe(true);
+        if ((yield* HostProcess.Platform) !== "win32") {
+          const folder = (yield* Path.Path).dirname(Option.getOrThrow(file).path);
+          yield* fs.chmod(folder, 0o755);
+          page.emit("download", {
+            failure: async () => null,
+            delete: async () => {},
+            saveAs: (path: string) => NodeFSP.writeFile(path, "c"),
+            suggestedFilename: () => "again.csv",
+            url: () => "https://example.test/again.csv",
+          });
+          let again = yield* Queue.take(viewer.output);
+          while (again._tag !== "download") again = yield* Queue.take(viewer.output);
+          expect((yield* fs.stat(folder)).mode & 0o777).toBe(0o700);
+        }
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
-it.live("a page download is saved, offered to the controller, and listed for the agent", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, broker, tabId } = yield* ready;
-      const page = contexts[0]!.page;
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
-      yield* viewer.input({ type: "takeControl" });
-      yield* Queue.clear(viewer.output);
-      const saved = yield* Queue.unbounded<string>();
-      const written = Promise.withResolvers<void>();
-      page.emit("download", {
-        failure: async () => null,
-        saveAs: (path: string) => {
-          Queue.offerUnsafe(saved, path);
-          return written.promise;
-        },
-        suggestedFilename: () => "report.csv",
-        url: () => "blob:http://localhost:5173/1",
-      });
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Queue.take(saved);
-      yield* fs.writeFileString(path, "a,b");
-      written.resolve();
-      let offered = yield* Queue.take(viewer.output);
-      while (offered._tag !== "download") offered = yield* Queue.take(viewer.output);
-      expect(offered).toMatchObject({ _tag: "download", fileName: "report.csv", sizeBytes: 3 });
-      const file = yield* browser.openDownload({
-        threadId: scope.thread.threadId,
-        tabId,
-        downloadId: offered.id,
-      });
-      expect(Option.isSome(file) && file.value.fileName).toBe("report.csv");
-      const status = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "status",
-        input: {},
-      });
-      expect(status.downloads).toEqual([
-        expect.objectContaining({ fileName: "report.csv", sizeBytes: 3 }),
-      ]);
-      expect(
-        Option.isNone(
-          yield* browser.openDownload({
-            threadId: scope.thread.threadId,
-            tabId,
-            downloadId: "guess",
-          }),
-        ),
-      ).toBe(true);
-    }),
-  ).pipe(Effect.provide(layer)),
+it.live.each(["save failed", "oversized"])(
+  "a rejected download releases the original and keeps no saved copy (%s)",
+  (outcome) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const fs = yield* FileSystem.FileSystem;
+        const original = `${yield* fs.makeTempDirectoryScoped()}/chromium-download`;
+        yield* fs.writeFileString(original, "a,b");
+        let savedPath: string | undefined;
+        const released = Promise.withResolvers<void>();
+        contexts[0]!.page.emit("download", {
+          failure: async () => null,
+          delete: async () => {
+            await NodeFSP.rm(original);
+            released.resolve();
+          },
+          saveAs: async (path: string) => {
+            savedPath = path;
+            await NodeFSP.copyFile(original, path);
+            if (outcome === "save failed") throw new Error("save interrupted");
+            // A sparse file exercises the size limit without writing a GiB of data.
+            await NodeFSP.truncate(path, 1024 ** 3 + 1);
+          },
+          suggestedFilename: () => "report.csv",
+          url: () => "blob:http://localhost:5173/1",
+        });
+        yield* Effect.promise(() => released.promise);
+        expect(yield* fs.exists(original)).toBe(false);
+        if (savedPath !== undefined) expect(yield* fs.exists(savedPath)).toBe(false);
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(status.downloads).toEqual([]);
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live("a page's file picker goes to the controller and takes its uploaded files", () =>
@@ -1331,283 +1140,6 @@ it.live("only the current controller can answer a file picker", () =>
       });
       expect(answered).toBe(false);
       expect(setFiles).not.toHaveBeenCalled();
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("a file picker replaces a stalled viewer backlog instead of being dropped", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, tabId } = yield* ready;
-      const page = contexts[0]!.page;
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
-      yield* viewer.input({ type: "takeControl" });
-      const accept = Promise.withResolvers<string>();
-      page.emit("filechooser", {
-        isMultiple: () => false,
-        element: () => ({ getAttribute: () => accept.promise }),
-        setFiles: async () => {},
-      });
-      yield* Queue.clear(viewer.output);
-      stallViewer(viewer, { _tag: "viewport", width: 1, height: 1 });
-      accept.resolve(".csv");
-      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
-      expect(yield* Queue.clear(viewer.output)).toEqual([
-        expect.objectContaining({ _tag: "fileChooser", accept: ".csv" }),
-      ]);
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("control updates replace a stalled viewer backlog in the order they happen", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, tabId } = yield* ready;
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
-      yield* Queue.clear(viewer.output);
-      const acked = Promise.withResolvers<void>();
-      yield* Effect.addFinalizer(() => Effect.sync(() => acked.resolve()));
-      stallViewer(viewer, {
-        _tag: "frame",
-        data: Buffer.alloc(0),
-        ack: Effect.promise(() => acked.promise),
-      });
-      yield* viewer.input({ type: "takeControl" });
-      yield* viewer.input({ type: "releaseControl" });
-      const controls = (yield* Queue.clear(viewer.output)).flatMap((item) =>
-        item._tag === "control" ? [item.controller] : [],
-      );
-      expect(controls[0]).toBe("you");
-      expect(controls.at(-1)).not.toBe("you");
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("an agent's tabs stop at the limit until an unwatched idle tab closes", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const open = broker.invoke<PreviewAutomationStatus>({
-        scope,
-        operation: "open",
-        input: { reuseExistingTab: false, show: false },
-      });
-      for (let count = 1; count < 8; count += 1) yield* open;
-      expect(yield* Effect.flip(open)).toMatchObject({
-        _tag: "PreviewAutomationControlInterruptedError",
-        reason: "tabLimit",
-      });
-      yield* broker.invoke({
-        scope: asSession("agent-b"),
-        operation: "open",
-        input: { reuseExistingTab: false, show: false },
-      });
-      const later = (yield* Clock.currentTimeMillis) + 31 * 60 * 1000;
-      const clock = vi.spyOn(Date, "now").mockReturnValue(later);
-      yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
-      const browser = yield* ServerBrowser.ServerBrowser;
-      yield* browser.attachViewer(viewerInput(tabId, false));
-      const reopened = yield* open;
-      const manager = yield* Manager.PreviewManager;
-      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
-      expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
-        [tabId, reopened.tabId].toSorted(),
-      );
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("an agent answers the page's file picker or sets files on a file input", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const page = contexts[0]!.page;
-      const upload = (input: Record<string, unknown>) =>
-        broker.invoke<void>({ scope, tabId, operation: "upload", input });
-      expect(yield* Effect.flip(upload({ paths: ["/tmp/a.csv"] }))).toMatchObject({
-        _tag: "PreviewAutomationExecutionError",
-      });
-      const setFiles = vi.fn(async (_files: unknown) => {});
-      page.emit("filechooser", {
-        isMultiple: () => false,
-        element: () => ({ getAttribute: async () => ".csv" }),
-        setFiles,
-      });
-      const status = broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "status",
-        input: {},
-      });
-      let opened = yield* status;
-      while (!opened.fileChooser) {
-        yield* Effect.sleep("5 millis");
-        opened = yield* status;
-      }
-      expect(opened.fileChooser).toEqual({ multiple: false, accept: ".csv" });
-      yield* Effect.flip(upload({ paths: ["/tmp/a.csv", "/tmp/b.csv"] }));
-      yield* upload({ paths: ["/tmp/a.csv"] });
-      expect(setFiles).toHaveBeenCalledExactlyOnceWith(["/tmp/a.csv"], expect.anything());
-      expect((yield* status).fileChooser).toBeNull();
-
-      const setInputFiles = vi.fn(async () => {});
-      page.locator.mockReturnValue({ setInputFiles } as never);
-      yield* upload({ paths: ["/tmp/b.csv"], locator: "input[type=file]" });
-      expect(page.locator).toHaveBeenLastCalledWith("input[type=file]");
-      expect(setInputFiles).toHaveBeenCalledWith(["/tmp/b.csv"], expect.anything());
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("viewers see the agent's pointer move to its target and click there", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, broker, tabId } = yield* ready;
-      const page = contexts[0]!.page;
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, false));
-      const click = vi.fn(async () => {});
-      page.locator.mockReturnValue({
-        scrollIntoViewIfNeeded: async () => {},
-        boundingBox: async () => ({ x: 100, y: 40, width: 80, height: 20 }),
-        click,
-      } as never);
-      yield* broker.invoke({ scope, tabId, operation: "click", input: { locator: "#go" } });
-      const pointers = (yield* Queue.clear(viewer.output)).filter(
-        (item) => item._tag === "pointer",
-      );
-      expect(pointers).toEqual([
-        expect.objectContaining({ phase: "move", x: 140, y: 50 }),
-        expect.objectContaining({ phase: "click", x: 140, y: 50 }),
-      ]);
-      expect(click).toHaveBeenCalledOnce();
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("drives the desktop's own page for a tab the desktop renders", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const browser = yield* ServerBrowser.ServerBrowser;
-      const broker = yield* Broker.PreviewAutomationBroker;
-      const manager = yield* Manager.PreviewManager;
-      yield* Effect.yieldNow;
-      desktopRendersNext = true;
-      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
-      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
-      expect(desktopConnections.map((connection) => connection.endpoint)).toEqual([
-        `ws://desktop/${opened.tabId}`,
-      ]);
-      expect(contexts).toEqual([]);
-      const page = desktopConnections[0]!.context.page;
-      yield* viewer.input({ type: "takeControl" });
-      yield* viewer.input({ type: "resize", width: 390, height: 844 });
-      expect(page.setViewportSize).not.toHaveBeenCalled();
-      yield* viewer.input({ type: "releaseControl" });
-      const evaluated = yield* broker.invoke({
-        scope: asSession("agent-desktop"),
-        operation: "status",
-        input: {},
-        tabId: PreviewTabId.make(opened.tabId),
-      });
-      expect(evaluated).toMatchObject({ tabId: opened.tabId });
-      yield* manager.close({ threadId: scope.thread.threadId, tabId: opened.tabId });
-      while (releasedDesktopTabs.length === 0) yield* Effect.yieldNow;
-      expect(releasedDesktopTabs).toEqual([opened.tabId]);
-      expect(page.close).not.toHaveBeenCalled();
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("desktop file pickers stay native outside agent actions and remote control", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const browser = yield* ServerBrowser.ServerBrowser;
-      const broker = yield* Broker.PreviewAutomationBroker;
-      const manager = yield* Manager.PreviewManager;
-      yield* Effect.yieldNow;
-      desktopRendersNext = true;
-      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
-      const tabId = PreviewTabId.make(opened.tabId);
-      const observer = yield* browser.attachViewer(viewerInput(tabId, false));
-      const page = desktopConnections[0]!.context.page;
-      page.openFileChooser();
-      expect(page.nativeFileChooser).toHaveBeenCalledTimes(1);
-
-      const status = () =>
-        broker.invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} });
-      expect((yield* status()).fileChooser).toBeNull();
-      const remote = yield* browser.attachViewer(viewerInput(tabId, true));
-      page.openFileChooser();
-      let offered = yield* Queue.take(remote.output);
-      while (offered._tag !== "fileChooser") offered = yield* Queue.take(remote.output);
-      const file = { name: "a.csv", mimeType: "text/csv", buffer: Buffer.from("a,b") };
-      expect(
-        yield* browser.answerFileChooser({
-          threadId: scope.thread.threadId,
-          tabId,
-          chooserId: offered.id,
-          files: [file],
-        }),
-      ).toBe(true);
-      expect(page.setChooserFiles).toHaveBeenLastCalledWith([file]);
-      expect(page.nativeFileChooser).toHaveBeenCalledTimes(1);
-
-      yield* remote.input({ type: "releaseControl" });
-      page.openFileChooser();
-      expect(page.nativeFileChooser).toHaveBeenCalledTimes(2);
-
-      page.locator.mockReturnValue({
-        scrollIntoViewIfNeeded: async () => {},
-        boundingBox: async () => null,
-        click: async () => page.openFileChooser(),
-      } as never);
-      yield* broker.invoke({ scope, tabId, operation: "click", input: { locator: "input" } });
-      expect((yield* status()).fileChooser).toEqual({ multiple: false, accept: ".csv" });
-      yield* broker.invoke({ scope, tabId, operation: "upload", input: { paths: ["/tmp/a.csv"] } });
-      expect(page.setChooserFiles).toHaveBeenLastCalledWith(["/tmp/a.csv"], expect.anything());
-      expect((yield* status()).fileChooser).toBeNull();
-      page.openFileChooser();
-      expect(page.nativeFileChooser).toHaveBeenCalledTimes(3);
-      page.locator.mockReturnValue({
-        scrollIntoViewIfNeeded: async () => {
-          throw new Error("input disappeared");
-        },
-      } as never);
-      expect(
-        yield* Effect.flip(
-          broker.invoke<void>({ scope, tabId, operation: "click", input: { locator: "input" } }),
-        ),
-      ).toMatchObject({ _tag: "PreviewAutomationExecutionError" });
-      page.openFileChooser();
-      expect(page.nativeFileChooser).toHaveBeenCalledTimes(4);
-      expect(
-        (yield* Queue.clear(observer.output)).some((item) => item._tag === "fileChooser"),
-      ).toBe(false);
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("a desktop page the desktop takes back reconnects instead of closing", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const browser = yield* ServerBrowser.ServerBrowser;
-      const manager = yield* Manager.PreviewManager;
-      yield* Effect.yieldNow;
-      desktopRendersNext = true;
-      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
-      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, false));
-      // The server's listener subscribes in its own fiber; detach once it is there.
-      while (desktopDetaches.listenerCount("detach") === 0) yield* Effect.yieldNow;
-      desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId: opened.tabId });
-      let end = yield* Queue.take(viewer.output);
-      while (end._tag !== "reconnect" && end._tag !== "gone")
-        end = yield* Queue.take(viewer.output);
-      expect(end._tag).toBe("reconnect");
-      expect(releasedDesktopTabs).toEqual([opened.tabId]);
-      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
-      expect(sessions.map((session) => session.tabId)).toContain(opened.tabId);
-      yield* browser.attachViewer(viewerInput(opened.tabId, false));
-      expect(desktopConnections).toHaveLength(2);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1768,32 +1300,4 @@ it.live(
         });
       }),
     ).pipe(Effect.provide(layer)),
-);
-
-it.live("an agent tab keeps throwaway storage when no client reported profiles", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      yield* ready;
-      expect(contextRequests).toEqual([{ profileId: "default", isolated: true }]);
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("a desktop page that comes back reconnects without waiting for a viewer", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const manager = yield* Manager.PreviewManager;
-      yield* ServerBrowser.ServerBrowser;
-      yield* Effect.yieldNow;
-      desktopRendersNext = true;
-      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
-      while (desktopConnections.length === 0) yield* Effect.yieldNow;
-      while (desktopDetaches.listenerCount("detach") === 0) yield* Effect.yieldNow;
-      desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId: opened.tabId });
-      while (releasedDesktopTabs.length === 0) yield* Effect.yieldNow;
-      desktopDetaches.emit("attach", { threadId: scope.thread.threadId, tabId: opened.tabId });
-      while (desktopConnections.length < 2) yield* Effect.yieldNow;
-      expect(desktopConnections).toHaveLength(2);
-    }),
-  ).pipe(Effect.provide(layer)),
 );

@@ -7,20 +7,55 @@ import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import * as DeviceService from "./DeviceService.ts";
 
 it.effect("keeps hosts independent when serials collide and another host fails", () =>
   Effect.gen(function* () {
+    const http = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            simulators: [],
+            emulators: [
+              {
+                id: "emulator-5554",
+                name: "Pixel",
+                version: "36",
+                platform: "android",
+                booted: true,
+                physical: false,
+              },
+            ],
+          }),
+        ),
+      ),
+    );
     const host = (id: string, failed = false): DeviceHost.DeviceHost["Service"] => {
-      const ready = {
+      const run = (command: string) =>
+        Effect.succeed({
+          stdout: command === "emulator" ? "" : " V....D libx264",
+          stderr: "",
+          code: 0,
+        });
+      const ready: DeviceHost.DeviceHostAgentReady = {
         nodePath: process.execPath,
         hub: { origin: `http://${id}` },
+        devices: makeDeviceHubOperations({
+          hostId: id,
+          origin: `http://${id}`,
+          http,
+          run,
+          androidAvailable: Effect.succeed(true),
+        }),
         agentDevice: { baseUrl: `http://${id}`, token: "test", entryPath: "/agent-device" },
-        run: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
+        run,
         helpers: { serveSimAxSettings: null, serveSimCli: null },
       };
       return {
         id,
+        label: id,
         summary: Effect.succeed({
           id,
           label: id,
@@ -46,26 +81,6 @@ it.effect("keeps hosts independent when serials collide and another host fails",
         stop: Effect.void,
       };
     };
-    const http = HttpClient.make((request) =>
-      Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          Response.json({
-            simulators: [],
-            emulators: [
-              {
-                id: "emulator-5554",
-                name: "Pixel",
-                version: "36",
-                platform: "android",
-                booted: true,
-                physical: false,
-              },
-            ],
-          }),
-        ),
-      ),
-    );
     const hosts = new Map(["a", "b", "offline"].map((id) => [id, host(id, id === "offline")]));
     const writeStarted = yield* Deferred.make<void>();
     const finishWrite = yield* Deferred.make<void>();
@@ -78,7 +93,7 @@ it.effect("keeps hosts independent when serials collide and another host fails",
         order.push("write finished");
         return "/host-config.json";
       }),
-    ).pipe(Effect.provide(NodeCrypto.layer), Effect.provideService(HttpClient.HttpClient, http));
+    ).pipe(Effect.provide(NodeCrypto.layer));
     expect(yield* service.agentReadinessIfSupported("b")).not.toBeNull();
     const listed = yield* service.list;
     expect(listed.devices.map((device) => device.hostId).sort()).toEqual(["a", "b"]);

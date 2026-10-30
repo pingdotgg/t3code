@@ -1,4 +1,9 @@
-import type { MenuAction } from "@react-native-menu/menu";
+import {
+  normalizeProviderAccentColor,
+  resolveProviderInstanceDisplayName,
+  shouldShowInstanceBadge,
+} from "@t3tools/client-runtime/state/provider-instance-display";
+
 import type {
   ModelCapabilities,
   ModelSelection,
@@ -6,21 +11,28 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
-import { resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
+import { isProviderDriverKind, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 
 export type ModelOption = {
   readonly key: string;
   readonly label: string;
+  readonly shortName?: string;
   readonly subtitle: string;
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly providerDriver: string;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly providerIconUrl?: string | undefined;
+  readonly providerBadge?: {
+    readonly displayName: string;
+    readonly accentColor?: string;
+    readonly showBadge: boolean;
+  };
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
@@ -123,11 +135,7 @@ function normalizeSelectionOptions(
       };
 }
 
-/**
- * `projectId` has no default: a caller that forgets it would silently check only the
- * machine-wide state and miss a project that turned this instance off. Pass `null` explicitly
- * outside a project's scope.
- */
+/** Require explicit projectId or null so omissions cannot bypass project provider disablement. */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
@@ -235,10 +243,61 @@ export function buildModelOptions(
   includeHidden = false,
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
+  const lockedProvider = config?.providers.find(
+    (provider) => provider.instanceId === providerInstanceId,
+  );
+  const matchesLockedProvider = (provider: T3ServerConfig["providers"][number]) => {
+    if (providerInstanceId === undefined || provider.instanceId === providerInstanceId) return true;
+    if (!lockedProvider || provider.driver !== lockedProvider.driver) return false;
+    const groupKey = lockedProvider.continuation?.groupKey;
+    if (groupKey) return provider.continuation?.groupKey === groupKey;
+    return provider.driver !== "antigravity";
+  };
+  const registryAgentId = (instanceId: ModelSelection["instanceId"]) => {
+    const configValue = config?.settings?.providerInstances[instanceId]?.config;
+    if (configValue === null || typeof configValue !== "object") return undefined;
+    const agentId = "agentId" in configValue ? configValue.agentId : undefined;
+    return "source" in configValue && configValue.source === "local"
+      ? undefined
+      : typeof agentId === "string"
+        ? agentId.trim() || undefined
+        : undefined;
+  };
+  const badgeEntries = (config?.providers ?? []).map((provider) => ({
+    driverKind: provider.driver,
+    enabled: provider.enabled,
+    acpRegistryAgentId: registryAgentId(provider.instanceId),
+  }));
+  const providerBadgeFor = (instanceId: ModelSelection["instanceId"]) => {
+    const snapshot = config?.providers.find((provider) => provider.instanceId === instanceId);
+    const instance = config?.settings?.providerInstances[instanceId];
+    const driver = snapshot?.driver ?? instance?.driver;
+    if (!driver) return undefined;
+    const accentColor = normalizeProviderAccentColor(
+      snapshot?.accentColor ?? instance?.accentColor,
+    );
+    return {
+      displayName: resolveProviderInstanceDisplayName({
+        instanceId,
+        driver,
+        displayName: snapshot?.displayName ?? instance?.displayName,
+      }),
+      ...(accentColor ? { accentColor } : {}),
+      showBadge: shouldShowInstanceBadge(
+        {
+          driverKind: driver,
+          accentColor,
+          acpRegistryAgentId: registryAgentId(instanceId),
+          enabled: snapshot?.enabled ?? instance?.enabled ?? false,
+        },
+        badgeEntries,
+      ),
+    };
+  };
 
   for (const provider of config?.providers ?? []) {
     if (
-      (providerInstanceId !== undefined && provider.instanceId !== providerInstanceId) ||
+      !matchesLockedProvider(provider) ||
       !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
@@ -248,6 +307,7 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const providerBadge = providerBadgeFor(provider.instanceId);
     const updateRequired = provider.updateRequiredModels?.length
       ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
       : undefined;
@@ -261,13 +321,16 @@ export function buildModelOptions(
       models.sort((a, b) => (order.get(a.slug) ?? Infinity) - (order.get(b.slug) ?? Infinity));
     for (const model of models) {
       const key = `${provider.instanceId}:${model.slug}`;
+      const shortName = resolveModelShortName(model, provider.driver);
       options.set(key, {
         key,
         label: model.name,
+        ...(shortName ? { shortName } : {}),
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
+        providerBadge,
         ...(provider.supportedRuntimeModes === undefined
           ? {}
           : { supportedRuntimeModes: provider.supportedRuntimeModes }),
@@ -325,13 +388,18 @@ export function buildModelOptions(
         displayName: provider?.displayName ?? instanceConfig?.displayName,
         instanceId: fallbackModelSelection.instanceId,
       });
+      const shortName = model
+        ? resolveModelShortName(model, isProviderDriverKind(providerDriver) ? providerDriver : null)
+        : undefined;
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
+        ...(shortName ? { shortName } : {}),
         subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver,
+        providerBadge: providerBadgeFor(fallbackModelSelection.instanceId),
         isDefault: false,
         isLegacy: model?.isLegacy === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection, projectId) ||
@@ -377,54 +445,4 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     models: group.models,
     ...(group.updateRequired ? { updateRequired: group.updateRequired } : {}),
   }));
-}
-
-function modelMenuAction(option: ModelOption, selectedModel: ModelSelection | null): MenuAction {
-  return {
-    id: `model:${option.key}`,
-    title: option.label,
-    state:
-      option.selection.instanceId === selectedModel?.instanceId &&
-      option.selection.model === selectedModel.model
-        ? "on"
-        : undefined,
-  };
-}
-
-export function buildModelMenuActions(
-  groups: ReadonlyArray<ProviderGroup>,
-  selectedModel: ModelSelection | null,
-): MenuAction[] {
-  return groups.flatMap((group) => {
-    const currentModels = group.models.filter((model) => !model.isLegacy);
-    const legacyModels = group.models.filter((model) => model.isLegacy);
-    const selected = group.models.find(
-      (model) =>
-        model.selection.instanceId === selectedModel?.instanceId &&
-        model.selection.model === selectedModel.model,
-    );
-
-    return [
-      ...(currentModels.length > 0
-        ? [
-            {
-              id: `provider:${group.providerKey}`,
-              title: group.providerLabel,
-              subtitle: selected && !selected.isLegacy ? selected.label : undefined,
-              subactions: currentModels.map((option) => modelMenuAction(option, selectedModel)),
-            },
-          ]
-        : []),
-      ...(legacyModels.length > 0
-        ? [
-            {
-              id: `legacy-models:${group.providerKey}`,
-              title: `${group.providerLabel} legacy models`,
-              subtitle: selected?.isLegacy ? selected.label : undefined,
-              subactions: legacyModels.map((option) => modelMenuAction(option, selectedModel)),
-            },
-          ]
-        : []),
-    ];
-  });
 }

@@ -1,7 +1,7 @@
-import { useLayoutEffect, useState } from "react";
+import { useState } from "react";
 import { observeResize } from "../../lib/observeResize";
 
-export function measureComposerMultilinePrompt(body: HTMLElement): boolean | null {
+function measureComposerMultilinePrompt(body: HTMLElement): boolean | null {
   const editor = body.querySelector<HTMLElement>('[data-testid="composer-editor"]');
   if (!editor || editor.clientWidth === 0) return null;
 
@@ -15,16 +15,17 @@ export function measureComposerMultilinePrompt(body: HTMLElement): boolean | nul
   range.selectNodeContents(editor);
   const bounds = range.getBoundingClientRect();
 
-  // Measure content, not the editor's minimum height. While resting, the
-  // prompt is unwrapped: compare its width with the expanded row so that
-  // moving the actions inline cannot make collapse and expansion oscillate.
+  // Measure against expanded width to prevent inline actions oscillating collapse.
   return bounds.height > lineHeight + 1 || bounds.width > expandedWidth + 1;
 }
 
-export function useComposerMultilinePrompt(body: HTMLElement | null): boolean {
+/** Whether the prompt wraps, and the ref callback that measures it on the composer body. */
+export function useComposerMultilinePrompt(): readonly [
+  boolean,
+  (body: HTMLElement | null) => (() => void) | undefined,
+] {
   const [isMultiline, setIsMultiline] = useState(false);
-
-  useLayoutEffect(() => {
+  const observeBody = (body: HTMLElement | null) => {
     if (!body) return;
     const measure = () => {
       const next = measureComposerMultilinePrompt(body);
@@ -39,7 +40,6 @@ export function useComposerMultilinePrompt(body: HTMLElement | null): boolean {
       stopObserving();
       mutationObserver.disconnect();
     };
-  }, [body]);
-
-  return isMultiline;
+  };
+  return [isMultiline, observeBody] as const;
 }

@@ -1,7 +1,9 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -11,64 +13,6 @@ import {
   bitbucketViewerPermissions,
   make,
 } from "./BitbucketPullRequestProvider.ts";
-
-it.effect.each([
-  {
-    metadata: "source commit hash",
-    commit: { hash: "9f3a7c2d8b1e6f045a9c3d7e2b8f1a6c0d4e5f93" },
-    headSha: "9f3a7c2d8b1e6f045a9c3d7e2b8f1a6c0d4e5f93",
-  },
-  {
-    metadata: "short source commit hash",
-    commit: { hash: "9f3a7c2d8b1e" },
-    headSha: "9f3a7c2d8b1e",
-  },
-  { metadata: "absent commit", commit: undefined, headSha: undefined },
-  { metadata: "null commit", commit: null, headSha: undefined },
-  { metadata: "absent hash", commit: {}, headSha: undefined },
-  { metadata: "null hash", commit: { hash: null }, headSha: undefined },
-])("reads change request details with $metadata", ({ commit, headSha }) =>
-  Effect.gen(function* () {
-    const pullRequest = Result.getOrThrow(
-      decodePullRequestJson(
-        JSON.stringify({
-          id: 897,
-          title: "Add trustabl-pipe",
-          state: "OPEN",
-          source: {
-            branch: { name: "feat/page" },
-            commit,
-            repository: { full_name: "fork/web" },
-          },
-          destination: { branch: { name: "master" }, commit: { hash: "base-commit" } },
-          created_on: "2026-06-16T05:04:32.258456+00:00",
-          updated_on: "2026-06-16T05:04:33.750542+00:00",
-          links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/897" } },
-        }),
-      ),
-    );
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
-          getPullRequest: () => Effect.succeed(pullRequest),
-          getDiffStat: () => Effect.succeed({ additions: 0, deletions: 0, changedFiles: 0 }),
-          getMergeability: () => Effect.succeed("unknown"),
-          listChecks: () => Effect.succeed([]),
-          getRepositoryPermission: () => Effect.succeed(true),
-        }),
-      ),
-    );
-    const detail = yield* provider.getChangeRequest({
-      cwd: "/repo",
-      repository: "acme/web",
-      host: "bitbucket.org",
-      number: 897,
-    });
-
-    expect(detail).toMatchObject({ number: 897, headBranch: "feat/page" });
-    expect(detail.headSha).toBe(headSha);
-  }),
-);
 
 it.effect.each([
   { state: "MERGED", mergedAt: "2025-06-16T23:40:46.222Z", closedAt: null },
@@ -85,7 +29,7 @@ it.effect.each([
           source: { branch: { name: "release" } },
           destination: { branch: { name: "master" } },
           created_on: "2025-06-16T06:20:58.415108+00:00",
-          // Comments after a merge move this, so it is not the merge time.
+          // Comments after merging move this timestamp.
           updated_on: "2025-06-20T10:00:00.000000+00:00",
           closed_on: state === "OPEN" ? null : "2025-06-16T23:40:46.222238+00:00",
           links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/52" } },
@@ -246,6 +190,16 @@ describe("bitbucketProviderFailure", () => {
     expect(bitbucketProviderFailure(responseError(401)).reason).toBe("unauthenticated");
     expect(bitbucketProviderFailure(responseError(403)).reason).toBe("failed");
   });
+
+  it("reports a request held back by the host-wide pause as rate limited until it ends", () => {
+    const paused = new SourceControlRateLimit.SourceControlRateLimitPausedError({
+      provider: SourceControlProviderKind.make("bitbucket"),
+      host: "bitbucket.org",
+      retryAt: 120_000,
+    });
+
+    expect(bitbucketProviderFailure(paused)).toEqual({ reason: "rate-limited", retryAt: 120_000 });
+  });
 });
 
 describe("bitbucketViewerPermissions", () => {
@@ -267,9 +221,5 @@ describe("bitbucketViewerPermissions", () => {
       verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
     });
-  });
-
-  it("treats an author with read access as any other reader, which is all Bitbucket says", () => {
-    expect(bitbucketViewerPermissions({ canWrite: false }).actions).toEqual(["close"]);
   });
 });

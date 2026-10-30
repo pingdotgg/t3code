@@ -11,10 +11,21 @@ import {
   type LimitPool,
   type LimitPoolMember,
   type LimitPoolWindow,
+  paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import {
+  createContext,
+  Fragment,
+  type ReactNode,
+  type RefObject,
+  use,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -26,11 +37,12 @@ import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   PaceIcon,
   ResetCreditDialog,
   barColor,
+  usePaceMark,
   resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
@@ -137,6 +149,7 @@ function SegmentPopover({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
+  const timeLeft = paceRemainingPercent(window, now);
   const resetsIn = formatResetsIn(window, now);
   const where =
     account.environments.length > 0
@@ -177,6 +190,7 @@ function SegmentPopover({
             {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
           </Row>
         ) : null}
+        {timeLeft !== null ? <Row label="Even pace">{timeLeft}% left by now</Row> : null}
         {reset && reset.restoresPercent > 0 ? (
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
@@ -202,134 +216,244 @@ function SegmentPopover({
 }
 
 /**
+ * Every segment on the page shares one popover, so hovering or clicking another
+ * segment moves it instead of opening a second one. The payload is the segment
+ * it currently describes.
+ */
+type SegmentPayload = Omit<Parameters<typeof SegmentPopover>[0], "now" | "onRedeem">;
+const SegmentPopoverContext = createContext<ReturnType<
+  typeof PopoverCreateHandle<SegmentPayload>
+> | null>(null);
+
+function ActiveSegmentPopover({
+  handle,
+  actions,
+  payload,
+  pools,
+  now,
+}: {
+  readonly handle: ReturnType<typeof PopoverCreateHandle<SegmentPayload>>;
+  readonly actions: RefObject<PopoverPrimitive.Root.Actions | null>;
+  readonly payload: SegmentPayload;
+  readonly pools: readonly LimitPool[];
+  readonly now: number;
+}) {
+  const available = pools.some((pool) =>
+    displayLimitWindows(pool).some((window) =>
+      window.members.some(
+        (member) =>
+          member.account.key === payload.account.key &&
+          member.window.id === payload.window.id &&
+          member.window.kind === payload.window.kind &&
+          Boolean(member.account.redeem) === Boolean(payload.redeem),
+      ),
+    ),
+  );
+  // The trigger is gone, so the popup has nothing to anchor to: an exit transition would
+  // slide it to the viewport origin. Unmount it outright, which also clears Base UI's
+  // active-trigger bookkeeping so the segment can open again when it comes back.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the popover handle and unmounts the Base UI popup before paint when its trigger is gone
+  useLayoutEffect(() => {
+    if (available) return;
+    handle.close();
+    actions.current?.unmount();
+  }, [available, handle, actions]);
+  return (
+    <PopoverPopup side="top" sideOffset={6}>
+      <SegmentPopover
+        {...payload}
+        now={now}
+        onRedeem={() => {
+          handle.close();
+          payload.redeem?.setConfirming(true);
+        }}
+      />
+    </PopoverPopup>
+  );
+}
+
+/**
  * The confirm is a sibling of the popover, not a child: dialogs stack under
  * popovers, and the popover closes as the confirm opens.
  */
 function PoolSegment({
   account,
-  window,
-  reset,
-  color,
-  now,
-  index,
-  showAccountName,
+  ...props
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
+  readonly refillPercent: number;
   readonly color: string;
   readonly now: number;
   readonly index: number;
   readonly showAccountName: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  return account.redeem ? (
+    <RedeemableSegment account={account} redeemAt={account.redeem} {...props} />
+  ) : (
+    <SegmentTriggers account={account} redeem={null} {...props} />
+  );
+}
+
+function RedeemableSegment({
+  redeemAt,
+  ...props
+}: Omit<Parameters<typeof SegmentTriggers>[0], "redeem"> & {
+  readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
+}) {
+  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
+  return (
+    <>
+      <SegmentTriggers redeem={redeem} {...props} />
+      <ResetCreditDialog
+        open={redeem.confirming}
+        onOpenChange={redeem.setConfirming}
+        onConfirm={() => void redeem.redeem()}
+        disabled={!redeem.canManageProviders}
+      />
+      {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}
+      {redeem.busy || redeem.status ? (
+        <span role="status" className="col-span-full text-xs text-muted-foreground">
+          <AccountName account={props.account} className="font-medium text-foreground" />{" "}
+          {redeem.busy ? "Using reset credit…" : redeem.status}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function SegmentTriggers({
+  account,
+  window,
+  reset,
+  redeem,
+  refillPercent,
+  color,
+  now,
+  index,
+  showAccountName,
+}: SegmentPayload & {
+  readonly refillPercent: number;
+  readonly color: string;
+  readonly now: number;
+  readonly index: number;
+  readonly showAccountName: boolean;
+}) {
+  const popover = use(SegmentPopoverContext) ?? undefined;
+  const payload: SegmentPayload = { account, window, reset, redeem };
   const remaining = remainingPercent(window);
+  const timeLeft = paceRemainingPercent(window, now);
+  const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <>
       <PopoverTrigger
+        handle={popover}
+        payload={payload}
         openOnHover
         render={
           <button
+            ref={segmentRef}
             type="button"
-            style={{ gridColumn: index, gridRow: 1 }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
-            className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
+            style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
+            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+            className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
       >
-        <div
-          aria-hidden
-          className="absolute inset-y-0 left-0 rounded-md opacity-35"
-          style={{ width: `${remaining}%`, backgroundColor: color }}
-        />
-        {remaining < 100 && reset ? (
-          <div
+        <div aria-hidden className="absolute inset-0 overflow-hidden rounded-md">
+          {/* Clipped inside the rounded clip so the bar's own corners keep their antialiasing. */}
+          <div className="absolute inset-0" style={paceMark?.gap}>
+            <div
+              aria-hidden
+              className="absolute inset-y-0 left-0 rounded-md opacity-35"
+              style={{ width: `${remaining}%`, backgroundColor: color }}
+            />
+            {remaining < 100 && reset && refillPercent > 0 ? (
+              <div
+                aria-hidden
+                className="absolute inset-y-0 right-0 opacity-20"
+                style={{
+                  width: `${Math.min(100 - remaining, refillPercent)}%`,
+                  backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
+                }}
+              />
+            ) : null}
+          </div>
+        </div>
+        {paceMark ? (
+          <span
             aria-hidden
-            className="absolute inset-y-0 right-0 opacity-20"
-            style={{
-              width: `${100 - remaining}%`,
-              backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
-            }}
+            className="absolute inset-y-0.5 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+            style={paceMark.tick}
           />
         ) : null}
         <span
           aria-hidden
-          className="absolute inset-0 flex items-center justify-center text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
+          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
         >
           {index}
         </span>
-        <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
+        <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @2xl/pool:flex">
           {showAccountName ? (
             <AccountName
               account={account}
               className="min-w-0 truncate font-medium text-foreground"
             />
           ) : null}
-          <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
-          <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
-            {resetsIn?.replace("resets in ", "↻ ") ?? ""}
-            {credits ? (
-              <>
-                {resetsIn ? (
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
+          {/* A single-account bar repeats the headline percentage. */}
+          {showAccountName ? (
+            <span className="shrink-0 font-semibold text-foreground tabular-nums">
+              {remaining}%
+            </span>
+          ) : null}
+          {resetsIn || credits ? (
+            <span className="ms-auto flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums">
+              {resetsIn?.replace("resets in ", "↻ ") ?? ""}
+              {credits ? (
+                <>
+                  {resetsIn ? (
+                    <span aria-hidden className="text-muted-foreground">
+                      ·
+                    </span>
+                  ) : null}
+                  <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
+                    <TicketIcon className="size-3" aria-hidden />
+                    {credits}
                   </span>
-                ) : null}
-                <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
-                  <TicketIcon className="size-3" aria-hidden />
-                  {credits}
-                </span>
-              </>
-            ) : null}
-          </span>
+                </>
+              ) : null}
+            </span>
+          ) : null}
         </div>
       </PopoverTrigger>
-      <LegendRow account={account} window={window} color={color} now={now} index={index} />
-      {account.redeem ? (
-        <RedeemableSegmentPopup
-          account={account}
-          window={window}
-          reset={reset}
-          now={now}
-          redeemAt={account.redeem}
-          closePopover={() => setOpen(false)}
-        />
-      ) : (
-        <PopoverPopup side="top" sideOffset={6}>
-          <SegmentPopover
-            account={account}
-            window={window}
-            reset={reset}
-            now={now}
-            redeem={null}
-            onRedeem={() => {}}
-          />
-        </PopoverPopup>
-      )}
-    </Popover>
+      <LegendRow payload={payload} color={color} now={now} index={index} />
+    </>
   );
 }
 
 function LegendRow({
-  account,
-  window,
+  payload,
   color,
   now,
   index,
 }: {
-  readonly account: LimitAccount;
-  readonly window: LimitPoolMember["window"];
+  readonly payload: SegmentPayload;
   readonly color: string;
   readonly now: number;
   readonly index: number;
 }) {
+  const popover = use(SegmentPopoverContext) ?? undefined;
+  const { account, window } = payload;
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <PopoverTrigger
+      handle={popover}
+      payload={payload}
       style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
       render={<Button variant="ghost" size="compact" />}
       className="min-w-0 @2xl/pool:hidden"
@@ -367,54 +491,6 @@ function LegendRow({
   );
 }
 
-function RedeemableSegmentPopup({
-  account,
-  window,
-  reset,
-  now,
-  redeemAt,
-  closePopover,
-}: {
-  readonly account: LimitAccount;
-  readonly window: LimitPoolMember["window"];
-  readonly reset: LimitPoolWindow["resets"][number] | undefined;
-  readonly now: number;
-  readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
-  readonly closePopover: () => void;
-}) {
-  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
-  return (
-    <>
-      <PopoverPopup side="top" sideOffset={6}>
-        <SegmentPopover
-          account={account}
-          window={window}
-          reset={reset}
-          now={now}
-          redeem={redeem}
-          onRedeem={() => {
-            closePopover();
-            redeem.setConfirming(true);
-          }}
-        />
-      </PopoverPopup>
-      <ResetCreditDialog
-        open={redeem.confirming}
-        onOpenChange={redeem.setConfirming}
-        onConfirm={() => void redeem.redeem()}
-        disabled={!redeem.canManageProviders}
-      />
-      {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}
-      {redeem.busy || redeem.status ? (
-        <span role="status" className="col-span-full text-xs text-muted-foreground">
-          <AccountName account={account} className="font-medium text-foreground" />{" "}
-          {redeem.busy ? "Using reset credit…" : redeem.status}
-        </span>
-      ) : null}
-    </>
-  );
-}
-
 function PoolBar({
   pool,
   color,
@@ -438,6 +514,7 @@ function PoolBar({
               account={member.account}
               window={member.window}
               reset={restores.get(member.account.key)}
+              refillPercent={member.refillPercent}
               color={color}
               now={now}
               index={position + 1}
@@ -533,6 +610,8 @@ export function UsageLimitsPooled({
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
 }) {
+  const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
+  const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
@@ -548,12 +627,27 @@ export function UsageLimitsPooled({
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
-      {pools.map((pool, index) => (
-        <Fragment key={pool.driver}>
-          {index === cursorPromptAt ? cursorPrompt : null}
-          <PoolSection pool={pool} now={now} />
-        </Fragment>
-      ))}
+      <SegmentPopoverContext value={segmentPopover}>
+        {pools.map((pool, index) => (
+          <Fragment key={pool.driver}>
+            {index === cursorPromptAt ? cursorPrompt : null}
+            <PoolSection pool={pool} now={now} />
+          </Fragment>
+        ))}
+      </SegmentPopoverContext>
+      <Popover handle={segmentPopover} actionsRef={segmentPopoverActions}>
+        {({ payload }) =>
+          payload ? (
+            <ActiveSegmentPopover
+              handle={segmentPopover}
+              actions={segmentPopoverActions}
+              payload={payload}
+              pools={pools}
+              now={now}
+            />
+          ) : null
+        }
+      </Popover>
       {cursorPromptAt === pools.length ? cursorPrompt : null}
       {externalLinks.map((link) => (
         <section

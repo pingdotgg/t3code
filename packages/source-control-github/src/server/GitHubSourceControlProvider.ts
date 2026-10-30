@@ -26,6 +26,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
+import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
@@ -60,22 +62,18 @@ import {
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-import { readSourceControlHostSettings } from "@t3tools/source-control-core/client/definition";
+import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
 
-import * as GitHubClient from "../client/definition.ts";
+import * as GitHubClient from "../shared/definition.ts";
 import {
   PullRequestByNumber,
   PullRequestNode,
   PullRequestsByHead,
 } from "./sourceControlProvider.graphql.ts";
 
-/**
- * The generated head lookup with its rows left undecoded, so `listByHead` decodes them one at a
- * time: a row whose fields no longer decode is skipped rather than failing every lookup that
- * shared its document.
- */
+// Decode rows separately to isolate malformed PRs within shared documents.
 const LenientPullRequestsByHead = GraphQL.query(PullRequestsByHead.name, {
-  // The template, not the joined text: `GraphQLResolver.aliased` repeats it per lookup.
+  // `GraphQLResolver.aliased` needs a template per lookup.
   document: PullRequestsByHead.template!,
   variables: PullRequestsByHead.variables,
   result: Schema.Struct({
@@ -167,8 +165,7 @@ export function parseGitHubAuth(
     };
   }
 
-  // gh gained `auth status --json` in 2.81.0. Older versions reject the flag and exit
-  // non-zero, which reads exactly like a signed-out CLI.
+  // gh before 2.81.0 rejects --json with a nonzero exit that resembles a signed-out CLI.
   if (input.exitCode !== 0 && output.includes("unknown flag: --json")) {
     return providerAuth({
       status: "unknown",
@@ -210,15 +207,15 @@ function environmentTokenVariable(environment: NodeJS.ProcessEnv): string | null
   return ["GH_TOKEN", "GITHUB_TOKEN"].find((name) => environment[name]?.trim()) ?? null;
 }
 
-/**
- * An environment token is checked against the API, since `gh auth status` may
- * not know it.
- */
+// `gh auth status` may not know environment tokens; check the API.
 export const makeDiscovery = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const environment = yield* HostProcess.Environment;
+  const appSignIn = yield* GitHubAppSignIn.GitHubAppSignIn;
+  const offerAppSignIn = <A extends SourceControlProviderDiscoveryItem>(item: A): A =>
+    appSignIn.enabled ? { ...item, appSignIn: true } : item;
 
   return {
     type: "managed-cli",
@@ -235,13 +232,24 @@ export const makeDiscovery = Effect.gen(function* () {
       );
       const cli = yield* probeSourceControlProvider({
         cwd,
-        process,
+        process: {
+          run: (input) => process.run({ ...input, concurrency: GH_PROCESS_CONCURRENCY }),
+        },
         spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings) },
       });
       const savedToken = (settings.tokens["github.com"] ?? "").trim() !== "";
+      const signedIn =
+        appSignIn.enabled && !savedToken && (settings.signIns["github.com"] ?? "").trim() !== "";
       const variable = environmentTokenVariable(environment);
-      const tokenSource = savedToken ? "the token saved in Settings" : variable;
-      if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) return cli;
+      const appName = GitHubClient.APP_SIGN_IN.appName;
+      const tokenSource = savedToken
+        ? "the token saved in Settings"
+        : signedIn
+          ? `the ${appName} sign-in`
+          : variable;
+      if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) {
+        return offerAppSignIn(cli);
+      }
       const viewer = yield* api
         .rest({ host: "github.com", operation: "discovery", path: "user" })
         .pipe(Effect.result);
@@ -249,7 +257,7 @@ export const makeDiscovery = Effect.gen(function* () {
         ? Option.getOrUndefined(decodeViewer(viewer.success.body))?.login
         : undefined;
       const accounts = cli.auth.accounts === undefined ? {} : { accounts: cli.auth.accounts };
-      return {
+      return offerAppSignIn({
         ...cli,
         status: "available" as const,
         auth: {
@@ -260,29 +268,30 @@ export const makeDiscovery = Effect.gen(function* () {
                 host: "github.com",
                 detail: savedToken
                   ? "Using the token saved in Settings; it overrides GH_TOKEN and the gh login."
-                  : `Using ${variable} from the server environment; it overrides the account chosen in Settings.`,
+                  : signedIn
+                    ? `Signed in with ${appName}.`
+                    : `Using ${variable} from the server environment; it overrides the account chosen in Settings.`,
               })
             : Result.isFailure(viewer) && viewer.failure._tag !== "GitHubApiAuthenticationError"
               ? providerAuth({
                   status: "unknown",
                   host: "github.com",
-                  detail: `Could not check ${savedToken ? tokenSource : `the token in ${tokenSource}`}: ${viewer.failure.message}`,
+                  detail: `Could not check ${savedToken || signedIn ? tokenSource : `the token in ${tokenSource}`}: ${viewer.failure.message}`,
                 })
               : providerAuth({
                   status: "unauthenticated",
                   host: "github.com",
                   detail: savedToken
                     ? "GitHub refused the token saved in Settings. Replace or remove it in Settings → Source Control."
-                    : `GitHub refused the token in ${tokenSource}. Replace it, or unset it to use \`gh auth login\`.`,
+                    : signedIn
+                      ? `GitHub refused the ${appName} sign-in. Sign in again in Settings → Source Control.`
+                      : `GitHub refused the token in ${tokenSource}. Replace it, or unset it to use \`gh auth login\`.`,
                 })),
           ...accounts,
         },
-      } satisfies SourceControlProviderDiscoveryItem;
+      } satisfies SourceControlProviderDiscoveryItem);
     }),
-    /**
-     * A host turned off in Settings is claimed too, so its error says so
-     * instead of "unsupported host".
-     */
+    // Claim disabled hosts so errors identify the setting.
     refineUnknownRemote: ({ context }) => {
       const url = URL.parse(context.provider.baseUrl);
       if (!url?.host) return Effect.succeed(null);
@@ -345,6 +354,7 @@ function fromGitHubApiError(
     case "GitHubApiNotFoundError":
       return failure(notFound, error);
     case "GitHubCliFailedError":
+    case "GitHubAppSessionError":
     case "GitHubApiResponseError":
     case "GitHubApiRequestError":
       return failure(error.message.trim() || "GitHub request failed.", error);
@@ -380,24 +390,12 @@ const GRAPHQL_STATES: Record<
   merged: ["MERGED"],
   all: ["OPEN", "CLOSED", "MERGED"],
 };
-/**
- * A document of a hundred costs one point, the same as one single lookup, but
- * half that keeps each answer near half a second.
- */
+/** 50 lookups keeps responses near 0.5s at the same one-point cost as 100. */
 const HEAD_LOOKUPS_PER_DOCUMENT = 50;
-/**
- * Branch discovery reaches GitHub only after each branch's own git reads, so lookups started
- * together arrive tens of milliseconds apart. A background sweep's lookups spread over up to
- * ~300ms, and every document costs a point no matter how few heads it holds, so reads
- * without reserve wait longer.
- */
+/** Git reads stagger background lookups by ~300ms; gather batches before spending quota. */
 const HEAD_LOOKUP_BATCH_WINDOW = "50 millis";
 const BACKGROUND_HEAD_LOOKUP_BATCH_WINDOW = "500 millis";
-/**
- * Background documents fill up under the longer window, and a failed document fails every head
- * in it. Fifty `main`-like heads of a hundred pull requests each took up to ~10s, GitHub's own
- * processing limit; twenty-five took ~7s.
- */
+/** For heads matching 100 PRs each, 50 lookups approached GitHub's ~10s limit; 25 took ~7s. */
 const BACKGROUND_HEAD_LOOKUPS_PER_DOCUMENT = 25;
 const HEAD_LOOKUP_MAX_RESPONSE_BYTES = 16_000_000;
 const OWNER_HEAD_SCAN_LIMIT = 100;
@@ -407,12 +405,7 @@ function trimmed(value: string): string | null {
   return text.length > 0 ? text : null;
 }
 
-/**
- * A pull request as every read reports it, or null for a row this cannot use: a number below
- * one, a blank title, URL or branch name, or an `updatedAt` that is not a date. A list skips a
- * null, so one such row cannot hide the rest. The generated schema already holds every row to
- * GitHub's own types, with `state` as a lenient enum.
- */
+/** Null isolates unusable PRs from the rest of a listing. */
 function toPullRequestRecord(node: PullRequestNode): NormalizedGitHubPullRequestRecord | null {
   const title = trimmed(node.title);
   const url = trimmed(node.url);
@@ -510,10 +503,6 @@ export const make = Effect.gen(function* () {
     ),
   ).pipe(Effect.provide(GitHubGraphQlClient.layer));
 
-  /**
-   * Runs a generated read against `target`. GitHub's refusals and `errors` fail the way REST
-   * ones do; an answer that does not decode is a `decodeDetail` failure.
-   */
   const graphqlRead = <A, E, R>(
     target: GitHubGraphQlClient.GitHubGraphQlTarget["Service"],
     decodeDetail: string,
@@ -531,13 +520,7 @@ export const make = Effect.gen(function* () {
   const rest = (input: GitHubRest.GitHubRestInput, notFoundDetail?: string) =>
     api.rest(input).pipe(Effect.mapError((error) => fromGitHubApiError(error, notFoundDetail)));
 
-  /**
-   * Head lookups to one host under one credential share aliased documents: the resolver batches by
-   * the host's endpoint and `batchKey`. Each lookup has its own `repository` root, so lookups on
-   * different repositories may share a document, and a repository GitHub cannot find fails only
-   * its own. Interactive and background lookups never share one, since they use separate
-   * resolvers, so a document is sent under one reserve setting.
-   */
+  // Batch by host/credential; isolate missing repositories and interactive/background reserves.
   const headResolver = GraphQLResolver.aliased(client.PullRequestsByHead, {
     batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(RequestResolver.batchN(HEAD_LOOKUPS_PER_DOCUMENT));
@@ -567,8 +550,7 @@ export const make = Effect.gen(function* () {
         host: locator.host,
         operation: "listPullRequestsByHead",
         allowReserve: input.allowReserve,
-        // Up to 50 heads of 100 rows each. A default branch such as `main` can match a hundred
-        // fork pull requests, so the usual cap would cut the answer short.
+        // 50 default-branch lookups can each match 100 fork PRs and exceed the usual cap.
         maxResponseBytes: HEAD_LOOKUP_MAX_RESPONSE_BYTES,
       },
       "GitHub returned an invalid change request list.",
@@ -676,8 +658,7 @@ export const make = Effect.gen(function* () {
     return decoded.success.login;
   });
 
-  // Git and filesystem errors can carry arguments, paths and stderr, so the detail a client
-  // sees is fixed and the raw error stays in `cause`.
+  // Keep paths, argv and stderr in cause; expose only a fixed checkout error to clients.
   const gitFailure = (cause: unknown) =>
     failure("The pull request could not be checked out with git.", cause);
 
@@ -688,9 +669,6 @@ export const make = Effect.gen(function* () {
       args,
     });
 
-  /**
-   * An existing branch fast-forwards, or with `force` is reset to the pull request.
-   */
   const checkoutPullRequest = Effect.fn("GitHubSourceControlProvider.checkoutPullRequest")(
     function* (input: {
       readonly cwd: string;
@@ -725,9 +703,7 @@ export const make = Effect.gen(function* () {
         const known = remoteFor(baseNameWithOwner);
         return known === null ? git.resolvePrimaryRemoteName(input.cwd) : Effect.succeed(known);
       });
-      // A fork's branch named like the base's default branch is checked out under the owner's
-      // prefix. Without the default branch that collision cannot be ruled out, and the checkout
-      // would reset the local default branch to the fork's commit, so it fails instead.
+      // Avoid resetting the default branch; prefix colliding forks and fail if it is unknown.
       const defaultBranch = isCrossRepository
         ? yield* readRepository(base).pipe(
             Effect.map((repository) => repository.default_branch ?? null),
@@ -792,7 +768,9 @@ export const make = Effect.gen(function* () {
       );
 
       yield* Effect.gen(function* () {
-        if (!exists) yield* runGit(input.cwd, "branch", ["branch", "--", localBranch, target.ref]);
+        if (!exists) {
+          yield* git.createBranch({ cwd: input.cwd, branch: localBranch, startPoint: target.ref });
+        }
         yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
         if (exists) {
           yield* runGit(
@@ -803,8 +781,7 @@ export const make = Effect.gen(function* () {
               : ["merge", "--ff-only", "--quiet", target.ref],
           );
         }
-        // Tracking is set once the branch is the pull request's, so a sync that fails leaves an
-        // existing branch's upstream as it was.
+        // Set tracking after sync succeeds so a failed checkout preserves the existing upstream.
         if (target.upstream !== null) {
           yield* git.setBranchUpstream({ cwd: input.cwd, branch: localBranch, ...target.upstream });
         }
@@ -882,17 +859,65 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("github"),
-    // `gh pr list --head` filters on the head ref name alone and accepts anything, so an
-    // `owner:branch` or `remote:branch` selector silently lists zero pull requests while
-    // spending a GraphQL call; the bare branch is always among the selectors. Without the owner,
-    // a bare branch also lists same-named branches on other forks (`main`, `patch-1`), so read a
-    // full page and let the owner check pick the right head.
+    // GitHub matches bare heads; read a full page to disambiguate forks by owner.
     headBranchProbe: ({ headSelectors }) => ({
       headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
       limit: 100,
     }),
-    readChangeRequestTemplate: ({ cwd, treeish }) =>
-      GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
+    readChangeRequestTemplate: Effect.fn("GitHubSourceControlProvider.readChangeRequestTemplate")(
+      function ({ cwd, treeish }) {
+        return GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute);
+      },
+    ),
+    // `createChangeRequest` targets what `resolveRepository` picks: GH_REPO when it parses, else
+    // the remote `gh repo set-default` marked (`gh-resolved`). An HTTPS remote keeps a
+    // non-default port in the context's host, and the mark is then ignored.
+    createsChangeRequestsIn: Effect.fn("GitHubSourceControlProvider.createsChangeRequestsIn")(
+      function* ({ cwd, context, repository }) {
+        const host = URL.canParse(context.provider.baseUrl)
+          ? new URL(context.provider.baseUrl).host
+          : null;
+        const target = repository?.toLowerCase();
+        const fromEnvironment = parseGitHubRepositorySelector(
+          environment.GH_REPO ?? "",
+          host ?? "",
+        );
+        if (fromEnvironment !== null) {
+          const { host: targetHost, owner, name } = fromEnvironment;
+          return (
+            host !== null &&
+            URL.canParse(`https://${targetHost}`) &&
+            new URL(`https://${targetHost}`).host === host &&
+            `${owner}/${name}`.toLowerCase() === target
+          );
+        }
+        const mark = yield* git
+          .readConfigValue(cwd, `remote.${context.remoteName}.gh-resolved`)
+          .pipe(Effect.orElseSucceed(() => null));
+        const { locator } = resolveGitHubRepository({
+          remotes: `${context.remoteName}\t${context.remoteUrl} (fetch)`,
+          resolved: mark === null ? "" : `remote.${context.remoteName}.gh-resolved ${mark}`,
+          hostHint: host ?? undefined,
+          defaultHost: host ?? "github.com",
+        });
+        return locator === null || `${locator.owner}/${locator.name}`.toLowerCase() === target;
+      },
+    ),
+    // `gh pr create` run in the checkout, as an agent in a T3 worktree often does, takes its base
+    // from this key.
+    recordBranchBase: Effect.fn("GitHubSourceControlProvider.recordBranchBase")(function ({
+      cwd,
+      branch,
+      baseBranch,
+    }) {
+      return git
+        .writeConfigValue({ cwd, key: `branch.${branch}.gh-merge-base`, value: baseBranch })
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not record the branch base for gh", { cause }),
+          ),
+        );
+    }),
     resolveLink: (input) => {
       // Automatic enrichment must not send ambient CLI credentials to a host from message text.
       if (input.url.host !== "github.com") return undefined;
@@ -902,33 +927,39 @@ export const make = Effect.gen(function* () {
       if (!match) return undefined;
       return readLinkSubject(input, `repos/${match[1]}/${match[2]}/issues/${match[3]}`);
     },
-    listChangeRequests: (input) =>
-      (input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive).pipe(
-        Effect.flatMap((allowReserve) =>
-          listByHead({
-            cwd: input.cwd,
-            headSelector: input.headSelector,
-            state: input.state,
-            limit: input.limit ?? (input.state === "open" ? 1 : 20),
-            host: contextHost(input.context),
-            context: input.context,
-            allowReserve,
-          }),
-        ),
-        Effect.map((records) => records.map(toChangeRequest)),
-        Effect.mapError(
-          providerError("listChangeRequests", input.cwd, { reference: input.headSelector }),
-        ),
-      ),
-    getChangeRequest: (input) =>
-      readPullRequest({ ...input, host: contextHost(input.context) }).pipe(
+    listChangeRequests: Effect.fn("GitHubSourceControlProvider.listChangeRequests")(
+      function (input) {
+        return (
+          input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive
+        ).pipe(
+          Effect.flatMap((allowReserve) =>
+            listByHead({
+              cwd: input.cwd,
+              headSelector: input.headSelector,
+              state: input.state,
+              limit: input.limit ?? (input.state === "open" ? 1 : 20),
+              host: contextHost(input.context),
+              context: input.context,
+              allowReserve,
+            }),
+          ),
+          Effect.map((records) => records.map(toChangeRequest)),
+          Effect.mapError(
+            providerError("listChangeRequests", input.cwd, { reference: input.headSelector }),
+          ),
+        );
+      },
+    ),
+    getChangeRequest: Effect.fn("GitHubSourceControlProvider.getChangeRequest")(function (input) {
+      return readPullRequest({ ...input, host: contextHost(input.context) }).pipe(
         Effect.map(toChangeRequest),
         Effect.mapError(
           providerError("getChangeRequest", input.cwd, { reference: input.reference }),
         ),
-      ),
-    createChangeRequest: (input) =>
-      Effect.gen(function* () {
+      );
+    }),
+    createChangeRequest: Effect.fn("GitHubSourceControlProvider.createChangeRequest")(
+      function* (input) {
         const locator = yield* resolveRepository(input);
         const body = yield* fileSystem
           .readFileString(input.bodyFile)
@@ -943,8 +974,7 @@ export const make = Effect.gen(function* () {
           method: "POST",
           allowReserve: true,
           path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
-          // `owner:branch` is how the REST API takes a fork's head, the same as `gh --head`.
-          // gh allows maintainer edits unless told otherwise; the API's default is not documented.
+          // Explicitly allow maintainer edits to match gh; the API default is undocumented.
           body: {
             base: input.baseRefName,
             head: input.headSelector,
@@ -953,13 +983,16 @@ export const make = Effect.gen(function* () {
             maintainer_can_modify: true,
           },
         });
-      }).pipe(
-        Effect.mapError(
-          providerError("createChangeRequest", input.cwd, { reference: input.headSelector }),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            providerError("createChangeRequest", input.cwd, { reference: input.headSelector }),
+          ),
         ),
-      ),
-    getRepositoryCloneUrls: (input) =>
-      Effect.gen(function* () {
+    ),
+    getRepositoryCloneUrls: Effect.fn("GitHubSourceControlProvider.getRepositoryCloneUrls")(
+      function* (input) {
         const fallbackHost = (yield* resolveRepository(input).pipe(
           Effect.map((locator) => locator.host),
           Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
@@ -968,17 +1001,26 @@ export const make = Effect.gen(function* () {
         const locator =
           parseGitHubRepositorySelector(input.repository, fallbackHost) ??
           (/^[^/\s]+$/.test(bareName)
-            ? { host: fallbackHost, owner: yield* readViewerLogin(fallbackHost), name: bareName }
+            ? {
+                host: fallbackHost,
+                owner: yield* readViewerLogin(fallbackHost),
+                name: bareName,
+              }
             : null);
         if (locator === null) return yield* failure("Repositories are named owner/name.");
         return repositoryCloneUrls(yield* readRepository(locator));
-      }).pipe(
-        Effect.mapError(
-          providerError("getRepositoryCloneUrls", input.cwd, { repository: input.repository }),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            providerError("getRepositoryCloneUrls", input.cwd, {
+              repository: input.repository,
+            }),
+          ),
         ),
-      ),
-    createRepository: (input) =>
-      Effect.gen(function* () {
+    ),
+    createRepository: Effect.fn("GitHubSourceControlProvider.createRepository")(
+      function* (input) {
         const locator = parseGitHubRepositorySelector(
           input.repository,
           (environment.GH_HOST ?? "github.com").toLowerCase(),
@@ -998,7 +1040,6 @@ export const make = Effect.gen(function* () {
               isViewer || owner === null ? "user/repos" : `orgs/${encodeURIComponent(owner)}/repos`,
             body: { name, private: input.visibility === "private" },
           },
-          // GitHub answers 404 for an organization the account cannot create repositories in.
           `No organization named ${owner ?? "that"} that this account can create repositories in.`,
         );
         const decoded = decodeRawRepository(response.body);
@@ -1006,13 +1047,16 @@ export const make = Effect.gen(function* () {
           return yield* failure("GitHub returned an invalid repository.", decoded.failure);
         }
         return repositoryCloneUrls(decoded.success);
-      }).pipe(
-        Effect.mapError(
-          providerError("createRepository", input.cwd, { repository: input.repository }),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            providerError("createRepository", input.cwd, { repository: input.repository }),
+          ),
         ),
-      ),
-    getDefaultBranch: (input) =>
-      Effect.gen(function* () {
+    ),
+    getDefaultBranch: Effect.fn("GitHubSourceControlProvider.getDefaultBranch")(
+      function* (input) {
         const locator = yield* resolveRepository({
           cwd: input.cwd,
           host: contextHost(input.context),
@@ -1021,12 +1065,17 @@ export const make = Effect.gen(function* () {
         const repository = yield* readRepository(locator);
         const branch = repository.default_branch?.trim() ?? "";
         return branch.length > 0 ? branch : null;
-      }).pipe(Effect.mapError(providerError("getDefaultBranch", input.cwd))),
-    checkoutChangeRequest: (input) =>
-      checkoutPullRequest(input).pipe(
-        Effect.mapError(
-          providerError("checkoutChangeRequest", input.cwd, { reference: input.reference }),
-        ),
-      ),
+      },
+      (effect, input) => effect.pipe(Effect.mapError(providerError("getDefaultBranch", input.cwd))),
+    ),
+    checkoutChangeRequest: Effect.fn("GitHubSourceControlProvider.checkoutChangeRequest")(
+      function (input) {
+        return checkoutPullRequest(input).pipe(
+          Effect.mapError(
+            providerError("checkoutChangeRequest", input.cwd, { reference: input.reference }),
+          ),
+        );
+      },
+    ),
   });
 });

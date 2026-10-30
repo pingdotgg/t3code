@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -11,7 +12,10 @@ import {
   isLearned,
 } from "@t3tools/client-runtime/connection";
 import { type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
-import { AUTH_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
+import {
+  AUTH_SCOPE_OPTIONS,
+  sessionPermissionsUnavailableMessage,
+} from "@t3tools/shared/authScopeOptions";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { useState } from "react";
@@ -26,7 +30,7 @@ import { cn } from "../../lib/cn";
 import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectionTone } from "../connection/connectionTone";
-import { SettingsActionRow } from "./components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
 
@@ -55,7 +59,7 @@ export function EnvironmentRoutesSection({
   const entry = useAtomValue(environmentCatalog.catalogValueAtom).entries.get(environmentId);
   const prepared = useAtomValue(environmentSession.preparedConnectionValueAtom(environmentId));
   const sessionResult = useAtomValue(environmentSession.sessionStateAtom(environmentId));
-  const session = Option.getOrNull(AsyncResult.value(sessionResult));
+  const session = AsyncResult.getOrElse(sessionResult, () => null);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const reorder = useAtomCommand(environmentCatalog.reorderRoutes, "route reorder");
   const removeRoute = useAtomCommand(environmentCatalog.removeRoute, "route removal");
@@ -73,9 +77,7 @@ export function EnvironmentRoutesSection({
     null,
   );
   const [heights, setHeights] = useState<ReadonlyMap<string, number>>(() => new Map());
-  // Each drop remounts the rows so the new order and the cleared drag offsets
-  // land in one frame. Kept rows would show their old offsets in their new
-  // slots until the animated style catches up, and the card flashes empty.
+  // Remount dropped rows so data order and cleared drag offsets change together without flashing.
   const [drops, setDrops] = useState(0);
   if (entry === undefined) return null;
 
@@ -132,15 +134,11 @@ export function EnvironmentRoutesSection({
       title="Routes"
       trailing={
         routes.length > 1 ? (
-          <Pressable
-            accessibilityRole="button"
+          <Button
+            label={editing ? "Done" : "Edit"}
+            tone="text"
             onPress={() => setEditing((value) => !value)}
-            className="px-2 py-1 active:opacity-70"
-          >
-            <Text className="text-sm font-t3-medium text-foreground android:text-primary-text">
-              {editing ? "Done" : "Edit"}
-            </Text>
-          </Pressable>
+          />
         ) : undefined
       }
     >
@@ -168,8 +166,14 @@ export function EnvironmentRoutesSection({
             </>
           ) : (
             <Text className="text-sm text-foreground-muted">
-              Permissions not checked. Connect to this environment to view this session’s
-              permissions.
+              {sessionPermissionsUnavailableMessage({
+                connected: activeRouteId !== null,
+                failed: sessionResult._tag === "Failure",
+                rejected:
+                  sessionResult._tag !== "Failure" &&
+                  !sessionResult.waiting &&
+                  session?.authenticated === false,
+              })}
             </Text>
           )}
         </View>

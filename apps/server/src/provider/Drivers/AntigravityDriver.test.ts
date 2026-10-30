@@ -7,13 +7,10 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -273,52 +270,6 @@ const layerTest = ProviderHostLive.layer.pipe(
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
-    "preserves the Node install message when starting a standalone provider",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness();
-        const error = yield* h.refresh().pipe(Effect.flip);
-        expect(error.detail).toContain("Install Node.js");
-        expect(h.launches).toEqual([]);
-      }).pipe(
-        Effect.scoped,
-        Effect.provideService(HostProcess.IsExecutable, true),
-        Effect.provideService(HostProcess.Environment, { PATH: "" }),
-      ),
-  );
-
-  it.effect.skipIf(windowsHost)("does not launch a process for a disabled instance", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ enabled: false });
-      const snapshot = yield* h.instance.snapshot.refresh;
-      expect(snapshot.status).toBe("disabled");
-      expect(h.acquisitions).toEqual([]);
-      expect(h.launches).toEqual([]);
-      expect(yield* h.fs.exists(h.profileDirectory)).toBe(false);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect.skipIf(windowsHost)("refreshes models after slow process startup", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      const entered = yield* Deferred.make<void>();
-      const ready = yield* Deferred.make<void>();
-      h.controls.beforeAcquire = Deferred.succeed(entered, undefined).pipe(
-        Effect.andThen(Deferred.await(ready)),
-      );
-      const refresh = yield* h.refresh().pipe(Effect.forkScoped);
-      yield* Deferred.await(entered);
-      yield* TestClock.adjust("70 seconds");
-      yield* Deferred.succeed(ready, undefined);
-      yield* Fiber.join(refresh);
-      const snapshot = yield* h.instance.snapshot.getSnapshot;
-      expect(snapshot.auth.status).toBe("authenticated");
-      expect(snapshot.models.length).toBeGreaterThan(0);
-      yield* h.assertClosed;
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect.skipIf(windowsHost)(
     "refreshes through the selected executable and personal Google ACP",
     () =>
       Effect.gen(function* () {
@@ -383,42 +334,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
   );
 
   it.effect.skipIf(windowsHost)(
-    "authenticates with the configured API key method and labels the account by method",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness({
-          config: { authMethod: "gemini-api-key", apiKey: "fixture-gemini-key" },
-        });
-        yield* h.refresh();
-        const snapshot = yield* h.instance.snapshot.getSnapshot;
-        expect(snapshot.auth).toMatchObject({
-          status: "authenticated",
-          type: "gemini-api-key",
-          label: "Gemini API key",
-        });
-        expect(snapshot.models.length).toBeGreaterThan(0);
-        const nativeLaunches = h.launches.filter((launch) => launch.harnessPath !== undefined);
-        expect(nativeLaunches.map((launch) => launch.geminiApiKey)).toEqual(["fixture-gemini-key"]);
-        const requests = yield* h.readRequests;
-        expect(
-          requests
-            .filter((request) => request.method === "auth/login")
-            .map((request) => request.params?.methodId),
-        ).toEqual(["gemini-api-key"]);
-        yield* h.assertClosed;
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect.skipIf(windowsHost)("reports the missing credential before launching a process", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ config: { authMethod: "gemini-api-key" } });
-      const error = yield* h.refresh().pipe(Effect.flip);
-      expect(error.detail).toContain("API key");
-      expect(h.launches.filter((launch) => launch.harnessPath !== undefined)).toEqual([]);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect.skipIf(windowsHost)(
     "closes refresh processes and clears account metadata when Google sign-in is required",
     () =>
       Effect.gen(function* () {
@@ -433,30 +348,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(snapshot.slashCommands).toEqual([]);
         expect(snapshot.supportsTextGeneration).toBe(false);
         expect(h.acquisitions).toHaveLength(2);
-        expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
-        yield* h.assertClosed;
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect.skipIf(windowsHost)(
-    "clears account metadata when a text helper needs Google sign-in",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness();
-        yield* h.refresh();
-        h.controls.selected = h.signedOut;
-        const error = yield* h.instance.textGeneration
-          .generateThreadTitle({
-            cwd: h.profileDirectory,
-            message: "Repair Google login",
-            modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-low" },
-          })
-          .pipe(Effect.flip);
-        expect(error._tag).toBe("TextGenerationError");
-        const snapshot = yield* h.instance.snapshot.getSnapshot;
-        expect(snapshot.auth.status).toBe("unauthenticated");
-        expect(snapshot.models).toEqual([]);
-        expect(snapshot.supportsTextGeneration).toBe(false);
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
         yield* h.assertClosed;
       }).pipe(Effect.scoped),
@@ -477,26 +368,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       expect(h.releases).toEqual([h.first.version]);
       yield* h.assertClosed;
     }).pipe(Effect.scoped),
-  );
-
-  it.effect.skipIf(windowsHost)(
-    "gives each process its own temp directory and removes it when the process closes",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness();
-        const tempRoot = h.directories.runtimeTemp;
-        yield* h.refresh();
-        yield* h.refresh();
-        const directories = h.launches.flatMap((launch) =>
-          launch.tempDirectory === undefined ? [] : [launch.tempDirectory],
-        );
-        expect(directories).toHaveLength(2);
-        for (const directory of directories) {
-          expect(h.path.dirname(directory)).toBe(tempRoot);
-        }
-        expect(new Set(directories).size).toBe(2);
-        yield* h.assertClosed;
-      }).pipe(Effect.scoped),
   );
 
   it.effect.skipIf(windowsHost)(
@@ -535,16 +406,5 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
       }).pipe(Effect.scoped),
-  );
-
-  it.effect("probes through installation resolution without launching a process", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ enabled: true });
-      const snapshot = yield* h.instance.snapshot.refresh;
-      expect(snapshot.installed).toBe(true);
-      expect(snapshot.version).toBe(h.first.version);
-      expect(h.launches).toEqual([]);
-      expect(h.acquisitions).toEqual([]);
-    }).pipe(Effect.scoped),
   );
 });

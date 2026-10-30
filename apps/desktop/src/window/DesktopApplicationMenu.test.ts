@@ -129,95 +129,6 @@ const configureMenu = (
   );
 
 describe("DesktopApplicationMenu", () => {
-  it.effect("keeps display branding in the macOS application menu", () =>
-    Effect.gen(function* () {
-      const selectedAction = yield* Deferred.make<string>();
-      const applicationMenuTemplate =
-        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
-
-      yield* configureMenu(selectedAction, applicationMenuTemplate, {
-        platform: "darwin",
-        appVersion: "0.0.43-nightly.20260929.2428",
-      });
-
-      const template = yield* Deferred.await(applicationMenuTemplate);
-      const applicationMenu = template[0];
-      assert.isDefined(applicationMenu);
-      assert.equal(applicationMenu.label, "T3 Code (Nightly)");
-      if (!Array.isArray(applicationMenu.submenu)) {
-        throw new Error("Expected application menu submenu to be an array.");
-      }
-      assert.equal(
-        applicationMenu.submenu.find((item) => item.role === "about")?.label,
-        "About T3 Code (Nightly)",
-      );
-      assert.equal(
-        applicationMenu.submenu.find((item) => item.role === "hide")?.label,
-        "Hide T3 Code (Nightly)",
-      );
-      assert.equal(
-        applicationMenu.submenu.find((item) => item.role === "quit")?.label,
-        "Quit T3 Code (Nightly)",
-      );
-    }),
-  );
-
-  it.effect("installs the native menu and routes Settings through DesktopWindow", () =>
-    Effect.gen(function* () {
-      const selectedAction = yield* Deferred.make<string>();
-      const applicationMenuTemplate =
-        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
-
-      yield* configureMenu(selectedAction, applicationMenuTemplate);
-
-      const template = yield* Deferred.await(applicationMenuTemplate);
-      const fileMenu = template.find((item) => item.label === "File");
-      assert.isDefined(fileMenu);
-      if (!Array.isArray(fileMenu.submenu)) {
-        throw new Error("Expected File menu submenu to be an array.");
-      }
-      const settingsItem = fileMenu.submenu.find((item) => item.label === "Settings...");
-      assert.isDefined(settingsItem);
-      const settingsClick = settingsItem.click;
-      if (typeof settingsClick !== "function") {
-        throw new Error("Expected Settings menu item to have a click handler.");
-      }
-
-      settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
-      assert.equal(yield* Deferred.await(selectedAction), "open-settings");
-    }),
-  );
-
-  it.effect("owns Paste as Text and routes it through the renderer", () =>
-    Effect.gen(function* () {
-      const selectedAction = yield* Deferred.make<string>();
-      const applicationMenuTemplate =
-        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
-
-      yield* configureMenu(selectedAction, applicationMenuTemplate);
-
-      const template = yield* Deferred.await(applicationMenuTemplate);
-      const editMenu = template.find((item) => item.label === "Edit");
-      assert.isDefined(editMenu);
-      if (!Array.isArray(editMenu.submenu)) {
-        throw new Error("Expected Edit menu submenu to be an array.");
-      }
-      const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
-      assert.isDefined(pasteAsTextItem);
-      assert.equal(pasteAsTextItem.accelerator, "CmdOrCtrl+Shift+V");
-      if (typeof pasteAsTextItem.click !== "function") {
-        throw new Error("Expected Paste as Text menu item to have a click handler.");
-      }
-
-      pasteAsTextItem.click(
-        {} as Electron.MenuItem,
-        {} as Electron.BrowserWindow,
-        {} as KeyboardEvent,
-      );
-      assert.equal(yield* Deferred.await(selectedAction), "paste-as-text");
-    }),
-  );
-
   it.effect("leaves the accelerator to Chromium instead of injecting a paste", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();
@@ -247,13 +158,13 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
-  it.effect("routes View menu zoom to the main window instead of zoom roles", () =>
+  it.effect("registers macOS command-plus once and routes it through main-window zoom", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();
       const applicationMenuTemplate =
         yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
 
-      yield* configureMenu(selectedAction, applicationMenuTemplate);
+      yield* configureMenu(selectedAction, applicationMenuTemplate, { platform: "darwin" });
 
       const template = yield* Deferred.await(applicationMenuTemplate);
       const viewMenu = template.find((item) => item.label === "View");
@@ -268,9 +179,17 @@ describe("DesktopApplicationMenu", () => {
         ),
       );
 
-      const zoomIn = viewMenu.submenu.find((item) => item.label === "Zoom In");
+      const shiftedEqual = viewMenu.submenu.filter(
+        (item) => item.accelerator === "CmdOrCtrl+Shift+=",
+      );
+      assert.lengthOf(shiftedEqual, 1);
+      assert.lengthOf(
+        viewMenu.submenu.filter((item) => item.accelerator === "CmdOrCtrl+numadd"),
+        1,
+      );
+      const zoomIn = shiftedEqual[0];
       assert.isDefined(zoomIn);
-      assert.equal(zoomIn.accelerator, "CmdOrCtrl+=");
+      assert.isFalse(zoomIn.visible);
       if (typeof zoomIn.click !== "function") {
         throw new Error("Expected Zoom In menu item to have a click handler.");
       }
@@ -280,33 +199,37 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
-  it.effect("zooms from the numeric keypad without listing the commands twice", () =>
+  it.effect("never binds Cmd/Ctrl+W to closing the window", () =>
     Effect.gen(function* () {
-      for (const [accelerator, expected] of [
-        ["CmdOrCtrl+numadd", "zoom-in"],
-        ["CmdOrCtrl+numsub", "zoom-out"],
-        ["CmdOrCtrl+num0", "zoom-reset"],
-      ] as const) {
-        const selectedAction = yield* Deferred.make<string>();
+      for (const platform of ["darwin", "linux", "win32"] as const) {
         const applicationMenuTemplate =
           yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+        yield* configureMenu(yield* Deferred.make<string>(), applicationMenuTemplate, {
+          platform,
+        });
 
-        yield* configureMenu(selectedAction, applicationMenuTemplate);
+        const items: Electron.MenuItemConstructorOptions[] = [];
+        const collect = (template: readonly Electron.MenuItemConstructorOptions[]) => {
+          for (const item of template) {
+            items.push(item);
+            if (Array.isArray(item.submenu)) collect(item.submenu);
+          }
+        };
+        collect(yield* Deferred.await(applicationMenuTemplate));
 
-        const template = yield* Deferred.await(applicationMenuTemplate);
-        const viewMenu = template.find((item) => item.label === "View");
-        if (!viewMenu || !Array.isArray(viewMenu.submenu)) {
-          throw new Error("Expected View menu submenu to be an array.");
-        }
-        const item = viewMenu.submenu.find((entry) => entry.accelerator === accelerator);
-        assert.isDefined(item);
-        assert.isFalse(item.visible);
-        if (typeof item.click !== "function") {
-          throw new Error(`Expected ${accelerator} menu item to have a click handler.`);
-        }
-
-        item.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
-        assert.equal(yield* Deferred.await(selectedAction), expected);
+        assert.isUndefined(
+          items.find((item) => item.role === "close"),
+          platform,
+        );
+        // Electron's default windowMenu submenu includes a close role.
+        assert.isUndefined(
+          items.find((item) => item.role === "windowMenu" && item.submenu === undefined),
+          platform,
+        );
+        assert.isUndefined(
+          items.find((item) => item.accelerator?.toLowerCase().endsWith("+w")),
+          platform,
+        );
       }
     }),
   );

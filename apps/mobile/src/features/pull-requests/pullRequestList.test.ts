@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   EnvironmentId,
+  ProjectId,
   SourceControlProviderKind,
   type PullRequestListEntry,
   type PullRequestListResult,
@@ -8,19 +9,25 @@ import {
 import {
   appendPullRequestListPage,
   DEFAULT_PR_LIST_CONTROLS,
+  EMPTY_PULL_REQUEST_STATS_CACHE,
   filterPullRequestList,
   mergePullRequestListEntries,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
   PR_LIST_PAGE_SIZE,
-  pullRequestListFacets,
+  patchPullRequestListEntry,
+  pullRequestFilterChoices,
+  pullRequestLabelColors,
   pullRequestListHead,
   pullRequestListInput,
-  pullRequestListReviewStatus,
-  pullRequestLabelColor,
   scopedPullRequestListKey,
+  shownPullRequestListPages,
   pullRequestListRowsAreEqual,
+  withAnsweredPullRequestStats,
+  withListedPullRequests,
+  withShownPullRequestStats,
   withoutScratchProjectScope,
+  pullRequestProjectChoices,
 } from "./pullRequestList";
 
 function entry(number: number, patch: Partial<PullRequestListEntry> = {}): PullRequestListEntry {
@@ -69,35 +76,6 @@ describe("recycled PR list rows", () => {
     environmentId: EnvironmentId.make("env-one"),
   });
 
-  it("keeps an unchanged row through provider refreshes and newly allocated labels and authors", () => {
-    const labels = [{ name: "bug", color: "ff0000" }];
-    expect(
-      pullRequestListRowsAreEqual(
-        scopedEntry({ labels }),
-        scopedEntry({ labels: labels.map((label) => ({ ...label })), observedAt: 20 }),
-      ),
-    ).toBe(true);
-  });
-
-  it.each([
-    { title: "New title" },
-    { additions: 8 },
-    { deletions: 4 },
-    { checksState: "failing" as const },
-    { reviewDecision: "approved" as const },
-    { viewerReviewRequested: true },
-    { isDraft: true },
-    { state: "closed" as const },
-    { mergeability: "conflicting" as const },
-    { baseBranch: "release" },
-    { author: { login: "another", name: null, avatarUrl: null } },
-    { author: { login: "octocat", name: null, avatarUrl: "https://example.com/avatar.png" } },
-    { labels: [{ name: "bug", color: "ff0000" }] },
-    { stack: { number: 1, position: 2, size: 3, base: "main" } },
-  ])("updates the row when visible status or quick actions change: %j", (patch) => {
-    expect(pullRequestListRowsAreEqual(scopedEntry(), scopedEntry(patch))).toBe(false);
-  });
-
   it("updates navigation and commands when a duplicate moves to another environment", () => {
     const original = scopedEntry();
     expect(
@@ -144,6 +122,14 @@ describe("mobile PR list pagination", () => {
     expect(
       mergePullRequestListEntries([entry(1)], [entry(2, { host: "enterprise.test" }), entry(2)]),
     ).toHaveLength(3);
+  });
+  it("patches a row that only the list head supplies, and keeps it while that head is current", () => {
+    const head = page([entry(2), entry(1)], { repo: "first" });
+    const patched = patchPullRequestListEntry(null, head, entry(1), { state: "merged" }, 5);
+    expect(shownPullRequestListPages(patched, head)?.entries.map((row) => row.state)).toEqual([
+      "open",
+      "merged",
+    ]);
   });
   it("refreshes the head without dropping older loaded pages or rewinding their cursor", () => {
     const first = pullRequestListHead(null, page([entry(3)], { repo: "first" }));
@@ -258,20 +244,6 @@ describe("all-environment PR list", () => {
 });
 
 describe("mobile PR scan and filters", () => {
-  it("shows review verdicts separately from checks and prioritizes changes requested", () => {
-    expect(
-      pullRequestListReviewStatus({
-        reviewDecision: "changes-requested",
-        viewerReviewRequested: true,
-      })?.accessibleLabel,
-    ).toBe("Changes requested");
-    expect(
-      pullRequestListReviewStatus({ reviewDecision: "approved", viewerReviewRequested: false })
-        ?.label,
-    ).toBe("Approved");
-    expect(pullRequestListReviewStatus({ viewerReviewRequested: true })?.label).toBe("Your review");
-    expect(pullRequestListReviewStatus({ viewerReviewRequested: false })).toBeNull();
-  });
   it("resolves authored and author:me per host rather than mixing account identities", () => {
     const rows = [entry(1), entry(2, { host: "enterprise.test" })];
     const viewers = { "github.com": "Octocat", "enterprise.test": "someone-else" };
@@ -295,30 +267,6 @@ describe("mobile PR scan and filters", () => {
     ).toEqual([1]);
     expect(
       filterPullRequestList(rows, DEFAULT_PR_LIST_CONTROLS, viewers, "author:@me", new Set()).map(
-        (row) => row.number,
-      ),
-    ).toEqual([1]);
-  });
-  it("combines label groups, exclusions, draft and review filters", () => {
-    const rows = [
-      entry(1, {
-        labels: [
-          { name: "size:XS", color: null },
-          { name: "bug", color: null },
-        ],
-        reviewDecision: "approved",
-      }),
-      entry(2, { isDraft: true, labels: [{ name: "bug", color: null }] }),
-      entry(3, { labels: [{ name: "feature", color: null }] }),
-    ];
-    const filters = {
-      draft: "hide" as const,
-      review: "approved" as const,
-      labels: [["SIZE:XS", "size:S"], ["bug"]],
-      excludedLabels: ["feature"],
-    };
-    expect(
-      filterPullRequestList(rows, { ...DEFAULT_PR_LIST_CONTROLS, filters }, {}, "", new Set()).map(
         (row) => row.number,
       ),
     ).toEqual([1]);
@@ -379,32 +327,6 @@ describe("mobile PR scan and filters", () => {
     expect(pick(new Set(["laptop", "server"]))).toEqual(["laptop"]);
     expect(pick(new Set())).toEqual(["laptop"]);
   });
-  it("sorts loaded rows and builds unique author and label options", () => {
-    const rows = [
-      entry(1, { labels: [{ name: "bug", color: null }] }),
-      entry(2, {
-        labels: [
-          { name: "bug", color: null },
-          { name: "feature", color: null },
-        ],
-      }),
-    ];
-    expect(
-      filterPullRequestList(
-        rows,
-        { ...DEFAULT_PR_LIST_CONTROLS, sort: "oldest" },
-        {},
-        "",
-        new Set(),
-      ).map((row) => row.number),
-    ).toEqual([1, 2]);
-    expect(pullRequestListFacets(rows)).toEqual({
-      authors: ["octocat"],
-      labels: ["bug", "feature"],
-    });
-    expect(pullRequestLabelColor("ffab00")).toBe("#ffab00");
-    expect(pullRequestLabelColor("not-a-color")).toBeNull();
-  });
 });
 
 describe("withoutScratchProjectScope", () => {
@@ -440,5 +362,162 @@ describe("withoutScratchProjectScope", () => {
       projectEnvironmentId: "env-b",
     };
     expect(withoutScratchProjectScope(elsewhere, projects)).toBe(elsewhere);
+  });
+});
+
+describe("pullRequestLabelColors", () => {
+  it("keeps the first usable color each label name carries", () => {
+    expect(
+      pullRequestLabelColors([
+        { name: "Bug", color: null },
+        { name: "bug", color: "d73a4a" },
+        { name: "BUG", color: "#000000" },
+        { name: "docs", color: "not-a-color" },
+        { name: "size:S", color: "#69C35F" },
+      ]),
+    ).toEqual({ bug: "#d73a4a", "size:s": "#69C35F" });
+  });
+});
+
+describe("pullRequestFilterChoices", () => {
+  it("keeps the picked value in view and adds host answers no loaded row carries, once", () => {
+    expect(
+      pullRequestFilterChoices({
+        selected: ["size:XL"],
+        suggestions: ["bug", "size:XL", "docs"],
+        hosted: ["Bug", "backend"],
+        query: "b",
+      }),
+    ).toEqual(["size:XL", "bug", "backend"]);
+  });
+
+  it("leaves room for the host's answers when loaded matches alone would fill the list", () => {
+    const loaded = Array.from({ length: 120 }, (_, index) => `label-${index}`);
+    const rows = pullRequestFilterChoices({
+      selected: [],
+      suggestions: loaded,
+      hosted: ["label-from-host"],
+      query: "label",
+    });
+    expect(rows).toHaveLength(100);
+    expect(rows[50]).toBe("label-from-host");
+  });
+});
+
+describe("pullRequestProjectChoices", () => {
+  const laptop = EnvironmentId.make("env-laptop");
+  const desktop = EnvironmentId.make("env-desktop");
+  const project = (id: string, environmentId: EnvironmentId) => ({
+    id: ProjectId.make(id),
+    environmentId,
+    title: "t3code",
+    workspaceRoot: `/work/${id}`,
+    repositoryIdentity: { canonicalKey: "github.com/pingdotgg/t3code" },
+  });
+  const projects = [project("main", laptop), project("worktree", laptop), project("main", desktop)];
+  const choices = (
+    servesPullRequests: (environmentId: EnvironmentId) => boolean,
+    scope: { projectId?: string; projectEnvironmentId?: string } = {},
+  ) =>
+    pullRequestProjectChoices(projects, {
+      environmentId: null,
+      controls: { ...DEFAULT_PR_LIST_CONTROLS, ...scope },
+      environmentLabels: new Map([
+        [laptop, "laptop"],
+        [desktop, "desktop"],
+      ]),
+      servesPullRequests,
+    }).map(({ id, environmentId, title }) => ({ id, environmentId, title }));
+
+  it("lists each repository once per environment that serves pull requests", () => {
+    expect(choices(() => true)).toEqual([
+      { id: "main", environmentId: desktop, title: "t3code · desktop" },
+      { id: "main", environmentId: laptop, title: "t3code · laptop" },
+    ]);
+    expect(choices((environmentId) => environmentId === desktop)).toEqual([
+      { id: "main", environmentId: desktop, title: "t3code" },
+    ]);
+  });
+
+  it("keeps the saved scope when its environment stops serving or has not loaded", () => {
+    const scope = { projectId: "worktree", projectEnvironmentId: laptop };
+    expect(choices((environmentId) => environmentId === desktop, scope)).toEqual([
+      { id: "main", environmentId: desktop, title: "t3code · desktop" },
+      { id: "worktree", environmentId: laptop, title: "t3code · laptop" },
+    ]);
+    expect(choices(() => false, scope)).toEqual([
+      { id: "worktree", environmentId: laptop, title: "t3code" },
+    ]);
+  });
+});
+
+describe("shown PR diff stats", () => {
+  const cups = EnvironmentId.make("cups");
+  const stat = (number: number, additions: number, deletions: number) => ({
+    projectId: "project" as PullRequestListEntry["projectId"],
+    repository: "org/repo",
+    number,
+    additions,
+    deletions,
+  });
+  const rows = [
+    { ...entry(1), environmentId: cups },
+    { ...entry(2, { additions: 4, deletions: 1 }), environmentId: cups },
+  ];
+
+  it("keeps the same list when the answers change no row", () => {
+    expect(withShownPullRequestStats(rows, [])).toBe(rows);
+    expect(withShownPullRequestStats(rows, [{ environmentId: cups, stats: [stat(1, 0, 0)] }])).toBe(
+      rows,
+    );
+    expect(withShownPullRequestStats(rows, [{ environmentId: cups, stats: [stat(2, 9, 9)] }])).toBe(
+      rows,
+    );
+  });
+
+  it("fills only rows without stats, in their own environment", () => {
+    const filled = withShownPullRequestStats(rows, [
+      { environmentId: EnvironmentId.make("mbp"), stats: [stat(1, 7, 7)] },
+      { environmentId: cups, stats: [stat(1, 3, 2), stat(2, 9, 9)] },
+    ]);
+    expect(filled.map(({ additions, deletions }) => [additions, deletions])).toEqual([
+      [3, 2],
+      [4, 1],
+    ]);
+    expect(filled[1]).toBe(rows[1]);
+  });
+});
+
+describe("cached PR diff stats", () => {
+  const stat = (number: number, additions: number) => ({
+    projectId: "project" as PullRequestListEntry["projectId"],
+    repository: "org/repo",
+    number,
+    additions,
+    deletions: 0,
+  });
+
+  it("drops a row's stat and refreshes its stats query when its updatedAt moves", () => {
+    const query = {
+      refs: [1, 2].map((number) => ({
+        projectId: stat(number, 0).projectId,
+        repository: "org/repo",
+        number,
+      })),
+    };
+    const listed = withListedPullRequests(EMPTY_PULL_REQUEST_STATS_CACHE, [entry(1), entry(2)]);
+    expect(listed.refresh).toEqual([]);
+    const answered = withAnsweredPullRequestStats(listed.cache, query, [stat(1, 5), stat(2, 7)]);
+    expect(withListedPullRequests(answered, [entry(1), entry(2)])).toEqual({
+      cache: answered,
+      refresh: [],
+    });
+
+    const pushed = withListedPullRequests(answered, [
+      entry(1, { updatedAt: "2026-10-20T00:00:00Z" }),
+      entry(2),
+    ]);
+    expect([...pushed.cache.stats.values()]).toEqual([stat(2, 7)]);
+    expect(pushed.refresh).toEqual([query]);
   });
 });

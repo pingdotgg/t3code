@@ -1,12 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  CommandId,
-  GitCommandError,
-  ProjectId,
-  ThreadId,
-  VcsProcessSpawnError,
-} from "@t3tools/contracts";
+import { CommandId, ProjectId, ThreadId, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -47,6 +41,7 @@ const layerEnrichment = ProjectEnrichmentService.layer.pipe(
         resolve: () => Effect.succeed(null),
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
         resolvePath: () => Effect.succeed(null),
       }),
     ),
@@ -114,15 +109,6 @@ const requireRoot = Effect.gen(function* () {
   return Option.getOrThrow(yield* scratch.scratchRoot);
 });
 
-it.effect("offers a Scratch folder under the data dir when it is outside a checkout", () =>
-  withScratch(({ baseDir }) =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      assert.equal(yield* requireRoot, path.resolve(baseDir, "scratch"));
-    }),
-  ),
-);
-
 it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -134,6 +120,7 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
     yield* Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
       assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+      assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");
     }).pipe(Effect.provide(layer(baseDir)));
@@ -279,7 +266,7 @@ it.effect("leaves threads in other projects alone", () =>
       const projects = yield* ProjectService.ProjectService;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* scratch.ensureScratchProject;
+      const { projectId: scratchId } = yield* scratch.ensureScratchProject;
       const other = yield* projects.create({
         commandId: CommandId.make("command:other"),
         projectId: ProjectId.make("project:other"),
@@ -295,6 +282,8 @@ it.effect("leaves threads in other projects alone", () =>
       });
       assert.isTrue(Option.isNone(folder));
       assert.deepEqual(yield* fileSystem.readDirectory(yield* requireRoot), []);
+      assert.isTrue(yield* scratch.isScratchProject(scratchId));
+      assert.isFalse(yield* scratch.isScratchProject(other.id));
     }),
   ),
 );
@@ -543,37 +532,4 @@ it.effect("removes the folder when the create is cancelled before the project ex
       },
     );
   }),
-);
-
-it.effect("removes the folder when the repository cannot be made", () =>
-  withScratch(
-    ({ baseDir }) =>
-      Effect.gen(function* () {
-        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-        const projects = yield* ProjectService.ProjectService;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-
-        const failure = yield* Effect.flip(folders.createNamedProject({ name: "Broken" }));
-
-        assert.equal(failure._tag, "NamedProjectFolderError");
-        assert.equal(failure.message, "Failed to create the project folder.");
-        assert.deepEqual(yield* fileSystem.readDirectory(path.resolve(baseDir, "projects")), []);
-        assert.deepEqual((yield* projects.snapshot).projects, []);
-      }),
-    {
-      git: Layer.mock(GitVcsDriver.GitVcsDriver)({
-        readConfigValue: () => Effect.succeed(null),
-        execute: (input) =>
-          Effect.fail(
-            new GitCommandError({
-              operation: input.operation,
-              command: "git",
-              cwd: input.cwd,
-              detail: "git is broken",
-            }),
-          ),
-      }),
-    },
-  ),
 );

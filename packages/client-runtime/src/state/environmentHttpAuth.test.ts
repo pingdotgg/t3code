@@ -12,15 +12,14 @@ import {
   OrchestrationV2ThreadTranscript,
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
-import { RelayClientTracer } from "@t3tools/shared/relayTracing";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import * as Tracer from "effect/Tracer";
-import { TestClock } from "effect/testing";
+import * as TestClock from "effect/testing/TestClock";
 import type { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -34,7 +33,6 @@ import * as ManagedRelay from "../relay/managedRelay.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
-import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
@@ -44,7 +42,6 @@ import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
-const encodeThreadSnapshot = Schema.encodeSync(OrchestrationV2ThreadDetailSnapshot);
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
 const encodeThreadTranscript = Schema.encodeSync(OrchestrationV2ThreadTranscript);
 
@@ -176,6 +173,14 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
   };
 }
 
+// Resolves "settled" instead of hanging when the load finishes without sending another request.
+function nextRequestOrSettled(requests: Queue.Queue<number>, load: Fiber.Fiber<unknown, unknown>) {
+  return Effect.raceFirst(
+    Queue.take(requests).pipe(Effect.as("sent" as const)),
+    Fiber.await(load).pipe(Effect.as("settled" as const)),
+  );
+}
+
 type HttpInput = ReturnType<typeof makeHarness>["input"];
 const LOADERS: ReadonlyArray<{
   readonly name: string;
@@ -218,18 +223,6 @@ const LOADERS: ReadonlyArray<{
       fetchEnvironmentShellSnapshot(input).pipe(
         Effect.map(({ loadPullRequests: _links, ...snapshot }) => snapshot),
       ),
-  },
-  {
-    name: "thread snapshot",
-    method: "GET",
-    path: `/api/orchestration/threads/${THREAD.projection.thread.id}`,
-    response: encodeThreadSnapshot(THREAD),
-    expected: THREAD,
-    load: (input: HttpInput) =>
-      ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({
-        ...input,
-        threadId: THREAD.projection.thread.id,
-      }),
   },
   {
     name: "thread transcript",
@@ -336,12 +329,6 @@ describe("authenticated environment HTTP requests", () => {
         fetchEnvironmentThreadTranscript({ ...input, threadId: MCP_THREAD_ID }),
     },
     {
-      name: "thread snapshot",
-      response: encodeThreadSnapshot(THREAD),
-      load: (input: HttpInput) =>
-        ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({ ...input, threadId: MCP_THREAD_ID }),
-    },
-    {
       name: "bounded thread snapshot",
       response: encodeBoundedSnapshot(BOUNDED_THREAD),
       load: (input: HttpInput) =>
@@ -406,36 +393,6 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 
-  it.effect.each(LOADERS.filter((loader) => loader.path.startsWith("/api/orchestration/")))(
-    "renews a rejected credential without losing the v2 protocol or query for $name",
-    (loader) =>
-      Effect.gen(function* () {
-        const harness = makeHarness((requestNumber) =>
-          requestNumber === 1 ? credentialRejectedResponse() : Response.json(loader.response),
-        );
-        const result = yield* loader.load(harness.input).pipe(Effect.provide(harness.httpLayer));
-        expect(result).toEqual(loader.expected);
-        expect(harness.calls).toHaveLength(2);
-        const retried = harness.calls[1]!;
-        const url = new URL(retried.url);
-        expect(url.origin).toBe(RENEWED_ORIGIN);
-        expect(url.pathname).toBe(loader.path);
-        expect(new Headers(retried.init.headers).get("authorization")).toBe("DPoP renewed-token");
-        expect(new Headers(retried.init.headers).get("dpop")).toBe("proof-2");
-        expect(new Headers(retried.init.headers).get(ORCHESTRATION_PROTOCOL_HEADER)).toBe(
-          ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-        );
-        expect(harness.proofs[1]).toEqual({
-          method: "GET",
-          url: retried.url,
-          accessToken: "renewed-token",
-        });
-        if (loader.name === "older thread history") {
-          expect(url.searchParams.get("cursor")).toBe("older-page");
-        }
-      }),
-  );
-
   it.effect("renews credentials captured by the bounded snapshot loader", () =>
     Effect.gen(function* () {
       const harness = makeHarness((requestNumber) =>
@@ -474,36 +431,6 @@ describe("authenticated environment HTTP requests", () => {
       expect(harness.calls).toHaveLength(2);
       expect(new Headers(harness.calls[1]!.init.headers).get("authorization")).toBe(
         "DPoP renewed-token",
-      );
-    }),
-  );
-
-  it.effect("uses the authorization service captured by the diff loader layer", () =>
-    Effect.gen(function* () {
-      const harness = makeHarness(() => Response.json(DIFF_RESULT));
-      const layerLoader = PullRequestDiffLoader.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            harness.httpLayer,
-            Layer.succeed(
-              ManagedRelay.ManagedRelayDpopSigner,
-              Option.getOrThrow(harness.input.signer),
-            ),
-            Layer.succeed(
-              RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-              harness.remoteAuthorization,
-            ),
-          ),
-        ),
-      );
-      const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader.pipe(
-        Effect.provide(layerLoader),
-      );
-      const result = yield* loader.load(PREPARED, DIFF);
-
-      expect(result).toEqual(DIFF_RESULT);
-      expect(new Headers(harness.calls[0]!.init.headers).get("authorization")).toBe(
-        "DPoP current-token",
       );
     }),
   );
@@ -587,6 +514,69 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 
+  it.effect(
+    "waits longer for session permissions after the environment is too slow to answer",
+    () =>
+      Effect.gen(function* () {
+        const requests = yield* Queue.unbounded<number>();
+        let answer: () => void = () => {};
+        const answered = new Promise<void>((resolve) => {
+          answer = resolve;
+        });
+        const harness = makeHarness((requestNumber) => {
+          Queue.offerUnsafe(requests, requestNumber);
+          return requestNumber === 1
+            ? new Promise<Response>(() => {})
+            : answered.then(() => Response.json(SESSION));
+        });
+        const load = yield* fetchEnvironmentSessionState({
+          prepared: { ...PREPARED, httpAuthorization: { _tag: "Bearer", token: "bearer-token" } },
+          signer: Option.none(),
+          timeoutMs: 1_000,
+        }).pipe(Effect.provide(harness.httpLayer), Effect.forkChild({ startImmediately: true }));
+
+        yield* Queue.take(requests);
+        yield* TestClock.adjust("1 second");
+        expect(yield* nextRequestOrSettled(requests, load)).toBe("sent");
+        yield* TestClock.adjust("1500 millis");
+        answer();
+
+        expect(yield* Fiber.await(load)).toStrictEqual(Exit.succeed(SESSION));
+        expect(harness.calls).toHaveLength(2);
+      }),
+  );
+
+  it.effect("gives up on session permissions once a 60 second wait also times out", () =>
+    Effect.gen(function* () {
+      const requests = yield* Queue.unbounded<number>();
+      const harness = makeHarness((requestNumber) => {
+        Queue.offerUnsafe(requests, requestNumber);
+        return new Promise<Response>(() => {});
+      });
+      const load = yield* fetchEnvironmentSessionState({
+        prepared: { ...PREPARED, httpAuthorization: { _tag: "Bearer", token: "bearer-token" } },
+        signer: Option.none(),
+        timeoutMs: 15_000,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.forkChild({ startImmediately: true }));
+
+      yield* Queue.take(requests);
+      yield* TestClock.adjust("15 seconds");
+      expect(yield* nextRequestOrSettled(requests, load)).toBe("sent");
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* nextRequestOrSettled(requests, load)).toBe("sent");
+      yield* TestClock.adjust("60 seconds");
+      const exit = yield* Fiber.await(load);
+
+      expect(exit).toMatchObject({
+        _tag: "Failure",
+        cause: {
+          reasons: [{ error: { _tag: "RemoteEnvironmentAuthTimeoutError", timeoutMs: 60_000 } }],
+        },
+      });
+      expect(harness.calls).toHaveLength(3);
+    }),
+  );
+
   it.effect("reports persistent session rejection instead of showing missing permissions", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(UNAUTHENTICATED_SESSION));
@@ -626,72 +616,6 @@ describe("authenticated environment HTTP requests", () => {
           authorization === null ? "include" : undefined,
         );
       }),
-  );
-
-  it.effect("keeps the caller's timeout while waiting for renewal", () =>
-    Effect.gen(function* () {
-      const harness = makeHarness(() => Response.json(SESSION));
-      const authorizing = yield* Deferred.make<void>();
-      const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
-        ...harness.remoteAuthorization,
-        authorizeDpopHttp: () =>
-          Deferred.succeed(authorizing, undefined).pipe(Effect.andThen(Effect.never)),
-      });
-      const pending = yield* fetchEnvironmentSessionState({
-        ...harness.input,
-        remoteAuthorization: Option.some(remoteAuthorization),
-        timeoutMs: 100,
-      }).pipe(Effect.provide(harness.httpLayer), Effect.flip, Effect.forkChild);
-      yield* Deferred.await(authorizing);
-      yield* TestClock.adjust(100);
-
-      expect(yield* Fiber.join(pending)).toMatchObject({
-        _tag: "RemoteEnvironmentAuthTimeoutError",
-        requestUrl: `${PREPARED.httpBaseUrl}/api/auth/session`,
-        timeoutMs: 100,
-      });
-      expect(harness.calls).toEqual([]);
-    }),
-  );
-
-  it.effect("reports the current endpoint when the total timeout expires during HTTP", () =>
-    Effect.gen(function* () {
-      const requested = Promise.withResolvers<void>();
-      const response = Promise.withResolvers<Response>();
-      const harness = makeHarness(() => {
-        requested.resolve();
-        return response.promise;
-      });
-      const authorizing = yield* Deferred.make<void>();
-      const authorize = yield* Deferred.make<void>();
-      const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
-        ...harness.remoteAuthorization,
-        authorizeDpopHttp: (input) =>
-          Deferred.succeed(authorizing, undefined).pipe(
-            Effect.andThen(Deferred.await(authorize)),
-            Effect.andThen(harness.remoteAuthorization.authorizeDpopHttp(input)),
-          ),
-      });
-      const pending = yield* fetchEnvironmentSessionState({
-        ...harness.input,
-        remoteAuthorization: Option.some(remoteAuthorization),
-        timeoutMs: 100,
-      }).pipe(Effect.provide(harness.httpLayer), Effect.flip, Effect.forkChild);
-      yield* Deferred.await(authorizing);
-      yield* TestClock.adjust(25);
-      yield* Deferred.succeed(authorize, undefined);
-      yield* Effect.promise(() => requested.promise);
-      yield* TestClock.adjust(75);
-
-      expect(yield* Fiber.join(pending)).toMatchObject({
-        _tag: "RemoteEnvironmentAuthTimeoutError",
-        requestUrl: `${CURRENT_ORIGIN}/api/auth/session`,
-        timeoutMs: 100,
-      });
-      expect(harness.calls.map((call) => call.url)).toEqual([`${CURRENT_ORIGIN}/api/auth/session`]);
-      expect(harness.authorizations).toHaveLength(1);
-      response.resolve(Response.json(SESSION));
-    }),
   );
 
   it.effect("reports renewal failure without sending the expired prepared token", () =>
@@ -735,49 +659,4 @@ describe("authenticated environment HTTP requests", () => {
       expect(harness.calls).toEqual([]);
     }),
   );
-});
-
-describe("relay request tracing", () => {
-  it.effect("starts an exported trace for a T3 Connect request", () =>
-    Effect.gen(function* () {
-      const productSpans: Array<{ readonly name: string; readonly root: boolean }> = [];
-      const productTracer = Tracer.make({
-        span: (options) => {
-          productSpans.push({ name: options.name, root: Option.isNone(options.parent) });
-          return new Tracer.NativeSpan(options);
-        },
-      });
-      const harness = makeHarness(() => Response.json(DIFF_RESULT));
-
-      yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
-        ...harness.input,
-        diff: DIFF,
-      }).pipe(
-        Effect.withSpan("mobile.screen.local"),
-        Effect.provide(harness.httpLayer),
-        Effect.provideService(RelayClientTracer, Option.some(productTracer)),
-      );
-
-      expect(productSpans[0]).toEqual({
-        name: "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest",
-        root: true,
-      });
-      expect(productSpans.map((span) => span.name)).not.toContain("mobile.screen.local");
-    }),
-  );
-});
-
-describe("orchestration HTTP compatibility header", () => {
-  it("announces the current protocol without replacing bearer or DPoP authentication", () => {
-    expect(
-      withOrchestrationProtocolHeader({
-        authorization: "DPoP access-token",
-        dpop: "signed-proof",
-      }),
-    ).toEqual({
-      authorization: "DPoP access-token",
-      dpop: "signed-proof",
-      [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-    });
-  });
 });

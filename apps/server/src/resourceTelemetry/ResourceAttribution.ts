@@ -32,7 +32,7 @@ function nonNegativeInteger(value: number | undefined, fallback: number): number
   return Math.max(0, Math.round(value));
 }
 
-export const make = Effect.fn("resourceTelemetry.resourceAttribution.make")(function* () {
+const make = Effect.fn("resourceTelemetry.resourceAttribution.make")(function* () {
   const entries = yield* Ref.make(new Map<string, ResourceAttributionEntry>());
 
   const record: ResourceAttribution["Service"]["record"] = (input) =>

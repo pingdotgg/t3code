@@ -1,18 +1,21 @@
 packages:
   - apps/*
+  - evals
   - infra/*
   - oxlint-plugin-t3code
   - packages/*
   - scripts
 
-# Successor to onlyBuiltDependencies/ignoredBuiltDependencies (pnpm 11).
+# Successor to onlyBuiltDependencies/ignoredBuiltDependencies (pnpm 11+).
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
 allowBuilds:
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
-  electron: true
+  # No install script since Electron 44; ensure:electron runs install.js.
+  # Keep the key: pnpm fails installs that still record a removed `true`.
+  electron: false
   electron-winstaller: false
   esbuild: true
   msgpackr-extract: true
@@ -20,20 +23,27 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.15.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-29ddd424.tgz": true
   sharp: true
-  tsc-rs: true
+  "@tsc-rs/typescript": true
   utf-8-validate: false
   workerd: false
 
 catalog:
+  "@alchemy.run/axiom": 2.0.0-beta.84
+  "@alchemy.run/cloudflare": 2.0.0-beta.84
+  "@alchemy.run/drizzle": 2.0.0-beta.84
+  "@alchemy.run/planetscale": 2.0.0-beta.84
   "@clerk/backend": 3.25.0
-  "@clerk/clerk-js": 6.39.1
-  "@clerk/electron": 0.1.1
+  "@clerk/clerk-js": 6.40.0
+  "@clerk/electron": 0.1.3
   "@clerk/electron-passkeys": 0.0.3
-  "@clerk/expo": 4.13.0
-  "@clerk/react": 6.17.8
-  "@clerk/shared": 4.40.0
+  "@clerk/expo": 4.14.0
+  "@clerk/react": 6.18.0
+  "@clerk/shared": 4.41.0
+  # Must match the version alchemy depends on: the relay overrides its
+  # Cloudflare retry policy through this package's Retry service.
+  "@distilled.cloud/cloudflare": 1.0.0-rc.17
   "@effect/atom-react": 4.0.5
   "@effect/graphql-generator": 4.0.5
   "@effect/openapi-generator": 4.0.5
@@ -41,31 +51,36 @@ catalog:
   "@effect/platform-node-shared": 4.0.5
   "@effect/sql-pg": 4.0.5
   "@effect/sql-sqlite-do": 4.0.5
-  "@effect/tsgo": 0.51.1
   "@effect/vitest": 4.0.5
   "@electron-webauthn/macos": 1.3.1
   "@legendapp/list": 3.3.5
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
-  "@pierre/diffs": 1.5.2
+  "@pierre/diffs": 1.6.1
+  "@pierre/highlights": 0.2.0
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
   "@types/node": 24.12.4
   "@types/plist": 3.0.5
+  "@types/react": ~19.3.0
+  "@types/react-dom": ~19.3.0
   "@types/ws": 8.18.2
+  alchemy: 2.0.0-beta.84
   effect: 4.0.5
   electron-webauthn: 1.3.1
   jose: 6.2.2
   lightningcss: 1.33.0
   objc-js: 1.5.0
   plist: 3.1.1
+  react: 19.3.0
+  react-dom: 19.3.0
   tailwindcss: 4.3.3
   tldts: 7.4.2
-  typescript: 7.0.2
+  typescript: npm:@tsc-rs/typescript@0.8.0
   undici: 8.11.2
-  vite: npm:@voidzero-dev/vite-plus-core@1.0.0
-  vite-plus: 1.0.0
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
+  vite-plus: 1.4.0
   ws: 8.22.0
   yaml: ^2.9.0
   # Markdown pipeline: the server counts find matches with the same parser the
@@ -83,24 +98,34 @@ catalog:
   unified: 11.0.5
 
 minimumReleaseAgeExclude:
-  - tsc-rs
+  - alchemy@2.0.0-beta.84
+  - "@alchemy.run/acme@2.0.0-beta.84"
+  - "@alchemy.run/axiom@2.0.0-beta.84"
+  - "@alchemy.run/cloudflare@2.0.0-beta.84"
+  - "@alchemy.run/cloudflare-runtime@2.0.0-beta.84"
+  - "@alchemy.run/docker@2.0.0-beta.84"
+  - "@alchemy.run/drizzle@2.0.0-beta.84"
+  - "@alchemy.run/node-utils@2.0.0-beta.84"
+  - "@alchemy.run/planetscale@2.0.0-beta.84"
+  - "@alchemy.run/sql@2.0.0-beta.84"
+  - "@distilled.cloud/acme@1.0.0-rc.17"
+  - "@distilled.cloud/aws4signer@1.0.0-rc.17"
+  - "@distilled.cloud/axiom@1.0.0-rc.17"
+  - "@distilled.cloud/cloudflare@1.0.0-rc.17"
+  - "@distilled.cloud/core@1.0.0-rc.17"
+  - "@distilled.cloud/iceberg@1.0.0-rc.17"
+  - "@distilled.cloud/planetscale@1.0.0-rc.17"
   - "@tsc-rs/*"
   - expo-glass-effect@58.0.4
   - expo-blur@58.0.4
   - expo-audio@58.0.9
   - "@clerk/backend@3.25.0"
-  - "@clerk/clerk-js@6.39.1"
-  - "@clerk/electron@0.1.1"
-  - "@clerk/expo-native-components@0.2.0"
-  - "@clerk/expo@4.13.0"
-  - "@clerk/react@6.17.8"
-  - "@clerk/shared@4.40.0"
-  - "@distilled.cloud/aws@1.0.0-rc.13"
-  - "@distilled.cloud/axiom@1.0.0-rc.13"
-  - "@distilled.cloud/cloudflare@1.0.0-rc.13"
-  - "@distilled.cloud/core@1.0.0-rc.13"
-  - "@distilled.cloud/neon@1.0.0-rc.13"
-  - "@distilled.cloud/planetscale@1.0.0-rc.13"
+  - "@clerk/clerk-js@6.40.0"
+  - "@clerk/electron@0.1.3"
+  - "@clerk/expo-native-components@0.4.0"
+  - "@clerk/expo@4.14.0"
+  - "@clerk/react@6.18.0"
+  - "@clerk/shared@4.41.0"
   - "@effect/atom-react@4.0.5"
   - "@effect/graphql-generator@4.0.5"
   - "@effect/openapi-generator@4.0.5"
@@ -109,7 +134,6 @@ minimumReleaseAgeExclude:
   - "@effect/sql-pg@4.0.5"
   - "@effect/sql-sqlite-do@4.0.5"
   - "@effect/vitest@4.0.5"
-  - alchemy@2.0.0-beta.80
   - effect@4.0.5
   - "@legendapp/list@3.3.5"
   - "@expo/cli@58.1.1 || 58.1.9 || 58.1.11"
@@ -146,19 +170,11 @@ minimumReleaseAgeExclude:
   - expo-sharing@58.0.19
   - expo-sqlite@58.0.13
   - expo-symbols@58.0.4
-  - electron@44.4.5
+  - electron@44.10.0
   - "@anthropic-ai/claude-agent-sdk@0.3.276"
-  - "@alchemy.run/cloudflare-runtime@2.0.0-beta.80"
-  - "@alchemy.run/floci@2.0.0-beta.80"
-  - "@alchemy.run/node-utils@2.0.0-beta.80"
-  - "@distilled.cloud/fly-io@1.0.0-rc.13"
-  - "@distilled.cloud/hetzner@1.0.0-rc.13"
-  - "@distilled.cloud/prisma@1.0.0-rc.13"
-  - "@distilled.cloud/railway@1.0.0-rc.13"
-  - "@distilled.cloud/stripe@1.0.0-rc.13"
   - "@shadcn/lint@0.1.5"
   - cn@0.3.2
-  - uniwind@1.12.1
+  - uniwind@1.13.0
   - "@expo/dom-webview@58.0.2"
   - "expo-auth-session@58.0.13"
   - "expo-camera@58.0.10"
@@ -177,7 +193,7 @@ minimumReleaseAgeExclude:
   - "react@19.3.0"
   - "react-dom@19.3.0"
   - "react-native@0.88.0"
-  - "react-native-keyboard-controller@1.22.7"
+  - "react-native-keyboard-controller@1.22.8"
   - "react-native-worklets@0.13.0"
   - "react-native-reanimated@4.7.1"
   - "react-native-screens@4.28.0"
@@ -185,11 +201,6 @@ minimumReleaseAgeExclude:
   - expo-application@58.0.3 || 58.1.2
   - expo-eas-client@58.0.2
   - expo-image-loader@58.0.3
-  - "@distilled.cloud/acme@1.0.0-rc.13"
-  - "@distilled.cloud/doppler@1.0.0-rc.13"
-  - "@distilled.cloud/gcp@1.0.0-rc.13"
-  - "@distilled.cloud/infisical@1.0.0-rc.13"
-  - "@distilled.cloud/zerossl@1.0.0-rc.13"
   - "@opencode/client@2.0.28"
   - "@opencode/protocol@2.0.28"
   - "@opencode/schema@2.0.28"
@@ -211,8 +222,41 @@ minimumReleaseAgeExclude:
   - "@react-native/virtualized-lists@0.88.0"
   - react-native-svg@15.16.0
   - "@expo/schema-utils@58.0.2"
+  - pele@1.8.0
+  - "@pierre/diffs@1.6.1"
+  - "@pierre/highlights@0.2.0"
+  - "@pierre/theming@1.0.2"
+  - agent-device@0.21.32
 
 overrides:
+  # Pin every patched package, including transitive dependencies, so lockfile-free
+  # release installs cannot drift past the patch. Update these with patchedDependencies.
+  react-native-image-viewing: 0.2.2
+  mdast-util-math: 3.0.0
+  micromark-extension-llm-math: 3.1.0
+  alchemy: "catalog:"
+  expo-audio: 58.0.9
+  expo-network: 58.0.3
+  "@clerk/expo-native-components": 0.4.0
+  expo-sharing: 58.0.19
+  expo-widgets: 58.0.20
+  "@ff-labs/fff-node": 0.11.0
+  "@legendapp/list": 3.3.5
+  "@pierre/diffs": 1.6.1
+  "@react-native-ai/apple": 0.12.0
+  "@react-native-menu/menu": 2.0.0
+  "@react-navigation/native-stack": 7.21.0
+  dbus-next: 0.10.2
+  node-pty: 1.2.0-beta.15
+  react-native-gesture-handler: 3.3.0
+  react-native-reanimated: 4.7.1
+  react-native-keyboard-controller: 1.22.8
+  react-native-pdf-jsi: 5.0.0
+  react-native-webview: 14.0.1
+  "@expo/ui": 58.0.20
+  "@expo/fingerprint": 0.21.5
+  app-builder-lib: 26.16.1
+  expo-modules-core: 58.0.22
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
@@ -237,10 +281,6 @@ overrides:
   "@alchemy.run/sigil>react": "-"
   "@alchemy.run/sigil>react-reconciler": "-"
   "@alchemy.run/sigil>scheduler": "-"
-  # Alchemy only reaches @prisma/dev through a lazy import inside the Prisma
-  # database provider, which the relay never deploys. Its exact hono/valibot
-  # pins are also the bulk of our open dependency advisories.
-  "alchemy>@prisma/dev": "-"
   "@clerk/backend": "catalog:"
   "@clerk/clerk-js": "catalog:"
   "@clerk/clerk-js>@base-org/account": "-"
@@ -267,6 +307,9 @@ overrides:
   "expo-sharing>@expo/config-plugins": 58.0.9
   "expo-sharing>@expo/config-types": 58.0.3
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
+  # Resolve below remark-math so Vite, Metro and Node use the same tokenizer.
+  "remark-math>micromark-extension-math": npm:micromark-extension-llm-math@3.1.0
+  micromark-extension-gfm-table: 2.1.1
   # Keep one copy of these native-binary packages. lightningcss ships 11 platform binaries per
   # version, and the workspaces' tailwindcss ^4 ranges drift into two 4.3.x copies of the family.
   "@tailwindcss/node": "catalog:"
@@ -277,7 +320,7 @@ overrides:
   # OpenCode 2's protocol and schema packages hard-pin an exact Effect version as a
   # dependency, and their schemas fail to decode under a second Effect copy.
   # The `effect` override above already collapses them; these name the edge so it
-  # stays pinned on its own. OpenCode2Client.live.test.ts re-proves it on bumps.
+  # stays pinned on its own.
   "@opencode/protocol>effect": "catalog:"
   "@opencode/schema>effect": "catalog:"
   node-abi: 4.33.0
@@ -310,9 +353,15 @@ packageExtensions:
       vite-plus: "catalog:"
 
 patchedDependencies:
-  alchemy@2.0.0-beta.80: patches/alchemy@2.0.0-beta.80.patch
+  react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
+  mdast-util-math@3.0.0: patches/mdast-util-math@3.0.0.patch
+  micromark-extension-llm-math@3.1.0: patches/micromark-extension-llm-math@3.1.0.patch
+  micromark-extension-gfm-table@2.1.1: patches/micromark-extension-gfm-table@2.1.1.patch
+  alchemy@2.0.0-beta.84: patches/alchemy@2.0.0-beta.84.patch
   expo-audio@58.0.9: patches/expo-audio@58.0.9.patch
-  "@clerk/expo-native-components@0.2.0": patches/@clerk__expo-native-components@0.2.0.patch
+  expo-video@58.0.11: patches/expo-video@58.0.11.patch
+  expo-network@58.0.3: patches/expo-network@58.0.3.patch
+  "@clerk/expo-native-components@0.4.0": patches/@clerk__expo-native-components@0.4.0.patch
   "@effect/vitest@4.0.5": patches/@effect__vitest@4.0.5.patch
   "@expo/metro-config@58.0.14": patches/@expo__metro-config@58.0.14.patch
   expo-sharing@58.0.19: patches/expo-sharing@58.0.19.patch
@@ -321,34 +370,50 @@ patchedDependencies:
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
   # Exports the dependency-light subpaths mobile and the web diff parser import, and keeps
   # measured wrapped-row heights above an edit (fileEditorVirtualization.test.ts).
-  "@pierre/diffs@1.5.2": patches/@pierre%2Fdiffs@1.5.2.patch
+  "@pierre/diffs@1.6.1": patches/@pierre%2Fdiffs@1.6.1.patch
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.21.0": patches/@react-navigation%2Fnative-stack@7.21.0.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
   react-native-gesture-handler@3.3.0: patches/react-native-gesture-handler@3.3.0.patch
-  react-native-keyboard-controller@1.22.7: patches/react-native-keyboard-controller@1.22.7.patch
+  # Screens v5 stack, split and tab screens leave at once, like legacy screens. Exiting animations
+  # inside one otherwise hold its removal for a later mount, after its stack has moved on.
+  react-native-reanimated@4.7.1: patches/react-native-reanimated@4.7.1.patch
+  react-native-keyboard-controller@1.22.8: patches/react-native-keyboard-controller@1.22.8.patch
+  react-native-pdf-jsi@5.0.0: patches/react-native-pdf-jsi@5.0.0.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
   "@expo/ui@58.0.20": patches/@expo__ui@58.0.20.patch
+  # Android: a Compose host that requests layout in a mount (a new screen's app bar) is laid out
+  # before that frame is drawn, instead of a frame later.
+  expo-modules-core@58.0.22: patches/expo-modules-core@58.0.22.patch
   # Android: Maven-resolved gradle plugins (expo-widgets) have no sourceDir; without this
   # skip, the fingerprint silently drops every Expo native module and OTAs reach stale binaries.
   "@expo/fingerprint@0.21.5": patches/@expo__fingerprint@0.21.5.patch
+  # Observe the owned host exit independently of descendants retaining its stdio.
+  "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
+  app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
 
 peerDependencyRules:
   allowAny:
+    - typescript
     - vite
   allowedVersions:
     vite: "*"
+
+# pnpm 12 links agent skills that dependencies ship into .claude/skills once
+# approved. We curate our own skills, so deny these to keep installs quiet.
+permissions:
+  "@tanstack/router-plugin":
+    skills: false
+  drizzle-kit:
+    skills: false
+  expo-sqlite:
+    skills: false
 
 # @cursor/sdk finds its platform package (sandbox helper, rg, tree-sitter) by
 # walking up from the entry script for node_modules/@cursor/sdk-<platform>-<arch>.
 # pnpm keeps optional deps inside the virtual store, so hoist it to the root.
 publicHoistPattern:
   - "@cursor/sdk-*"
-
-supportedArchitectures:
-  cpu: [current, x64]
-  libc: [current, glibc]
-  os: [current, linux]

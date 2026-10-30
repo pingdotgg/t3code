@@ -10,17 +10,18 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  elapsedShare,
   formatDuration,
   formatResetsIn,
   type LimitPace,
   paceOf,
+  paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useLayoutEffect, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { observeResize } from "../../lib/observeResize";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
@@ -73,6 +74,44 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   );
 }
 
+// The tick sits in a transparent gap cut from the bar, clamped so it stays inside at 0% and 100%.
+// The gap is a clip-path slot rather than a mask: a mask composites its layer and re-antialiases
+// the bar's rounded ends, and the polygon reaches 1px past the box so only the slot edges clip.
+function paceMarkStyles(timeLeft: number | null) {
+  if (timeLeft === null) return null;
+  const at = `clamp(3px, ${timeLeft}%, calc(100% - 3px))`;
+  const [left, right] = [`calc(${at} - 3px)`, `calc(${at} + 3px)`];
+  const [near, far] = ["-1px", "calc(100% + 1px)"];
+  return {
+    tick: { left: at },
+    gap: {
+      clipPath: `polygon(${near} ${near}, ${left} ${near}, ${left} ${far}, ${right} ${far}, ${right} ${near}, ${far} ${near}, ${far} ${far}, ${near} ${far})`,
+    },
+    // For a track painted on an element that also draws focus rings, which a clip would cut.
+    gappedTrack: {
+      backgroundColor: "transparent",
+      backgroundImage: `linear-gradient(to right, var(--color-muted) ${left}, transparent ${left}, transparent ${right}, var(--color-muted) ${right})`,
+    },
+  };
+}
+
+/**
+ * Pace mark styles for the bar given the returned ref. Below 6px there is no room for the gap
+ * and tick, so the bar draws neither, as the mobile bars do.
+ */
+export function usePaceMark(timeLeft: number | null) {
+  const [bar, setBar] = useState<HTMLElement | null>(null);
+  const [roomy, setRoomy] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the bar DOM width before paint and remeasures through a ResizeObserver
+  useLayoutEffect(() => {
+    if (!bar) return;
+    const measure = () => setRoomy(bar.getBoundingClientRect().width >= 6);
+    measure();
+    return observeResize(bar, measure);
+  }, [bar]);
+  return [setBar, roomy ? paceMarkStyles(timeLeft) : null] as const;
+}
+
 function WindowBar({
   color,
   window,
@@ -84,8 +123,8 @@ function WindowBar({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
-  const elapsed = elapsedShare(window, now);
-  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
+  const timeLeft = paceRemainingPercent(window, now);
+  const [barRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
@@ -99,6 +138,7 @@ function WindowBar({
       <TooltipTrigger
         render={
           <div
+            ref={barRef}
             role="img"
             aria-label={summary}
             tabIndex={0}
@@ -106,18 +146,21 @@ function WindowBar({
           />
         }
       >
-        <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
-        {remaining > 0 ? (
-          <div
-            className="absolute inset-y-1.5 left-0 rounded-full"
-            style={{ width: `${remaining}%`, backgroundColor: color }}
-          />
-        ) : null}
-        {timeLeft !== null ? (
+        {/* Clip both layers so the gap exposes even a translucent composer surface. */}
+        <div className="absolute inset-0" style={paceMark?.gap}>
+          <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
+          {remaining > 0 ? (
+            <div
+              className="absolute inset-y-1.5 left-0 rounded-full"
+              style={{ width: `${remaining}%`, backgroundColor: color }}
+            />
+          ) : null}
+        </div>
+        {paceMark ? (
           <span
             aria-hidden
-            className="absolute inset-y-0.5 w-px -translate-x-1/2 bg-foreground/60"
-            style={{ left: `${timeLeft}%` }}
+            className="absolute inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+            style={paceMark.tick}
           />
         ) : null}
       </TooltipTrigger>
@@ -222,11 +265,8 @@ export function useResetCredit(
   return { canManageProviders, confirming, setConfirming, busy, status, redeem };
 }
 
-/**
- * Redeeming spends a credit the provider granted the user, so it never fires on a bare click.
- * Mount it outside any popover that holds the button: dialogs stack under popovers, and closing
- * the popover would unmount a dialog rendered inside it.
- */
+/** Require confirmation because redemption spends credits. Mount outside popovers, which stack above
+ * dialogs and unmount on close. */
 export function ResetCreditDialog({
   open,
   onOpenChange,
@@ -317,10 +357,7 @@ export function ResetCredits({
   );
 }
 
-/**
- * The page advances `now` on explicit refresh rather than ticking: a live clock would repaint the
- * page for no decision-changing gain.
- */
+/** Advance now only on explicit refresh to avoid page repaints from ticking. */
 export function UsageLimitsSection({
   selectedEnvironmentIds,
   hiddenProviders,

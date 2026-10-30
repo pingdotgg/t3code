@@ -1,8 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * Native and canonical views share batching, rotation, and retention state so
- * they cannot race while appending to the same thread-scoped file.
- */
+/** Native and canonical views share write state to avoid races on the same thread file. */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -75,30 +72,7 @@ export interface EventNdjsonLogStoreOptions {
   readonly maxBytes?: number;
   readonly maxFiles?: number;
   readonly batchWindowMs?: number;
-  readonly maxTotalBytes?: number;
-  readonly maxAgeMs?: number;
-  readonly retentionCheckIntervalMs?: number;
-  readonly maxBufferedBytes?: number;
-  readonly maxBufferedRecords?: number;
   readonly attribution?: ResourceAttribution.ResourceAttribution["Service"];
-}
-
-export interface EventNdjsonLoggerOptions extends EventNdjsonLogStoreOptions {
-  readonly stream: EventNdjsonStream;
-}
-
-export class EventNdjsonLogConfigurationError extends Schema.TaggedError<EventNdjsonLogConfigurationError>()(
-  "EventNdjsonLogConfigurationError",
-  {
-    filePath: Schema.String,
-    option: Schema.String,
-    value: Schema.Number,
-    minimum: Schema.Number,
-  },
-) {
-  override get message(): string {
-    return `Provider event log option '${this.option}' must be an integer >= ${this.minimum}; received ${this.value} for '${this.filePath}'`;
-  }
 }
 
 export class EventNdjsonLogDirectoryError extends Schema.TaggedError<EventNdjsonLogDirectoryError>()(
@@ -113,9 +87,7 @@ export class EventNdjsonLogDirectoryError extends Schema.TaggedError<EventNdjson
   }
 }
 
-export type EventNdjsonLogStoreError =
-  | EventNdjsonLogConfigurationError
-  | EventNdjsonLogDirectoryError;
+export type EventNdjsonLogStoreError = EventNdjsonLogDirectoryError;
 
 interface ResolvedOptions {
   readonly maxBytes: number;
@@ -203,8 +175,7 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
 
     const nested = Reflect.get(event, "event");
     const envelope = typeof nested === "object" && nested !== null ? nested : event;
-    // Decoded frames carry the same information as raw frames without another
-    // copy of every token delta.
+    // Decoded frames preserve raw-frame information without duplicating every token delta.
     if (Reflect.get(envelope, "stage") === "raw") return false;
     const decodedPayload = Reflect.get(envelope, "payload");
     const nativeEvent =
@@ -479,48 +450,19 @@ async function enforceRetention(input: {
   return { failures };
 }
 
-function validateOption(input: {
-  readonly filePath: string;
-  readonly option: string;
-  readonly value: number;
-  readonly minimum: number;
-}): EventNdjsonLogConfigurationError | undefined {
-  if (Number.isInteger(input.value) && input.value >= input.minimum) return undefined;
-  return new EventNdjsonLogConfigurationError(input);
-}
-
-function resolveOptions(
-  filePath: string,
-  options: EventNdjsonLogStoreOptions,
-): Effect.Effect<ResolvedOptions, EventNdjsonLogConfigurationError> {
+function resolveOptions(options: EventNdjsonLogStoreOptions): Effect.Effect<ResolvedOptions> {
   const resolved = {
     maxBytes: options.maxBytes ?? DEFAULT_MAX_BYTES,
     maxFiles: options.maxFiles ?? DEFAULT_MAX_FILES,
     batchWindowMs: options.batchWindowMs ?? DEFAULT_BATCH_WINDOW_MS,
-    maxTotalBytes: options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES,
-    maxAgeMs: options.maxAgeMs ?? DEFAULT_MAX_AGE_MS,
-    retentionCheckIntervalMs:
-      options.retentionCheckIntervalMs ?? DEFAULT_RETENTION_CHECK_INTERVAL_MS,
-    maxBufferedBytes: options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES,
-    maxBufferedRecords: options.maxBufferedRecords ?? DEFAULT_MAX_BUFFERED_RECORDS,
+    maxTotalBytes: DEFAULT_MAX_TOTAL_BYTES,
+    maxAgeMs: DEFAULT_MAX_AGE_MS,
+    retentionCheckIntervalMs: DEFAULT_RETENTION_CHECK_INTERVAL_MS,
+    maxBufferedBytes: DEFAULT_MAX_BUFFERED_BYTES,
+    maxBufferedRecords: DEFAULT_MAX_BUFFERED_RECORDS,
     attribution: options.attribution,
   } satisfies ResolvedOptions;
 
-  const validations = [
-    ["maxBytes", resolved.maxBytes, 1],
-    ["maxFiles", resolved.maxFiles, 1],
-    ["batchWindowMs", resolved.batchWindowMs, 0],
-    ["maxTotalBytes", resolved.maxTotalBytes, 1],
-    ["maxAgeMs", resolved.maxAgeMs, 1],
-    ["retentionCheckIntervalMs", resolved.retentionCheckIntervalMs, 1],
-    ["maxBufferedBytes", resolved.maxBufferedBytes, 1],
-    ["maxBufferedRecords", resolved.maxBufferedRecords, 1],
-  ] as const;
-
-  for (const [option, value, minimum] of validations) {
-    const error = validateOption({ filePath, option, value, minimum });
-    if (error) return Effect.fail(error);
-  }
   return Effect.succeed(resolved);
 }
 
@@ -648,7 +590,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
 > {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const resolved = yield* resolveOptions(filePath, options);
+  const resolved = yield* resolveOptions(options);
   const directory = NodePath.dirname(filePath);
   const filePrefix = providerLogPrefix(filePath);
 
@@ -809,23 +751,4 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   };
 
   return { filePath, logger, close } satisfies EventNdjsonLogStore;
-});
-
-export const makeEventNdjsonLogger = Effect.fnUntraced(function* (
-  filePath: string,
-  options: EventNdjsonLoggerOptions,
-): Effect.fn.Return<
-  ProviderEventLoggers.EventNdjsonLogger | undefined,
-  never,
-  FileSystem.FileSystem | Path.Path
-> {
-  const store = yield* makeEventNdjsonLogStore(filePath, options).pipe(
-    Effect.catch((error) =>
-      logWarning(error.message, { error }).pipe(
-        Effect.as<EventNdjsonLogStore | undefined>(undefined),
-      ),
-    ),
-  );
-  if (!store) return undefined;
-  return { ...store.logger(options.stream), close: store.close };
 });

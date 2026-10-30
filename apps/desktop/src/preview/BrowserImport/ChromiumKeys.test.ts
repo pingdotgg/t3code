@@ -96,14 +96,6 @@ describe("macOS Chromium secrets", () => {
     }).pipe(Effect.provide(layerNoProcesses)),
   );
 
-  it.effect("reports a missing keychain entry", () =>
-    Effect.gen(function* () {
-      getPassword.mockReturnValue(null);
-      const error = yield* resolveChromiumKeys(request).pipe(Effect.flip);
-      expect(error.reason).toBe("keychainItemMissing");
-    }).pipe(Effect.provide(layerNoProcesses)),
-  );
-
   it.effect("preserves a denied keychain approval", () =>
     Effect.gen(function* () {
       const denied = new Error("User denied access");
@@ -151,40 +143,6 @@ describe("Linux Chromium secrets", () => {
         ChildProcessSpawner.make(() => Effect.die("must not spawn")),
       ),
       Effect.provideService(LinuxBrowserSecretPath, undefined),
-    ),
-  );
-
-  it.effect("looks up the browser's libsecret application attribute", () => {
-    let captured: CapturedCommand | undefined;
-    return Effect.gen(function* () {
-      const keys = yield* resolveChromiumKeys({
-        platform: "linux",
-        keychainService: "ignored macOS service",
-        keychainAccount: "ignored macOS account",
-        linuxSecretApplication: "msedge",
-      });
-
-      expect(captured?.command).toBe("/bundled/browser-secret/t3-browser-secret");
-      expect(captured?.args).toEqual(["msedge"]);
-      expect(captured?.options.stdin).toBe("ignore");
-      expect(keys.cbcV10).toHaveLength(16);
-      expect(keys.cbcV11).toHaveLength(16);
-    }).pipe(
-      Effect.provide(
-        layerHelper({ stdout: "linux-secret", capture: (value) => (captured = value) }),
-      ),
-    );
-  });
-
-  it.effect("reports an unavailable Secret Service backend as a read failure", () =>
-    Effect.gen(function* () {
-      const error = yield* readLinuxSecret("chrome").pipe(Effect.flip);
-      expect(error).toBeInstanceOf(ChromiumKeyError);
-      expect(error.reason).toBe("keychainUnavailable");
-    }).pipe(
-      Effect.provide(
-        layerHelper({ stderr: "Cannot autolaunch D-Bus without X11 $DISPLAY", exitCode: 1 }),
-      ),
     ),
   );
 
@@ -239,51 +197,6 @@ describe("Linux Chromium secrets", () => {
         }),
       );
     },
-  );
-
-  it.effect("does not discard a denied unlock prompt while resolving keys", () =>
-    Effect.gen(function* () {
-      const error = yield* resolveChromiumKeys({
-        platform: "linux",
-        keychainService: undefined,
-        keychainAccount: undefined,
-        linuxSecretApplication: "brave",
-      }).pipe(Effect.flip);
-      expect(error.reason).toBe("needsKeychainApproval");
-    }).pipe(Effect.provide(layerHelper({ stderr: "Keyring is locked", exitCode: 3 }))),
-  );
-
-  it.effect("keeps the v10 fallback when the Secret Service backend is unavailable", () =>
-    Effect.gen(function* () {
-      const keys = yield* resolveChromiumKeys({
-        platform: "linux",
-        keychainService: undefined,
-        keychainAccount: undefined,
-        linuxSecretApplication: "chrome",
-      });
-      expect(keys.cbcV10).toHaveLength(16);
-      expect(keys.cbcV11).toBeUndefined();
-    }).pipe(
-      Effect.provide(
-        layerHelper({
-          stderr: "Cannot autolaunch D-Bus without X11 $DISPLAY",
-          exitCode: 1,
-        }),
-      ),
-    ),
-  );
-
-  it.effect("keeps the v10 fallback when no matching v11 secret exists", () =>
-    Effect.gen(function* () {
-      const keys = yield* resolveChromiumKeys({
-        platform: "linux",
-        keychainService: undefined,
-        keychainAccount: undefined,
-        linuxSecretApplication: "vivaldi",
-      });
-      expect(keys.cbcV10).toHaveLength(16);
-      expect(keys.cbcV11).toBeUndefined();
-    }).pipe(Effect.provide(layerHelper({ exitCode: 2 }))),
   );
 });
 

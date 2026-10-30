@@ -8,7 +8,7 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { showThreadUndoNotice } from "../hooks/showThreadUndoNotice";
-import * as ThreadUndo from "../hooks/threadUndo";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { releaseDraftAttachments } from "./attachmentUploadQueue";
 
 export function discardComposerDraft(target: ComposerThreadTarget): void {
@@ -49,7 +49,6 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
         return {
           draftsByThreadKey: {
             ...state.draftsByThreadKey,
-            // Removing a draft session revokes its image previews.
             [key]: discardsSession
               ? {
                   ...draft,

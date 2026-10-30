@@ -1,4 +1,4 @@
-import { NETWORK_BLOCKING_HINT } from "./network.ts";
+import { NETWORK_BLOCKING_HINT, UNRESPONSIVE_HOST_HINT } from "./network.ts";
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -13,6 +13,7 @@ const TRANSPORT_ERROR_PATTERNS = [
     `\\b(?:is not connected|disconnected|stopped responding|could not establish a WebSocket connection)\\.(?: ${escapeRegExp(NETWORK_BLOCKING_HINT)})?$`,
     "i",
   ),
+  new RegExp(`\\bstopped responding for \\d+s\\. ${escapeRegExp(UNRESPONSIVE_HOST_HINT)}$`, "i"),
   /\bClientProtocolError\b/i,
   /\bRpcClientError\b/i,
   /\bping timeout\b/i,

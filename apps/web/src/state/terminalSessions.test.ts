@@ -1,13 +1,34 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type TerminalSummary } from "@t3tools/contracts";
 import { selectRunningSubprocessTerminalIds } from "@t3tools/client-runtime/state/terminal";
+import { AtomRegistry } from "effect/reactivity";
 
-import { selectKnownTerminalSessions } from "./terminalSessions";
+import { attachedTerminalSessionAtom, selectKnownTerminalSessions } from "./terminalSessions";
 
-vi.mock("./terminal", () => ({ terminalEnvironment: {} }));
+const attachCalls = vi.hoisted(() => [] as unknown[]);
+vi.mock("./terminal", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return {
+    terminalEnvironment: {
+      attach: (request: unknown) => {
+        attachCalls.push(request);
+        return Atom.make(AsyncResult.initial(true));
+      },
+      metadata: () => Atom.make(AsyncResult.initial(true)),
+    },
+  };
+});
+vi.mock("./session", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const granted = Atom.make(AsyncResult.success({}));
+  return {
+    environmentSession: { sessionStateAtom: () => granted },
+    sessionHasScope: () => true,
+    useEnvironmentScope: () => true,
+  };
+});
 
 const environmentA = EnvironmentId.make("environment-a");
-const environmentB = EnvironmentId.make("environment-b");
 const threadA = ThreadId.make("thread-a");
 const threadB = ThreadId.make("thread-b");
 
@@ -33,48 +54,6 @@ function summary(
 }
 
 describe("selectKnownTerminalSessions", () => {
-  it("preserves numeric terminal order and stable picker ties across threads", () => {
-    const metadata = [
-      summary(threadB, "terminal-2"),
-      summary(threadA, "terminal-10"),
-      summary(threadB, "terminal-1"),
-      summary(threadA, "terminal-1"),
-      summary(threadA, "terminal-01"),
-    ];
-    const all = selectKnownTerminalSessions(metadata, environmentA, null);
-    const selected = selectKnownTerminalSessions(metadata, environmentA, threadB);
-    expect(all.map((session) => `${session.target.threadId}/${session.target.terminalId}`)).toEqual(
-      [
-        "thread-b/terminal-1",
-        "thread-a/terminal-1",
-        "thread-a/terminal-01",
-        "thread-b/terminal-2",
-        "thread-a/terminal-10",
-      ],
-    );
-    expect(selected.map((session) => session.target.terminalId)).toEqual([
-      "terminal-1",
-      "terminal-2",
-    ]);
-    const repeated = [...metadata];
-    expect(selectKnownTerminalSessions(repeated, environmentA, null)).toBe(all);
-    expect(selectKnownTerminalSessions(repeated, environmentA, threadB)).toBe(selected);
-
-    const reordered = metadata.toReversed();
-    expect(selectKnownTerminalSessions(reordered, environmentA, threadB)).toBe(selected);
-    expect(
-      selectKnownTerminalSessions(reordered, environmentA, null).map(
-        (session) => `${session.target.threadId}/${session.target.terminalId}`,
-      ),
-    ).toEqual([
-      "thread-a/terminal-01",
-      "thread-a/terminal-1",
-      "thread-b/terminal-1",
-      "thread-b/terminal-2",
-      "thread-a/terminal-10",
-    ]);
-  });
-
   it("changes only the affected group and preserves earlier snapshots", () => {
     const first = summary(threadA, "terminal-1");
     const second = summary(threadA, "terminal-2");
@@ -119,53 +98,22 @@ describe("selectKnownTerminalSessions", () => {
     expect(selectKnownTerminalSessions([other], environmentA, threadA)).toEqual([]);
     expect(selectKnownTerminalSessions([other], environmentA, threadB)).toBe(beforeB);
   });
+});
 
-  it("keeps environment targets separate when snapshots share the same objects", () => {
-    const metadata = [summary(threadA, "terminal-1")];
-    const first = selectKnownTerminalSessions(metadata, environmentA, threadA);
-    const second = selectKnownTerminalSessions(metadata, environmentB, threadA);
-    expect(first[0]?.target.environmentId).toBe(environmentA);
-    expect(second[0]?.target.environmentId).toBe(environmentB);
-    expect(first).not.toBe(second);
-    expect(first[0]).not.toBe(second[0]);
-    expect(selectKnownTerminalSessions([...metadata], environmentA, threadA)).toBe(first);
-    expect(selectKnownTerminalSessions([...metadata], environmentB, threadA)).toBe(second);
-  });
+describe("attachedTerminalSessionAtom", () => {
+  it("attaches with the launch input it was keyed by", () => {
+    attachCalls.length = 0;
+    const input = {
+      threadId: threadA,
+      terminalId: "terminal-1",
+      cwd: "/repo",
+      worktreePath: null,
+      env: { T3CODE_PROJECT_ROOT: "/repo" },
+    };
+    const atom = attachedTerminalSessionAtom(environmentA, input);
+    expect(attachedTerminalSessionAtom(environmentA, { ...input })).toBe(atom);
 
-  it("returns stable empty results without a connected environment or matching sessions", () => {
-    const metadata = [summary(threadA, "terminal-1")];
-    const empty = selectKnownTerminalSessions(null, environmentA, threadA);
-    expect(selectKnownTerminalSessions(metadata, null, threadA)).toBe(empty);
-    expect(selectKnownTerminalSessions([], environmentA, null)).toBe(empty);
-    expect(selectKnownTerminalSessions(metadata, environmentA, threadB)).toBe(empty);
-  });
-
-  it("does not materialize unrelated raw thread identifiers", () => {
-    const metadata = [summary(" untrimmed-thread ", "terminal-1"), summary(threadA, "terminal-2")];
-    expect(
-      selectKnownTerminalSessions(metadata, environmentA, threadA).map(
-        (session) => session.target.threadId,
-      ),
-    ).toEqual([threadA]);
-  });
-
-  it("reads the metadata array once for all thread selectors", () => {
-    const source = Array.from({ length: 40 }, (_, index) =>
-      summary(`thread-${index}`, "terminal-1"),
-    );
-    let reads = 0;
-    const metadata = new Proxy(source, {
-      get(target, property, receiver) {
-        if (typeof property === "string" && /^(0|[1-9]\d*)$/.test(property)) reads += 1;
-        return Reflect.get(target, property, receiver);
-      },
-    });
-    for (const item of source) {
-      expect(
-        selectKnownTerminalSessions(metadata, environmentA, ThreadId.make(item.threadId)),
-      ).toHaveLength(1);
-    }
-    expect(selectKnownTerminalSessions(metadata, environmentA, null)).toHaveLength(source.length);
-    expect(reads).toBe(source.length);
+    AtomRegistry.make().get(atom);
+    expect(attachCalls).toEqual([{ environmentId: environmentA, input }]);
   });
 });

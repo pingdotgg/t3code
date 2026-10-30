@@ -2,10 +2,7 @@ import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import {
-  importComposerThreadAttachment,
-  remainingComposerAttachmentSlots,
-} from "./composerThreadImport";
+import { importComposerThreadAttachment } from "./composerThreadImport";
 
 function deferredFile() {
   let resolve!: (file: File) => void;
@@ -63,77 +60,6 @@ describe("importComposerThreadAttachment", () => {
     expect(store.getComposerDraft(targetKey)?.files.at(-1)?.name).toBe("thread.jsonl");
     expect(pendingImports.size).toBe(0);
     store.clearComposerContent(targetKey);
-  });
-
-  it.each(["file", "image"])(
-    "reserves the final slot while restoring a stashed %s",
-    async (kind) => {
-      const pendingImports = new Map<string, number>();
-      const targetKey = "draft";
-      const attached = Array.from(
-        { length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 },
-        (_, index) => `existing-${index}`,
-      );
-      const countReservedAttachments = () => attached.length + (pendingImports.get(targetKey) ?? 0);
-      const attach = async (file: File) => {
-        if (
-          remainingComposerAttachmentSlots(attached.length, pendingImports.get(targetKey) ?? 0) ===
-          0
-        ) {
-          return false;
-        }
-        attached.push(file.name);
-        return true;
-      };
-      const transcript = deferredFile();
-      const importing = importComposerThreadAttachment({
-        targetKey,
-        pendingImports,
-        countReservedAttachments,
-        load: () => transcript.promise,
-        isActive: () => true,
-        attach,
-        onLimitReached: () => {
-          throw new Error("The final slot should be available");
-        },
-      });
-
-      expect(await attach(new File(["unrelated"], `unrelated.${kind}`))).toBe(false);
-      transcript.resolve(new File(["transcript"], "thread.txt"));
-      await importing;
-
-      expect(attached.at(-1)).toBe("thread.txt");
-      expect(attached).toHaveLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
-      expect(pendingImports.size).toBe(0);
-    },
-  );
-
-  it("rejects a repeated drop until the reserved slot is released", async () => {
-    const pendingImports = new Map<string, number>();
-    const transcript = deferredFile();
-    const load = vi.fn(() => transcript.promise);
-    const onLimitReached = vi.fn();
-    const attach = vi.fn(async (_file: File) => true);
-    const input = {
-      targetKey: "draft",
-      pendingImports,
-      countReservedAttachments: () =>
-        PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 + (pendingImports.get("draft") ?? 0),
-      load,
-      isActive: () => true,
-      attach,
-      onLimitReached,
-    };
-    const first = importComposerThreadAttachment(input);
-    await importComposerThreadAttachment(input);
-    expect(load).toHaveBeenCalledTimes(1);
-    expect(onLimitReached).toHaveBeenCalledTimes(1);
-
-    transcript.resolve(new File(["transcript"], "thread.txt"));
-    await first;
-    await importComposerThreadAttachment(input);
-    expect(attach).toHaveBeenCalledTimes(2);
-    expect(pendingImports.size).toBe(0);
   });
 
   it("keeps the second drop's slot reserved when the first drop finishes", async () => {

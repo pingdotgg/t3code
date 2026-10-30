@@ -1,22 +1,16 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
-import { useCallback } from "react";
 import { Keyboard } from "react-native";
+
+import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
-/** Switch workspace tabs from inside the sidebar, closing any open detail first. */
+/** Opens a workspace tab, Settings included, from a tab bar, rail, toolbar or command. */
 export function useSelectWorkspaceTab() {
-  const workspace = useWorkspaceTabs()!;
-  const navigation = useNavigation();
-  const selectedTab = workspace.state.selectedTab;
-  const { dispatch } = workspace;
-  return useCallback(
-    (tab: WorkspaceTab) => {
-      if (tab === selectedTab) return;
-      Keyboard.dismiss();
-      if (navigation.getState()?.index) navigation.dispatch(StackActions.popToTop());
-      dispatch({ type: "select", tab });
-    },
-    [dispatch, navigation, selectedTab],
-  );
+  const dispatch = useWorkspaceTabs()?.dispatch;
+  const { openWorkspaceTab } = useAdaptiveWorkspaceLayout();
+  return (tab: WorkspaceTab | "settings") => {
+    Keyboard.dismiss();
+    openWorkspaceTab(tab);
+    if (tab !== "settings") dispatch?.({ type: "select", tab });
+  };
 }

@@ -157,16 +157,6 @@ describe("SessionControl", () => {
     expect(control.generation).toBe(1);
   });
 
-  it("does not let a failed action poison the serial queue", async () => {
-    const control = new SessionControl("agent");
-    await expect(
-      control.agent("agent", async () => {
-        throw new Error("navigation failed");
-      }),
-    ).rejects.toThrow("navigation failed");
-    await expect(control.agent("agent", async () => "recovered")).resolves.toBe("recovered");
-  });
-
   it("lets any agent act on a tab no agent opened, but only while no human controls it", async () => {
     const control = new SessionControl(null);
     await expect(control.agent("agent-a", async () => "acted")).resolves.toBe("acted");

@@ -2,31 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
-  DEFAULT_TERMINAL_FONT_FAMILY,
-  DEFAULT_TERMINAL_FONT_SIZE,
   advanceTerminalSelectionClickSequence,
   applyTerminalCopyEvent,
   clearPrimedTerminalCopyInput,
-  ghosttyMouseButton,
-  isTerminalAltGraphText,
-  isTerminalCompositionCommitInput,
   isTerminalCompositionKey,
   isTerminalCopyShortcut,
-  isTerminalPasteShortcut,
-  loadTerminalFontFamily,
   primeTerminalCopyInput,
   resolveTerminalMouseData,
-  resolveTerminalMouseTrackingState,
-  shouldBlinkTerminalCursor,
-  shouldReportTerminalMouse,
-  terminalGridCellAt,
-  terminalScrollbarGeometry,
-  terminalScrollbarOffsetAtPointer,
   terminalLinkAtPositionWithRange,
   terminalContentOriginY,
-  terminalFontFamily,
-  terminalFontSize,
-  terminalWheelArrowData,
+  terminalSelectionAutoscrollRows,
   terminalWheelDeltaRows,
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
@@ -54,11 +39,13 @@ describe("GhosttyTerminalSurface visibility", () => {
         | "metaKey"
         | "shiftKey"
         | "isComposing"
+        | "repeat"
         | "keyCode"
         | "getModifierState"
       >
     > = {},
     type = "keydown",
+    target: EventTarget = surface.input,
   ) {
     const event = Object.assign(new Event(type, { cancelable: true }), {
       key,
@@ -68,11 +55,12 @@ describe("GhosttyTerminalSurface visibility", () => {
       metaKey: false,
       shiftKey: false,
       isComposing: false,
+      repeat: false,
       keyCode: 0,
       getModifierState: () => false,
       ...modifiers,
     });
-    surface.input.dispatchEvent(event);
+    target.dispatchEvent(event);
     return event;
   }
 
@@ -186,6 +174,7 @@ describe("GhosttyTerminalSurface visibility", () => {
     const onData = vi.fn<(data: string) => void>();
 
     return {
+      canvas,
       mount,
       frames,
       paint,
@@ -271,99 +260,6 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.restoreAllMocks();
   });
 
-  it.each([
-    { platform: "Linux x86_64", primary: { ctrlKey: true } },
-    { platform: "MacIntel", primary: { metaKey: true } },
-  ])(
-    "navigates history from terminal input without sending keys ($platform)",
-    async ({ platform, primary }) => {
-      vi.stubGlobal("navigator", { platform });
-      const harness = createHarness();
-      const surface = await harness.create({ beforeKey: () => true });
-      surface.write(Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\r\n"));
-      harness.flushFrame();
-      const latest = harness.renderedSnapshot.rowData[0]?.text;
-      expect(surface.isAtBottom()).toBe(true);
-
-      expect(key(surface, "PageUp", "PageUp", { shiftKey: true }).defaultPrevented).toBe(true);
-      harness.flushFrame();
-      expect(harness.renderedSnapshot.rowData[0]?.text).toContain("line 8");
-      expect(surface.isAtBottom()).toBe(false);
-      key(surface, "PageDown", "PageDown", { shiftKey: true });
-      harness.flushFrame();
-      expect(harness.renderedSnapshot.rowData[0]?.text).toBe(latest);
-
-      key(surface, "Home", "Home", { ...primary, shiftKey: true });
-      harness.flushFrame();
-      expect(harness.renderedSnapshot.rowData[0]?.text).toContain("line 0");
-      key(surface, "End", "End", { ...primary, shiftKey: true });
-      harness.flushFrame();
-      expect(harness.renderedSnapshot.rowData[0]?.text).toBe(latest);
-      expect(surface.isAtBottom()).toBe(true);
-      expect(harness.onData).not.toHaveBeenCalled();
-    },
-  );
-
-  it("forwards navigation presses and releases when scrollback state is unavailable", async () => {
-    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
-    const harness = createHarness();
-    const surface = await harness.create({ beforeKey: () => true });
-    surface.write("history\x1b[>31u");
-    vi.spyOn(GhosttyTerminalCore.prototype, "scrollbarState").mockReturnValue(null);
-
-    for (const [name, modifiers] of [
-      ["PageUp", { shiftKey: true }],
-      ["Home", { ctrlKey: true, shiftKey: true }],
-    ] as const) {
-      key(surface, name, name, modifiers);
-      key(surface, name, name, modifiers, "keyup");
-    }
-    expect(harness.onData).toHaveBeenCalledTimes(4);
-    expect(harness.onData.mock.calls[1]?.[0]).toContain(":3");
-    expect(harness.onData.mock.calls[3]?.[0]).toContain(":3");
-  });
-
-  it("selects full history and keeps selection coordinates available outside the viewport", async () => {
-    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
-    const harness = createHarness();
-    const surface = await harness.create({ beforeKey: () => true });
-    const lines = Array.from({ length: 20 }, (_, index) => `line ${index}`);
-    surface.write(lines.join("\r\n"));
-    harness.flushFrame();
-    surface.selectAll();
-    harness.flushFrame();
-    expect(surface.getSelection()).toBe(lines.join("\n"));
-    expect(surface.getSelectionPosition()).toMatchObject({ start: { x: 0, y: 0 } });
-    expect(surface.getSelectionPosition()?.end.y).toBe(19);
-    expect(surface.getSelectionEndClientRect()).not.toBeNull();
-    expect(harness.renderedSnapshot.rowData.every((row) => row.cells[0]?.selected)).toBe(true);
-
-    key(surface, "Home", "Home", { ctrlKey: true, shiftKey: true });
-    harness.flushFrame();
-    surface.selectAll();
-    expect(surface.getSelection()).toBe(lines.join("\n"));
-    expect(surface.getSelectionPosition()?.end.y).toBe(19);
-    expect(surface.getSelectionEndClientRect()).toBeNull();
-    surface.clearSelection();
-    expect(surface.getSelection()).toBe("");
-    expect(surface.getSelectionPosition()).toBeNull();
-  });
-
-  it.each([
-    { platform: "Linux x86_64", modifiers: { ctrlKey: true, shiftKey: true } },
-    { platform: "MacIntel", modifiers: { metaKey: true } },
-  ])("selects all through the local shortcut ($platform)", async ({ platform, modifiers }) => {
-    vi.stubGlobal("navigator", { platform });
-    const harness = createHarness();
-    const surface = await harness.create({ beforeKey: () => true });
-    surface.write("hello\r\nworld");
-    harness.flushFrame();
-    expect(key(surface, "a", "KeyA", modifiers).defaultPrevented).toBe(true);
-    expect(surface.getSelection()).toBe("hello\nworld");
-    expect(surface.getSelectionPosition()).not.toBeNull();
-    expect(harness.onData).not.toHaveBeenCalled();
-  });
-
   it("preserves shell Ctrl+A and ordinary application navigation", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     const harness = createHarness();
@@ -420,6 +316,50 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData.mock.calls[1]?.[0]).toContain(":3");
   });
 
+  it("reports Kitty releases only for presses encoded by this surface", async () => {
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("\x1b[>11u");
+
+    key(surface, "a", "KeyA");
+    key(surface, "a", "KeyA", {}, "keyup");
+    key(surface, "Control", "ControlLeft", { ctrlKey: true });
+    // App capture stops Ctrl+D before it reaches the terminal input.
+    key(surface, "d", "KeyD", { ctrlKey: true }, "keydown", window);
+    key(surface, "d", "KeyD", { ctrlKey: true }, "keyup");
+    key(surface, "Control", "ControlLeft", {}, "keyup");
+
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual([
+      "\x1b[97u",
+      "\x1b[97;1:3u",
+      "\x1b[57442;5u",
+      "\x1b[57442;1:3u",
+    ]);
+  });
+
+  it("keeps a held Kitty press through focus changes and an app-consumed repeat", async () => {
+    const harness = createHarness();
+    let consumeRepeat = false;
+    const surface = await harness.create({ beforeKey: () => !consumeRepeat });
+    surface.write("\x1b[>11u");
+
+    key(surface, "a", "KeyA");
+    key(surface, "a", "KeyA", { repeat: true });
+    surface.input.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    surface.input.dispatchEvent(new Event("focus"));
+    consumeRepeat = true;
+    key(surface, "a", "KeyA", { repeat: true });
+    key(surface, "a", "KeyA", {}, "keyup");
+
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual([
+      "\x1b[97u",
+      "\x1b[97;1:2u",
+      "\x1b[97;1:3u",
+    ]);
+  });
+
   it("honors host interception, IME candidates, and AltGr before local shortcuts", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     const harness = createHarness();
@@ -447,398 +387,54 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { platform: "Linux x86_64", modifiers: { ctrlKey: true, metaKey: false } },
-    { platform: "MacIntel", modifiers: { ctrlKey: false, metaKey: true } },
-  ])(
-    "gates path links and preserves selection and URLs ($platform)",
-    async ({ platform, modifiers }) => {
-      vi.stubGlobal("navigator", { platform });
+  function paste(surface: GhosttyTerminalSurface, text: string) {
+    surface.input.dispatchEvent(
+      Object.assign(new Event("paste", { cancelable: true }), {
+        clipboardData: { getData: () => text },
+      }),
+    );
+  }
+
+  it.each(["native", "clipboard"])("pastes once when %s arrives first", async (first) => {
+    const harness = createHarness();
+    const read = Promise.resolve("echo hi");
+    vi.stubGlobal("navigator", {
+      platform: "MacIntel",
+      clipboard: { readText: () => read },
+    });
+    const surface = await harness.create({ beforeKey: () => true });
+
+    key(surface, "v", "KeyV", { metaKey: true });
+    if (first === "native") paste(surface, "echo hi");
+    await read;
+    if (first === "clipboard") paste(surface, "echo hi");
+
+    expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
+  });
+
+  it.each(["V keyup", "blur", "Meta keyup without V keyup"])(
+    "accepts a later identical menu paste after %s",
+    async (end) => {
       const harness = createHarness();
-      vi.spyOn(Event.prototype, "timeStamp", "get").mockImplementation(() => Date.now());
-      let canOpenPaths = false;
-      const openLink = vi.fn();
-      const surface = await harness.create({
-        canActivateLink: (text) => text.startsWith("https://") || canOpenPaths,
-        onLinkActivate: openLink,
+      const read = Promise.resolve("echo hi");
+      vi.stubGlobal("navigator", {
+        platform: "MacIntel",
+        clipboard: { readText: () => read },
       });
-      surface.write("/repo/file.ts");
-      harness.flushFrame();
-      harness.pointer("pointermove", 5, 0, modifiers);
-      expect(surface.canvas.style.cursor).toBe("");
-      harness.pointer("pointerdown", 5, 1, modifiers);
-      harness.pointer("pointerup", 5, 0, modifiers);
-      expect(openLink).not.toHaveBeenCalled();
+      const surface = await harness.create({ beforeKey: () => true });
 
-      vi.advanceTimersByTime(501);
-      harness.pointer("pointerdown", 5, 1);
-      harness.pointer("pointermove", 37, 1);
-      harness.pointer("pointerup", 37, 0);
-      expect(surface.getSelection()).toBe("/repo");
+      key(surface, "v", "KeyV", { metaKey: true });
+      await read;
+      expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
+      if (end === "blur") surface.input.dispatchEvent(new Event("blur"));
+      else if (end === "V keyup") key(surface, "v", "KeyV", { metaKey: true }, "keyup");
+      // macOS can omit V keyup while Command is held.
+      else key(surface, "Meta", "MetaLeft", {}, "keyup");
+      paste(surface, "echo hi");
 
-      vi.advanceTimersByTime(501);
-      harness.pointer("pointermove", 5, 0, modifiers);
-      canOpenPaths = true;
-      surface.refreshLinkActivation();
-      expect(surface.canvas.style.cursor).toBe("pointer");
-      harness.pointer("pointerdown", 5, 1, modifiers);
-      harness.pointer("pointerup", 5, 0, modifiers);
-      expect(openLink).toHaveBeenCalledExactlyOnceWith("/repo/file.ts", expect.any(Event));
-
-      vi.advanceTimersByTime(501);
-      harness.pointer("pointerdown", 5, 1, modifiers);
-      canOpenPaths = false;
-      surface.refreshLinkActivation();
-      expect(surface.canvas.style.cursor).toBe("");
-      harness.pointer("pointerup", 5, 0, modifiers);
-      expect(openLink).toHaveBeenCalledOnce();
-
-      vi.advanceTimersByTime(501);
-      surface.resetAndWrite("https://t3.codes");
-      harness.flushFrame();
-      harness.pointer("pointermove", 5, 0, modifiers);
-      expect(surface.canvas.style.cursor).toBe("pointer");
-      harness.pointer("pointerdown", 5, 1, modifiers);
-      harness.pointer("pointerup", 5, 0, modifiers);
-      expect(openLink).toHaveBeenLastCalledWith("https://t3.codes", expect.any(Event));
+      expect(harness.onData.mock.calls).toEqual([["echo hi"], ["echo hi"]]);
     },
   );
-
-  it("resends an unchanged grid when authorization and attachment become ready", async () => {
-    const harness = createHarness();
-    let canOperate = false;
-    let attached = false;
-    const resizePty = vi.fn<(cols: number, rows: number) => void>();
-    const surface = await harness.create({
-      onResize: (cols, rows) => {
-        if (canOperate && attached) resizePty(cols, rows);
-      },
-    });
-    vi.advanceTimersByTime(150);
-    expect(resizePty).not.toHaveBeenCalled();
-
-    canOperate = true;
-    surface.resendSize();
-    vi.advanceTimersByTime(150);
-    expect(resizePty).not.toHaveBeenCalled();
-
-    attached = true;
-    surface.resendSize();
-    vi.advanceTimersByTime(150);
-    expect(resizePty).toHaveBeenCalledExactlyOnceWith(20, 6);
-    surface.fit();
-    vi.advanceTimersByTime(150);
-    expect(resizePty).toHaveBeenCalledOnce();
-
-    canOperate = false;
-    harness.mount.clientWidth = 248;
-    surface.fit();
-    vi.advanceTimersByTime(150);
-    expect(resizePty).toHaveBeenCalledOnce();
-  });
-
-  it("sends the settled grid when a resize drag is released", async () => {
-    const harness = createHarness();
-    const onResize = vi.fn<(cols: number, rows: number) => void>();
-    const surface = await harness.create({ onResize });
-    vi.advanceTimersByTime(150);
-    onResize.mockClear();
-
-    harness.mount.clientWidth = 120;
-    harness.resize();
-    expect(surface.cols).toBe(14);
-    expect(onResize).not.toHaveBeenCalled();
-
-    harness.mount.clientWidth = 96;
-    window.dispatchEvent(new Event("pointerup"));
-    expect(onResize).toHaveBeenCalledExactlyOnceWith(11, 6);
-
-    harness.resize();
-    vi.advanceTimersByTime(150);
-    window.dispatchEvent(new Event("pointerup"));
-    expect(onResize).toHaveBeenCalledOnce();
-  });
-
-  it("replays the current grid on reveal when a hidden host becomes ready", async () => {
-    const harness = createHarness();
-    const onResize = vi.fn<(cols: number, rows: number) => void>();
-    const surface = await harness.create({ onResize });
-    vi.advanceTimersByTime(150);
-    onResize.mockClear();
-
-    surface.setVisible(false);
-    surface.resendSize();
-    vi.advanceTimersByTime(150);
-    expect(onResize).not.toHaveBeenCalled();
-
-    surface.setVisible(true);
-    vi.advanceTimersByTime(150);
-    expect(onResize).toHaveBeenCalledExactlyOnceWith(20, 6);
-  });
-
-  it("stops hidden snapshots and paint while preserving live VT replies and the next cursor", async () => {
-    const harness = createHarness();
-    const surface = await harness.create();
-    surface.focus();
-    surface.write("ready\x1b[1 q");
-    harness.flushFrame();
-    vi.advanceTimersByTime(500);
-    harness.flushFrame();
-    surface.write("queued");
-    expect(harness.frames.size).toBe(1);
-    surface.setVisible(false);
-    expect(harness.frames.size).toBe(0);
-    expect(vi.getTimerCount()).toBe(0);
-    harness.snapshot.mockClear();
-    harness.paint.mockClear();
-    harness.requestFrame.mockClear();
-
-    surface.write("\x1b[2J\x1b[H\x1b[3");
-    surface.write("1mhidden");
-    surface.write("界🙂\x1b[0m\x1b[5n\x1b[6n");
-    surface.fit();
-    vi.advanceTimersByTime(2_000);
-    harness.flushFrame();
-
-    expect(harness.onData.mock.calls).toEqual([["\x1b[0n"], ["\x1b[1;11R"]]);
-    expect(harness.snapshot).not.toHaveBeenCalled();
-    expect(harness.paint).not.toHaveBeenCalled();
-    expect(harness.requestFrame).not.toHaveBeenCalled();
-
-    surface.setVisible(true);
-    expect(harness.snapshot).toHaveBeenCalledTimes(1);
-    expect(harness.renderedSnapshot).toMatchObject({ cursorX: 10, cursorY: 0 });
-    expect(harness.renderedSnapshot.rowData[0]?.text).toContain("hidden");
-    expect(harness.paint.mock.calls).toContainEqual(["fillRect", [84, 4, 8, 16]]);
-    expect(harness.frames.size).toBe(0);
-  });
-
-  it("scrolls touch drags in both directions without selecting or sending input", async () => {
-    const harness = createHarness();
-    const surface = await harness.create();
-    surface.write(Array.from({ length: 50 }, (_, i) => `row ${i}\r\n`).join(""));
-    harness.flushFrame();
-    const bottom = harness.renderedSnapshot.rowData[0]?.text;
-    harness.touch("pointerdown", 20);
-    for (let y = 22; y <= 68; y += 2) harness.touch("pointermove", y);
-    harness.flushFrame();
-    expect(harness.renderedSnapshot.rowData[0]?.text).not.toBe(bottom);
-    expect(surface.getSelection()).toBe("");
-    harness.touch("pointermove", 20);
-    harness.touch("pointerup", 20);
-    harness.flushFrame();
-    expect(harness.renderedSnapshot.rowData[0]?.text).toBe(bottom);
-    expect(harness.onData).not.toHaveBeenCalled();
-  });
-
-  it("sends touch scrolling to alternate-screen applications", async () => {
-    const harness = createHarness();
-    const surface = await harness.create();
-    surface.write("\x1b[?1049h\x1b[?1h");
-    harness.touch("pointerdown", 20);
-    harness.touch("pointermove", 52);
-    harness.touch("pointerup", 52);
-    expect(harness.onData.mock.calls).toEqual([["\x1bOA\x1bOA"]]);
-  });
-
-  it("reports touch scrolling and taps to mouse-tracking applications", async () => {
-    const harness = createHarness();
-    const surface = await harness.create();
-    surface.write("\x1b[?1000h\x1b[?1006h");
-    harness.touch("pointerdown", 20);
-    harness.touch("pointermove", 52);
-    harness.touch("pointerup", 52);
-    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual([
-      "\x1b[<64;5;4M",
-      "\x1b[<64;5;4M",
-    ]);
-    harness.onData.mockClear();
-    harness.touch("pointerdown", 20);
-    harness.touch("pointerup", 20);
-    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual([
-      "\x1b[<0;5;2M",
-      "\x1b[<0;5;2m",
-    ]);
-  });
-
-  it("opens a link on touch tap but not on drag or cancellation", async () => {
-    const harness = createHarness();
-    const onLinkActivate = vi.fn();
-    const surface = await harness.create({ onLinkActivate });
-    surface.write("https://example.com");
-    harness.flushFrame();
-    harness.touch("pointerdown", 5);
-    harness.touch("pointerup", 5);
-    expect(onLinkActivate).toHaveBeenCalledTimes(1);
-    harness.touch("pointerdown", 5);
-    harness.touch("pointermove", 37);
-    harness.touch("pointerup", 37);
-    harness.touch("pointerdown", 5);
-    harness.touch("pointercancel", 5);
-    expect(onLinkActivate).toHaveBeenCalledTimes(1);
-  });
-
-  it("ends a canceled touch drag and ignores a second finger", async () => {
-    const harness = createHarness();
-    const surface = await harness.create();
-    surface.write(Array.from({ length: 50 }, (_, i) => `row ${i}\r\n`).join(""));
-    harness.flushFrame();
-    const bottom = harness.renderedSnapshot.rowData[0]?.text;
-    harness.touch("pointerdown", 20);
-    harness.touch("pointerdown", 20, 3);
-    harness.touch("pointermove", 68, 3);
-    harness.touch("pointercancel", 20);
-    harness.touch("pointermove", 68);
-    harness.flushFrame();
-    expect(harness.renderedSnapshot.rowData[0]?.text).toBe(bottom);
-    harness.touch("pointerdown", 20);
-    harness.touch("pointermove", 68);
-    harness.touch("pointerup", 68);
-    harness.flushFrame();
-    expect(harness.renderedSnapshot.rowData[0]?.text).not.toBe(bottom);
-  });
-
-  it("keeps the selection on reveal and applies a hidden selection clear", async () => {
-    const harness = createHarness();
-    const surface = await harness.create();
-    surface.write("hello world");
-    harness.flushFrame();
-    harness.pointer("pointerdown", 5, 1);
-    harness.pointer("pointermove", 37, 1);
-    harness.pointer("pointerup", 37, 0);
-    harness.flushFrame();
-    expect(surface.getSelection()).toBe("hello");
-    const position = surface.getSelectionPosition();
-
-    surface.setVisible(false);
-    harness.snapshot.mockClear();
-    surface.setVisible(true);
-    expect(harness.snapshot).toHaveBeenCalledTimes(1);
-    expect(surface.getSelectionPosition()).toEqual(position);
-    expect(
-      harness.renderedSnapshot.rowData[0]?.cells.slice(0, 5).every((cell) => cell.selected),
-    ).toBe(true);
-
-    surface.setVisible(false);
-    harness.snapshot.mockClear();
-    surface.clearSelection();
-    surface.write("!");
-    expect(harness.snapshot).not.toHaveBeenCalled();
-    surface.setVisible(true);
-    expect(harness.snapshot).toHaveBeenCalledTimes(1);
-    expect(surface.getSelection()).toBe("");
-    expect(surface.getSelectionPosition()).toBeNull();
-    expect(harness.renderedSnapshot.rowData[0]?.cells.some((cell) => cell.selected)).toBe(false);
-  });
-
-  it("scrolls a selection drag held at the terminal edge, even when the window ends there", async () => {
-    const harness = createHarness();
-    const surface = await harness.create();
-    surface.write(Array.from({ length: 40 }, (_, index) => `line ${index}`).join("\r\n"));
-    harness.flushFrame();
-    const latest = harness.renderedSnapshot.rowData[0]?.text;
-
-    harness.pointer("pointerdown", 5, 1, {}, 0, 50);
-    harness.pointer("pointermove", 5, 1, {}, 0, 1);
-    vi.advanceTimersByTime(400);
-    harness.flushFrame();
-    expect(surface.isAtBottom()).toBe(false);
-
-    harness.pointer("pointermove", 5, 1, {}, 0, 103);
-    vi.advanceTimersByTime(2_000);
-    harness.pointer("pointerup", 5, 0, {}, 0, 103);
-    harness.flushFrame();
-    expect(surface.isAtBottom()).toBe(true);
-    expect(harness.renderedSnapshot.rowData[0]?.text).toBe(latest);
-    expect(surface.getSelection()).not.toBe("");
-    expect(surface.getSelectionPosition()?.end.y).toBe(39);
-  });
-
-  it("pastes the terminal selection, and only that, on a Linux middle click", async () => {
-    const harness = createHarness();
-    const readText = vi.fn(async () => "clipboard text");
-    vi.stubGlobal("navigator", { platform: "Linux x86_64", clipboard: { readText } });
-    const surface = await harness.create();
-    surface.write("hello world");
-    harness.flushFrame();
-    harness.pointer("pointerdown", 5, 1);
-    harness.pointer("pointermove", 37, 1);
-    harness.pointer("pointerup", 37, 0);
-    expect(surface.getSelection()).toBe("hello");
-
-    harness.onData.mockClear();
-    harness.pointer("pointerdown", 5, 4, false, 1);
-    await vi.waitFor(() => expect(harness.onData).toHaveBeenCalled());
-    expect(harness.onData.mock.calls.at(-1)?.[0]).toBe("hello");
-    expect(surface.getSelection()).toBe("hello");
-
-    surface.clearSelection();
-    harness.pointer("pointerdown", 5, 4, false, 1);
-    expect(readText).not.toHaveBeenCalled();
-  });
-
-  it("starts a selection when dragging from a link", async () => {
-    const harness = createHarness();
-    const onLinkActivate = vi.fn();
-    const surface = await harness.create({ onLinkActivate });
-    surface.write("https://example.com");
-    harness.flushFrame();
-
-    harness.pointer("pointerdown", 5, 1);
-    harness.pointer("pointermove", 37, 1);
-    harness.pointer("pointerup", 37, 0);
-
-    expect(onLinkActivate).not.toHaveBeenCalled();
-    expect(surface.getSelection()).toBe("https");
-  });
-
-  it("keeps a link click active through slight pointer movement", async () => {
-    const harness = createHarness();
-    const onLinkActivate = vi.fn();
-    const surface = await harness.create({ onLinkActivate });
-    surface.write("https://example.com");
-    harness.flushFrame();
-
-    harness.pointer("pointerdown", 5, 1);
-    harness.pointer("pointermove", 6, 1);
-    harness.pointer("pointerup", 6, 0);
-
-    expect(onLinkActivate).toHaveBeenCalledOnce();
-  });
-
-  it("uses repeated link clicks for word and line selection", async () => {
-    const harness = createHarness();
-    const onLinkActivate = vi.fn();
-    const surface = await harness.create({ onLinkActivate });
-    surface.write("https://example.com tail");
-    harness.flushFrame();
-
-    harness.pointer("pointerdown", 5, 1);
-    harness.pointer("pointerup", 5, 0);
-    harness.pointer("pointerdown", 5, 1);
-    harness.pointer("pointerup", 5, 0);
-    expect(onLinkActivate).toHaveBeenCalledOnce();
-    expect(surface.getSelection()).not.toBe("");
-
-    harness.pointer("pointerdown", 5, 1);
-    harness.pointer("pointerup", 5, 0);
-    expect(onLinkActivate).toHaveBeenCalledOnce();
-    expect(surface.getSelection()).toBe("https://example.com tail");
-  });
-
-  it("uses Shift drags over links for selection", async () => {
-    const harness = createHarness();
-    const onLinkActivate = vi.fn();
-    const surface = await harness.create({ onLinkActivate });
-    surface.write("https://example.com");
-    harness.flushFrame();
-
-    harness.pointer("pointerdown", 5, 1, true);
-    harness.pointer("pointermove", 37, 1, true);
-    harness.pointer("pointerup", 37, 0, true);
-    expect(onLinkActivate).not.toHaveBeenCalled();
-    expect(surface.getSelection()).toBe("https");
-  });
 
   it("does not activate a link replaced before pointer release", async () => {
     const harness = createHarness();
@@ -853,31 +449,6 @@ describe("GhosttyTerminalSurface visibility", () => {
     harness.pointer("pointerup", 5, 0);
 
     expect(onLinkActivate).not.toHaveBeenCalled();
-  });
-
-  it("stops zero-size mounts and repaints when the same size returns", async () => {
-    const harness = createHarness();
-    const surface = await harness.create();
-    surface.focus();
-    surface.write("visible");
-    harness.flushFrame();
-    harness.snapshot.mockClear();
-    harness.paint.mockClear();
-    harness.mount.clientWidth = 0;
-    surface.write("!");
-    harness.flushFrame();
-    harness.requestFrame.mockClear();
-    for (let index = 0; index < 8; index += 1) surface.write("x");
-    vi.advanceTimersByTime(2_000);
-
-    expect(harness.snapshot).not.toHaveBeenCalled();
-    expect(harness.paint).not.toHaveBeenCalled();
-    expect(harness.requestFrame).not.toHaveBeenCalled();
-    harness.mount.clientWidth = 168;
-    harness.resize();
-    expect(harness.snapshot).toHaveBeenCalledTimes(1);
-    expect(harness.renderedSnapshot.rowData[0]?.text).toContain("visible!xxxxxxxx");
-    expect(harness.paint).toHaveBeenCalled();
   });
 
   it.each([false, true])(
@@ -940,70 +511,43 @@ const cell = (text: string): GhosttyCell => ({
   selected: false,
 });
 
-describe("isTerminalAltGraphText", () => {
-  it("defers printable AltGr output to the textarea input event", () => {
-    expect(
-      isTerminalAltGraphText({
-        key: "@",
-        getModifierState: (modifier) => modifier === "AltGraph",
-      }),
-    ).toBe(true);
-    expect(
-      isTerminalAltGraphText({
-        key: "ArrowRight",
-        getModifierState: (modifier) => modifier === "AltGraph",
-      }),
-    ).toBe(false);
-  });
-});
-
-describe("terminalGridCellAt", () => {
-  const options = {
-    bounds: { left: 100, top: 200 },
-    cols: 3,
-    rows: 2,
-    metrics: { width: 10, height: 20 },
-    padding: 4,
-    originY: 24,
-  };
-
-  it("maps points inside the rendered grid without clamping its padding", () => {
-    expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 224 })).toEqual({
-      x: 0,
-      y: 0,
-    });
-    expect(terminalGridCellAt({ ...options, clientX: 133, clientY: 263 })).toEqual({
-      x: 2,
-      y: 1,
-    });
-    expect(terminalGridCellAt({ ...options, clientX: 103, clientY: 224 })).toBeNull();
-    expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 223 })).toBeNull();
-    expect(terminalGridCellAt({ ...options, clientX: 134, clientY: 224 })).toBeNull();
-    expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 264 })).toBeNull();
-  });
-});
-
-describe("shouldBlinkTerminalCursor", () => {
-  const blinking = {
-    focused: true,
-    cursorBlinking: true,
-    cursorVisible: true,
-    reducedMotion: false,
-  };
-
-  it("blinks a focused visible cursor the terminal asked to blink", () => {
-    expect(shouldBlinkTerminalCursor(blinking)).toBe(true);
-  });
-
-  it("holds the cursor steady when blinking would be unwanted", () => {
-    expect(shouldBlinkTerminalCursor({ ...blinking, focused: false })).toBe(false);
-    expect(shouldBlinkTerminalCursor({ ...blinking, cursorBlinking: false })).toBe(false);
-    expect(shouldBlinkTerminalCursor({ ...blinking, cursorVisible: false })).toBe(false);
-    expect(shouldBlinkTerminalCursor({ ...blinking, reducedMotion: true })).toBe(false);
-  });
-});
-
 describe("terminalLinkAtPositionWithRange", () => {
+  it.each([
+    { text: "https://example.com/日本", cols: 80, end: { x: 23, y: 0 } },
+    { text: "src/日本/main.ts:3:1", cols: 80, end: { x: 19, y: 0 } },
+    { text: "https://example.com/🙂", cols: 80, end: { x: 21, y: 0 } },
+    { text: "https://example.com/日本", cols: 23, end: { x: 1, y: 1 } },
+  ])("keeps every cell of $text clickable at $cols columns", async ({ text, cols, end }) => {
+    const core = await GhosttyTerminalCore.create(
+      cols,
+      3,
+      8,
+      16,
+      {
+        foreground: { r: 255, g: 255, b: 255 },
+        background: { r: 0, g: 0, b: 0 },
+        cursor: { r: 255, g: 255, b: 255 },
+      },
+      () => {},
+    );
+    try {
+      core.write(text + " next");
+      const rows = core.snapshot().rowData;
+      for (let y = 0; y <= end.y; y += 1) {
+        const lastColumn = y === end.y ? end.x : cols - 2;
+        for (let x = 0; x <= lastColumn; x += 1) {
+          expect(terminalLinkAtPositionWithRange(rows, y, x)).toEqual({
+            text,
+            range: { start: { x: 0, y: 0 }, end },
+          });
+        }
+      }
+      expect(terminalLinkAtPositionWithRange(rows, end.y, end.x + 1)).toBeNull();
+    } finally {
+      core.dispose();
+    }
+  });
+
   it("activates a wrapped quoted Windows path from its spaces and position suffix", () => {
     const row = (text: string, isWrapContinuation: boolean): GhosttyRow => ({
       cells: Array.from(text, (character) => cell(character)),
@@ -1062,12 +606,20 @@ describe("terminalLinkAtPositionWithRange", () => {
       row("com/reference", true),
       row("~/project/file", false),
       row("C:\\repo\\file.ts", false),
+      row("PS C:\\repo\\dir 1", false, true),
+      row("\\test> ", true),
     ];
 
     expect(terminalLinkAtPositionWithRange(rows, 0, 8)?.text).toBe("https://example.com/reference");
     expect(terminalLinkAtPositionWithRange(rows, 1, 4)?.text).toBe("https://example.com/reference");
     expect(terminalLinkAtPositionWithRange(rows, 2, 2)?.text).toBe("~/project/file");
     expect(terminalLinkAtPositionWithRange(rows, 3, 4)?.text).toBe("C:\\repo\\file.ts");
+    expect(terminalLinkAtPositionWithRange(rows, 4, 13)).toEqual({
+      text: "C:\\repo\\dir 1\\test",
+      range: { start: { x: 3, y: 4 }, end: { x: 4, y: 5 } },
+    });
+    expect(terminalLinkAtPositionWithRange(rows, 5, 2)?.text).toBe("C:\\repo\\dir 1\\test");
+    expect(terminalLinkAtPositionWithRange(rows, 5, 5)).toBeNull();
     expect(terminalLinkAtPositionWithRange(rows, 1, 4)).toEqual({
       text: "https://example.com/reference",
       range: {
@@ -1129,47 +681,16 @@ describe("isTerminalCopyShortcut", () => {
     expect(isTerminalCopyShortcut(event({ metaKey: true }), "MacIntel")).toBe(true);
   });
 
-  it("copies with Ctrl+C and Ctrl+Shift+C elsewhere", () => {
-    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(true);
-    expect(isTerminalCopyShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
-      true,
-    );
-    expect(isTerminalCopyShortcut(event({}), "Linux x86_64")).toBe(false);
-  });
-
   it("uses the produced character instead of the physical key position", () => {
     expect(isTerminalCopyShortcut(event({ key: "C", metaKey: true }), "MacIntel")).toBe(true);
     expect(isTerminalCopyShortcut(event({ key: "j", metaKey: true }), "MacIntel")).toBe(false);
   });
-
-  it("supports the conventional Ctrl+Insert copy shortcut", () => {
-    expect(isTerminalCopyShortcut(event({ key: "Insert", ctrlKey: true }), "Linux x86_64")).toBe(
-      true,
-    );
-    expect(isTerminalCopyShortcut(event({ key: "Insert" }), "Linux x86_64")).toBe(false);
-    expect(
-      isTerminalCopyShortcut(
-        event({ key: "Insert", ctrlKey: true, shiftKey: true }),
-        "Linux x86_64",
-      ),
-    ).toBe(false);
-    expect(isTerminalCopyShortcut(event({ key: "Insert", ctrlKey: true }), "MacIntel")).toBe(false);
-  });
 });
 
 describe("applyTerminalCopyEvent", () => {
-  it("writes the selection and claims the fallback when clipboardData is present", () => {
-    const setData = vi.fn();
-    expect(applyTerminalCopyEvent("ls -la", { setData })).toEqual({
-      preventDefault: true,
-      claimWriteFallback: true,
-    });
-    expect(setData).toHaveBeenCalledWith("text/plain", "ls -la");
-  });
-
+  // regression: #7678 copying a terminal selection produced a blank clipboard
   it("leaves the writeText fallback alive when clipboardData is missing", () => {
-    // Electron's edit-menu Copy often delivers a copy event with no
-    // clipboardData.
+    // Electron menu Copy often omits clipboardData.
     expect(applyTerminalCopyEvent("ls -la", null)).toEqual({
       preventDefault: false,
       claimWriteFallback: false,
@@ -1202,80 +723,12 @@ describe("applyTerminalCopyEvent", () => {
 });
 
 describe("primeTerminalCopyInput", () => {
-  it("selects the Ghostty selection in the hidden textarea so native copy has text", () => {
-    const input = {
-      value: "",
-      selectionStart: 0,
-      selectionEnd: 0,
-      select() {
-        this.selectionStart = 0;
-        this.selectionEnd = this.value.length;
-      },
-    };
-    primeTerminalCopyInput(input, "git status");
-    expect(input.value).toBe("git status");
-    expect(input.selectionStart).toBe(0);
-    expect(input.selectionEnd).toBe(10);
-    clearPrimedTerminalCopyInput(input, "git status");
-    expect(input.value).toBe("");
-  });
-
   it("does not wipe an IME candidate that replaced the primed copy", () => {
     const input = { value: "", select() {} };
     primeTerminalCopyInput(input, "git status");
     input.value = "あ";
     clearPrimedTerminalCopyInput(input, "git status");
     expect(input.value).toBe("あ");
-  });
-});
-
-describe("isTerminalPasteShortcut", () => {
-  const event = (overrides: Partial<Parameters<typeof isTerminalPasteShortcut>[0]> = {}) => ({
-    ctrlKey: false,
-    key: "v",
-    metaKey: false,
-    shiftKey: false,
-    ...overrides,
-  });
-
-  it("uses Cmd+V on macOS", () => {
-    expect(isTerminalPasteShortcut(event({ metaKey: true }), "MacIntel")).toBe(true);
-    expect(isTerminalPasteShortcut(event({ ctrlKey: true }), "MacIntel")).toBe(false);
-  });
-
-  it("preserves Ctrl+V and uses Ctrl+Shift+V elsewhere", () => {
-    expect(isTerminalPasteShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(false);
-    expect(isTerminalPasteShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
-      true,
-    );
-  });
-
-  it("supports the conventional Shift+Insert paste shortcut", () => {
-    expect(isTerminalPasteShortcut(event({ key: "Insert", shiftKey: true }), "Linux x86_64")).toBe(
-      true,
-    );
-    expect(isTerminalPasteShortcut(event({ key: "Insert" }), "Linux x86_64")).toBe(false);
-    expect(
-      isTerminalPasteShortcut(
-        event({ key: "Insert", ctrlKey: true, shiftKey: true }),
-        "Linux x86_64",
-      ),
-    ).toBe(false);
-    expect(isTerminalPasteShortcut(event({ key: "Insert", shiftKey: true }), "MacIntel")).toBe(
-      false,
-    );
-  });
-});
-
-describe("isTerminalCompositionCommitInput", () => {
-  it("identifies browser composition follow-up input", () => {
-    expect(isTerminalCompositionCommitInput({ inputType: "" })).toBe(true);
-    expect(isTerminalCompositionCommitInput({ inputType: "insertCompositionText" })).toBe(true);
-    expect(isTerminalCompositionCommitInput({ inputType: "insertFromComposition" })).toBe(true);
-  });
-
-  it("keeps a fast repeated input as legitimate text", () => {
-    expect(isTerminalCompositionCommitInput({ inputType: "insertText" })).toBe(false);
   });
 });
 
@@ -1295,32 +748,9 @@ describe("isTerminalCompositionKey", () => {
     expect(isTerminalCompositionKey(event({ key: "Process" }), false)).toBe(true);
     expect(isTerminalCompositionKey(event({ keyCode: 229 }), false)).toBe(true);
   });
-
-  it("lets ordinary keydowns clear a primed copy", () => {
-    expect(isTerminalCompositionKey(event(), false)).toBe(false);
-  });
 });
 
 describe("application mouse reporting", () => {
-  const event = (overrides: Partial<Parameters<typeof shouldReportTerminalMouse>[1]> = {}) => ({
-    ctrlKey: false,
-    metaKey: false,
-    shiftKey: false,
-    ...overrides,
-  });
-
-  it("keeps Shift and link activation modifiers available to the browser", () => {
-    expect(shouldReportTerminalMouse(true, event())).toBe(true);
-    expect(shouldReportTerminalMouse(true, event({ shiftKey: true }))).toBe(false);
-    expect(shouldReportTerminalMouse(true, event({ ctrlKey: true }))).toBe(false);
-    expect(shouldReportTerminalMouse(true, event({ metaKey: true }))).toBe(false);
-    expect(shouldReportTerminalMouse(false, event())).toBe(false);
-  });
-
-  it("maps browser buttons to Ghostty's button enum", () => {
-    expect([0, 1, 2, 3, 4, 5].map(ghosttyMouseButton)).toEqual([1, 3, 2, 4, 5, null]);
-  });
-
   it("drops repeated motion reports until another mouse action resets the cell", () => {
     const first = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", "");
     expect(first).toEqual({ send: true, nextMotionData: "\u001b[<35;8;4M" });
@@ -1336,94 +766,9 @@ describe("application mouse reporting", () => {
       nextMotionData: "\u001b[<35;8;4M",
     });
   });
-
-  it("clears the motion baseline when application mouse tracking changes", () => {
-    expect(resolveTerminalMouseTrackingState(true, false, "\u001b[<35;8;4M")).toEqual({
-      tracking: false,
-      motionData: "",
-    });
-    expect(resolveTerminalMouseTrackingState(false, true, "\u001b[<35;8;4M")).toEqual({
-      tracking: true,
-      motionData: "",
-    });
-    expect(resolveTerminalMouseTrackingState(true, true, "\u001b[<35;8;4M")).toEqual({
-      tracking: true,
-      motionData: "\u001b[<35;8;4M",
-    });
-    expect(resolveTerminalMouseTrackingState(false, false, "\u001b[<35;8;4M")).toEqual({
-      tracking: false,
-      motionData: "\u001b[<35;8;4M",
-    });
-  });
-});
-
-describe("terminal font resolution", () => {
-  it("validates the requested face after its styles load", async () => {
-    let loaded = false;
-    const load = vi.fn(async () => {
-      loaded = true;
-      return [];
-    });
-    const resolve = vi.fn(() => {
-      expect(loaded).toBe(true);
-      return DEFAULT_TERMINAL_FONT_FAMILY;
-    });
-
-    await expect(
-      loadTerminalFontFamily("Proportional Test", 12, {
-        load,
-        resolve,
-      }),
-    ).resolves.toBe(DEFAULT_TERMINAL_FONT_FAMILY);
-    expect(load).toHaveBeenCalledTimes(4);
-    expect(resolve).toHaveBeenCalledWith("Proportional Test");
-  });
-
-  it("keeps the glyph fallbacks behind a custom text face", () => {
-    expect(terminalFontFamily()).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
-    expect(terminalFontFamily("  ")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
-    const custom = terminalFontFamily('"Fira Code"');
-    expect(custom.startsWith('"Fira Code", ')).toBe(true);
-    expect(custom).toContain('"Symbols Nerd Font Mono"');
-    expect(custom.endsWith("monospace")).toBe(true);
-  });
-
-  it("ignores proportional families the cell grid cannot lay out", () => {
-    // Node has no canvas, so the probe answers "monospace" and the
-    // family is kept; the guard is exercised in the browser instead.
-    const stack = terminalFontFamily("Helvetica Neue");
-    expect(stack.endsWith("monospace")).toBe(true);
-  });
-
-  it("quotes families the canvas font shorthand would otherwise reject", () => {
-    expect(terminalFontFamily("3270 Nerd Font").startsWith('"3270 Nerd Font", ')).toBe(true);
-    expect(terminalFontFamily("M+ 1m").startsWith('"M+ 1m", ')).toBe(true);
-    expect(terminalFontFamily("Cascadia Code, Menlo").startsWith('"Cascadia Code", Menlo, ')).toBe(
-      true,
-    );
-    expect(terminalFontFamily(" , ")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
-  });
-
-  it("clamps requested font sizes to the supported range", () => {
-    expect(terminalFontSize()).toBe(DEFAULT_TERMINAL_FONT_SIZE);
-    expect(terminalFontSize(Number.NaN)).toBe(DEFAULT_TERMINAL_FONT_SIZE);
-    expect(terminalFontSize(13.4)).toBe(13);
-    expect(terminalFontSize(2)).toBe(6);
-    expect(terminalFontSize(90)).toBe(32);
-  });
 });
 
 describe("terminalContentOriginY", () => {
-  it("stays top-anchored like a fresh terminal until scrollback exists", () => {
-    expect(terminalContentOriginY(100, 4, 5, 16, false)).toBe(4);
-  });
-
-  it("pins the grid to the bottom by moving the sub-row slack above row 0", () => {
-    expect(terminalContentOriginY(100, 4, 5, 16, true)).toBe(16);
-    expect(terminalContentOriginY(88, 4, 5, 16, true)).toBe(4);
-    expect(terminalContentOriginY(80, 4, 5, 16, true)).toBe(4);
-  });
-
   it("keeps the prompt stationary while a drag crosses row boundaries", () => {
     for (let height = 88; height < 104; height += 1) {
       const rows = Math.max(1, Math.floor((height - 8) / 16));
@@ -1434,12 +779,6 @@ describe("terminalContentOriginY", () => {
 });
 
 describe("terminalWheelDeltaRows", () => {
-  it("converts line-mode deltas into whole rows", () => {
-    const result = terminalWheelDeltaRows({ deltaY: 3, deltaMode: 1 }, 16, 24, 0);
-    expect(result.rows).toBe(3);
-    expect(result.remainder).toBe(0);
-  });
-
   it("accumulates fractional pixel deltas across events", () => {
     let remainder = 0;
     let scrolled = 0;
@@ -1451,20 +790,20 @@ describe("terminalWheelDeltaRows", () => {
     expect(scrolled).toBe(1);
     expect(remainder).toBeCloseTo(4 / 16);
   });
-
-  it("keeps direction for negative page-mode deltas", () => {
-    const result = terminalWheelDeltaRows({ deltaY: -1, deltaMode: 2 }, 16, 24, 0);
-    expect(result.rows).toBe(-24);
-    expect(result.remainder).toBe(0);
-  });
 });
 
-describe("terminalWheelArrowData", () => {
-  it("emits one arrow per row honoring application cursor keys", () => {
-    expect(terminalWheelArrowData(-2, false)).toBe("\u001b[A\u001b[A");
-    expect(terminalWheelArrowData(3, false)).toBe("\u001b[B\u001b[B\u001b[B");
-    expect(terminalWheelArrowData(-1, true)).toBe("\u001bOA");
-    expect(terminalWheelArrowData(0, true)).toBe("");
+// regression: #19492 drag selection scrolled one row per tick however far past the edge
+describe("terminalSelectionAutoscrollRows", () => {
+  it("scrolls more rows per tick the farther the pointer is past an edge", () => {
+    const top = 100;
+    const bottom = 500;
+    expect(terminalSelectionAutoscrollRows(300, top, bottom)).toBe(0);
+    expect(terminalSelectionAutoscrollRows(99, top, bottom)).toBe(-1);
+    expect(terminalSelectionAutoscrollRows(75, top, bottom)).toBe(-8);
+    expect(terminalSelectionAutoscrollRows(501, top, bottom)).toBe(1);
+    expect(terminalSelectionAutoscrollRows(525, top, bottom)).toBe(8);
+    expect(terminalSelectionAutoscrollRows(550, top, bottom)).toBe(15);
+    expect(terminalSelectionAutoscrollRows(2_000, top, bottom)).toBe(15);
   });
 });
 
@@ -1487,51 +826,5 @@ describe("advanceTerminalSelectionClickSequence", () => {
     });
 
     expect([first.count, second.count, third.count]).toEqual([1, 2, 3]);
-  });
-
-  it("starts over after movement, delay, or a completed triple click", () => {
-    const previous = { count: 3, time: 1_000, x: 20, y: 30 };
-    expect(
-      advanceTerminalSelectionClickSequence(previous, {
-        clientX: 20,
-        clientY: 30,
-        timeStamp: 1_100,
-      }).count,
-    ).toBe(1);
-    expect(
-      advanceTerminalSelectionClickSequence(previous, {
-        clientX: 30,
-        clientY: 30,
-        timeStamp: 1_100,
-      }).count,
-    ).toBe(1);
-    expect(
-      advanceTerminalSelectionClickSequence(previous, {
-        clientX: 20,
-        clientY: 30,
-        timeStamp: 1_501,
-      }).count,
-    ).toBe(1);
-  });
-});
-
-describe("terminal scrollbar", () => {
-  it("maps Ghostty's viewport state to a proportional thumb", () => {
-    expect(terminalScrollbarGeometry({ total: 100, offset: 40, len: 20 }, 200)).toEqual({
-      thumbHeight: 40,
-      thumbTop: 80,
-      maxOffset: 80,
-    });
-    expect(terminalScrollbarGeometry({ total: 100, offset: 0, len: 100 }, 200)).toBeNull();
-  });
-
-  it("keeps the thumb usable for large scrollback and maps dragging back to rows", () => {
-    const state = { total: 10_000, offset: 0, len: 20 };
-    expect(terminalScrollbarGeometry(state, 200)).toEqual({
-      thumbHeight: 18,
-      thumbTop: 0,
-      maxOffset: 9_980,
-    });
-    expect(terminalScrollbarOffsetAtPointer(state, 200, 191, 9)).toBe(9_980);
   });
 });

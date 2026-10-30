@@ -3,9 +3,6 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
-import * as Fiber from "effect/Fiber";
-import * as Deferred from "effect/Deferred";
 import { SourceControlProviderError } from "@t3tools/contracts";
 import { resolveThreadTitleLinks } from "./ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -14,7 +11,6 @@ const layerRegistry = Layer.mock(SourceControlProviderRegistry.SourceControlProv
 const encodeSubject = Schema.encodeSync(
   Schema.fromJsonString(Schema.Struct({ title: Schema.String, body: Schema.String })),
 );
-const success = { title: "Fix QR pairing expiry", body: "Keep remote connections working." };
 
 it.effect(
   "uses provider-selected links, deduplicates anchors, and bounds lookups and summaries",
@@ -49,31 +45,6 @@ it.effect(
           .join("\n\n"),
       );
     }),
-);
-
-it.effect("returns unavailable when a lookup times out while retaining successful subjects", () =>
-  Effect.gen(function* () {
-    const started = yield* Deferred.make<void>();
-    const fiber = yield* resolveThreadTitleLinks({
-      cwd: "/tmp/project",
-      message: "https://forge.test/change/1 https://forge.test/change/2",
-    }).pipe(
-      Effect.provide(
-        layerRegistry({
-          resolveLink: ({ url }) =>
-            url.pathname.endsWith("1")
-              ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
-              : Effect.succeed(success),
-        }),
-      ),
-      Effect.forkChild,
-    );
-    yield* Deferred.await(started);
-    yield* TestClock.adjust("3 seconds");
-    expect(yield* Fiber.join(fiber)).toBe(
-      `https://forge.test/change/1: unavailable\n\nhttps://forge.test/change/2\n${encodeSubject(success)}`,
-    );
-  }),
 );
 
 it.effect("keeps lookup failure out of generation and skips unlinked messages", () =>

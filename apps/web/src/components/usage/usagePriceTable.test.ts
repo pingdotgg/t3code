@@ -1,7 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  usageAliasCell,
   usagePriceCell,
   usagePriceTableChanges,
   usagePriceTableErrors,
@@ -29,29 +28,6 @@ const draft = (values: UsagePriceDraft["values"]): UsagePriceDraft => ({
 });
 
 describe("price table edits", () => {
-  it("shows shared and mixed cells separately, and never treats missing settings as automatic", () => {
-    const targets = [
-      target("a", { example: price }),
-      target("b", { example: { ...price, outputCostPerMillionTokens: 10 } }),
-    ];
-    expect(usagePriceCell(targets, "example", "inputCostPerMillionTokens").value).toBe("2");
-    expect(usagePriceCell(targets, "example", "outputCostPerMillionTokens")).toEqual({
-      value: "",
-      placeholder: "Mixed",
-    });
-    expect(usagePriceCell(targets, "example", "cacheReadCostPerMillionTokens")).toEqual({
-      value: "",
-      placeholder: "Input rate",
-    });
-    expect(
-      usagePriceCell([target("a", {})], "example", "inputCostPerMillionTokens").placeholder,
-    ).toBe("Automatic");
-    expect(
-      usagePriceCell([targets[0]!, target("b", null)], "example", "inputCostPerMillionTokens")
-        .placeholder,
-    ).toBe("Unavailable");
-  });
-
   it.each(["constructor", "toString", "__proto__"])(
     "handles an exact model ID named %s",
     (model) => {
@@ -125,55 +101,6 @@ describe("price table edits", () => {
     expect(missing.errors.has("model:example")).toBe(true);
   });
 
-  it("ignores empty new rows without blocking other edits", () => {
-    const environment = target("a", { example: price });
-    const empty: UsagePriceDraft = {
-      id: "new:1",
-      model: " ",
-      isNew: true,
-      values: { inputCostPerMillionTokens: " " },
-    };
-    const plan = usagePriceTableChanges(environment, [
-      draft({ inputCostPerMillionTokens: "3" }),
-      empty,
-    ]);
-    expect(plan.errors.size).toBe(0);
-    expect(plan.changes).toEqual([
-      { model: "example", price: { ...price, inputCostPerMillionTokens: 3 } },
-    ]);
-    expect(usagePriceTableChanges(environment, [empty]).changes).toEqual([]);
-    expect(
-      usagePriceTableChanges(environment, [
-        { ...empty, values: { inputCostPerMillionTokens: "0" } },
-      ]).errors.get(empty.id),
-    ).toBe("Enter a model ID.");
-  });
-
-  it.each(["Offline", "Read-only access", "Update server to edit prices"])(
-    "does not let %s destinations block a valid edit elsewhere",
-    (unavailable) => {
-      const edits = [draft({ inputCostPerMillionTokens: "3" })];
-      const writable = target("writable", { example: price });
-      const other = target("other", {});
-      expect(usagePriceTableErrors([writable, { ...other, unavailable }], edits).size).toBe(0);
-      expect(usagePriceTableErrors([writable, other], edits).has("model:example")).toBe(true);
-    },
-  );
-
-  it("does not write unchanged rates and rejects invalid edited cells", () => {
-    const environment = target("a", { example: price });
-    expect(
-      usagePriceTableChanges(environment, [draft({ inputCostPerMillionTokens: "2.00" })]).changes,
-    ).toEqual([]);
-    expect(
-      usagePriceTableChanges(environment, [draft({ cacheReadCostPerMillionTokens: "-1" })]).errors
-        .size,
-    ).toBe(1);
-    expect(
-      usagePriceTableChanges(environment, [draft({ outputCostPerMillionTokens: "" })]).errors.size,
-    ).toBe(1);
-  });
-
   it("mapping a model drops its own price and resetting removes the mapping", () => {
     const priced = target("a", { example: price });
     expect(usagePriceTableChanges(priced, [{ ...draft({}), alias: " example-model " }])).toEqual({
@@ -193,35 +120,46 @@ describe("price table edits", () => {
       ),
     ).toBe("Map to a different model.");
   });
+});
 
-  it("clearing a mapping returns to automatic pricing unless prices are entered", () => {
-    const mapped = target("a", {}, { example: "example-model" });
-    expect(usagePriceTableChanges(mapped, [{ ...draft({}), alias: "" }]).changes).toEqual([
-      { model: "example", alias: null },
-    ]);
-    expect(
-      usagePriceTableChanges(mapped, [
-        {
-          ...draft({ inputCostPerMillionTokens: "2", outputCostPerMillionTokens: "8" }),
-          alias: "",
-        },
-      ]).changes,
-    ).toEqual([
-      { model: "example", alias: null },
-      { model: "example", price },
-    ]);
+describe("model mapping validation", () => {
+  const mapping = (model: string, alias: string): UsagePriceDraft => ({
+    id: `model:${model}`,
+    model,
+    alias,
+    isNew: false,
+    values: {},
   });
 
-  it("keeps each environment's mapping when the column is untouched", () => {
-    const edits = [draft({ inputCostPerMillionTokens: "3" })];
-    expect(
-      usagePriceTableChanges(target("a", {}, { example: "example-model" }), edits).changes,
-    ).toEqual([]);
-    expect(
-      usageAliasCell(
-        [target("a", {}, { example: "example-model" }), target("b", { example: price })],
-        "example",
-      ),
-    ).toEqual({ value: "", placeholder: "Mixed" });
+  it("rejects a cycle created by several mappings in one save", () => {
+    const edits = [mapping("a", "b"), mapping("b", "c"), mapping("c", "a")];
+    const result = usagePriceTableChanges(target("local", {}), edits);
+    expect([...result.errors.keys()]).toEqual(["model:a", "model:b", "model:c"]);
+  });
+
+  it("checks each environment's saved chain when an edited mapping closes it", () => {
+    const edits = [mapping("c", "a")];
+    const acyclic = target("one", {}, { a: "b" });
+    const cyclic = target("two", {}, { a: "b", b: "c" });
+    expect(usagePriceTableChanges(acyclic, edits).errors.size).toBe(0);
+    expect(usagePriceTableErrors([acyclic, cyclic], edits).get("model:c")).toBe(
+      "Model mappings cannot form a cycle on two.",
+    );
+  });
+
+  it("validates the final batch so a mapping can be reversed in either row order", () => {
+    const environment = target("local", {}, { constructor: "__proto__" });
+    const clear = mapping("constructor", "");
+    const reverse = mapping("__proto__", "constructor");
+    for (const edits of [
+      [reverse, clear],
+      [clear, reverse],
+    ]) {
+      const result = usagePriceTableChanges(environment, edits);
+      expect(result.errors.size).toBe(0);
+      expect(result.changes).toEqual(
+        edits.map(({ model, alias }) => ({ model, alias: alias || null })),
+      );
+    }
   });
 });

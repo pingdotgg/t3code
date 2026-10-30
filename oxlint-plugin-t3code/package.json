@@ -3,15 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc-rs --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run --config ../vite.config.ts --dir ."
   },
   "dependencies": {
-    "@effect/platform-node": "catalog:",
     "@oxlint/plugins": "^1.63.0",
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "vite-plus": "catalog:"
   }

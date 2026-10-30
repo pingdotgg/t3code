@@ -9,7 +9,7 @@ import { useLocation } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
-import { APP_DISPLAY_NAME } from "~/branding";
+import { DESKTOP_DOWNLOAD_URL } from "~/branding";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { isHostedStaticApp } from "~/hostedPairing";
 import { useEnvironments } from "~/state/environments";
@@ -21,7 +21,6 @@ import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 
 const OPENER_STORAGE_KEY = "t3code:prompt-link-opener";
 const Opener = Schema.NullOr(Schema.Literals(["app", "browser"]));
-const DOWNLOAD_URL = "https://t3.codes/download";
 
 interface LinkSummary {
   readonly prompt: LinkedPrompt | null;
@@ -105,6 +104,7 @@ function HostedPromptLinkLanding({
   const onPhone = /android|iphone|ipad/i.test(navigator.userAgent);
   const autoOpenedRef = useRef(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- redirects window.location to the app deep link once when the user chose to always open in the app
   useEffect(() => {
     if (!openInAppRemembered || !summary.ok || autoOpenedRef.current) return;
     autoOpenedRef.current = true;
@@ -113,21 +113,16 @@ function HostedPromptLinkLanding({
 
   if (!summary.ok) {
     return (
-      <StandalonePage tone="error">
-        <StandalonePageHeader
-          eyebrow={APP_DISPLAY_NAME}
-          title="Could not open the link"
-          description={summary.error}
-        />
+      <StandalonePage>
+        <StandalonePageHeader title="Could not open the link" description={summary.error} />
       </StandalonePage>
     );
   }
 
   const { prompt, details } = summary.value;
   return (
-    <StandalonePage tone="brand">
+    <StandalonePage>
       <StandalonePageHeader
-        eyebrow={APP_DISPLAY_NAME}
         title="Open this prompt"
         description="It opens as a draft. Nothing runs until you press Send."
       />
@@ -155,7 +150,7 @@ function HostedPromptLinkLanding({
             Continue here
           </Button>
         ) : null}
-        <Button variant="ghost" render={<a href={DOWNLOAD_URL} />}>
+        <Button variant="ghost" render={<a href={DESKTOP_DOWNLOAD_URL} />}>
           Get T3 Code
         </Button>
       </div>

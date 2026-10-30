@@ -1,8 +1,10 @@
-"use client";
-
 import { useAtomValue } from "@effect/atom-react";
-import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import {
+  parseScopedThreadKey,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
+import { type EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -11,6 +13,7 @@ import {
   readThreadPreviewState,
   reconcilePreviewServerSessions,
 } from "~/previewStateStore";
+import { isElectron } from "~/env";
 import { previewEnvironment } from "~/state/preview";
 
 class PreviewSessionThreadKeyParseError extends Schema.TaggedError<PreviewSessionThreadKeyParseError>()(
@@ -45,8 +48,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       if (result.waiting || !AsyncResult.isSuccess(result)) return;
       reconcilePreviewServerSessions(threadRef, result.value);
       if (!readThreadPreviewState(threadRef).listLoaded) {
-        // An event overtook the first list. Retry the authoritative baseline;
-        // do not declare a partial event-only index ready for surface cleanup.
+        // An event overtook the initial list; retry before using the partial index for surface cleanup.
         queueMicrotask(() => {
           if (!disposed) get.refresh(sessionsAtom);
         });
@@ -67,8 +69,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       disposed = true;
     });
     const initialEvent = get.once(eventsAtom);
-    // Subscribing alone does not evaluate a lazy list. Start it now, but
-    // reconcile only subsequent responses: a completed cache may be stale.
+    // Evaluate the lazy list, then reconcile only new responses because cached results can be stale.
     get.once(sessionsAtom);
     get.subscribe(sessionsAtom, (result) => {
       reconcileSessions(result);
@@ -81,9 +82,8 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     get.mount(eventsAtom);
     queueMicrotask(() => {
       if (disposed) return;
-      // The cached list can predate an automation-created tab. Keep the local
-      // snapshot visible until an authoritative refresh arrives instead of
-      // reconciling against a stale empty result when the panel first mounts.
+      // Keep local tabs until authoritative refresh; stale cached emptiness could remove automation-created
+      // tabs.
       const current = get.once(sessionsAtom);
       if (!AsyncResult.isInitial(current) && !current.waiting) get.refresh(sessionsAtom);
       if (eventsVersion === 0) applyLatestEvent(initialEvent);
@@ -93,4 +93,38 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 
 export function usePreviewSession(threadRef: ScopedThreadRef): void {
   useAtomValue(previewSessionSyncAtom(scopedThreadKey(threadRef)));
+}
+
+const inactiveAtom = Atom.make(() => undefined);
+
+// Discover background tabs without listing every thread at startup. Retain each
+// sync for the host's lifetime so later events still arrive while chat is absent.
+const desktopHostedPreviewSyncAtom = Atom.family((environmentId: EnvironmentId) => {
+  const eventsAtom = previewEnvironment.events({ environmentId, input: {} });
+  return Atom.make((get) => {
+    const syncedThreadIds = new Set<string>();
+    get.subscribe(
+      eventsAtom,
+      (result) => {
+        if (!AsyncResult.isSuccess(result) || result.value.type === "closed") return;
+        const threadId = result.value.threadId;
+        if (syncedThreadIds.has(threadId)) return;
+        syncedThreadIds.add(threadId);
+        get.mount(
+          previewSessionSyncAtom(
+            scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId))),
+          ),
+        );
+      },
+      { immediate: true },
+    );
+  }).pipe(Atom.withLabel(`preview:desktop-hosted-sync:${environmentId}`));
+});
+
+export function useDesktopHostedPreviewSessions(environmentId: EnvironmentId | null): void {
+  useAtomValue(
+    isElectron && environmentId !== null
+      ? desktopHostedPreviewSyncAtom(environmentId)
+      : inactiveAtom,
+  );
 }

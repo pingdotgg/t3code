@@ -44,7 +44,7 @@ function normalizeModelName(name: string): string {
   return normalizeSearchQuery(name).replace(/\s+/gu, " ");
 }
 
-export function buildModelPickerSearchText(model: ModelPickerSearchableModel): string {
+function buildModelPickerSearchText(model: ModelPickerSearchableModel): string {
   return normalizeSearchQuery(
     [model.name, model.shortName, model.subProvider, model.driverKind, model.providerDisplayName]
       .filter((value): value is string => typeof value === "string" && value.length > 0)

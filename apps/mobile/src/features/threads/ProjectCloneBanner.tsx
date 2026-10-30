@@ -1,9 +1,10 @@
+import { Button } from "../../components/ui/Button";
 import {
   projectCloneDisplayName,
   projectCloneProgressSummary,
   type ProjectCloneSnapshot,
 } from "@t3tools/contracts";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { cn } from "../../lib/cn";
@@ -65,13 +66,11 @@ export function ProjectCloneBanner(props: {
 
 function BannerAction(props: { readonly label: string; readonly onPress: () => void }) {
   return (
-    <Pressable
-      accessibilityRole="button"
+    <Button
+      label={props.label}
+      tone="secondary"
       accessibilityLabel={props.label}
-      className="rounded-full border border-border bg-card px-3 py-1.5"
       onPress={props.onPress}
-    >
-      <Text className="font-t3-medium text-xs">{props.label}</Text>
-    </Pressable>
+    />
   );
 }

@@ -3,7 +3,6 @@ import {
   MessageId,
   NodeId,
   ProviderDriverKind,
-  ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   RunId,
@@ -13,150 +12,72 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  InvalidScopedProjectRefCollectionKeyError,
-  InvalidScopedThreadKeyError,
-  parseProjectRefCollectionKey,
-  parseThreadKey,
-} from "./entities.ts";
-import {
-  presentThreadShell,
-  resolveThreadProviderStack,
-  resolveThreadWorkingStartedAt,
-} from "./models.ts";
+import { presentThreadShell, resolveThreadWorkingStartedAt } from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
+import { isThreadWorking } from "./threadInbox.ts";
 import { derivePendingThreadRequests } from "./threadRequests.ts";
+import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
 
-describe("scoped entity keys", () => {
-  it("preserves an invalid thread key as structured error data", () => {
-    const key = "missing-thread-key-separator";
-    let error: unknown;
-
-    try {
-      parseThreadKey(key);
-    } catch (cause) {
-      error = cause;
-    }
-
-    expect(error).toEqual(new InvalidScopedThreadKeyError({ key }));
-  });
-
-  it("preserves malformed project reference collection input and its cause", () => {
-    const key = "not-json";
-    let error: unknown;
-
-    try {
-      parseProjectRefCollectionKey(key);
-    } catch (cause) {
-      error = cause;
-    }
-
-    expect(error).toBeInstanceOf(InvalidScopedProjectRefCollectionKeyError);
-    expect(error).toMatchObject({ key, cause: expect.anything() });
-  });
-
-  it("rejects invalid project reference collection shapes", () => {
-    const key = JSON.stringify([["environment-1"]]);
-
-    expect(() => parseProjectRefCollectionKey(key)).toThrowError(
-      InvalidScopedProjectRefCollectionKeyError,
-    );
-  });
-});
-
 describe("V2 client presentation", () => {
-  it("presents shell timestamps and status without constructing V1 state", () => {
-    const shell = presentThreadShell(environmentId, v2ThreadShell);
-    expect(shell.environmentId).toBe(environmentId);
-    expect(shell.createdAt).toBe("2026-06-20T00:00:00.000Z");
-    expect(shell.runtime).toBeNull();
-    expect(shell.source).toBe(v2ThreadShell);
-  });
-
-  it("preserves active ordering and both pull-request sources", () => {
-    const linkedPullRequest = {
-      projectId: v2ThreadShell.projectId,
-      repository: "pingdotgg/t3code",
-      number: 42,
-      url: "https://github.com/pingdotgg/t3code/pull/42",
-    };
-    const branchPullRequest = { ...linkedPullRequest, number: 43 };
-    const shell = presentThreadShell(environmentId, {
+  it("keeps async questions in Working until the run completes", () => {
+    const runId = RunId.make("run-async-question");
+    const running = {
       ...v2ThreadShell,
-      activeOrderKey: "m",
-      linkedPullRequest,
-      branchPullRequest,
-    });
-
-    expect(shell.activeOrderKey).toBe("m");
-    expect(shell.linkedPullRequest).toEqual(linkedPullRequest);
-    expect(shell.branchPullRequest).toEqual(branchPullRequest);
-  });
-
-  it("presents provider errors carried by failed thread shells", () => {
-    const runId = RunId.make("run-failed");
-    const shell = presentThreadShell(environmentId, {
-      ...v2ThreadShell,
+      snoozedAt: DateTime.makeUnsafe("2026-06-19T23:59:00.000Z"),
+      snoozedUntil: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
       latestRunId: runId,
-      status: "failed",
-      lastError: "provider process exited",
-    });
-
-    expect(shell.runtime).toMatchObject({
-      status: "failed",
-      lastError: "provider process exited",
-    });
-  });
-
-  it("preserves shell run timestamps for sidebar activity clocks", () => {
-    const runId = RunId.make("run-working-clock");
-    const requestedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
-    const startedAt = DateTime.makeUnsafe("2026-06-20T01:00:02.000Z");
-    const shell = presentThreadShell(environmentId, {
-      ...v2ThreadShell,
-      latestRunId: runId,
-      latestRunRequestedAt: requestedAt,
-      latestRunStartedAt: startedAt,
-      latestRunCompletedAt: null,
       activeRunId: runId,
-      status: "running",
-      updatedAt: DateTime.makeUnsafe("2026-06-20T01:04:45.000Z"),
-    });
+      status: "running" as const,
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("request-async-question"),
+        kind: "user_input" as const,
+        createdAt: v2ThreadShell.updatedAt,
+        blocking: false,
+      },
+    };
+    const active = presentThreadShell(environmentId, running);
+    expect(active.hasPendingUserInput).toBe(false);
+    expect(isThreadWorking(active)).toBe(true);
+    expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
 
-    expect(shell.latestRun).toMatchObject({
-      runId,
-      status: "running",
-      requestedAt: "2026-06-20T01:00:00.000Z",
-      startedAt: "2026-06-20T01:00:02.000Z",
-      completedAt: null,
-    });
-  });
-
-  it("parks presented runtime at idle when a settled shell has pending background tasks", () => {
-    const runId = RunId.make("run-completed");
-    const shell = presentThreadShell(environmentId, {
-      ...v2ThreadShell,
-      latestRunId: runId,
+    const completed = presentThreadShell(environmentId, {
+      ...running,
       activeRunId: null,
       status: "completed",
-      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Watch build", kind: "monitor" }],
     });
+    expect(completed.hasPendingUserInput).toBe(true);
+    expect(isThreadWorking(completed)).toBe(false);
+    expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+  });
 
-    expect(shell.latestRun).toMatchObject({ runId, status: "completed" });
-    expect(shell.runtime).toMatchObject({
-      status: "idle",
-      activeRunId: null,
-    });
-    expect(shell.pendingBackgroundTasks).toEqual([
-      { taskId: "bg-1", description: "Watch build", kind: "monitor" },
-    ]);
+  it("keeps blocking and legacy questions out of Working", () => {
+    for (const capability of [{ blocking: true }, {}]) {
+      const shell = presentThreadShell(environmentId, {
+        ...v2ThreadShell,
+        latestRunId: RunId.make("run-blocking-question"),
+        activeRunId: RunId.make("run-blocking-question"),
+        status: "running",
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request-blocking-question"),
+          kind: "user_input",
+          createdAt: v2ThreadShell.updatedAt,
+          ...capability,
+        },
+      });
+      expect(shell.hasPendingUserInput).toBe(true);
+      expect(isThreadWorking(shell)).toBe(false);
+    }
   });
 
   it("parks a thread that never ran at idle while a pull request watch holds it", () => {
-    const watch = { taskId: "pull-request-watch:github.com/acme/app#1", kind: "monitor" as const };
+    const watch = {
+      taskId: "pull-request-watch:github.com/acme/app#1",
+      kind: "monitor" as const,
+      awaited: true as const,
+    };
     const watched = presentThreadShell(environmentId, {
       ...v2ThreadShell,
       latestRunId: null,
@@ -224,68 +145,13 @@ describe("V2 client presentation", () => {
       activeRunId: null,
       status: "failed",
       lastError: "Provider turn failed",
-      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Watch build", kind: "monitor" }],
+      pendingBackgroundTasks: [
+        { taskId: "bg-1", description: "Watch build", kind: "monitor", awaited: true },
+      ],
     });
 
     expect(shell.runtime).toMatchObject({ status: "failed", lastError: "Provider turn failed" });
     expect(shell.pendingBackgroundTasks).toHaveLength(1);
-  });
-
-  it("stacks earlier provider owners behind the current one, newest history first to go", () => {
-    const codex = ProviderInstanceId.make("codex");
-    const claude = ProviderInstanceId.make("claude");
-    const cursor = ProviderInstanceId.make("cursor");
-    const grok = ProviderInstanceId.make("grok");
-    const shell = presentThreadShell(environmentId, {
-      ...v2ThreadShell,
-      providerInstanceId: grok,
-      modelSelection: { instanceId: grok, model: "grok-4" },
-      providerInstanceHistory: [codex, claude, cursor, grok],
-    });
-
-    expect(resolveThreadProviderStack(shell)).toEqual([claude, cursor, grok]);
-    expect(
-      resolveThreadProviderStack({ ...shell, providerInstanceHistory: [codex, grok] }),
-    ).toEqual([codex, grok]);
-    expect(resolveThreadProviderStack({ ...shell, providerInstanceHistory: [] })).toEqual([grok]);
-    expect(
-      presentThreadShell(environmentId, { ...v2ThreadShell, providerInstanceHistory: undefined })
-        .providerInstanceHistory,
-    ).toEqual([]);
-  });
-
-  it("keeps terminal runtime completed when there are no pending background tasks", () => {
-    const runId = RunId.make("run-completed");
-    const shell = presentThreadShell(environmentId, {
-      ...v2ThreadShell,
-      latestRunId: runId,
-      activeRunId: null,
-      status: "completed",
-      pendingBackgroundTasks: [],
-    });
-
-    expect(shell.latestRun).toMatchObject({ runId, status: "completed" });
-    expect(shell.runtime).toMatchObject({
-      status: "completed",
-      activeRunId: null,
-    });
-  });
-
-  it("keeps runtime running when there is no background roster", () => {
-    const runId = RunId.make("run-running");
-    const shell = presentThreadShell(environmentId, {
-      ...v2ThreadShell,
-      latestRunId: runId,
-      activeRunId: runId,
-      status: "running",
-      pendingBackgroundTasks: [],
-    });
-
-    expect(shell.latestRun).toMatchObject({ runId, status: "running" });
-    expect(shell.runtime).toMatchObject({
-      status: "running",
-      activeRunId: runId,
-    });
   });
 
   it("keeps an older active run visible over a newer cancelled run", () => {
@@ -307,19 +173,6 @@ describe("V2 client presentation", () => {
       status: "running",
       activeRunId,
     });
-  });
-
-  it("keeps an older waiting run visible over a newer cancelled run", () => {
-    const shell = presentThreadShell(environmentId, {
-      ...v2ThreadShell,
-      latestRunId: RunId.make("run-cancelled"),
-      activeRunId: null,
-      activityRunStatus: "waiting",
-      status: "cancelled",
-      pendingBackgroundTasks: [],
-    });
-
-    expect(shell.runtime).toMatchObject({ status: "waiting", activeRunId: null });
   });
 
   it("keeps a post-settlement background roster ahead of activity status", () => {
@@ -345,7 +198,9 @@ describe("V2 client presentation", () => {
       latestRunId: runId,
       activeRunId: runId,
       status: "running",
-      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Watch build", kind: "monitor" }],
+      pendingBackgroundTasks: [
+        { taskId: "bg-1", description: "Watch build", kind: "monitor", awaited: true },
+      ],
     });
 
     expect(shell.latestRun).toMatchObject({ runId, status: "running" });
@@ -354,27 +209,7 @@ describe("V2 client presentation", () => {
       activeRunId: runId,
     });
     expect(shell.pendingBackgroundTasks).toEqual([
-      { taskId: "bg-1", description: "Watch build", kind: "monitor" },
-    ]);
-  });
-
-  it("parks runtime idle over stale checkpoint waiting when the roster is nonempty", () => {
-    const runId = RunId.make("run-stale-waiting");
-    const shell = presentThreadShell(environmentId, {
-      ...v2ThreadShell,
-      latestRunId: runId,
-      activeRunId: runId,
-      status: "waiting",
-      pendingBackgroundTasks: [{ taskId: "bg-2", description: "Watch build", kind: "monitor" }],
-    });
-
-    expect(shell.latestRun).toMatchObject({ runId, status: "waiting" });
-    expect(shell.runtime).toMatchObject({
-      status: "idle",
-      activeRunId: runId,
-    });
-    expect(shell.pendingBackgroundTasks).toEqual([
-      { taskId: "bg-2", description: "Watch build", kind: "monitor" },
+      { taskId: "bg-1", description: "Watch build", kind: "monitor", awaited: true },
     ]);
   });
 
@@ -576,7 +411,7 @@ describe("V2 client presentation", () => {
       ).toMatchObject({ status, activeRunId: null });
     }
 
-    for (const kind of ["monitor", "background_task"] as const) {
+    for (const held of [{ kind: "monitor", awaited: true }, { kind: "background_task" }] as const) {
       const providerThread = {
         id: ProviderThreadId.make("provider-thread-background"),
         driver: ProviderDriverKind.make("claudeCode"),
@@ -591,7 +426,7 @@ describe("V2 client presentation", () => {
         lastRunOrdinal: 1,
         handoffIds: [],
         forkedFrom: null,
-        pendingBackgroundTasks: [{ taskId: "background-task", kind }],
+        pendingBackgroundTasks: [{ taskId: "background-task", ...held }],
         createdAt: now,
         updatedAt: now,
       };

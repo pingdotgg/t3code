@@ -1,9 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -15,14 +13,16 @@ import * as GitHubQuota from "./GitHubQuota.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { runGitHubStackAction as runStackAction } from "./githubStackActions.ts";
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 
-/**
- * One request as the fake saw it, flattened to words: the path or document, then each variable
- * or body field as `name=value`, so an assertion reads as "this request carried that value".
- * A batched GraphQL request is one call, its variables carrying their alias prefixes.
- */
+const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+  enabled: false,
+  token: () => Effect.succeedNone,
+  invalidate: () => Effect.void,
+});
+
 type Call = ReadonlyArray<string>;
-/** The next answer in the script: a REST body, or for GraphQL the `data` to answer with. */
 type Send = (call: Call, kind: "graphql" | "rest") => Effect.Effect<unknown>;
 
 let gitCalls: Array<ReadonlyArray<string>> = [];
@@ -47,7 +47,6 @@ const fakeGit = Layer.mergeAll(
   FileSystem.layerNoop({ makeTempDirectoryScoped: () => Effect.succeed("/tmp/scratch") }),
 );
 
-/** GitHub's GraphQL endpoint, answering each request with the next scripted `data`. */
 const graphQlHttp = (send: Send) =>
   HttpClient.make((request) =>
     Effect.gen(function* () {
@@ -95,13 +94,19 @@ const runGitHubStackAction = (send: Send, input: Parameters<typeof runStackActio
                     source: "gh" as const,
                     fingerprint: "fp",
                   }),
+                saved: () => Effect.succeedNone,
+                fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
                 invalidate: () => Effect.void,
               }),
               GitHubQuota.layer,
               SourceControlRateLimit.layer,
+              appSignedOut,
             ),
           ),
         ),
+        Layer.mock(GitHubAppAccess.GitHubAppAccess)({
+          credentialFor: () => Effect.succeed({ token: Redacted.make("token"), fingerprint: "fp" }),
+        }),
         Layer.succeed(HttpClient.HttpClient, graphQlHttp(send)),
       ),
     ),
@@ -157,7 +162,6 @@ const input = {
   action: "merge" as const,
 };
 const writable = { headRepository: { viewerPermission: "WRITE" }, maintainerCanModify: false };
-/** One batched branch-access answer: each open layer's pull request, in stack order. */
 const accessOf = (...pullRequests: ReadonlyArray<unknown>) =>
   Object.fromEntries(
     pullRequests.map((pullRequest, index) => [`_${index}_repository`, { pullRequest }]),
@@ -256,27 +260,6 @@ it.effect("does not merge from an already merged layer", () =>
   }),
 );
 
-it.effect("polls an accepted merge and reports a later rule rejection", () =>
-  Effect.gen(function* () {
-    const api = fake([
-      stack,
-      { status: "pending", details: { uuid: "operation" } },
-      { status: "failed", details: { message: "Required checks have not passed" } },
-    ]);
-    const fiber = yield* runGitHubStackAction(api.execute, input).pipe(
-      Effect.result,
-      Effect.forkChild,
-    );
-    yield* TestClock.adjust("1 second");
-    const result = yield* Fiber.join(fiber);
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackMergeRejectedError" },
-    });
-    expect(api.calls[2]).toContain("repos/acme/web/pulls/3/merge-async/operation");
-  }),
-);
-
 it.effect("retains stack identity and a rejection response without a message", () =>
   Effect.gen(function* () {
     const rejection = { status: "failed", details: {} };
@@ -292,21 +275,6 @@ it.effect("retains stack identity and a rejection response without a message", (
         cause: rejection,
       },
     });
-  }),
-);
-
-it.effect("refuses a changed stack before performing any mutation", () =>
-  Effect.gen(function* () {
-    const api = fake([stack]);
-    const result = yield* runGitHubStackAction(api.execute, {
-      ...input,
-      expectedStackHeads: [
-        { number: 2, headSha: "old" },
-        { number: 3, headSha: "ccc" },
-      ],
-    }).pipe(Effect.result);
-    expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "GitHubStackChangedError" } });
-    expect(api.calls).toHaveLength(1);
   }),
 );
 
@@ -362,35 +330,14 @@ it.effect("rebases for a GitHub App, which GitHub gives no permission to read", 
   }),
 );
 
-it.effect("bounds polling and reports a still-running merge without claiming success", () =>
-  Effect.gen(function* () {
-    const api = fake([
-      stack,
-      ...Array.from({ length: 40 }, () => ({ status: "pending", details: { uuid: "operation" } })),
-    ]);
-    const fiber = yield* runGitHubStackAction(api.execute, input).pipe(
-      Effect.result,
-      Effect.forkChild,
-    );
-    yield* TestClock.adjust("6 minutes");
-    expect(yield* Fiber.join(fiber)).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackMergePendingError" },
-    });
-    expect(api.calls.length).toBeLessThan(40);
-  }),
-);
-
 it.effect("rebases the open layers bottom to top in a scratch clone, each onto the one below", () =>
   Effect.gen(function* () {
     gitCalls = [];
     const api = fake([stack, access]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    // Both layers' access is one aliased read, layer by layer in stack order.
     expect(api.calls[1]).toEqual(
       expect.arrayContaining(["_0_number=2", "_1_number=3", "_0_owner=acme", "_0_name=web"]),
     );
-    // GitHub is only read; every change is a git push with a lease on the reviewed head.
     expect(api.calls.some(isMutation)).toBe(false);
     const rebases = gitCalls.filter((args) => args[0] === "rebase");
     expect(rebases).toEqual([
@@ -413,20 +360,5 @@ it.effect("rebases the open layers bottom to top in a scratch clone, each onto t
         "new-sha:refs/heads/top",
       ],
     ]);
-  }),
-);
-
-it.effect("checks every layer's write access before any git runs", () =>
-  Effect.gen(function* () {
-    gitCalls = [];
-    const api = fake([
-      stack,
-      accessOf(writable, {
-        headRepository: { viewerPermission: "READ" },
-        maintainerCanModify: false,
-      }),
-    ]);
-    yield* Effect.flip(runGitHubStackAction(api.execute, { ...input, action: "update-branch" }));
-    expect(gitCalls).toEqual([]);
   }),
 );

@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   gitHubApiHostForRemote,
+  parseGitHubRepositorySelector,
   selectGitHubBaseRepository,
 } from "./gitHubRepositoryResolution.ts";
 
@@ -30,6 +31,11 @@ describe("selectGitHubBaseRepository", () => {
     assert.deepStrictEqual(
       select({ remotes: fork, resolved: "remote.origin.gh-resolved acme/other" }),
       { owner: "acme", name: "other" },
+    );
+    const partialClone = fork.replaceAll("(fetch)", "(fetch) [blob:none]");
+    assert.deepStrictEqual(
+      select({ remotes: partialClone, resolved: "remote.origin.gh-resolved base" }),
+      { owner: "me", name: "web" },
     );
     assert.deepStrictEqual(
       select({
@@ -82,5 +88,24 @@ describe("gitHubApiHostForRemote", () => {
       "github.example.com",
     );
     assert.strictEqual(gitHubApiHostForRemote("git@gitlab.com:a/b.git"), null);
+  });
+});
+
+describe("parseGitHubRepositorySelector", () => {
+  it("reads host/owner/name only when the host is a plain hostname", () => {
+    assert.deepStrictEqual(parseGitHubRepositorySelector("GHE.corp:8443/acme/web", "github.com"), {
+      host: "ghe.corp:8443",
+      owner: "acme",
+      name: "web",
+    });
+    for (const selector of [
+      "evil.com#.ghe.com/acme/web",
+      "evil.com?.ghe.com/acme/web",
+      "token@evil.com/acme/web",
+      "evil.com\\.ghe.com/acme/web",
+      "-evil.com/acme/web",
+    ]) {
+      assert.strictEqual(parseGitHubRepositorySelector(selector, "github.com"), null, selector);
+    }
   });
 });

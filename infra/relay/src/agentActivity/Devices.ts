@@ -70,7 +70,7 @@ export class Devices extends Context.Service<
   }
 >()("t3code-relay/agentActivity/Devices") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
 
   return Devices.of({
@@ -81,11 +81,7 @@ export const make = Effect.gen(function* () {
       const updatedAt = DateTime.formatIso(yield* DateTime.now);
       const registration = input.registration;
 
-      // The drizzle handle is alchemy's lazy proxy chain: it only becomes a
-      // real Effect when consumed via `yield*`. Handing it to Effect.all sends
-      // the raw Proxy into the fiber runtime, which spins the isolate at 100%
-      // CPU (registrations then hang until the client aborts) — keep every db
-      // chain directly yielded.
+      // Alchemy's lazy drizzle proxies become Effects only at yield*; Effect.all sends raw proxies into a spinning fiber.
       if (registration.pushToken) {
         yield* db
           .update(relayMobileDevices)
@@ -147,8 +143,7 @@ export const make = Effect.gen(function* () {
             iosMajorVersion: registration.iosMajorVersion ?? null,
             androidApiLevel: registration.androidApiLevel ?? null,
             appVersion: registration.appVersion ?? null,
-            // Preserve routing from newer app builds when an older build
-            // re-registers without these fields.
+            // Older builds must preserve newer routing fields on re-registration.
             bundleId: sql`coalesce(excluded.bundle_id, ${relayMobileDevices.bundleId})`,
             apsEnvironment: sql`coalesce(
                 excluded.aps_environment,

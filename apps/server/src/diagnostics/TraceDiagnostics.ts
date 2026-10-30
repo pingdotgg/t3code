@@ -376,9 +376,7 @@ export function makeTraceDiagnosticsAggregator(
   return { addLine, finish };
 }
 
-/**
- * Succeeds with false when the file does not exist.
- */
+/** Succeeds with false if the file is absent. */
 export function streamTraceFileLines(
   fileSystem: FileSystem.FileSystem,
   path: string,
@@ -404,7 +402,7 @@ export function streamTraceFileLines(
   );
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
 
@@ -469,11 +467,9 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(TraceDiagnostics, make);
 
-export function readTraceDiagnostics(
+export const readTraceDiagnostics = Effect.fn("TraceDiagnostics.readTraceDiagnostics")(function* (
   options: TraceDiagnosticsOptions,
-): Effect.Effect<ServerTraceDiagnosticsResult, never, TraceDiagnostics> {
-  return Effect.gen(function* () {
-    const diagnostics = yield* TraceDiagnostics;
-    return yield* diagnostics.read(options);
-  });
-}
+): Effect.fn.Return<ServerTraceDiagnosticsResult, never, TraceDiagnostics> {
+  const diagnostics = yield* TraceDiagnostics;
+  return yield* diagnostics.read(options);
+});

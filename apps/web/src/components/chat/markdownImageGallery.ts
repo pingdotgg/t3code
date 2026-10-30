@@ -1,4 +1,4 @@
-import { mediaKindFromPath } from "@t3tools/shared/filePreview";
+import { mediaKindFromPath } from "@t3tools/shared/mediaPreview";
 import { mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";

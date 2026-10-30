@@ -1,5 +1,3 @@
-"use client";
-
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
   PREVIEW_VIEWPORT_MAX_DIMENSION,
@@ -308,7 +306,6 @@ export function BrowserDeviceToolbar({
       >
         <ScreenRotationIcon />
       </Button>
-      {/* Sticky backing so scrolled controls do not show through the close action. */}
       <span className="sticky right-0 ml-auto flex bg-background/95">
         <Button
           variant="ghost"
