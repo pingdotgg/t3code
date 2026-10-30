@@ -375,15 +375,11 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       const coverage = handoffCoverage(input);
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
-          const message = historicalMessage(item);
-          return message === null
-            ? []
-            : [
-                {
-                  ...message,
-                  ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
-                },
-              ];
+          const message = historicalMessage(
+            item,
+            item.runId === null ? undefined : runStatuses.get(item.runId),
+          );
+          return message === null ? [] : [message];
         }),
         coverage,
         budget: tokenCap,

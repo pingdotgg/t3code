@@ -124,51 +124,69 @@ export function handoffBudget(input: {
   );
 }
 
-export function historicalMessage(
-  item: OrchestrationV2TurnItem,
-): OrchestrationV2HistoricalMessage | null {
-  let text: string;
+export const HISTORICAL_ITEM_TYPES = [
+  "user_message",
+  "assistant_message",
+  "command_execution",
+  "error",
+  "run_interrupt_result",
+  "file_change",
+  "proposed_plan",
+] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+const historicalItemTypes: ReadonlySet<string> = new Set(HISTORICAL_ITEM_TYPES);
+
+export const isHistoricalItem = (item: OrchestrationV2TurnItem) =>
+  historicalItemTypes.has(item.type);
+
+export function historicalText(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
     case "user_message":
     case "assistant_message":
-      text = item.text;
-      break;
+      return item.text;
     case "command_execution":
-      text = [
+      return [
         `Command: ${item.input}`,
         `Exit code: ${item.exitCode ?? "unknown"}`,
         item.output ?? "",
       ].join("\n");
-      break;
     case "error":
-      text = item.failure.message;
-      break;
+      return item.failure.message;
     case "run_interrupt_result":
-      text = item.message;
-      break;
+      return item.message;
     case "file_change":
-      text = `File change: ${item.fileName}`;
-      break;
+      return `File change: ${item.fileName}`;
     case "proposed_plan":
-      text = item.markdown;
-      break;
+      return item.markdown;
     default:
       return null;
   }
+}
+
+export function historicalMessage(
+  item: OrchestrationV2TurnItem,
+  runStatus?: OrchestrationV2HistoricalMessage["runStatus"],
+): OrchestrationV2HistoricalMessage | null {
+  const text = historicalText(item);
+  if (text === null) return null;
   return {
     role: item.type === "user_message" ? "user" : "assistant",
     text,
     threadId: item.threadId,
     runId: item.runId,
     itemId: item.id,
-    providerThreadId: item.providerThreadId,
+    providerThreadId: item.providerThreadId ?? null,
     status: item.status,
     kind: item.type,
+    ...(runStatus === undefined ? {} : { runStatus }),
   };
 }
 
+function historicalMessageHeader(message: OrchestrationV2HistoricalMessage): string {
+  return `[Historical ${message.role}; ${message.kind}; thread=${message.threadId}; run=${message.runId ?? "imported"}; item=${message.itemId}; provider-thread=${message.providerThreadId ?? "none"}; status=${message.status}${message.runStatus === undefined ? "" : `; run-status=${message.runStatus}`}]`;
+}
+
 function renderHistoricalMessage(message: OrchestrationV2HistoricalMessage): string {
-  return `[Historical ${message.role}; ${message.kind}; thread=${message.threadId}; run=${message.runId ?? "imported"}; item=${message.itemId}; provider-thread=${message.providerThreadId ?? "none"}; status=${message.status}${message.runStatus === undefined ? "" : `; run-status=${message.runStatus}`}]\n${message.text}`;
+  return `${historicalMessageHeader(message)}\n${message.text}`;
 }
 
 export function historyResponseItems(
@@ -198,6 +216,67 @@ export function renderHistory(
 }
 
 const jsonByteLength = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+
+/** UTF-8 bytes of `JSON.stringify(text)` without the quotes, counted without building the string. */
+export function jsonEscapedByteLength(text: string): number {
+  let bytes = 0;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code < 0x20) {
+      bytes += code === 8 || code === 9 || code === 10 || code === 12 || code === 13 ? 2 : 6;
+    } else if (code === 0x22 || code === 0x5c) {
+      bytes += 2;
+    } else if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index++;
+      } else {
+        bytes += 6;
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      bytes += 6;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+// JSON string escaping is concatenative, so a message's serialized size is its escaped
+// header and body plus a constant per-role envelope; selection never builds the strings.
+const envelopeBytes = (role: OrchestrationV2HistoricalMessage["role"]) => {
+  const probe = {
+    role,
+    text: "",
+    threadId: "",
+    runId: null,
+    itemId: "",
+    providerThreadId: null,
+    status: "completed",
+    kind: "user_message",
+  } as unknown as OrchestrationV2HistoricalMessage;
+  const rendered = renderHistoricalMessage(probe);
+  return jsonByteLength(historyResponseItems([probe], "")[1]) - jsonByteLength(rendered);
+};
+const RESPONSE_ENVELOPE_BYTES = {
+  user: envelopeBytes("user"),
+  assistant: envelopeBytes("assistant"),
+};
+const MIN_MESSAGE_COST = Math.min(RESPONSE_ENVELOPE_BYTES.user, RESPONSE_ENVELOPE_BYTES.assistant);
+
+function messageCost(message: OrchestrationV2HistoricalMessage): number {
+  const rendered =
+    jsonEscapedByteLength(historicalMessageHeader(message)) +
+    2 +
+    jsonEscapedByteLength(message.text) +
+    2;
+  return Math.max(rendered + RESPONSE_ENVELOPE_BYTES[message.role] + 1, rendered + 4);
+}
 
 export function historyCost(
   messages: ReadonlyArray<OrchestrationV2HistoricalMessage>,
@@ -230,11 +309,9 @@ export function selectHistory(input: {
     historyCost([], contextFor(messages.length, (input.omittedItems ?? 0) + messages.length));
   const tryAdd = (index: number) => {
     const message = messages[index];
-    if (message === undefined || selected.has(index)) return;
-    const cost = Math.max(
-      Buffer.byteLength(JSON.stringify(historyResponseItems([message], "")[1])) + 1,
-      Buffer.byteLength(JSON.stringify(renderHistoricalMessage(message))) + 4,
-    );
+    // Escaped bytes are never fewer than UTF-16 units, so oversized bodies skip the scan.
+    if (message === undefined || selected.has(index) || message.text.length > remaining) return;
+    const cost = messageCost(message);
     if (cost > remaining) return;
     selected.add(index);
     remaining -= cost;
@@ -242,12 +319,17 @@ export function selectHistory(input: {
   tryAdd(messages.findLastIndex((message) => message.role === "user"));
   tryAdd(messages.findLastIndex((message) => message.role === "assistant"));
   tryAdd(messages.findIndex((message) => message.role === "user"));
-  for (let index = messages.length - 1; index >= 0; index--) tryAdd(index);
+  for (let index = messages.length - 1; index >= 0 && remaining >= MIN_MESSAGE_COST; index--)
+    tryAdd(index);
+  const selectedMessages: Array<OrchestrationV2HistoricalMessage> = [];
+  const omittedItemIds: Array<OrchestrationV2HistoricalMessage["itemId"]> = [];
+  for (const [index, message] of messages.entries()) {
+    if (selected.has(index)) selectedMessages.push(message);
+    else omittedItemIds.push(message.itemId);
+  }
   return {
-    messages: messages.filter((_, index) => selected.has(index)),
-    omittedItemIds: messages
-      .filter((_, index) => !selected.has(index))
-      .map((message) => message.itemId),
+    messages: selectedMessages,
+    omittedItemIds,
     context: contextFor(selected.size),
     omittedItems: (input.omittedItems ?? 0) + messages.length - selected.size,
   };

@@ -23,6 +23,7 @@ import {
   historyResponseItems,
   selectHistory,
   historicalMessage,
+  jsonEscapedByteLength,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
@@ -177,6 +178,44 @@ describe("handoff budget", () => {
       });
       assert.isAtMost(historyCost(selected.messages, selected.context), budget);
       assert.isAbove(selected.omittedItems, 0);
+    }
+  });
+
+  it("counts escaped JSON bytes exactly, including lone surrogates and control characters", () => {
+    const samples = [
+      "",
+      "plain ascii",
+      '\u0000\u0008\t\n\u000b\f\r\u001f"\\',
+      "界é€𝄞🧪",
+      "\ud800",
+      "\udc00x",
+      "a\ud83d",
+      "\ud83d\ude00\ud83d",
+      "\u007f\u0080\u07ff\u0800\uffff",
+    ];
+    for (const sample of samples) {
+      assert.strictEqual(
+        jsonEscapedByteLength(sample),
+        Buffer.byteLength(JSON.stringify(sample)) - 2,
+      );
+    }
+  });
+
+  it("selects exactly what the serialized envelope allows at every budget edge", () => {
+    const candidates = [
+      message("edge:0", "user", "界🧪\n".repeat(7)),
+      message("edge:1", "assistant", 'quote " and \\ slash'),
+      message("edge:2", "user", "x".repeat(300)),
+    ];
+    for (let budget = 1_024; budget <= 2_200; budget++) {
+      const selected = selectHistory({ messages: candidates, coverage: "Recover", budget });
+      assert.isAtMost(historyCost(selected.messages, selected.context), budget);
+      const smaller = selectHistory({
+        messages: candidates,
+        coverage: "Recover",
+        budget: budget - 1,
+      });
+      assert.isAtMost(smaller.messages.length, selected.messages.length);
     }
   });
 

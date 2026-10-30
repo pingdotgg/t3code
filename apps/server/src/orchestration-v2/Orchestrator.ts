@@ -104,6 +104,7 @@ import {
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
+import { HISTORICAL_ITEM_TYPES } from "@t3tools/provider-core/server/handoffBudget";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import {
   cancelledBeforeStart,
@@ -1167,13 +1168,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
-  const readHandoffItems = (threadId: ThreadId, runIds?: ReadonlyArray<RunId | null>) =>
+  const readHandoffItems = (
+    threadId: ThreadId,
+    runIds?: ReadonlyArray<RunId | null>,
+    turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>,
+  ) =>
     projectionStore
-      .getThreadRecords(
-        threadId,
-        ["turnItems"],
-        runIds === undefined ? undefined : { turnItemRunIds: runIds },
-      )
+      .getThreadRecords(threadId, ["turnItems"], {
+        ...(runIds === undefined ? {} : { turnItemRunIds: runIds }),
+        ...(turnItemTypes === undefined ? {} : { turnItemTypes }),
+      })
       .pipe(
         Effect.map((records) => records.turnItems),
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
@@ -1820,6 +1824,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   ...(yield* readHandoffItems(
                     threadId,
                     coveredRuns.map((run) => run.id),
+                    HISTORICAL_ITEM_TYPES,
                   )),
                 ],
                 createdAt: now,
@@ -4879,7 +4884,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           toProviderInstanceId: input.modelSelection.instanceId,
           coveredRunOrdinals: { from: 1, to: targetRun.ordinal },
           strategy: "full_thread_summary",
-          items: yield* readHandoffItems(input.command.threadId),
+          items: yield* readHandoffItems(input.command.threadId, undefined, HISTORICAL_ITEM_TYPES),
           runs: input.projection.runs,
           createdAt: now,
         })
@@ -6590,6 +6595,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(yield* readHandoffItems(
               command.threadId,
               providerSwitchCoveredRuns.map((run) => run.id),
+              HISTORICAL_ITEM_TYPES,
             )),
           ];
     const providerSwitchTransferId =
