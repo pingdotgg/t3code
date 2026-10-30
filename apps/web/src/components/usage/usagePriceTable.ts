@@ -115,6 +115,26 @@ export function usagePriceTableChanges(
     if (USAGE_PRICE_FIELDS.some((field) => original[field.key] !== next[field.key]))
       changes.push(parsed);
   }
+  // Check the final batch so clearing a mapping and reversing it in one save stays valid.
+  const aliases = new Map(Object.entries(target.aliases ?? {}));
+  for (const change of changes) {
+    if (!("alias" in change)) continue;
+    if (change.alias === null) aliases.delete(change.model);
+    else aliases.set(change.model, change.alias);
+  }
+  for (const draft of drafts) {
+    if (draft.removed || errors.has(draft.id)) continue;
+    let model = draft.model.trim();
+    const seen = new Set<string>();
+    while (aliases.has(model)) {
+      if (seen.has(model)) {
+        errors.set(draft.id, `Model mappings cannot form a cycle on ${target.label}.`);
+        break;
+      }
+      seen.add(model);
+      model = aliases.get(model)!;
+    }
+  }
   return { changes, errors };
 }
 

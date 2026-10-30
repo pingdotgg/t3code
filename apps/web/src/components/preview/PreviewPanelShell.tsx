@@ -1,16 +1,10 @@
-import {
-  type CSSProperties,
-  type ReactNode,
-  type RefObject,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { type CSSProperties, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import {
   type PreviewPanelInlineSize,
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
 import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
+import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
@@ -18,6 +12,9 @@ import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
 interface PreviewPanelShellProps {
+  workspaceArea?: boolean;
+  workspaceFocusKey?: string;
+  workspaceLabel?: string;
   mode: PreviewPanelMode;
   maximized?: boolean;
   inlineSize?: PreviewPanelInlineSize;
@@ -37,65 +34,57 @@ export function PreviewPanelShell(props: PreviewPanelShellProps) {
 }
 
 function ResizablePreviewPanelShell(props: PreviewPanelShellProps) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const inlineSize = usePreviewPanelInlineSize(hostRef, {
+  const inlineSize = usePreviewPanelInlineSize({
     enabled: props.mode === "inline" && !props.maximized,
     widthStorageKey: props.widthStorageKey,
     defaultWidth: props.defaultWidth,
   });
-  return <PreviewPanelShellFrame {...props} inlineSize={inlineSize} hostRef={hostRef} />;
+  return <PreviewPanelShellFrame {...props} inlineSize={inlineSize} />;
 }
 
 function PreviewPanelShellFrame(
-  props: PreviewPanelShellProps & {
-    inlineSize: PreviewPanelInlineSize;
-    hostRef?: RefObject<HTMLDivElement | null>;
-  },
+  props: PreviewPanelShellProps & { inlineSize: PreviewPanelInlineSize },
 ) {
+  const panelArea = workspaceAreaProps("panel", 4, props.workspaceLabel ?? "Workspace panel");
   const isInline = props.mode === "inline";
   const collapsible = isInline && props.open !== undefined;
   const open = props.open ?? true;
   const maximized = props.maximized ?? false;
-  const localHostRef = useRef<HTMLDivElement | null>(null);
-  const hostRef = props.hostRef ?? localHostRef;
+  const hostRef = useRef<HTMLDivElement | null>(null);
   const returnedFocus = useRef(false);
-  const { width, handlers } = props.inlineSize;
-  // Suppress transitions before commit so resize/maximize changes never start width transitions.
-  const [layoutTransition, setLayoutTransition] = useState(() => ({
+  const { width, handlers, observeRow } = props.inlineSize;
+  // Width animates only for an open or close. Any other width change disables
+  // the transition in the same commit that changes the width, so the browser
+  // never starts one; the next open or close re-enables it in its own commit,
+  // so nothing waits for a paint.
+  const [widthTransition, setWidthTransition] = useState(() => ({
     open,
     width,
     maximized,
-    suppressed: false,
+    enabled: true,
   }));
   if (
-    layoutTransition.open !== open ||
-    layoutTransition.width !== width ||
-    layoutTransition.maximized !== maximized
+    widthTransition.open !== open ||
+    widthTransition.width !== width ||
+    widthTransition.maximized !== maximized
   ) {
-    setLayoutTransition({
+    setWidthTransition({
       open,
       width,
       maximized,
-      suppressed:
-        collapsible &&
-        layoutTransition.open === open &&
-        (layoutTransition.width !== width || layoutTransition.maximized !== maximized),
+      enabled: widthTransition.open !== open,
     });
   }
-  const suppressWidthTransition = layoutTransition.suppressed;
-  useLayoutEffect(() => {
-    if (!suppressWidthTransition) return;
-    let restoreFrame = 0;
-    const paintFrame = window.requestAnimationFrame(() => {
-      restoreFrame = window.requestAnimationFrame(() => {
-        setLayoutTransition((current) => ({ ...current, suppressed: false }));
-      });
-    });
+  const suppressWidthTransition = collapsible && !widthTransition.enabled;
+  const attachHost = (host: HTMLDivElement) => {
+    hostRef.current = host;
+    const stopObservingRow = observeRow(host);
     return () => {
-      window.cancelAnimationFrame(paintFrame);
-      window.cancelAnimationFrame(restoreFrame);
+      hostRef.current = null;
+      stopObservingRow();
     };
-  }, [suppressWidthTransition]);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on unmount, returns DOM focus to the panel toggle if removal dropped it on the body
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host || !collapsible) return;
@@ -109,6 +98,7 @@ function PreviewPanelShellFrame(
       });
     };
   }, [collapsible, hostRef]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves focus to the toggle and sets inert on the host DOM node before a collapse paints
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -126,7 +116,10 @@ function PreviewPanelShellFrame(
   }, [collapsible, open, hostRef]);
   return (
     <div
-      ref={hostRef}
+      ref={attachHost}
+      {...(props.workspaceArea ? panelArea : {})}
+      data-workspace-focus-key={props.workspaceFocusKey}
+      data-workspace-unavailable={collapsible && !open ? "true" : undefined}
       className={cn(
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline

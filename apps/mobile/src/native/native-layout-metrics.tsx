@@ -11,6 +11,10 @@ const NativeLayoutContext = createContext<NativeLayoutMetrics | null>(null);
 const DeviceTypeContext = createContext<DeviceType>(
   deriveDeviceType({ isPad: IS_PAD, metrics: null }),
 );
+// Binaries without the native no-hinge fallback never report metrics on ordinary
+// iPhones running iOS 27.1 or later; consumers stop waiting at this deadline.
+export const NATIVE_METRICS_TIMEOUT_MS = 1000;
+const NativeLayoutMetricsDeadlineContext = createContext<number>(0);
 // Column reservations come from UIKit's layout, outside the resizing navigator.
 export const NativeColumnLayoutMetricsContext = createContext<NativeLayoutMetrics | null>(null);
 
@@ -38,6 +42,7 @@ export function currentNativeLayoutMetrics() {
 
 export function NativeLayoutMetricsProvider(props: { readonly children: ReactNode }) {
   const [metrics, setMetrics] = useState<NativeLayoutMetrics | null>(null);
+  const [metricsDeadline] = useState(() => Date.now() + NATIVE_METRICS_TIMEOUT_MS);
   const publish = (next: NativeLayoutMetrics) => {
     latestMetrics = next;
     for (const settle of metricsWaiters) settle(next);
@@ -45,17 +50,24 @@ export function NativeLayoutMetricsProvider(props: { readonly children: ReactNod
   };
   const deviceType = deriveDeviceType({ isPad: IS_PAD, metrics });
   return (
-    <NativeLayoutContext value={metrics}>
-      <DeviceTypeContext value={deviceType}>
-        <NativeLayoutObserver onChange={publish} />
-        {props.children}
-      </DeviceTypeContext>
-    </NativeLayoutContext>
+    <NativeLayoutMetricsDeadlineContext value={metricsDeadline}>
+      <NativeLayoutContext value={metrics}>
+        <DeviceTypeContext value={deviceType}>
+          <NativeLayoutObserver onChange={publish} />
+          {props.children}
+        </DeviceTypeContext>
+      </NativeLayoutContext>
+    </NativeLayoutMetricsDeadlineContext>
   );
 }
 
 export function useNativeLayoutMetrics() {
   return use(NativeLayoutContext);
+}
+
+/** Epoch ms after which a consumer still waiting for the first metrics gives up. */
+export function useNativeLayoutMetricsDeadline() {
+  return use(NativeLayoutMetricsDeadlineContext);
 }
 
 export function useNativeColumnLayoutMetrics() {

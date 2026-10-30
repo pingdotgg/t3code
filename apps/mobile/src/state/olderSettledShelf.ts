@@ -39,6 +39,7 @@ export function useOlderSettledShelf(input: {
   }));
   const shelfKey = JSON.stringify(shelfScopes);
   const shelf = useAtomValue(olderSettledThreads.shelfAtom(shelfScopes));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older settled thread pages into the shared thread registry while the shelf shows them
   useEffect(() => {
     const releases = (JSON.parse(shelfKey) as typeof shelfScopes).flatMap(({ scope, pages }) =>
       pages === 0
@@ -92,6 +93,7 @@ export function useOlderSettledShelfGrowth(
     visibleCount: shelf.visibleCount,
   });
   const { grow, pages } = shelf;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests more shelf pages when the loaded rows list fewer threads than the shelf shows
   useEffect(() => {
     if (wanted !== pages) grow(wanted);
   }, [wanted, pages, grow]);

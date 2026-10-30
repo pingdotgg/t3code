@@ -1,10 +1,4 @@
-import type {
-  EnvironmentId,
-  ScopedThreadRef,
-  ThreadLinkedPullRequest,
-  ThreadPullRequestLink,
-} from "@t3tools/contracts";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -17,28 +11,13 @@ import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
-import { findProjectForChangeRequest } from "@t3tools/client-runtime/change-request-links";
-import {
-  sourceControlClients,
-  type ChangeRequestLink,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { useProjects } from "~/state/entities";
 import { environmentServerConfigsAtom } from "~/state/server";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
-
-export function canLinkChangeRequest(
-  mode: ReturnType<typeof threadPullRequestLinkMode>,
-  projects: ReadonlyArray<EnvironmentProject>,
-  parsed: ChangeRequestLink,
-): boolean {
-  if (mode === "unsupported") return false;
-  if (mode === "multiple") return true;
-  return findProjectForChangeRequest(projects, parsed) !== undefined;
-}
 
 // A primitive mode prevents unchanged status pushes from re-rendering every link.
 const linkModeAtom = Atom.family((environmentId: EnvironmentId | null) =>
@@ -52,29 +31,16 @@ const linkModeAtom = Atom.family((environmentId: EnvironmentId | null) =>
 );
 
 export function usePullRequestLinking(environmentId: EnvironmentId | null | undefined) {
-  const projects = useProjects();
   const mode = useAtomValue(linkModeAtom(environmentId ?? null));
   const link = useAtomCommand(threadEnvironment.linkPullRequest, { reportFailure: false });
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: false });
-  const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
-  const environmentProjects = projects.filter((project) => project.environmentId === environmentId);
-  const canLink = (url: string) => {
-    const parsed = sourceControlClients.parseChangeRequestUrl(url)?.link;
-    return parsed !== undefined && canLinkChangeRequest(mode, environmentProjects, parsed);
-  };
+  const canLink = (url: string) =>
+    mode !== "unsupported" && sourceControlClients.parseChangeRequestUrl(url) !== null;
   const isLinked = (
-    thread: {
-      readonly pullRequests?: readonly ThreadPullRequestLink[];
-      readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
-    } | null,
+    thread: { readonly pullRequests?: readonly ThreadPullRequestLink[] } | null,
     url: string,
   ) => {
     if (thread === null || mode === "unsupported") return false;
-    if (mode !== "multiple")
-      return (
-        thread.linkedPullRequest != null &&
-        sourceControlClients.isSameChangeRequest(thread.linkedPullRequest.url, url)
-      );
     const parsed = sourceControlClients.parseChangeRequestUrl(url)?.link;
     return (
       parsed !== undefined &&
@@ -91,24 +57,18 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
       (linked && !canLink(url))
     )
       throw new Error("The pull request is not available in this environment.");
-    const legacyProject = findProjectForChangeRequest(environmentProjects, parsed);
     const mutation = planThreadPullRequestMutation({
       capabilities: appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId)
         ?.environment.capabilities,
       threadId: threadRef.threadId,
       reference: { ...parsed, url },
-      legacyProjectId: legacyProject?.id ?? null,
-      legacyRepository:
-        sourceControlClients.repositorySelector(legacyProject?.repositoryIdentity) ?? undefined,
       linked,
     });
     if (mutation === null)
       throw new Error("This environment does not support linking this pull request.");
-    const result = await (mutation.type === "thread.meta.update"
-      ? updateMetadata({ environmentId: threadRef.environmentId, input: mutation.input })
-      : mutation.type === "thread.pull-request.link"
-        ? link({ environmentId: threadRef.environmentId, input: mutation.input })
-        : unlink({ environmentId: threadRef.environmentId, input: mutation.input }));
+    const result = await (mutation.type === "thread.pull-request.link"
+      ? link({ environmentId: threadRef.environmentId, input: mutation.input })
+      : unlink({ environmentId: threadRef.environmentId, input: mutation.input }));
     if (result._tag === "Failure") {
       if (isAtomCommandInterrupted(result)) throw new Error("Link update interrupted.");
       throw squashAtomCommandFailure(result);

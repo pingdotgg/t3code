@@ -1,3 +1,4 @@
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { dual } from "effect/Function";
@@ -54,7 +55,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
       return GitHubGraphQlAuth.of({
         execute: Effect.fn("GitHubGraphQlAuth.execute")(function* ({ request, next }) {
           const target = yield* GitHubGraphQlTarget;
-          const host = GitHubRequestPolicy.normalizeHost(target.host);
+          const host = normalizeHost(target.host);
           yield* Effect.annotateCurrentSpan({
             "github.kind": "graphql",
             "github.graphql.query_hash": queryHash(request.query),
@@ -76,9 +77,18 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
                     headers: responseHeaders,
                     ...(answer.errors === undefined ? {} : { graphqlErrors: answer.errors }),
                   });
+                  const withheld = (answer.errors ?? []).some(
+                    (error) => error["type"] === "NOT_FOUND" || error["type"] === "FORBIDDEN",
+                  );
                   return rateLimited
                     ? { _tag: "RateLimited" as const, status, headers: responseHeaders }
-                    : { _tag: "Ok" as const, value: answer, status, headers: responseHeaders };
+                    : {
+                        _tag: "Ok" as const,
+                        value: answer,
+                        withheld,
+                        status,
+                        headers: responseHeaders,
+                      };
                 }),
                 Effect.catchIf(GraphQLClientError.isGraphQLClientError, (error) =>
                   refused(error, { host, operation: target.operation }),
@@ -210,7 +220,7 @@ const fromClientError = (
   const reason = error.reason;
   if (reason._tag !== "ResponseError") return error;
   const context = {
-    host: GitHubRequestPolicy.normalizeHost(target.host),
+    host: normalizeHost(target.host),
     operation: target.operation,
   };
   return isNotFoundOnly(error)

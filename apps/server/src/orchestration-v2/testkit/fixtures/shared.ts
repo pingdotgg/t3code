@@ -116,35 +116,6 @@ export const THREAD_ROLLBACK_AFTER_PROMPT = "Repeat the conversation verbatim.";
 export const THREAD_FORK_NATIVE_SOURCE_PROMPT =
   "Respond with the following text: source fork seed ok";
 export const THREAD_FORK_NATIVE_TARGET_PROMPT = "Respond with the following text: fork native ok";
-const THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER = "source-marker-7Q9V";
-const THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER = "fork-marker-2K4M";
-export const THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER} for later in this conversation. Respond with exactly: source marker stored`;
-export const THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT = `Remember the second opaque marker ${THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER} for later in this conversation. Respond with exactly: fork marker stored`;
-export const THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT =
-  "Return the two opaque markers previously provided in chronological order, separated by a single | character. Respond with only the markers and separator.";
-const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER = "sibling-source-8R3D";
-const THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER = "sibling-first-5L2P";
-const THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER = "sibling-second-9N6C";
-export const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER} for later in this conversation. Respond with exactly: sibling source stored`;
-export const THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
-export const THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
-const THREAD_MERGE_BACK_SOURCE_MARKER = "merge-source-4H8Q";
-const THREAD_MERGE_BACK_FORK_MARKER = "merge-fork-7T2W";
-export const THREAD_MERGE_BACK_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_MERGE_BACK_SOURCE_MARKER} for later in this conversation. Respond with exactly: merge source stored`;
-export const THREAD_MERGE_BACK_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_FORK_MARKER}. Respond with exactly: merge fork stored`;
-export const THREAD_MERGE_BACK_HANDOFF_PROMPT = [
-  "Context handoff (merge_back / fork_delta_summary):",
-  "Merge-back context from forked conversation.",
-  "",
-  "Fork delta:",
-  `- User introduced opaque marker ${THREAD_MERGE_BACK_FORK_MARKER}.`,
-  "- Assistant confirmed: merge fork stored",
-  "",
-  "User message:",
-  "Retain the transferred fork marker for later. Respond with exactly: merge delta stored",
-].join("\n");
-export const THREAD_MERGE_BACK_RECALL_PROMPT =
-  "Return the source marker followed by the transferred fork marker, separated by a single | character. Respond with only the markers and separator.";
 const THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER = "merge-sibling-source-3C7K";
 const THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER = "merge-sibling-first-6V2J";
 const THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER = "merge-sibling-second-9X5B";
@@ -351,6 +322,12 @@ export const MUSE_MODEL_SELECTION = {
 export const GROK_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("grok"),
   model: "grok-build",
+} satisfies ModelSelection;
+
+/** fx fixtures run on fx's Default; the replay adapter has no probed model, so it writes none. */
+export const FX_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("fx"),
+  model: "default",
 } satisfies ModelSelection;
 
 export const OPENCODE_MODEL_SELECTION = {

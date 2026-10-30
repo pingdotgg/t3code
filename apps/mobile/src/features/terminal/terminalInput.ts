@@ -12,7 +12,7 @@ export type ModifiedTerminalInput =
 
 const UNSAFE_PASTE_BYTES = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 
-export function applyCtrlModifier(input: string): string {
+function applyCtrlModifier(input: string): string {
   const firstCharacter = input[0];
   if (!firstCharacter) {
     return input;
@@ -43,6 +43,14 @@ export function resolveModifiedTerminalInput(input: {
   const pasteModifier: PendingModifier = input.hostPlatform === "mac" ? "meta" : "ctrl";
   if (input.modifier === pasteModifier && input.data.toLowerCase() === "v") {
     return { kind: "paste" };
+  }
+
+  if (
+    input.data.length === 3 &&
+    input.data.startsWith("\u001b[") &&
+    /[ABCD]/.test(input.data.charAt(2))
+  ) {
+    return { kind: "write", data: `\u001b[1;${input.modifier === "ctrl" ? 5 : 3}${input.data[2]}` };
   }
 
   return {

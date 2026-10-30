@@ -1,5 +1,5 @@
 import { MOBILE_MOTION, MOBILE_SHAPE } from "../../lib/designTokens";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { AccessibilityInfo, Platform, StyleSheet, View, useWindowDimensions } from "react-native";
 import { GestureDetector, usePanGesture } from "react-native-gesture-handler";
 import Animated, {
@@ -55,6 +55,7 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
   const action = props.action ? (
     <Button label={props.action.label} onPress={props.action.onPress} />
   ) : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- announces the toast message to VoiceOver through AccessibilityInfo
   useEffect(() => {
     if (Platform.OS === "ios") AccessibilityInfo.announceForAccessibility(props.message);
   }, [props.message]);
@@ -133,22 +134,20 @@ function SwipeableToast(props: ToastProps & { readonly onDismiss: () => void }) 
   const [glassReady, setGlassReady] = useState(Platform.OS !== "ios");
   const finishEntering = useCallback(() => setGlassReady(true), []);
   // UIKit can skip glass on a moving host; remount the surface after entry so its blur installs.
-  const toastEntering = useMemo(
-    () => (values: EntryAnimationsValues) => {
-      "worklet";
-      return {
-        initialValues: { originY: values.targetOriginY + values.targetHeight + 12 },
-        animations: { originY: withTiming(values.targetOriginY, ENTER_TIMING) },
-        callback: (finished: boolean) => {
-          if (finished) runOnJS(finishEntering)();
-        },
-      };
-    },
-    [finishEntering],
-  );
+  const toastEntering = (values: EntryAnimationsValues) => {
+    "worklet";
+    return {
+      initialValues: { originY: values.targetOriginY + values.targetHeight + 12 },
+      animations: { originY: withTiming(values.targetOriginY, ENTER_TIMING) },
+      callback: (finished: boolean) => {
+        if (finished) runOnJS(finishEntering)();
+      },
+    };
+  };
   const { onDismiss } = props;
   const translation = useSharedValue(0);
   const width = useSharedValue(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the Reanimated swipe translation animation on unmount
   useLayoutEffect(
     () => () => {
       cancelAnimation(translation);

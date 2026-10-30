@@ -9,6 +9,7 @@ import {
   ConnectOnboardingOptOutSchema,
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
 } from "~/cloud/connectOnboarding";
+import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -19,7 +20,12 @@ import {
   usePrimaryEnvironmentId,
 } from "~/state/environments";
 import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  type T3ConnectAccountPageUrl,
+  useT3ConnectAccountPage,
+} from "../clerk/T3ConnectAccountPages";
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
+import { TunnelLimitAlert } from "./TunnelUsage";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Dialog } from "../ui/dialog";
@@ -63,6 +69,7 @@ function ConfiguredConnectOnboardingDialog() {
     primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
   const controller = useCloudLinkController();
+  const accountPage = useT3ConnectAccountPage();
   const showPublishStep = canManageRelay && controller.linkState.target !== null;
   const steps: ReadonlyArray<OnboardingStep> = showPublishStep
     ? ["publish", "devices"]
@@ -180,6 +187,15 @@ function ConfiguredConnectOnboardingDialog() {
     setStep("devices");
   };
 
+  const openAccountPage = accountPage.open;
+  // The account page is a Clerk modal, so close this dialog before it opens.
+  const leaveForAccountPage = openAccountPage
+    ? (page: T3ConnectAccountPageUrl) => {
+        complete();
+        openAccountPage(page);
+      }
+    : null;
+
   return (
     <Dialog
       open={openForAccount !== null}
@@ -223,6 +239,8 @@ function ConfiguredConnectOnboardingDialog() {
               publishAgentActivity={publishAgentActivity}
               disabled={isApplying || !canManageRelay || linkStateData === null}
               operationError={controller.operationError ?? controller.linkState.error}
+              tunnelLimit={controller.tunnelLimit}
+              onOpenAccountPage={leaveForAccountPage}
               onExposeEnvironmentChange={(enabled) => {
                 if (
                   primaryEnvironmentId !== null &&
@@ -274,6 +292,8 @@ function ConfiguredConnectOnboardingDialog() {
           )}
         </WizardFooter>
       </WizardPopup>
+      {/* Base UI renders Root children while closed, so this keeps the account page mounted. */}
+      {accountPage.portals}
     </Dialog>
   );
 }
@@ -288,6 +308,8 @@ function PublishStep({
   publishAgentActivity,
   disabled,
   operationError,
+  tunnelLimit,
+  onOpenAccountPage,
   onExposeEnvironmentChange,
   onPublishAgentActivityChange,
 }: {
@@ -295,6 +317,8 @@ function PublishStep({
   readonly publishAgentActivity: boolean;
   readonly disabled: boolean;
   readonly operationError: string | null;
+  readonly tunnelLimit: number | null;
+  readonly onOpenAccountPage: ((page: T3ConnectAccountPageUrl) => void) | null;
   readonly onExposeEnvironmentChange: (enabled: boolean) => void;
   readonly onPublishAgentActivityChange: (enabled: boolean) => void;
 }) {
@@ -317,7 +341,25 @@ function PublishStep({
         />
       </div>
       {operationError ? <p className="text-xs text-destructive">{operationError}</p> : null}
+      {tunnelLimit !== null ? (
+        <OnboardingTunnelLimitAlert onOpenAccountPage={onOpenAccountPage} />
+      ) : null}
     </div>
+  );
+}
+
+function OnboardingTunnelLimitAlert({
+  onOpenAccountPage,
+}: {
+  readonly onOpenAccountPage: ((page: T3ConnectAccountPageUrl) => void) | null;
+}) {
+  const { upgrade } = useManagedTunnelUsage();
+  return (
+    <TunnelLimitAlert
+      upgrade={upgrade}
+      onLinkT3Chat={onOpenAccountPage ? () => onOpenAccountPage("t3-chat") : null}
+      onManageTunnels={onOpenAccountPage ? () => onOpenAccountPage("t3-connect") : null}
+    />
   );
 }
 

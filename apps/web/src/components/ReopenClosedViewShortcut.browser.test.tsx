@@ -47,7 +47,10 @@ vi.mock(import("../connection/catalog"), async (original) => {
     ...actual,
     environmentCatalog: {
       ...actual.environmentCatalog,
-      catalogValueAtom: Atom.make({ isReady: true, entries: new Map([["remote", {}]]) }) as never,
+      catalogValueAtom: Atom.make({
+        isReady: true,
+        entries: new Map([["remote", { target: { _tag: "DirectConnectionTarget" } }]]),
+      }) as never,
     },
   };
 });

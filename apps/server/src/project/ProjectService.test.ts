@@ -1,3 +1,6 @@
+import * as Context from "effect/Context";
+import * as Queue from "effect/Queue";
+import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
@@ -56,6 +59,35 @@ const layerMetadata = Layer.merge(
   }),
 );
 
+class EnrichmentCompletions extends Context.Service<EnrichmentCompletions, Queue.Queue<void>>()(
+  "t3/project/ProjectService.test/EnrichmentCompletions",
+) {}
+
+const layerEnrichmentCompletions = Layer.effectContext(
+  Effect.gen(function* () {
+    const completions = yield* Queue.unbounded<void>();
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (...args) => {
+          end(...args);
+          if (
+            span.name === "ProjectEnrichmentService.resolveRepositoryIdentity" ||
+            span.name === "ProjectEnrichmentService.resolveFavicon"
+          ) {
+            Queue.offerUnsafe(completions, undefined);
+          }
+        };
+        return span;
+      },
+    });
+    return Context.make(EnrichmentCompletions, completions).pipe(
+      Context.add(Tracer.Tracer, tracer),
+    );
+  }),
+);
+
 const layerTestFor = (
   projectMetadataLayer: Layer.Layer<
     | ProjectFaviconResolver.ProjectFaviconResolver
@@ -70,6 +102,7 @@ const layerTestFor = (
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
     Layer.provide(NodeServices.layer),
+    Layer.provideMerge(layerEnrichmentCompletions),
   );
 
 const layerTest = layerTestFor(layerMetadata);
@@ -96,12 +129,16 @@ const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* 
   projectId: ProjectId,
   predicate: (project: Project) => boolean,
 ) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const project = Option.getOrThrow(yield* service.getById(projectId));
-    if (predicate(project)) return project;
-    yield* Effect.yieldNow;
-  }
-  return yield* Effect.die(`Project ${projectId} was not enriched in time.`);
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const completions = yield* EnrichmentCompletions;
+      for (;;) {
+        const project = Option.getOrThrow(yield* service.getById(projectId));
+        if (predicate(project)) return project;
+        yield* Queue.take(completions);
+      }
+    }),
+  );
 });
 
 it.layer(layerTest)("ProjectService", (it) => {

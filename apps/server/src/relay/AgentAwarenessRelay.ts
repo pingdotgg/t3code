@@ -309,7 +309,6 @@ interface SubagentRequest {
 
 function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
   readonly thread: Option.Option<OrchestrationV2ThreadShell>;
   readonly project: Option.Option<Project>;
   readonly pendingSubagentRequest: SubagentRequestAwareness | null;
@@ -583,7 +582,6 @@ export const make = Effect.gen(function* () {
       : Option.none<Project>();
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
-      threadId,
       thread,
       project,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
@@ -650,7 +648,6 @@ export const make = Effect.gen(function* () {
         thread.value.settledOverride === "settled"
           ? resolveAgentAwarenessRelayPublishSnapshot({
               environmentId,
-              threadId,
               thread: Option.some({ ...thread.value, settledOverride: null }),
               project,
               pendingSubagentRequest: null,
@@ -896,10 +893,15 @@ export const make = Effect.gen(function* () {
       return "unlinked" as const;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
-    const [projectSnapshot, shellSnapshot] = yield* Effect.all([
-      projects.snapshot,
-      threads.getShellSnapshot(),
-    ]);
+    const projectSnapshot = yield* projects.snapshot;
+    // Subagents never publish awareness, and they are most threads.
+    const topLevelThreadIds = (yield* threads.listActiveShellIndex()).flatMap((thread) =>
+      thread.lineage.relationshipToParent === "subagent" ? [] : [thread.id],
+    );
+    const shellSnapshot = yield* threads.getShellSnapshot({
+      location: "active",
+      threadIds: topLevelThreadIds,
+    });
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
       startedAt,
@@ -1011,7 +1013,9 @@ export const make = Effect.gen(function* () {
   return AgentAwarenessRelay.of({
     publishThread,
     drain: worker.drain,
-    requestCatchUp: () => Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid),
+    requestCatchUp: Effect.fn("AgentAwarenessRelay.requestCatchUp")(function () {
+      return Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid);
+    }),
     start,
   });
 });

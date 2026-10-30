@@ -49,7 +49,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve", "request-changes"],
   },
   reviewers: { request: true, listCandidates: true },
-  edit: { changeRequest: true, comment: true },
+  edit: { changeRequest: true, comment: true, maintainerEdits: true },
   stacks: true,
   stackActions: true,
   labels: true,
@@ -365,25 +365,13 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          Effect.flatMap((page) =>
-            cli
-              .listActorAvatars({
-                cwd: input.cwd,
-                repository: input.repository,
-                host: input.host,
-                ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
-              })
-              .pipe(
-                Effect.orElseSucceed(() => new Map<string, string>()),
-                Effect.map((avatarsByLogin) => ({
-                  ...page,
-                  items: page.items.map((item) => ({
-                    ...item,
-                    author: withAvatar(item.author, avatarsByLogin, input.host),
-                  })),
-                })),
-              ),
-          ),
+          Effect.map((page) => ({
+            ...page,
+            items: page.items.map((item) => ({
+              ...item,
+              author: withAvatar(item.author, new Map<string, string>(), input.host),
+            })),
+          })),
         ),
 
     listChangeRequestsAcross: (input) =>
@@ -465,10 +453,13 @@ export const make = Effect.gen(function* () {
             ...pullRequest.reviewRequestTeams,
           ],
           mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
-          viewerPermissions: gitHubViewerPermissions({
-            ...pullRequest.viewerAccess,
-            canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
-          }),
+          viewerPermissions: {
+            ...gitHubViewerPermissions({
+              ...pullRequest.viewerAccess,
+              canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+            }),
+            maintainerEdits: pullRequest.canEditMaintainerEdits,
+          },
           baseComparison:
             pullRequest.comparison === null || pullRequest.comparison.behindBy === null
               ? "unknown"
@@ -678,6 +669,9 @@ export const make = Effect.gen(function* () {
     updateChangeRequest: (input) =>
       cli
         .updatePullRequest({
+          ...(input.maintainerCanModify === undefined
+            ? {}
+            : { maintainerCanModify: input.maintainerCanModify }),
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,

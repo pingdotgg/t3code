@@ -8,7 +8,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
-import { appendPendingThreadMessages, isCompactionCommandFeedEntry } from "./pending-thread-feed";
+import {
+  appendPendingThreadMessages,
+  isCompactionCommandFeedEntry,
+  selectPendingAcknowledgedMessages,
+} from "./pending-thread-feed";
 
 const pending = (id: string): QueuedThreadMessage => ({
   environmentId: EnvironmentId.make("env"),
@@ -108,5 +112,24 @@ describe("pending timeline messages", () => {
     const delivered = { ...optimistic, pendingMessage: undefined };
     expect(appendPendingThreadMessages([delivered], [delivered], [queued])).toEqual([delivered]);
     expect(appendPendingThreadMessages([], [delivered], [queued])).toEqual([]);
+  });
+
+  it("stops showing an acknowledged message once the thread catches up, even when the feed hides it", () => {
+    // A rolled-back or cancelled queued run keeps its message in projection.messages
+    // while its user_message item leaves the visible feed.
+    const echoed = pending("rolled-back");
+    // A bounded projection pages an applied message out; it must not come back as pending.
+    const pagedOut = { ...pending("paged-out"), sequence: 40 };
+    const waiting = { ...pending("waiting"), sequence: 50 };
+    const shown = selectPendingAcknowledgedMessages([echoed, pagedOut, waiting], {
+      threadKey: "env:thread",
+      queuedMessages: [],
+      sequence: 45,
+      projectedMessages: [{ id: echoed.messageId }],
+    });
+    expect(shown).toEqual([waiting]);
+    expect(appendPendingThreadMessages([], [], shown).map((entry) => entry.id)).toEqual([
+      "waiting",
+    ]);
   });
 });

@@ -3,13 +3,21 @@ import { AccessibilityInfo, AppState } from "react-native";
 
 type Listener = () => void;
 
-function subscribeAppState(onChange: Listener): () => void {
+export function subscribeAppState(onChange: Listener): () => void {
   const subscription = AppState.addEventListener("change", () => onChange());
   return () => subscription.remove();
 }
 
-function isAppActive(): boolean {
+export function isAppActive(): boolean {
   return AppState.currentState === "active";
+}
+
+/** Runs `onActive` each time the app returns to the foreground. */
+export function subscribeAppActive(onActive: Listener): () => void {
+  const subscription = AppState.addEventListener("change", (state) => {
+    if (state === "active") onActive();
+  });
+  return () => subscription.remove();
 }
 
 export function useAppActive(): boolean {

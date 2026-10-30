@@ -1,21 +1,58 @@
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import { createBrowserHistory, createHashHistory } from "@tanstack/react-router";
 
 import { applyAppearanceContrast } from "./appearanceContrast";
 import { applyAppearanceFontVariables } from "./appearanceFonts";
+import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
+import { startBrowserProfileReporting } from "./browser/BrowserProfileReporter";
+import { startPreviewTitleRecording } from "./browserHistoryStore";
+import { retainThreadOverlaysForThread } from "./components/chat/threadOverlayRetention";
+import { startBackgroundThreadAnnouncements } from "./components/BackgroundThreadAnnouncer";
+import { startSshPasswordPromptQueue } from "./components/desktop/SshPasswordPromptDialog";
+import { startHostFreezeToasts } from "./components/HostFreezeToastCoordinator";
+import { startKeybindingsUpdateToasts } from "./components/KeybindingsUpdateToast";
+import { startLegacyThreadMigrationToast } from "./components/LegacyThreadMigrationToast";
+import { startPermissionUpdateNotices } from "./components/PermissionUpdateNotice";
 import { startAgentOpenedPreviews } from "./components/preview/agentOpenedPreviews";
+import { startMainAppLocationTracking } from "./components/sidebar/mainAppLocation";
+import { startDesktopUpdateLaunchNotice } from "./components/sidebar/updateEverythingRun";
+import { startSlowRpcRequestToasts } from "./components/SlowRpcRequestToastCoordinator";
+import { startThreadNotifications } from "./components/ThreadNotificationCoordinator";
+import { startGuideRunNotifications } from "./components/pullRequest/guide/PullRequestGuideRunCoordinator";
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "./branding";
 import { resolveServerBackedAppDisplayName } from "./branding.logic";
 import { isElectron } from "./env";
-import { getClientSettings, subscribeClientSettings } from "./hooks/useSettings";
+import {
+  subscribeComposerDraftModelReconciliation,
+  subscribeDraftThreadPromotion,
+  useComposerDraftStore,
+} from "./composerDraftStore";
+import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
+import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
+import {
+  getClientSettings,
+  startModelPreferencesMigration,
+  subscribeClientSettings,
+} from "./hooks/useSettings";
+import { syncBrowserChromeTheme } from "./hooks/useTheme";
+import { startThreadVisitedMigration } from "./hooks/useThreadVisitedMigration";
+import { installDesktopPasteAsText } from "./lib/desktopPasteAsText";
 import {
   syncDocumentElectronPlatformClasses,
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
-import { prepareProviderAuthDelivery } from "./providerAuthDelivery";
+import { startProviderAuthDelivery } from "./providerAuthDelivery";
 import { getRouter, type AppRouter } from "./router";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { primaryServerConfigAtom } from "./state/server";
+import { environmentShell } from "./state/shell";
+import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
+import { startWorkspaceFocus } from "./lib/workspaceFocus";
+import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommands";
+import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
+import { environmentThreadShells } from "./state/threads";
+import { resolveThreadRouteTarget } from "./threadRoutes";
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
 function startClientAppearance(): void {
@@ -30,9 +67,6 @@ function startClientAppearance(): void {
     }
     if (previous?.chatWidth !== settings.chatWidth) {
       root.dataset.chatWidth = settings.chatWidth;
-    }
-    if (previous?.redesignEnabled !== settings.redesignEnabled) {
-      root.toggleAttribute("data-redesign", settings.redesignEnabled);
     }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);
@@ -85,12 +119,41 @@ function startDocumentTitle(): void {
 }
 
 /**
+ * Each route paints its own surface, which the browser chrome samples once it is on screen.
+ * onRendered only fires for a new href; onResolved also covers `router.invalidate()`, which
+ * can swap the root between the bare outlet and the shell at the same address.
+ */
+function startBrowserChromeThemeSync(router: AppRouter): void {
+  const resync = () => window.requestAnimationFrame(syncBrowserChromeTheme);
+  router.subscribe("onRendered", resync);
+  router.subscribe("onResolved", resync);
+}
+
+/** Chat overlays belong to the thread they were opened in, so leaving its route drops them. */
+function startThreadOverlayRetention(router: AppRouter): void {
+  router.subscribe("onResolved", () => {
+    const target = resolveThreadRouteTarget(router.state.matches.at(-1)?.params ?? {});
+    const draftSession =
+      target?.kind === "draft"
+        ? useComposerDraftStore.getState().getDraftSession(target.draftId)
+        : null;
+    const threadRef =
+      target?.kind === "server"
+        ? target.threadRef
+        : draftSession
+          ? scopeThreadRef(draftSession.environmentId, draftSession.threadId)
+          : null;
+    retainThreadOverlaysForThread(threadRef ? scopedThreadKey(threadRef) : null);
+  });
+}
+
+/**
  * Starts every app-lifetime service once, before the first render, and returns the router.
  * They run for the life of the page, so their disposers are dropped here.
  */
 export function startAppServices(): AppRouter {
   // Ahead of the history: the provider auth code must leave the address before anything reads it.
-  prepareProviderAuthDelivery();
+  startProviderAuthDelivery();
 
   // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
   const router = getRouter(isElectron ? createHashHistory() : createBrowserHistory());
@@ -100,9 +163,48 @@ export function startAppServices(): AppRouter {
     syncDocumentWindowControlsOverlayClass();
   }
 
+  installDesktopPasteAsText(window.desktopBridge, window);
+
   startClientAppearance();
   startDocumentTitle();
+  startEnvironmentThemeRepaint();
+  startBrowserChromeThemeSync(router);
+  startDefaultThemeAdoption();
+  startModelPreferencesMigration();
   startAgentOpenedPreviews();
+  if (isElectron) startElectronBrowserHost();
+  startPreviewTitleRecording();
+  startBrowserProfileReporting();
+  installChatRouteCommands(router);
+  installCommandPaletteCommands(router);
+  registerOpenFavoriteEditorCommand();
+  startThreadOverlayRetention(router);
+  // Drafts promote as their server threads arrive, wherever the user is.
+  subscribeDraftThreadPromotion({
+    registry: appAtomRegistry,
+    threadShellAtom: environmentThreadShells.quietThreadShellAtom,
+    threadRefsAtom: environmentThreadShells.threadRefsAtom,
+  });
+  subscribeComposerDraftModelReconciliation({
+    registry: appAtomRegistry,
+    threadShellAtom: environmentThreadShells.threadShellAtom,
+    threadRefsAtom: environmentThreadShells.threadRefsAtom,
+    shellStateAtom: environmentShell.stateAtom,
+  });
+  startMainAppLocationTracking(router);
+  startWorkspaceFocus(router);
+  startBackgroundThreadAnnouncements(appAtomRegistry, router);
+  startThreadVisitedMigration(appAtomRegistry);
+  startSshPasswordPromptQueue();
+
+  startKeybindingsUpdateToasts();
+  startSlowRpcRequestToasts();
+  startHostFreezeToasts();
+  startLegacyThreadMigrationToast();
+  startPermissionUpdateNotices(router);
+  startThreadNotifications(appAtomRegistry, router);
+  startGuideRunNotifications(appAtomRegistry, router);
+  if (isElectron) startDesktopUpdateLaunchNotice();
 
   return router;
 }

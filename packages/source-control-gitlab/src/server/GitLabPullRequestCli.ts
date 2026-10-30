@@ -1,3 +1,4 @@
+import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -479,10 +480,6 @@ function filterParams(input: {
 
 function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
-}
-
-function isCommitSha(value: string): boolean {
-  return /^[0-9a-f]{7,64}$/i.test(value);
 }
 
 function searchParams(search: string | undefined): ReadonlyArray<readonly [string, string]> {
@@ -1120,17 +1117,21 @@ export const make = Effect.gen(function* () {
   return GitLabPullRequestCli.of({
     getViewerUsername: viewerUsername,
 
-    listMergeRequests: (input) => {
+    listMergeRequests: Effect.fn("GitLabPullRequestCli.listMergeRequests")(function (input) {
       const perPage = Math.min(input.limit + 1, MAX_PAGE_SIZE);
       const page = Math.floor((input.cursor?.delivered ?? 0) / perPage) + 1;
       return listPage({ ...input, page, collected: [], cursorAdvance: 0 });
-    },
+    }),
 
     getMergeRequestDetail: mergeRequestDetail,
 
-    listNotes: (input) => notesPage({ ...input, page: 1, collected: [] }),
+    listNotes: Effect.fn("GitLabPullRequestCli.listNotes")(function (input) {
+      return notesPage({ ...input, page: 1, collected: [] });
+    }),
 
-    listReactions: (input) => awardsPage({ ...input, cursor: null, page: 1, collected: null }),
+    listReactions: Effect.fn("GitLabPullRequestCli.listReactions")(function (input) {
+      return awardsPage({ ...input, cursor: null, page: 1, collected: null });
+    }),
 
     getFileRevisions: fileRevisions,
 
@@ -1168,8 +1169,8 @@ export const make = Effect.gen(function* () {
       });
     }),
 
-    listCommits: (input) =>
-      api({
+    listCommits: Effect.fn("GitLabPullRequestCli.listCommits")(function (input) {
+      return api({
         cwd: input.cwd,
         path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/commits?${query(
           [
@@ -1191,11 +1192,12 @@ export const make = Effect.gen(function* () {
                 }),
               );
         }),
-      ),
+      );
+    }),
 
-    getMergeRequestDiff: (input) => {
+    getMergeRequestDiff: Effect.fn("GitLabPullRequestCli.getMergeRequestDiff")(function* (input) {
       if (input.commit !== undefined && !isCommitSha(input.commit)) {
-        return Effect.fail(new GitLabDiffCommitError({ command: "glab", cwd: input.cwd }));
+        return yield* new GitLabDiffCommitError({ command: "glab", cwd: input.cwd });
       }
       const target = {
         cwd: input.cwd,
@@ -1204,13 +1206,13 @@ export const make = Effect.gen(function* () {
         ...(input.commit === undefined ? {} : { commit: input.commit }),
       };
       if (input.cursor === undefined) {
-        return diffPage({ ...target, page: 1 });
+        return yield* diffPage({ ...target, page: 1 });
       }
       const page = diffCursorPage(input.cursor);
-      return page === null
-        ? Effect.fail(new GitLabDiffCursorError({ command: "glab", cwd: input.cwd }))
-        : diffPage({ ...target, page });
-    },
+      if (page === null)
+        return yield* new GitLabDiffCursorError({ command: "glab", cwd: input.cwd });
+      return yield* diffPage({ ...target, page });
+    }),
 
     getMergeRequestDiffFileContents: Effect.fn(
       "GitLabPullRequestCli.getMergeRequestDiffFileContents",
@@ -1264,28 +1266,31 @@ export const make = Effect.gen(function* () {
       return { oldContents, newContents };
     }),
 
-    getProjectMergeCapabilities: (input) =>
-      api({
-        cwd: input.cwd,
-        path: `projects/${projectPath(input.repository)}?license=false`,
-      }).pipe(
-        Effect.flatMap((result) => {
-          const decoded = decodeProjectMergeCapabilitiesJson(result.stdout.trim());
-          return Result.isSuccess(decoded)
-            ? Effect.succeed(decoded.success)
-            : Effect.fail(
-                new GitLabMergeRequestReadError({
-                  command: "glab",
-                  cwd: input.cwd,
-                  operation: "getProjectMergeCapabilities",
-                  cause: decoded.failure,
-                }),
-              );
-        }),
-      ),
+    getProjectMergeCapabilities: Effect.fn("GitLabPullRequestCli.getProjectMergeCapabilities")(
+      function (input) {
+        return api({
+          cwd: input.cwd,
+          path: `projects/${projectPath(input.repository)}?license=false`,
+        }).pipe(
+          Effect.flatMap((result) => {
+            const decoded = decodeProjectMergeCapabilitiesJson(result.stdout.trim());
+            return Result.isSuccess(decoded)
+              ? Effect.succeed(decoded.success)
+              : Effect.fail(
+                  new GitLabMergeRequestReadError({
+                    command: "glab",
+                    cwd: input.cwd,
+                    operation: "getProjectMergeCapabilities",
+                    cause: decoded.failure,
+                  }),
+                );
+          }),
+        );
+      },
+    ),
 
-    listProjectLabels: (input) =>
-      api({
+    listProjectLabels: Effect.fn("GitLabPullRequestCli.listProjectLabels")(function (input) {
+      return api({
         cwd: input.cwd,
         path: `projects/${projectPath(input.repository)}/labels?${query([
           ["per_page", String(MAX_PAGE_SIZE)],
@@ -1308,35 +1313,42 @@ export const make = Effect.gen(function* () {
                 }),
               );
         }),
-      ),
+      );
+    }),
 
-    listProjectUsers: (input) =>
-      projectUsers(input).pipe(
+    listProjectUsers: Effect.fn("GitLabPullRequestCli.listProjectUsers")(function (input) {
+      return projectUsers(input).pipe(
         Effect.map(({ candidates, rawCount }) => ({
           items: candidates.map(({ login, name, avatarUrl }) => ({ login, name, avatarUrl })),
           truncated: rawCount >= MAX_PAGE_SIZE,
         })),
-      ),
+      );
+    }),
 
-    listReviewerCandidates: (input) =>
-      Effect.all([mergeRequestDetail(input), projectUsers(input)], { concurrency: 2 }).pipe(
-        Effect.map(([mergeRequest, users]) => {
-          const author = mergeRequest.author?.login;
-          const requested = new Set(mergeRequest.reviewRequestLogins);
-          return {
-            // GitLab forbids requesting a review from the MR author.
-            candidates: users.candidates.flatMap((candidate) =>
-              candidate.login === author
-                ? []
-                : [{ ...candidate, isRequested: requested.has(candidate.login) }],
-            ),
-            truncated: users.rawCount >= MAX_PAGE_SIZE,
-          };
-        }),
-      ),
+    listReviewerCandidates: Effect.fn("GitLabPullRequestCli.listReviewerCandidates")(
+      function (input) {
+        return Effect.all([mergeRequestDetail(input), projectUsers(input)], {
+          concurrency: 2,
+        }).pipe(
+          Effect.map(([mergeRequest, users]) => {
+            const author = mergeRequest.author?.login;
+            const requested = new Set(mergeRequest.reviewRequestLogins);
+            return {
+              // GitLab forbids requesting a review from the MR author.
+              candidates: users.candidates.flatMap((candidate) =>
+                candidate.login === author
+                  ? []
+                  : [{ ...candidate, isRequested: requested.has(candidate.login) }],
+              ),
+              truncated: users.rawCount >= MAX_PAGE_SIZE,
+            };
+          }),
+        );
+      },
+    ),
 
-    setReviewerRequest: (input) =>
-      mergeRequestDetail(input).pipe(
+    setReviewerRequest: Effect.fn("GitLabPullRequestCli.setReviewerRequest")(function (input) {
+      return mergeRequestDetail(input).pipe(
         Effect.flatMap((mergeRequest) => {
           // GitLab replaces reviewer_ids wholesale.
           const ids = new Set(mergeRequest.reviewerIds);
@@ -1354,7 +1366,8 @@ export const make = Effect.gen(function* () {
           });
         }),
         Effect.asVoid,
-      ),
+      );
+    }),
 
     runMergeRequestAction: Effect.fn("GitLabPullRequestCli.runMergeRequestAction")(
       function* (input) {
@@ -1386,8 +1399,8 @@ export const make = Effect.gen(function* () {
       },
     ),
 
-    updateMergeRequest: (input) =>
-      api({
+    updateMergeRequest: Effect.fn("GitLabPullRequestCli.updateMergeRequest")(function (input) {
+      return api({
         cwd: input.cwd,
         path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}`,
         method: "PUT",
@@ -1396,28 +1409,35 @@ export const make = Effect.gen(function* () {
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.description === undefined ? {} : { description: input.description }),
         }),
-      }).pipe(Effect.asVoid),
+      }).pipe(Effect.asVoid);
+    }),
 
-    commentOnMergeRequest: (input) =>
-      api({
-        cwd: input.cwd,
-        path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/notes`,
-        method: "POST",
-        // JSON avoids glab's coercion of numeric/boolean comment bodies.
-        stdin: JSON.stringify({ body: input.body }),
-      }).pipe(Effect.asVoid),
+    commentOnMergeRequest: Effect.fn("GitLabPullRequestCli.commentOnMergeRequest")(
+      function (input) {
+        return api({
+          cwd: input.cwd,
+          path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/notes`,
+          method: "POST",
+          // JSON avoids glab's coercion of numeric/boolean comment bodies.
+          stdin: JSON.stringify({ body: input.body }),
+        }).pipe(Effect.asVoid);
+      },
+    ),
 
-    updateNote: (input) =>
-      api({
+    updateNote: Effect.fn("GitLabPullRequestCli.updateNote")(function (input) {
+      return api({
         cwd: input.cwd,
         path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/notes/${encodeURIComponent(
           input.noteId,
         )}`,
         method: "PUT",
         stdin: JSON.stringify({ body: input.body }),
-      }).pipe(Effect.asVoid),
+      }).pipe(Effect.asVoid);
+    }),
 
-    listDiscussions: (input) => discussionsPage({ ...input, page: 1, collected: [] }),
+    listDiscussions: Effect.fn("GitLabPullRequestCli.listDiscussions")(function (input) {
+      return discussionsPage({ ...input, page: 1, collected: [] });
+    }),
 
     submitReview: Effect.fn("GitLabPullRequestCli.submitReview")(function* (input) {
       const project = projectPath(input.repository);
@@ -1468,25 +1488,29 @@ export const make = Effect.gen(function* () {
       }
     }),
 
-    replyToDiscussion: (input) =>
-      api({
+    replyToDiscussion: Effect.fn("GitLabPullRequestCli.replyToDiscussion")(function (input) {
+      return api({
         cwd: input.cwd,
         path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/discussions/${encodeURIComponent(
           input.discussionId,
         )}/notes`,
         method: "POST",
         stdin: JSON.stringify({ body: input.body }),
-      }).pipe(Effect.asVoid),
+      }).pipe(Effect.asVoid);
+    }),
 
-    setDiscussionResolution: (input) =>
-      api({
-        cwd: input.cwd,
-        path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/discussions/${encodeURIComponent(
-          input.discussionId,
-        )}`,
-        method: "PUT",
-        stdin: JSON.stringify({ resolved: input.resolved }),
-      }).pipe(Effect.asVoid),
+    setDiscussionResolution: Effect.fn("GitLabPullRequestCli.setDiscussionResolution")(
+      function (input) {
+        return api({
+          cwd: input.cwd,
+          path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/discussions/${encodeURIComponent(
+            input.discussionId,
+          )}`,
+          method: "PUT",
+          stdin: JSON.stringify({ resolved: input.resolved }),
+        }).pipe(Effect.asVoid);
+      },
+    ),
   });
 });
 

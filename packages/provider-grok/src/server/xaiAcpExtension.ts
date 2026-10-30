@@ -11,7 +11,6 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
-const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
 export const xAiRateLimitedErrorCode = -32003;
 const completedXAiPromptIdLimit = 128;
 
@@ -1257,9 +1256,6 @@ function promptResponseFromXAi(
   const meta: Record<string, Schema.Json> = {
     sessionId: notification.sessionId,
   };
-  if (notification.stopReason === undefined) {
-    meta[xAiStopReasonMissingMetaKey] = true;
-  }
   if (notification.promptId !== undefined) {
     meta.promptId = notification.promptId;
     meta.requestId = notification.promptId;
@@ -1524,10 +1520,9 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
           .pipe(Effect.forkChild);
         return yield* Effect.raceFirst(
           Fiber.join(promptRpcFiber).pipe(
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.succeed(cancelledResponse)
-                : Effect.failCause(cause),
+            Effect.catchCauseIf(
+              (cause) => Cause.hasInterruptsOnly(cause),
+              (_cause) => Effect.succeed(cancelledResponse),
             ),
           ),
           Deferred.await(fallback.deferred),

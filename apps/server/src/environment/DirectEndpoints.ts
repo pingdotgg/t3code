@@ -155,7 +155,11 @@ export const make = Effect.gen(function* () {
     return endpoints;
   });
 
-  return DirectEndpoints.of({ resolve: () => resolve });
+  return DirectEndpoints.of({
+    resolve: Effect.fn("DirectEndpoints.resolve")(function () {
+      return resolve;
+    }),
+  });
 });
 
 export const layer = Layer.effect(DirectEndpoints, make);

@@ -55,6 +55,8 @@ const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
 // Older clients omit the limit and validate responses against a 20-agent cap.
 const DEFAULT_SEARCH_LIMIT = 20;
 const REGISTRY_REQUEST_TIMEOUT = "30 seconds";
+// Searches reuse an index fetched this recently; prepare always fetches the latest.
+const REGISTRY_SEARCH_MAX_AGE_MS = 5 * 60 * 1_000;
 const ARCHIVE_REQUEST_TIMEOUT = "20 minutes";
 const PACKAGE_INSTALL_TIMEOUT = "20 minutes";
 const PACKAGE_QUERY_TIMEOUT = "30 seconds";
@@ -659,6 +661,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       : path.join(packageInstallRoot(agent, distribution), "bin");
   const packageReceiptsDirectory = path.join(registryDirectory, "package-installs");
   const registryRef = yield* Ref.make<AcpRegistryIndex | undefined>(undefined);
+  // When the network last served registryRef; unset while it holds the disk cache.
+  const registryFetchedAtMs = yield* Ref.make<number | undefined>(undefined);
   const registryRevision = yield* Ref.make(0);
   const registrySemaphore = yield* Semaphore.make(1);
   const installSemaphore = yield* Semaphore.make(1);
@@ -848,23 +852,41 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         const current = yield* Ref.get(registryRef);
         if (current !== undefined && currentRevision !== observedRevision) return current;
 
-        const registry = yield* fetchRegistry().pipe(
+        const { registry, fetched } = yield* fetchRegistry().pipe(
+          Effect.map((registry) => ({ registry, fetched: true })),
           Effect.catch((networkError) =>
             readCachedRegistry.pipe(
               Effect.flatMap(
                 Option.match({
                   onNone: () => Effect.fail(networkError),
-                  onSome: Effect.succeed,
+                  onSome: (registry) => Effect.succeed({ registry, fetched: false }),
                 }),
               ),
             ),
           ),
         );
         yield* Ref.set(registryRef, registry);
+        yield* Ref.set(registryFetchedAtMs, fetched ? yield* Clock.currentTimeMillis : undefined);
         yield* Ref.update(registryRevision, (revision) => revision + 1);
         return registry;
       }),
     );
+  });
+
+  const recentRegistry = Effect.fn("AcpRegistryCatalog.recentRegistry")(function* () {
+    const current = yield* Ref.get(registryRef);
+    const fetchedAtMs = yield* Ref.get(registryFetchedAtMs);
+    const now = yield* Clock.currentTimeMillis;
+    // A clock moved back makes the stamp untrustworthy, so it counts as stale.
+    if (
+      current !== undefined &&
+      fetchedAtMs !== undefined &&
+      now >= fetchedAtMs &&
+      now - fetchedAtMs < REGISTRY_SEARCH_MAX_AGE_MS
+    ) {
+      return current;
+    }
+    return yield* refreshRegistry();
   });
 
   const loadCachedRegistry = Effect.fn("AcpRegistryCatalog.loadCachedRegistry")(function* () {
@@ -1294,8 +1316,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
       const acquired = yield* fileSystem.writeFileString(lockPath, "", { flag: "wx" }).pipe(
         Effect.as(true),
-        Effect.catch((error) =>
-          isAlreadyExists(error) ? Effect.succeed(false) : Effect.fail(error),
+        Effect.catchIf(
+          (error) => isAlreadyExists(error),
+          () => Effect.succeed(false),
         ),
       );
       if (acquired) return;
@@ -1588,7 +1611,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const search: AcpRegistryCatalog["Service"]["search"] = Effect.fn("AcpRegistryCatalog.search")(
     function* (input) {
-      const registry = yield* refreshRegistry();
+      const registry = yield* recentRegistry();
       const ranked = registry.agents.flatMap((agent) => {
         const distribution = resolveAcpRegistryDistribution({
           agent,

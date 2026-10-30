@@ -213,7 +213,7 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, E>>,
 ) {
   const shellStateValue = (state: AsyncResult.AsyncResult<EnvironmentShellState, E>) =>
-    Option.getOrNull(AsyncResult.value(state));
+    AsyncResult.getOrElse(state, () => null);
 
   const countReadAtom = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:orchestration:older-settled-counts",

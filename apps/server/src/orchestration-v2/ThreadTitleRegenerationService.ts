@@ -90,15 +90,15 @@ const make = Effect.gen(function* () {
     thread: OrchestrationV2AppThread,
   ) {
     let title: string | undefined;
-    let history: Array<OrchestrationV2ConversationMessage> = [];
+    const history: Array<ReadonlyArray<OrchestrationV2ConversationMessage>> = [];
     let forkedFrom = thread.forkedFrom;
     while (forkedFrom?.type === "run") {
       const source = yield* messagesThroughRun(forkedFrom.threadId, forkedFrom.runId);
-      history = [...source.messages, ...history];
+      history.push(source.messages);
       title ??= source.thread.title;
       forkedFrom = source.thread.forkedFrom;
     }
-    const context = formatThreadTitleContext(history);
+    const context = formatThreadTitleContext(history.reverse().flat());
     return title === undefined || context.message.length === 0
       ? undefined
       : { title, history: context.message };

@@ -35,7 +35,7 @@ function resolveTimestampLocale(systemLocale: string | null | undefined): string
 
 function readHostSystemLocale(): string | null {
   if (typeof window === "undefined") return null;
-  return window.desktopBridge?.getSystemLocale?.() ?? null;
+  return window.desktopBridge?.getSystemLocale() ?? null;
 }
 
 const timestampLocale = resolveTimestampLocale(readHostSystemLocale());
@@ -271,28 +271,6 @@ export function formatElapsedDurationLabel(isoDate: string, nowMs: number = Date
 
   const days = Math.floor(hours / 24);
   return `${days}d`;
-}
-
-function formatRelativeTimeUntil(isoDate: string): RelativeTimeParts | null {
-  const date = parseTimestampDate(isoDate);
-  if (!date) return null;
-  const diffMs = date.getTime() - Date.now();
-  if (diffMs <= 0) return { value: "Expired", suffix: null };
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 5) return { value: "Soon", suffix: null };
-  if (seconds < 60) return { value: `${seconds}s`, suffix: "left" };
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { value: `${minutes}m`, suffix: "left" };
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { value: `${hours}h`, suffix: "left" };
-  const days = Math.floor(hours / 24);
-  return { value: `${days}d`, suffix: "left" };
-}
-
-export function formatRelativeTimeUntilLabel(isoDate: string): string {
-  const relative = formatRelativeTimeUntil(isoDate);
-  if (!relative) return "";
-  return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
 }
 
 /** Pass nowMs to match a parent-driven render tick. */

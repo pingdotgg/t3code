@@ -108,7 +108,7 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
-  it("counts a subagent question on its parent only while the subagent runs", () => {
+  it("keeps a live subagent question inside the parent without flagging its thread", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const root = v2ThreadShell;
     const child = {
@@ -132,6 +132,10 @@ describe("v2 thread shell lists", () => {
     const dispose = registry.mount(inputs);
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, child] });
     expect(registry.get(inputs).map((thread) => thread.id)).toEqual([child.id]);
+    expect(
+      registry.get(threads.threadShellAtom({ environmentId, threadId: root.id }))
+        ?.pendingSubagentRequest,
+    ).toBeNull();
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,
       threads: [root, { ...child, status: "queued" as const }],
@@ -212,6 +216,162 @@ describe("v2 thread shell lists", () => {
     expect(isThreadWorking(registry.get(parent)!)).toBe(true);
     disposeInputs();
     disposeParent();
+    registry.dispose();
+  });
+
+  it("lists a task a linked environment runs for a listed thread under that thread", () => {
+    const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness([
+      environmentId,
+      remoteEnvironmentId,
+    ]);
+    const parent = v2ThreadShell;
+    const task = {
+      ...v2ThreadShell,
+      id: ThreadId.make("remote-task"),
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      delegatedFrom: { environmentId, threadId: parent.id, title: parent.title },
+    };
+    const helper = {
+      ...task,
+      id: ThreadId.make("remote-helper"),
+      delegatedFrom: undefined,
+      lineage: {
+        ...task.lineage,
+        parentThreadId: task.id,
+        relationshipToParent: "subagent" as const,
+      },
+    };
+    const approval = {
+      id: RuntimeRequestId.make("cat-file"),
+      kind: "command" as const,
+      createdAt: v2Now,
+    };
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [parent] });
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [task, helper],
+    });
+    const parentRef = { environmentId, threadId: parent.id };
+    const inputs = threads.childThreadInputsAtom(parentRef);
+    const disposeNavigation = registry.mount(threads.navigationThreadShellsAtom);
+    const disposeParent = registry.mount(threads.threadShellAtom(parentRef));
+    const disposeInputs = registry.mount(inputs);
+    const listed = () =>
+      registry
+        .get(threads.navigationThreadShellsAtom)
+        .map((thread) => `${thread.environmentId}/${thread.id}`);
+    expect(listed()).toEqual([`${environmentId}/${parent.id}`]);
+
+    // The helper the task started there asks for approval: the parent here hears of it.
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [task, { ...helper, pendingRuntimeRequest: approval }],
+    });
+    expect(registry.get(threads.threadShellAtom(parentRef))?.pendingSubagentRequest).toBe(
+      "approval",
+    );
+    expect(registry.get(inputs).map((thread) => `${thread.environmentId}/${thread.id}`)).toEqual([
+      `${remoteEnvironmentId}/${helper.id}`,
+    ]);
+
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [
+        task,
+        { ...helper, pendingRuntimeRequest: { ...approval, kind: "user_input" as const } },
+      ],
+    });
+    expect(registry.get(threads.threadShellAtom(parentRef))?.pendingSubagentRequest).toBeNull();
+    expect(registry.get(inputs).map((thread) => thread.id)).toEqual([helper.id]);
+
+    // A task whose parent is gone there is listed on its own, as is one whose
+    // parent's environment is switched off.
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
+    expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
+    // Archiving the parent here leaves the task there unarchived, so it is listed on its own.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...parent, archivedAt: v2Now }],
+    });
+    expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [parent] });
+    expect(listed()).toEqual([`${environmentId}/${parent.id}`]);
+    const catalog = registry.get(catalogValueAtom);
+    const entries = new Map(catalog.entries);
+    entries.set(environmentId, { ...entries.get(environmentId)!, enabled: false });
+    registry.set(catalogValueAtom, { ...catalog, entries });
+    expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
+    disposeInputs();
+    disposeParent();
+    disposeNavigation();
+    registry.dispose();
+  });
+
+  it("brings an approval up a chain of tasks across three environments to its root", () => {
+    const thirdEnvironmentId = EnvironmentId.make("third-environment-v2");
+    const { registry, threads, snapshotAtom } = makeHarness([
+      environmentId,
+      remoteEnvironmentId,
+      thirdEnvironmentId,
+    ]);
+    const root = v2ThreadShell;
+    const running = {
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+    };
+    const task = {
+      ...v2ThreadShell,
+      ...running,
+      id: ThreadId.make("remote-task"),
+      delegatedFrom: { environmentId, threadId: root.id, title: root.title },
+    };
+    const nestedTask = {
+      ...v2ThreadShell,
+      ...running,
+      id: ThreadId.make("third-task"),
+      delegatedFrom: { environmentId: remoteEnvironmentId, threadId: task.id, title: task.title },
+    };
+    // A task the middle one delegates back to the root's own environment.
+    const returningTask = {
+      ...nestedTask,
+      id: ThreadId.make("returning-task"),
+    };
+    const approval = {
+      id: RuntimeRequestId.make("cat-file"),
+      kind: "command" as const,
+      createdAt: v2Now,
+    };
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root] });
+    registry.set(snapshotAtom(remoteEnvironmentId), { ...v2ShellSnapshot, threads: [task] });
+    registry.set(snapshotAtom(thirdEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...nestedTask, pendingRuntimeRequest: approval }],
+    });
+    const rootRef = { environmentId, threadId: root.id };
+    const taskRef = { environmentId: remoteEnvironmentId, threadId: task.id };
+    const disposeRoot = registry.mount(threads.threadShellAtom(rootRef));
+    const disposeTask = registry.mount(threads.threadShellAtom(taskRef));
+    expect(registry.get(threads.threadShellAtom(taskRef))?.pendingSubagentRequest).toBe("approval");
+    expect(registry.get(threads.threadShellAtom(rootRef))?.pendingSubagentRequest).toBe("approval");
+
+    // Once it is answered, neither stays flagged.
+    registry.set(snapshotAtom(thirdEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [nestedTask],
+    });
+    expect(registry.get(threads.threadShellAtom(rootRef))?.pendingSubagentRequest).toBeNull();
+
+    // Environments that delegate to each other still settle on the root's flag.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, { ...returningTask, pendingRuntimeRequest: approval }],
+    });
+    expect(registry.get(threads.threadShellAtom(rootRef))?.pendingSubagentRequest).toBe("approval");
+    disposeTask();
+    disposeRoot();
     registry.dispose();
   });
 

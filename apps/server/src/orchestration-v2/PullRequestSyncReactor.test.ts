@@ -1,3 +1,5 @@
+import * as NodeV8 from "node:v8";
+
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
 import {
@@ -21,10 +23,12 @@ import {
   type ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -496,6 +500,40 @@ const mergingSnapshot = () =>
   makeSnapshot([makeThread(MERGING_THREAD, { pullRequests: [makeLink(7, { state: "open" })] })]);
 
 describe("PullRequestSyncReactor", () => {
+  it.effect("lets a finished sweep's links go while a cache keeps the fiber that read them", () =>
+    Effect.gen(function* () {
+      class SweptLink {
+        readonly swept = true;
+      }
+      // Like PullRequestReadCache's revisions: a lookup fiber, kept for good, forked from the reader.
+      const kept = yield* Cache.makeWith(() => Effect.void, {
+        capacity: 1,
+        timeToLive: () => Duration.infinity,
+      });
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([]),
+        summary: (input) => Cache.get(kept, undefined).pipe(Effect.as(makeSummary(input))),
+      });
+      yield* Ref.set(
+        fixture.snapshots,
+        makeSnapshot(
+          Array.from({ length: 30 }, (_, index) =>
+            makeThread(`thread-${index}`, {
+              pullRequests: [Object.assign(new SweptLink(), makeLink(7))],
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        yield* startAndSweep(fixture);
+        assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 30);
+        yield* Ref.set(fixture.snapshots, makeSnapshot([]));
+
+        assert.strictEqual(NodeV8.queryObjects(SweptLink, { format: "count" }), 0);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
   it.effect("retries a failed stack read after the summary becomes terminal", () =>
     Effect.scoped(
       Effect.gen(function* () {

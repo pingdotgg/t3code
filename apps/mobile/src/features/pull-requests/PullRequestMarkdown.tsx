@@ -9,7 +9,7 @@ import {
   usePullRequestMediaUrl,
 } from "./PullRequestMedia";
 import { videoMimeType } from "@t3tools/shared/video";
-import { createContext, useContext, useCallback, useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 import { linkReferenceAutolinks } from "./pullRequestAutolinks";
@@ -40,23 +40,17 @@ export function PullRequestMarkdownRepository(props: {
 }) {
   const provider = props.changeRequest?.provider;
   const url = props.changeRequest?.url;
-  const autolinks = useMemo(
-    () =>
-      provider === undefined || url === undefined
-        ? null
-        : changeRequestReferenceAutolinker({ provider, url }),
-    [provider, url],
-  );
+  const autolinks =
+    provider === undefined || url === undefined
+      ? null
+      : changeRequestReferenceAutolinker({ provider, url });
   const target = pullRequestTarget(props.params);
   const project = useProject({
     environmentId: target.environmentId,
     projectId: target.input.projectId,
   });
   const cwd = project?.workspaceRoot;
-  const media = useMemo(
-    () => (cwd ? { environmentId: target.environmentId, cwd } : null),
-    [target.environmentId, cwd],
-  );
+  const media = cwd ? { environmentId: target.environmentId, cwd } : null;
   return (
     <AutolinksContext value={autolinks}>
       <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
@@ -119,32 +113,23 @@ function PullRequestMarkdownContent(props: {
 }) {
   const autolinks = useContext(AutolinksContext);
   const mediaContext = useContext(PullRequestMediaContext);
-  const markdown = useMemo(
-    () => linkReferenceAutolinks(props.markdown, autolinks),
-    [props.markdown, autolinks],
-  );
+  const markdown = linkReferenceAutolinks(props.markdown, autolinks);
   const openPullRequest = useOpenPullRequest();
-  const openLink = useCallback(
-    (href: string) => {
-      void openPullRequest(href);
-    },
-    [openPullRequest],
-  );
-  const gallery = useMemo<FilePreviewItem[]>(
-    () =>
-      markdownImageSources(props.imageGroupMarkdown ?? props.markdown)
-        .filter(
-          (uri) =>
-            /^https?:\/\//i.test(uri) &&
-            videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
-        )
-        .map((uri) => pullRequestImageSource(uri, mediaContext)),
-    [props.markdown, props.imageGroupMarkdown, mediaContext],
-  );
+  const openLink = (href: string) => {
+    void openPullRequest(href);
+  };
+  const gallery: FilePreviewItem[] = markdownImageSources(
+    props.imageGroupMarkdown ?? props.markdown,
+  )
+    .filter(
+      (uri) =>
+        /^https?:\/\//i.test(uri) &&
+        videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
+    )
+    .map((uri) => pullRequestImageSource(uri, mediaContext));
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
-  const renderImage = useCallback<MarkdownImageRenderer>(
-    (image) => <MarkdownImage href={image.href} alt={image.alt} onPreview={setPreview} />,
-    [],
+  const renderImage: MarkdownImageRenderer = (image) => (
+    <MarkdownImage href={image.href} alt={image.alt} onPreview={setPreview} />
   );
   const styles = useMarkdownPreviewStyles();
   return (

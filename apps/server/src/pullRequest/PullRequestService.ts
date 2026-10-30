@@ -528,6 +528,9 @@ function withRateLimitBackoff(
           listChangeRequestStats: wrap("listChangeRequestStats", api.listChangeRequestStats),
         }),
     getChangeRequest: wrap("getChangeRequest", api.getChangeRequest),
+    ...(api.forgetChangeRequestReads === undefined
+      ? {}
+      : { forgetChangeRequestReads: api.forgetChangeRequestReads }),
     ...(api.getChangeRequestPreview === undefined
       ? {}
       : { getChangeRequestPreview: wrap("getChangeRequestPreview", api.getChangeRequestPreview) }),
@@ -1565,7 +1568,7 @@ export const make = Effect.gen(function* () {
     }
     const result = yield* api
       .withVerifiedCredential(
-        { cwd: project.project.workspaceRoot, host: project.host },
+        { cwd: project.project.workspaceRoot, host: project.host, repository: project.repository },
         (identity) =>
           identity.accountId === input.expectedAccountId
             ? operation.pipe(Effect.provideService(routingCredential, identity), Effect.result)
@@ -1753,6 +1756,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.autoMergeMethod === undefined
               ? {}
               : { autoMergeMethod: changeRequest.autoMergeMethod }),
+            ...(changeRequest.maintainerCanModify === undefined
+              ? {}
+              : { maintainerCanModify: changeRequest.maintainerCanModify }),
             ...(changeRequest.workflowApprovalsRequired === undefined
               ? {}
               : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
@@ -2066,7 +2072,11 @@ export const make = Effect.gen(function* () {
         return input.action === "delete-branch" && project.api.withVerifiedCredential !== undefined
           ? project.api
               .withVerifiedCredential(
-                { cwd: project.project.workspaceRoot, host: project.host },
+                {
+                  cwd: project.project.workspaceRoot,
+                  host: project.host,
+                  repository: project.repository,
+                },
                 () => operation.pipe(Effect.result),
               )
               .pipe(
@@ -2134,7 +2144,22 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
-        if (input.title === undefined && input.body === undefined) {
+        if (
+          input.maintainerCanModify !== undefined &&
+          project.api.capabilities.edit?.maintainerEdits !== true
+        ) {
+          return Effect.fail(
+            new PullRequestOperationError({
+              operation: "update",
+              detail: "This host does not support maintainer edits.",
+            }),
+          );
+        }
+        if (
+          input.title === undefined &&
+          input.body === undefined &&
+          input.maintainerCanModify === undefined
+        ) {
           return Effect.fail(
             new PullRequestOperationError({
               operation: "update",
@@ -2147,6 +2172,9 @@ export const make = Effect.gen(function* () {
           repository: project.repository,
           host: project.host,
           number: input.number,
+          ...(input.maintainerCanModify === undefined
+            ? {}
+            : { maintainerCanModify: input.maintainerCanModify }),
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.body === undefined ? {} : { body: input.body }),
         }).pipe(Effect.mapError(toPullRequestError("update")));
@@ -2696,14 +2724,9 @@ export const make = Effect.gen(function* () {
           },
         }),
       );
-    const serveHeld = (
-      key: string,
-      effect: Effect.Effect<A, PullRequestError>,
-      mode: "reuse" | "revalidate",
-    ) => {
+    const serveHeld = (key: string, effect: Effect.Effect<A, PullRequestError>) => {
       const snapshot = held.get(key);
       if (snapshot === undefined) return read(key, effect);
-      if (mode === "reuse") return Effect.succeed(snapshot.value);
       return revalidate(read(key, effect)).pipe(Effect.as(snapshot.value));
     };
     return { peek: (key: string) => held.get(key)?.value, read, record, serveHeld };
@@ -2954,8 +2977,9 @@ export const make = Effect.gen(function* () {
     ]);
     // A replacement reader can join a lookup still finishing its previous reader's cancellation.
     return Cache.get(listCache, key).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause) ? Cache.get(listCache, key) : Effect.failCause(cause),
+      Effect.catchCauseIf(
+        (cause) => Cause.hasInterruptsOnly(cause),
+        (_cause) => Cache.get(listCache, key),
       ),
     );
   };
@@ -3178,7 +3202,7 @@ export const make = Effect.gen(function* () {
     );
     return input.allowStale === false
       ? read.pipe(Effect.tap((value) => lastGoodDetail.record(key, value)))
-      : lastGoodDetail.serveHeld(key, read, "revalidate");
+      : lastGoodDetail.serveHeld(key, read);
   };
 
   const activityCache = yield* Cache.makeWith(
@@ -3385,8 +3409,9 @@ export const make = Effect.gen(function* () {
     if (missing.size === 0) return { stats: held };
     const key = statsBatchKey(missing.values());
     const { result, at } = yield* Cache.get(listStatsCache, key).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause) ? Cache.get(listStatsCache, key) : Effect.failCause(cause),
+      Effect.catchCauseIf(
+        (cause) => Cause.hasInterruptsOnly(cause),
+        (_cause) => Cache.get(listStatsCache, key),
       ),
     );
     for (const [key, ref] of missing) {
@@ -3400,6 +3425,13 @@ export const make = Effect.gen(function* () {
     }
     return { stats: [...held, ...result.stats] };
   });
+
+  const forgetProviderReads = (scope?: { readonly repository: string; readonly number?: number }) =>
+    Effect.forEach(
+      registry.kinds,
+      (kind) => registry.get(kind)?.forgetChangeRequestReads?.(scope) ?? Effect.void,
+      { discard: true },
+    );
 
   const invalidate: PullRequestService["Service"]["invalidate"] = Effect.fn(
     "PullRequestService.invalidate",
@@ -3416,13 +3448,15 @@ export const make = Effect.gen(function* () {
     if (reference !== undefined) {
       yield* canonicalRef(reference).pipe(
         Effect.flatMap((ref) =>
-          readCache
-            .invalidate(refScope(ref))
-            .pipe(Effect.andThen(Effect.sync(() => bumpRefEpoch(ref)))),
+          forgetProviderReads({ repository: ref.repository, number: ref.number }).pipe(
+            Effect.andThen(readCache.invalidate(refScope(ref))),
+            Effect.andThen(Effect.sync(() => bumpRefEpoch(ref))),
+          ),
         ),
         Effect.ignore,
       );
     } else {
+      yield* forgetProviderReads();
       listingsEpoch = ++epochCounter;
       everyFileRevisionEpoch = ++epochCounter;
       viewersByHost.clear();
@@ -3433,22 +3467,27 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = (projectId) =>
-    Effect.suspend(() => {
-      listingsEpoch = ++epochCounter;
-      projectEpochs.delete(projectId);
-      if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
-        const oldest = projectEpochs.keys().next().value;
-        if (oldest !== undefined) {
-          projectEpochFloor = projectEpochs.get(oldest)!;
-          projectEpochs.delete(oldest);
-        }
+  const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = Effect.fn(
+    "PullRequestService.refreshAfterTurn",
+  )(function* (projectId) {
+    // Everything the provider holds, not just the project's repository: a turn can touch a
+    // change request reached through another repository, and no epoch may move until those
+    // reads are gone, or a reader in between keeps the old one under the new epoch.
+    yield* forgetProviderReads();
+    listingsEpoch = ++epochCounter;
+    projectEpochs.delete(projectId);
+    if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
+      const oldest = projectEpochs.keys().next().value;
+      if (oldest !== undefined) {
+        projectEpochFloor = projectEpochs.get(oldest)!;
+        projectEpochs.delete(oldest);
       }
-      projectEpochs.set(projectId, listingsEpoch);
-      return readCache
-        .invalidate(`project:${projectId}`)
-        .pipe(Effect.andThen(SubscriptionRef.set(pullRequestRefreshes, listingsEpoch)));
-    });
+    }
+    projectEpochs.set(projectId, listingsEpoch);
+    const epoch = listingsEpoch;
+    yield* readCache.invalidate(`project:${projectId}`);
+    yield* SubscriptionRef.set(pullRequestRefreshes, epoch);
+  });
 
   const invalidatedByMutation =
     <I extends PullRequestRef>(
@@ -3621,10 +3660,13 @@ export const make = Effect.gen(function* () {
     withRoutingCredential,
     list,
     filterOptions,
-    listStats: (input) =>
-      Effect.forEach(input.refs, (ref) => canonicalRef(ref).pipe(Effect.option)).pipe(
-        Effect.flatMap((refs) => listStats({ ...input, refs: refs.flatMap(Option.toArray) })),
-      ),
+    // The local operation owns the span; this wrapper only canonicalizes refs.
+    listStats: Effect.fnUntraced(function* (input) {
+      const refs = yield* Effect.forEach(input.refs, (ref) =>
+        canonicalRef(ref).pipe(Effect.option),
+      );
+      return yield* listStats({ ...input, refs: refs.flatMap(Option.toArray) });
+    }),
     summary: credentialCached(summary),
     stack: credentialCached(stack),
     subscribeMerges: PubSub.subscribe(mergedPullRequests).pipe(
