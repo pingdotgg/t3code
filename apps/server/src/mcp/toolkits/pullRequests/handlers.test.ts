@@ -437,6 +437,43 @@ describe("pull request toolkit handlers", () => {
         number: 9,
       });
       expect(onGitHub.url).toBe("https://github.com/acme/web/pull/9");
+
+      for (const remoteUrl of [
+        "ssh://git@code.example.com:7999/PROJ/web.git",
+        "git@code.example.com:PROJ/web.git",
+      ]) {
+        const bitbucket = yield* makeHarness({
+          project: makeProject({
+            canonicalKey: "code.example.com/proj/web",
+            locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+            provider: SourceControlProviderKind.make("bitbucket-server"),
+            displayName: "PROJ/web",
+            webUrl: "https://code.example.com:8443/stash/projects/PROJ/repos/web",
+          }),
+        });
+        for (const host of [undefined, "CODE.EXAMPLE.COM:8443"]) {
+          const linked = yield* bitbucket.call("link_pull_request", {
+            ...(host ? { host } : {}),
+            repository: "PROJ/Web",
+            number: 42,
+          });
+          expect(linked).toEqual({
+            host: "code.example.com:8443",
+            repository: "proj/web",
+            number: 42,
+            url: "https://code.example.com:8443/stash/projects/PROJ/repos/web/pull-requests/42",
+            alreadyLinked: false,
+          });
+        }
+        for (const target of [
+          { repository: "PROJ/other", number: 42 },
+          { host: "other.example.com", repository: "PROJ/web", number: 42 },
+          { host: "code.example.com:9443", repository: "PROJ/web", number: 42 },
+        ]) {
+          const error = yield* bitbucket.call("link_pull_request", target).pipe(Effect.flip);
+          expect(error).toMatchObject({ _tag: "PullRequestUrlUnavailableError" });
+        }
+      }
     }),
   );
 

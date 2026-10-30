@@ -98,6 +98,11 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
   const kind =
     sourceControlDefinitions.findByPublicHost(host)?.kind ??
     (recognizedKind === "gitcafe" ? recognizedKind : projectHost.kind);
+  const identity = project?.repositoryIdentity;
+  const ownRepository =
+    kind === projectHost.kind &&
+    (host === projectHost.host || host === URL.parse(identity?.webUrl ?? "")?.host.toLowerCase()) &&
+    sourceControlDefinitions.repositorySelector(identity)?.toLowerCase() === repository;
   const url =
     kind === null
       ? null
@@ -105,7 +110,8 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
           host,
           repository,
           number: input.number,
-          remoteUrl: project?.repositoryIdentity?.locator.remoteUrl,
+          remoteUrl: identity?.locator.remoteUrl,
+          webUrl: ownRepository ? identity?.webUrl : undefined,
         });
   if (url === null) {
     return yield* new PullRequestUrlUnavailableError({});
