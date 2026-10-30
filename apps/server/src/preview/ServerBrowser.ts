@@ -97,6 +97,7 @@ const SCREENCAST_MOTION_WINDOW_MS = 300;
 const SCREENCAST_MOTION_QUALITY = 50;
 const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
+const DESKTOP_FIRST_FRAME_TIMEOUT = "5 seconds";
 const VIEWER_OUTPUT_LIMIT = 64;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
 const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSchema);
@@ -735,6 +736,11 @@ const make = Effect.gen(function* () {
       runFork(manager.close({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore));
     }
   };
+
+  const moveTabToHeadless = (tab: ServerTab) =>
+    manager
+      .markHeadless({ threadId: ThreadId.make(tab.threadId), tabId: tab.tabId, reload: true })
+      .pipe(Effect.ignore, Effect.andThen(Effect.sync(() => dropTab(tab, false))));
 
   const desktopRenders = (snapshot: PreviewSessionSnapshot) =>
     desktopChannel.available && !snapshot.headless
@@ -2482,10 +2488,20 @@ const make = Effect.gen(function* () {
       });
     });
     void broadcastViewport(tab).catch(constVoid);
-    yield* Effect.promise(() => startScreencast(1));
-    // An idle page does not repaint for a new screencast, so the viewer
-    // starts from a still unless a live frame beat it.
-    if (!screencastStarted) yield* Effect.promise(pushStill);
+    const firstFrame = Effect.promise(async () => {
+      await startScreencast(1);
+      // An idle page does not repaint for a new screencast, so the viewer
+      // starts from a still unless a live frame beat it.
+      if (!screencastStarted) await pushStill();
+    });
+    if (tab.desktop) {
+      const painted = yield* firstFrame.pipe(Effect.timeoutOption(DESKTOP_FIRST_FRAME_TIMEOUT));
+      // A minimized host window paints no guest, so this page can never reach the viewer.
+      // Reconnecting moves the tab to headless Chromium, which needs no display.
+      if (Option.isNone(painted) && !screencastStarted) yield* moveTabToHeadless(tab);
+    } else {
+      yield* firstFrame;
+    }
     return {
       output,
       input: (raw: unknown) =>

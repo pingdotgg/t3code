@@ -100,6 +100,10 @@ function makeSession(
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
       if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
       if (method === "Page.captureScreenshot") {
+        if (desktopPaintsNothing) {
+          desktopCaptureStarted.resolve();
+          return new Promise<never>(() => {});
+        }
         // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
         return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
       }
@@ -287,6 +291,9 @@ let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
 /** Replaces the answer to the desktop page's size reads. */
 let desktopSizeAnswer: (() => Promise<Record<string, unknown>>) | null = null;
+/** A minimized host: the capture never answers because the guest paints no frame. */
+let desktopPaintsNothing = false;
+let desktopCaptureStarted = Promise.withResolvers<void>();
 const desktopDetaches = new NodeEvents.EventEmitter();
 let desktopDetachReady = Promise.withResolvers<void>();
 let desktopReleased = Promise.withResolvers<void>();
@@ -433,6 +440,8 @@ beforeEach(() => {
   desktopTabs.clear();
   desktopRendersNext = false;
   desktopSizeAnswer = null;
+  desktopPaintsNothing = false;
+  desktopCaptureStarted = Promise.withResolvers<void>();
   desktopDetachReady = Promise.withResolvers<void>();
   desktopReleased = Promise.withResolvers<void>();
   releasedDesktopTabs.length = 0;
@@ -545,6 +554,51 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
 
       expect(headlessOf(tabId)).toBe(true);
       expect(headlessOf(desktopTab.tabId)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a desktop tab that paints nothing moves to headless and its viewer reconnects", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* ready;
+      desktopRendersNext = true;
+      const url = "https://example.com/account";
+      const { tabId } = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        url,
+      });
+      yield* manager.reportStatus({
+        threadId: scope.thread.threadId,
+        tabId,
+        navStatus: { _tag: "Success", url, title: "Account" },
+        canGoBack: false,
+        canGoForward: false,
+        serverControlled: true,
+      });
+      desktopPaintsNothing = true;
+      const attaching = yield* browser
+        .attachViewer(viewerInput(tabId, true))
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => desktopCaptureStarted.promise);
+      yield* TestClock.adjust("5 seconds");
+      const stalled = yield* Fiber.join(attaching);
+
+      const items = yield* Queue.clear(stalled.output);
+      expect(items.map((item) => item._tag)).toContain("reconnect");
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      const moved = sessions.find((session) => session.tabId === tabId);
+      expect(moved?.headless).toBe(true);
+
+      desktopPaintsNothing = false;
+      yield* browser.attachViewer(viewerInput(tabId, true));
+      expect(contexts.at(-1)!.page.goto).toHaveBeenCalledWith(
+        url,
+        expect.objectContaining({ waitUntil: "commit" }),
+      );
     }),
   ).pipe(Effect.provide(layer)),
 );

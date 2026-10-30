@@ -44,7 +44,7 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<void, PreviewError>;
     /** Records that a server tab runs headless. It stays headless until it closes. */
     readonly markHeadless: (
-      input: PreviewCloseInput & { readonly tabId: string },
+      input: PreviewCloseInput & { readonly tabId: string; readonly reload?: boolean },
     ) => Effect.Effect<void, PreviewError>;
     readonly requestReveal: (
       input: PreviewCloseInput & { readonly tabId: string; readonly force: boolean },
@@ -278,8 +278,14 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       input.tabId,
       Effect.fn("PreviewManager.markSessionHeadless")(function* (session) {
         if (session.snapshot.headless) return { next: session, emit: null, result: undefined };
+        const { navStatus } = session.snapshot;
         const snapshot: PreviewSessionSnapshot = {
           ...session.snapshot,
+          // A new headless page only loads a tab that is still marked as loading.
+          navStatus:
+            input.reload && navStatus._tag === "Success"
+              ? { ...navStatus, _tag: "Loading" }
+              : navStatus,
           headless: true,
           updatedAt: yield* currentIsoTimestamp,
         };
