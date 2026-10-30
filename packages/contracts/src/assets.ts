@@ -80,7 +80,7 @@ export const AssetCreateUrlResult = Schema.Struct({
     TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   ),
   imageDimensions: Schema.optional(AssetImageDimensions),
-  /** Changes only when the file's contents or identity change, unlike `relativeUrl`, which is re-signed on every mint. */
+  /** Changes when the file, its identity, or its loaded local assets change; URL renewals alone keep it stable. */
   fileRevision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;

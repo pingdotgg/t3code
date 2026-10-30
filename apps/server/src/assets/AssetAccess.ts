@@ -62,9 +62,15 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import * as WorkspacePreviewRevisions from "./WorkspacePreviewRevisions.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
-import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
+import {
+  mediaFileRevision,
+  openMediaFile,
+  readMediaFileHeader,
+  type OpenMediaFile,
+} from "./MediaFile.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -402,7 +408,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
                 : Effect.succeed(null),
               (dimensions) => ({
                 identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
-                fileRevision: `${file.info.dev}:${file.info.ino}:${file.info.size}:${file.info.mtimeNs}:${file.info.ctimeNs}`,
+                fileRevision: mediaFileRevision(file.info),
                 dimensions,
               }),
             ),
@@ -500,13 +506,36 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           }),
       ),
     );
-    const imageDimensions = HEADER_IMAGE_EXTENSIONS.has(
-      path.extname(resolved.relativePath).toLowerCase(),
-    )
-      ? yield* readImageDimensionsFromHeader(canonicalFile)
-      : null;
+    const opened = yield* Effect.gen(function* () {
+      const file = yield* openMediaFile(canonicalFile);
+      if (file === null) return null;
+      return {
+        fileRevision: mediaFileRevision(file.info),
+        imageDimensions: HEADER_IMAGE_EXTENSIONS.has(
+          path.extname(resolved.relativePath).toLowerCase(),
+        )
+          ? yield* readImageDimensionsFromOpenFile(canonicalFile, file)
+          : null,
+      };
+    }).pipe(
+      Effect.scoped,
+      Effect.mapError(
+        (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+      ),
+    );
+    if (opened === null) {
+      return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+    }
+    const isHtml = /\.html?$/i.test(resolved.relativePath);
+    const fileRevision = isHtml
+      ? yield* (yield* WorkspacePreviewRevisions.WorkspacePreviewRevisions).revision({
+          workspaceRoot: canonicalWorkspaceRoot,
+          baseRelativePath: path.dirname(resolved.relativePath),
+          fileRevision: opened.fileRevision,
+        })
+      : opened.fileRevision;
     return {
-      claims: !/\.html?$/i.test(resolved.relativePath)
+      claims: !isHtml
         ? {
             version: 1 as const,
             kind: "workspace-file-exact" as const,
@@ -522,8 +551,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             expiresAt: input.expiresAt,
           },
       fileName: path.basename(resolved.relativePath),
-      imageDimensions,
-      fileRevision: undefined,
+      imageDimensions: opened.imageDimensions,
+      fileRevision,
     };
   },
 );
@@ -598,6 +627,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
+      fileRevision = finalized.fileRevision;
       break;
     }
     case "draft-workspace-file": {
@@ -1036,6 +1066,12 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     claims.baseRelativePath === "." ? decodedPath : path.join(claims.baseRelativePath, decodedPath);
   const workspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({
     workspaceRoot: claims.workspaceRoot,
+    relativePath: joinedRelativePath,
+  });
+  const revisions = yield* WorkspacePreviewRevisions.WorkspacePreviewRevisions;
+  yield* revisions.observe({
+    workspaceRoot: claims.workspaceRoot,
+    baseRelativePath: claims.baseRelativePath,
     relativePath: joinedRelativePath,
   });
   return workspaceFile ? ({ kind: "file", path: workspaceFile } satisfies ResolvedAsset) : null;

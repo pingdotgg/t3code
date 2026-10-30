@@ -33,6 +33,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import * as WorkspacePreviewRevisions from "./WorkspacePreviewRevisions.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { fakeSourceControlDriverInstance } from "@t3tools/source-control-testing/fakeSourceControlDriver";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
@@ -118,6 +119,7 @@ const layerTest = Layer.mergeAll(
     Layer.provide(T3ProjectFileLoader.layer),
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(layerConfig)),
+  WorkspacePreviewRevisions.layer,
   ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -807,41 +809,109 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("versions media by file changes rather than by re-signing", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-revision-" });
-      const filePath = path.join(root, "recording.mp4");
-      yield* fs.writeFileString(filePath, "original");
-      yield* Effect.promise(() => NodeFSP.utimes(filePath, 1_000, 1_000));
-      const input = {
-        resource: {
-          _tag: "media-file" as const,
-          threadId: ThreadId.make("thread-1"),
-          path: filePath,
-        },
-      };
-      const original = yield* issueAssetUrl(input);
-      expect(original.fileRevision).toEqual(expect.any(String));
+  it.effect.each(["media-file", "workspace-file", "draft-workspace-file"] as const)(
+    "versions %s by file changes rather than by re-signing",
+    (kind) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-revision-" });
+        const filePath = path.join(root, "report.html");
+        yield* fs.writeFileString(filePath, "original");
+        yield* Effect.promise(() => NodeFSP.utimes(filePath, 1_000, 1_000));
+        const input = {
+          resource:
+            kind === "draft-workspace-file"
+              ? { _tag: kind, cwd: root, path: "report.html" }
+              : { _tag: kind, threadId: ThreadId.make("thread-1"), path: filePath },
+          workspaceRoot: root,
+        };
+        const original = yield* issueAssetUrl(input);
+        expect(original.fileRevision).toEqual(expect.any(String));
 
-      yield* TestClock.adjust("1 minute");
-      const renewed = yield* issueAssetUrl(input);
-      expect(renewed.relativeUrl).not.toBe(original.relativeUrl);
-      expect(renewed.fileRevision).toBe(original.fileRevision);
+        yield* TestClock.adjust("1 minute");
+        const renewed = yield* issueAssetUrl(input);
+        expect(renewed.relativeUrl).not.toBe(original.relativeUrl);
+        expect(renewed.fileRevision).toBe(original.fileRevision);
 
-      yield* fs.writeFileString(filePath, "modified");
-      yield* Effect.promise(() => NodeFSP.utimes(filePath, 2_000, 2_000));
-      const edited = yield* issueAssetUrl(input);
-      expect(edited.fileRevision).not.toBe(original.fileRevision);
+        yield* fs.writeFileString(filePath, "modified");
+        yield* Effect.promise(() => NodeFSP.utimes(filePath, 2_000, 2_000));
+        const edited = yield* issueAssetUrl(input);
+        expect(edited.fileRevision).not.toBe(original.fileRevision);
 
-      const replacement = path.join(root, "replacement.mp4");
-      yield* fs.writeFileString(replacement, "modified");
-      yield* Effect.promise(() => NodeFSP.utimes(replacement, 2_000, 2_000));
-      yield* fs.rename(replacement, filePath);
-      const replaced = yield* issueAssetUrl(input);
-      expect(replaced.fileRevision).not.toBe(edited.fileRevision);
-    }).pipe(Effect.provide(layerTest)),
+        const replacement = path.join(root, "replacement.html");
+        yield* fs.writeFileString(replacement, "modified");
+        yield* Effect.promise(() => NodeFSP.utimes(replacement, 2_000, 2_000));
+        yield* fs.rename(replacement, filePath);
+        const replaced = yield* issueAssetUrl(input);
+        expect(replaced.fileRevision).not.toBe(edited.fileRevision);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["workspace-file", "draft-workspace-file"] as const)(
+    "refreshes %s HTML when loaded local assets change",
+    (kind) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-preview-dependencies-" });
+        const htmlPath = path.join(root, "report.html");
+        const cssPath = path.join(root, "styles.css");
+        const scriptPath = path.join(root, "app.js");
+        const unrelatedPath = path.join(root, "unrelated.css");
+        yield* fs.writeFileString(
+          htmlPath,
+          '<link rel="stylesheet" href="styles.css"><script src="app.js"></script>',
+        );
+        yield* fs.writeFileString(cssPath, "body{color:red}");
+        yield* fs.writeFileString(scriptPath, "window.answer=1");
+        yield* fs.writeFileString(unrelatedPath, "unrelated");
+        const input = {
+          resource:
+            kind === "draft-workspace-file"
+              ? { _tag: kind, cwd: root, path: "report.html" }
+              : { _tag: kind, threadId: ThreadId.make("thread-1"), path: htmlPath },
+          workspaceRoot: root,
+        };
+        const original = yield* issueAssetUrl(input);
+        const suffix = original.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+        for (const name of ["report.html", "styles.css", "app.js"]) {
+          expect(yield* resolveAsset(token, name)).not.toBeNull();
+        }
+        expect(yield* resolveAsset(token, "missing.css")).toBeNull();
+        yield* fs.writeFileString(unrelatedPath, "edited unrelated file");
+        const unchanged = yield* issueAssetUrl(input);
+        expect(unchanged.fileRevision).toBe(original.fileRevision);
+
+        yield* fs.writeFileString(cssPath, "body{color:tan}");
+        yield* Effect.promise(() => NodeFSP.utimes(cssPath, 2_000, 2_000));
+        const cssEdited = yield* issueAssetUrl(input);
+        expect(cssEdited.fileRevision).not.toBe(unchanged.fileRevision);
+        expect((yield* issueAssetUrl(input)).fileRevision).toBe(cssEdited.fileRevision);
+
+        yield* fs.writeFileString(scriptPath, "window.answer=2");
+        yield* Effect.promise(() => NodeFSP.utimes(scriptPath, 3_000, 3_000));
+        expect(yield* resolveAsset(token, "app.js")).not.toBeNull();
+        const jsEdited = yield* issueAssetUrl(input);
+        expect(jsEdited.fileRevision).not.toBe(cssEdited.fileRevision);
+
+        const replacement = path.join(root, "replacement.js");
+        yield* fs.writeFileString(replacement, "window.answer=2");
+        yield* Effect.promise(() => NodeFSP.utimes(replacement, 3_000, 3_000));
+        yield* fs.rename(replacement, scriptPath);
+        const replaced = yield* issueAssetUrl(input);
+        expect(replaced.fileRevision).not.toBe(jsEdited.fileRevision);
+
+        yield* fs.remove(cssPath);
+        const deleted = yield* issueAssetUrl(input);
+        expect(deleted.fileRevision).not.toBe(replaced.fileRevision);
+        expect((yield* issueAssetUrl(input)).fileRevision).toBe(deleted.fileRevision);
+
+        yield* fs.writeFileString(path.join(root, "missing.css"), "body{color:red}");
+        const created = yield* issueAssetUrl(input);
+        expect(created.fileRevision).not.toBe(deleted.fileRevision);
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("keeps in-place edits readable but requires a new URL after atomic replacement", () =>

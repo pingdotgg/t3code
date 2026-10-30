@@ -1,5 +1,5 @@
 import DocumentPages, { sanitizeDocumentHtml } from "./DocumentPages";
-import { act, render, stubGlobal, type Screen } from "../../../test/render";
+import { act, fakeTimers, render, stubGlobal, type Screen } from "../../../test/render";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -459,6 +459,106 @@ describe("bounded binary previews", () => {
   });
 });
 import { OFFICE_PREVIEW_MAX_COLUMNS, type OfficeWorkerResult } from "./officePreviewProtocol";
+
+describe("workspace browser preview", () => {
+  it("keeps scroll and form input through unrelated commands and reloads changed files", async () => {
+    using _timers = fakeTimers({ now: 0 });
+    refresh.mockReset();
+    assetUrlState.mockReset();
+    const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+    const url = URL.createObjectURL(
+      new Blob(
+        [
+          `<input id="note"><div style="height:4000px"></div><script>
+            addEventListener("message", (event) => {
+              if (event.data === "edit") {
+                document.getElementById("note").value = "Keep my place";
+                scrollTo(0, 800);
+              }
+              parent.postMessage({ value: document.getElementById("note").value, scrollTop: scrollY }, "*");
+            });
+            parent.postMessage("preview-ready", "*");
+          </script>`,
+        ],
+        { type: "text/html" },
+      ),
+    );
+    const ready = vi.fn();
+    const onMessage = (event: MessageEvent) => {
+      if (event.data === "preview-ready") ready();
+    };
+    window.addEventListener("message", onMessage);
+    using _fixture = {
+      [Symbol.dispose]() {
+        window.removeEventListener("message", onMessage);
+        URL.revokeObjectURL(url);
+      },
+    };
+    const state = (suffix: string, fileRevision?: string, expiresAt = 3_600_000) =>
+      assetUrlState.mockReturnValue({
+        _tag: "Success",
+        url: `${url}#${suffix}`,
+        expiresAt,
+        ...(fileRevision === undefined ? {} : { fileRevision }),
+      });
+    const preview = (mutation: string | null) => (
+      <div className="flex h-[400px] w-[600px] flex-col">
+        <WorkspaceBrowserPreview
+          environmentId={EnvironmentId.make("test")}
+          threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+          draft={false}
+          absolutePath="/repo/report.html"
+          workspaceRoot="/repo"
+          title="report.html"
+          workspaceMutationId={mutation}
+        />
+      </div>
+    );
+    const readState = (frame: HTMLIFrameElement, command = "read") =>
+      new Promise<{ value: string; scrollTop: number }>((resolve) => {
+        const receive = (event: MessageEvent) => {
+          if (event.source !== frame.contentWindow || typeof event.data !== "object") return;
+          window.removeEventListener("message", receive);
+          resolve(event.data);
+        };
+        window.addEventListener("message", receive);
+        frame.contentWindow!.postMessage(command, "*");
+      });
+
+    state("initial", "one");
+    await using screen = await render(preview(null));
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(1));
+    const frame = screen.container.querySelector("iframe")!;
+    expect(await readState(frame, "edit")).toEqual({ value: "Keep my place", scrollTop: 800 });
+
+    for (const mutation of ["first-command", "next-command"]) {
+      state(mutation, "one");
+      await screen.rerender(preview(mutation));
+      expect(screen.container.querySelector("iframe")).toBe(frame);
+      expect(await readState(frame)).toEqual({ value: "Keep my place", scrollTop: 800 });
+    }
+
+    state("next-command", "two");
+    await screen.rerender(preview("file-edit"));
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(2));
+    const edited = screen.container.querySelector("iframe")!;
+    expect(edited).not.toBe(frame);
+    expect(await readState(edited)).toEqual({ value: "", scrollTop: 0 });
+
+    state("renewed", "two", 7_200_000);
+    await screen.rerender(preview("renewed-command"));
+    expect(screen.container.querySelector("iframe")).toBe(edited);
+    await act(() => vi.advanceTimersByTime(3_570_000));
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(3));
+    expect(screen.container.querySelector("iframe")).not.toBe(edited);
+
+    state("legacy");
+    await screen.rerender(preview("legacy-command"));
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(4));
+    await screen.rerender(preview("legacy-edit"));
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(5));
+  });
+});
 
 describe("large text preview recovery", () => {
   it("retains the workspace viewer across URL renewals and reloads revisions and manual refreshes", async () => {

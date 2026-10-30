@@ -58,6 +58,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
+import { useDeadlinePassed } from "~/hooks/useDeadline";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
@@ -222,7 +223,7 @@ function WorkspaceImagePreview(props: {
   );
 }
 
-function WorkspaceBrowserPreview(props: {
+export function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -238,11 +239,29 @@ function WorkspaceBrowserPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const assetUrl = useAssetUrlState(props.environmentId, resource, props.workspaceMutationId);
+  const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
+  const revision = fileRevision ?? props.workspaceMutationId;
   const revisionSuffix =
-    props.workspaceMutationId === null
+    revision === null
       ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
+  const documentRevision = JSON.stringify([props.environmentId, resource, revision]);
+  const [documentGrant, setDocumentGrant] = useState<{
+    revision: string;
+    expiresAt: number;
+  } | null>(null);
+  const documentGrantExpiring = useDeadlinePassed(
+    documentGrant === null ? null : documentGrant.expiresAt - 60_000,
+  );
+  if (
+    assetUrl._tag === "Success" &&
+    (documentGrant === null ||
+      documentGrant.revision !== documentRevision ||
+      (assetUrl.expiresAt > documentGrant.expiresAt && documentGrantExpiring))
+  ) {
+    setDocumentGrant({ revision: documentRevision, expiresAt: assetUrl.expiresAt });
+  }
 
   if (assetUrl._tag === "Failure") {
     return (
@@ -261,7 +280,7 @@ function WorkspaceBrowserPreview(props: {
   return (
     <BrowserDocumentFrame
       src={`${assetUrl.url}${revisionSuffix}`}
-      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${props.workspaceMutationId}`}
+      documentKey={JSON.stringify([documentRevision, documentGrant?.expiresAt])}
       title={props.title}
       pdf={isPdfPreviewFile(props.absolutePath)}
     />

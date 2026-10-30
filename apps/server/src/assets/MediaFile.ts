@@ -39,6 +39,9 @@ export interface OpenMediaFile {
   readonly info: NodeFS.BigIntStats;
 }
 
+export const mediaFileRevision = (info: OpenMediaFile["info"]) =>
+  `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+
 const realpathLikeFileSystem = (filePath: string) =>
   new Promise<string>((resolve, reject) => {
     NodeFS.realpath(filePath, (error, resolved) => (error ? reject(error) : resolve(resolved)));
