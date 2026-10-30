@@ -113,6 +113,16 @@ const SERVICE_TIER_DESCRIPTIONS: Readonly<Record<string, string>> = {
   ultrafast: "Even faster, more expensive",
 };
 
+const DEFAULT_CYBER_ACCESS_PROGRAM_ID = "default";
+
+const CYBER_ACCESS_PROGRAM_LABELS: Readonly<
+  Record<CodexSchema.V2ModelListResponse__CyberAccessProgram, string>
+> = {
+  standard: "Standard",
+  daybreakBlue: "Daybreak Blue",
+  daybreakRed: "Daybreak Red",
+};
+
 function reasoningEffortLabel(reasoningEffort: string): string {
   return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
 }
@@ -239,6 +249,24 @@ export function mapCodexModelCapabilities(
         }),
       ],
       currentValue: defaultServiceTier,
+    });
+  }
+  const cyberAccessPrograms = (model.availableAccessPrograms?.cyber ?? []).filter(
+    (program) => program !== "standard",
+  );
+  if (cyberAccessPrograms.length > 0) {
+    optionDescriptors.push({
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      options: [
+        { id: DEFAULT_CYBER_ACCESS_PROGRAM_ID, label: "Automatic", isDefault: true },
+        ...cyberAccessPrograms.map((program) => ({
+          id: program,
+          label: CYBER_ACCESS_PROGRAM_LABELS[program],
+        })),
+      ],
+      currentValue: DEFAULT_CYBER_ACCESS_PROGRAM_ID,
     });
   }
 
