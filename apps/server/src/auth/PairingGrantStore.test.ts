@@ -138,6 +138,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       const exact = yield* bootstrapCredentials.consume("abcdefghjkmn");
       const otherCase = yield* Effect.flip(bootstrapCredentials.consume("ABCDEFGHJKMN"));
 
+      const forbidden = yield* Effect.flip(
+        bootstrapCredentials.consume("abcdefghjkmn", { requiredScopes: ["review:write"] }),
+      );
+      expect(forbidden._tag).toBe("BootstrapCredentialScopeNotGrantedError");
       expect(exact.method).toBe("desktop-bootstrap");
       expect(otherCase._tag).toBe("UnknownBootstrapCredentialError");
     }).pipe(
