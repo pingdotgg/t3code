@@ -227,7 +227,27 @@ describe("thread details limits", () => {
     expect(resolved).toEqual({ limits: limitsAt(40), sourceLabel: null });
   });
 
-  it("ignores hub accounts for other drivers and hub accounts without usable limits", () => {
+  it("keeps the instance's notice when a second hub account has no usable limits", () => {
+    // The hub may route the thread through either account, so the readable one is not enough.
+    const resolved = resolveThreadDetailsLimits(
+      instanceId,
+      [claudeInstance(unsupported)],
+      [
+        hub("hub", [
+          { id: "claude-a.json", limits: limitsAt(19) },
+          {
+            id: "claude-b.json",
+            limits: { ...unsupported, unavailable: { reason: "probeFailed" } },
+          },
+        ]),
+      ],
+      now,
+    );
+
+    expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
+  });
+
+  it("ignores other drivers' hub accounts but not the only account's unusable limits", () => {
     const resolved = resolveThreadDetailsLimits(
       instanceId,
       [claudeInstance(unsupported)],
