@@ -125,6 +125,7 @@ export function AppearanceSettingsPanel() {
   const chatCustomWidthRatio =
     (settings.chatCustomWidthRem - MIN_CHAT_CUSTOM_WIDTH_REM) /
     (MAX_CHAT_CUSTOM_WIDTH_REM - MIN_CHAT_CUSTOM_WIDTH_REM);
+  const chatCustomWidthLabel = `${settings.chatCustomWidthRem * settings.fontSizeInterface} px`;
   const chatCustomWidthSliderStyle = {
     "--settings-slider-progress": `${chatCustomWidthRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - chatCustomWidthRatio}rem`,
@@ -256,7 +257,8 @@ export function AppearanceSettingsPanel() {
           {...searchableSetting("chat-width")}
           description="Set how wide messages and the composer can grow on large screens."
           resetAction={
-            settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
+            settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ||
+            settings.chatCustomWidthRem !== DEFAULT_UNIFIED_SETTINGS.chatCustomWidthRem ? (
               <SettingResetButton
                 label="chat width"
                 onClick={() =>
@@ -302,10 +304,11 @@ export function AppearanceSettingsPanel() {
                   className="min-w-18 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
                   htmlFor="chat-custom-width"
                 >
-                  {settings.chatCustomWidthRem * settings.fontSizeInterface} px
+                  {chatCustomWidthLabel}
                 </output>
                 <input
                   aria-label="Custom chat width"
+                  aria-valuetext={`${chatCustomWidthLabel}`}
                   className="settings-slider min-w-0 flex-1"
                   id="chat-custom-width"
                   max={MAX_CHAT_CUSTOM_WIDTH_REM}
