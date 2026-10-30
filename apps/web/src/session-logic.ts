@@ -697,7 +697,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
 
     const htmlRender =
       item.type === "dynamic_tool" && item.status === "completed"
-        ? htmlRenderFromToolItem(item)
+        ? htmlRenderFromToolItem(item, row.sourceThreadId)
         : undefined;
     if (htmlRender !== undefined) {
       entries.push({

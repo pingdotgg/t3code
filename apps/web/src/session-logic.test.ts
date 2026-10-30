@@ -1346,6 +1346,41 @@ describe("HTML renders in the timeline", () => {
     expect(rowsFor(entries, true)).toEqual(["message", "turn-fold", "attempt-fold", "html-render"]);
   });
 
+  it("shows a page an execute script returned only when it was published for the row's thread", () => {
+    const page = (thread: string) => ({
+      attachmentId: `${thread}-00000000-0000-4000-8000-000000000001-html`,
+      title: "Chart",
+      height: 420,
+    });
+    const executeCall = (render: ReturnType<typeof page>): OrchestrationV2TurnItem => ({
+      ...base("render", 2),
+      type: "dynamic_tool",
+      toolName: "execute",
+      input: { code: "return await tools.render()" },
+      output: JSON.stringify({ htmlRender: render }),
+    });
+    expect(
+      turn(executeCall(page("render-thread"))).find((e) => e.kind === "html-render"),
+    ).toMatchObject({ htmlRender: page("render-thread") });
+    const foreign = turn(executeCall(page("other-thread")));
+    expect(foreign.some((entry) => entry.kind === "html-render")).toBe(false);
+    // A delegated child's row is checked against the child, not the thread showing it.
+    const child = ThreadId.make("child-thread");
+    const merged = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        { ...visible(executeCall(page("child-thread"))), sourceThreadId: child },
+        {
+          ...visible({ ...executeCall(page("render-thread")), id: TurnItemId.make("render-2") }),
+          sourceThreadId: child,
+        },
+      ],
+      optimisticMessages: [],
+    });
+    expect(merged.filter((entry) => entry.kind === "html-render").map((entry) => entry.id)).toEqual(
+      ["render"],
+    );
+  });
+
   it.each([
     ["running", "running", undefined],
     ["failed", "failed", { content: [{ type: "text", text: "Invalid HTML" }], isError: true }],

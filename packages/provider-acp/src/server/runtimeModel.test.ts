@@ -1203,6 +1203,80 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recovers T3 identity from CodeBuddy's qualified rawInput.toolName", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-1",
+      kind: "Tool",
+      title: "Tool",
+      status: "in_progress",
+      rawInput: { toolName: "mcp__t3-code__html_render", arguments: {} },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+  });
+
+  it("ignores an unqualified rawInput.toolName such as a ToolSearch query", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-1",
+      kind: "search",
+      title: "ToolSearch",
+      status: "in_progress",
+      rawInput: { toolName: "html_render", query: "render html" },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
+  });
+
+  it("recovers T3 identity from Devin's namespaced inference tool name", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-2",
+      kind: "DeferExecuteTool",
+      title: "Deferred tool call",
+      status: "in_progress",
+      rawInput: { server_name: "other", tool_name: "html_render" },
+      _meta: { "cognition.ai/inferenceToolName": "mcp__t3-code__html_render" },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+  });
+
+  it("recovers T3 identity from Grok's snake_case rawInput and annotated titles", () => {
+    const snakeCase = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-3",
+      kind: "UseTool",
+      title: "UseTool",
+      status: "in_progress",
+      rawInput: { server_name: "t3-code", tool_name: "html_render" },
+      _meta: { is_mcp_tool_call: true },
+    });
+    const filePassed = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-4",
+      kind: "UseTool",
+      title: "t3-code__html_render — source file: /tmp/mcp-render.json",
+      status: "in_progress",
+      rawInput: { tool_name: "html_render", tool_input: { height: 200 }, variant: "UseTool" },
+      _meta: { is_mcp_tool_call: true },
+    });
+
+    for (const toolCall of [snakeCase, filePassed]) {
+      expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+        server: "t3-code",
+        tool: "html_render",
+      });
+    }
+  });
+
   it("recovers T3 identity from acp-mcp-call fallback commands", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",

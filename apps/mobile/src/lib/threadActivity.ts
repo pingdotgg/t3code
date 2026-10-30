@@ -2087,7 +2087,7 @@ export function buildThreadFeed(
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
     const render =
       item.type === "dynamic_tool" && item.status === "completed"
-        ? htmlRenderFromToolItem(item)
+        ? htmlRenderFromToolItem(item, row.sourceThreadId)
         : undefined;
     if (render) {
       const entry: RawThreadFeedEntry = {

@@ -127,6 +127,10 @@
       "types": "./src/toolOutput.ts",
       "import": "./src/toolOutput.ts"
     },
+    "./attachmentIds": {
+      "types": "./src/attachmentIds.ts",
+      "import": "./src/attachmentIds.ts"
+    },
     "./htmlRender": {
       "types": "./src/htmlRender.ts",
       "import": "./src/htmlRender.ts"

@@ -132,6 +132,18 @@ describe("compactDynamicToolOutput", () => {
       threadId: "known",
     });
   });
+
+  it("keeps outer metadata when a text field holds no result", () => {
+    expect(compactDynamicToolOutput({ threadId: "thread-1", text: '{"a":1}' })).toEqual({
+      threadId: "thread-1",
+    });
+    expect(compactDynamicToolOutput({ type: "text", threadId: "thread-1", text: "{}" })).toEqual({
+      threadId: "thread-1",
+    });
+    expect(compactDynamicToolOutput({ threadId: "thread-1", text: "x".repeat(20_000) })).toEqual({
+      threadId: "thread-1",
+    });
+  });
 });
 
 describe("toolOutputIndicatesFailure", () => {

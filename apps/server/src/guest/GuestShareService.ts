@@ -653,7 +653,7 @@ const make = Effect.gen(function* () {
   const render = Effect.fn("GuestShareService.render")(function* (session: string, itemId: string) {
     const { thread, item } = yield* threadItem(session, itemId);
     if (item.type !== "dynamic_tool") return yield* unavailable;
-    const reference = htmlRenderFromToolItem(item);
+    const reference = htmlRenderFromToolItem(item, thread.id);
     const [attachmentId] = threadHtmlRenderAttachmentIds(thread.id, [item]);
     const path =
       attachmentId === undefined

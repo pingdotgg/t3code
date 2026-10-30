@@ -5236,7 +5236,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       FROM orchestration_v2_projection_turn_items
       WHERE thread_id = ${threadId}
         AND type = 'dynamic_tool'
-        AND (payload_json LIKE '%htmlRender%' OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`})
+        AND (
+          payload_json LIKE '%htmlRender%'
+          -- An execute script can return a page's reference without the htmlRender key.
+          OR payload_json LIKE '%-html%'
+          OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
+        )
     `,
         // A guest's waiting files are pending uploads that no message row holds yet.
         sql<{ id: string }>`

@@ -1089,8 +1089,11 @@ export function extractMcpToolCallIdentity(
 ): AcpMcpToolCallIdentity | undefined {
   const rawInput = isRecord(toolCall.data.rawInput) ? toolCall.data.rawInput : undefined;
   const meta = isRecord(toolCall.data.meta) ? toolCall.data.meta : undefined;
-  const server = typeof rawInput?.server === "string" ? rawInput.server.trim() : "";
-  const tool = typeof rawInput?.tool === "string" ? rawInput.tool.trim() : "";
+  // Grok spells these snake_case.
+  const rawServer = rawInput?.server ?? rawInput?.server_name;
+  const rawTool = rawInput?.tool ?? rawInput?.tool_name;
+  const server = typeof rawServer === "string" ? rawServer.trim() : "";
+  const tool = typeof rawTool === "string" ? rawTool.trim() : "";
   if (meta?.is_mcp_tool_call === true && server.length > 0 && tool.length > 0) {
     return { server, tool };
   }
@@ -1133,10 +1136,18 @@ export function extractMcpToolCallIdentity(
     meta?.toolName,
     claudeCode?.toolName,
     gooseToolCall?.toolName,
+    meta?.["cognition.ai/inferenceToolName"],
+    // CodeBuddy keeps the qualified `mcp__<server>__<tool>` name here; built-ins such as ToolSearch put bare names here.
+    typeof rawInput?.toolName === "string" && /^mcp__.+?__.+$/i.test(rawInput.toolName.trim())
+      ? rawInput.toolName
+      : undefined,
     toolCall.data.title,
   ].filter((value): value is string => typeof value === "string");
   for (const candidate of candidates) {
-    const trimmed = candidate.trim();
+    // Grok annotates file-passed calls: "t3-code__html_render — source file: /tmp/x.json".
+    // oxlint-disable-next-line t3code/no-em-dash-copy -- Matches Grok's title, not product copy.
+    const annotation = candidate.indexOf(" — source file:");
+    const trimmed = (annotation === -1 ? candidate : candidate.slice(0, annotation)).trim();
     const qualified = /^mcp__(.+?)__(.+)$/i.exec(trimmed);
     if (qualified?.[1] && qualified[2] && !/^t3[-_ ]?code$/i.test(qualified[1]))
       return { server: qualified[1], tool: qualified[2] };

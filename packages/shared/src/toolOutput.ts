@@ -9,6 +9,7 @@ import {
   readHtmlRenderReference,
   type HtmlRenderReference,
 } from "./htmlRender.ts";
+import { attachmentIdBelongsToThread } from "./attachmentIds.ts";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference, type McpAppReference } from "./mcpApp.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
@@ -75,7 +76,7 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     let data: ResultEnvelope["data"];
     let failed = false;
     for (const block of value) {
-      const text = Predicate.isObject(block) ? block.text : undefined;
+      const text = Predicate.isObject(block) ? (block.text ?? block.content) : undefined;
       const result = readResult(
         Predicate.isObject(text) ? (text.text ?? text) : text,
         budget,
@@ -88,6 +89,7 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     return { ...(data === undefined ? {} : { data }), failed };
   }
   if (!Predicate.isObject(value)) return { failed: false };
+  if (isTextContentBlock(value)) return readResult(value.text, budget, depth + 1);
   const failed =
     value.isError === true ||
     value.is_error === true ||
@@ -99,6 +101,19 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     return { ...nested, failed: failed || nested.failed };
   }
   return { data: value, failed };
+}
+
+const TEXT_CONTENT_BLOCK_KEYS = new Set(["type", "text", "annotations", "_meta"]);
+
+/** Some ACP agents persist a bare MCP text block; anything with extra keys keeps its own metadata. */
+function isTextContentBlock(
+  value: Record<PropertyKey, unknown>,
+): value is Record<PropertyKey, unknown> & { text: string } {
+  return (
+    value.type === "text" &&
+    typeof value.text === "string" &&
+    Object.keys(value).every((key) => TEXT_CONTENT_BLOCK_KEYS.has(key))
+  );
 }
 
 function boundedId(value: unknown): string | undefined {
@@ -123,7 +138,12 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       if (id !== undefined) output[key] = id;
     }
     if (data.status === "rolled_back") output.status = "rolled_back";
-    const htmlRender = readHtmlRenderReference(data.htmlRender);
+    // A Code Mode script may return html_render's reference unwrapped; only html_render mints `-html` ids.
+    const htmlRender =
+      readHtmlRenderReference(data.htmlRender) ??
+      (typeof data.attachmentId === "string" && data.attachmentId.endsWith("-html")
+        ? readHtmlRenderReference(data)
+        : undefined);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
     if (mcpApp !== undefined) output[MCP_APP_OUTPUT_KEY] = mcpApp;
@@ -176,13 +196,25 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   return Object.keys(output).length === 0 ? undefined : output;
 }
 
-export function htmlRenderFromToolItem(item: {
-  readonly toolName: string | null | undefined;
-  readonly output?: unknown;
-}): HtmlRenderReference | undefined {
-  if (resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
+/**
+ * OpenCode Code Mode runs T3 tools inside `execute`, whose output is whatever the script returned,
+ * so its page only counts when it was published for `threadId`, the thread that owns the item.
+ */
+export function htmlRenderFromToolItem(
+  item: {
+    readonly toolName: string | null | undefined;
+    readonly output?: unknown;
+  },
+  threadId?: string,
+): HtmlRenderReference | undefined {
+  const fromScript = item.toolName === "execute";
+  if (!fromScript && resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
   const output = compactDynamicToolOutput(item.output);
-  return output?.isError ? undefined : output?.htmlRender;
+  const render = output?.isError ? undefined : output?.htmlRender;
+  if (render === undefined || !fromScript) return render;
+  return threadId !== undefined && attachmentIdBelongsToThread(render.attachmentId, threadId)
+    ? render
+    : undefined;
 }
 
 /** Accept app references only when server and tool match the item, so tools cannot impersonate another app source. */
