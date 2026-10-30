@@ -45,6 +45,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -1089,6 +1090,8 @@ interface ActiveAcpTurn {
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
   readonly itemOrdinals: Map<string, number>;
+  readonly outgoingPrompt?: ReadonlyArray<EffectAcpSchema.ContentBlock> | undefined;
+  consumedPromptMessageId?: string;
   readonly user: ActiveTextStream;
   readonly assistant: ActiveTextStream;
   readonly reasoning: ActiveTextStream;
@@ -4938,6 +4941,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ) {
             yield* emitProviderRetry(context, "completed");
           }
+          if (
+            context.outgoingPrompt !== undefined &&
+            (update.sessionUpdate === "user_message" ||
+              update.sessionUpdate === "user_message_chunk")
+          ) {
+            // ACP v2 prompt acknowledgments lack a messageId; correlate one full echo by content.
+            if (
+              context.consumedPromptMessageId === undefined &&
+              update.sessionUpdate === "user_message" &&
+              Equal.equals(update.content, context.outgoingPrompt)
+            ) {
+              context.consumedPromptMessageId = update.messageId;
+            }
+            if (
+              context.consumedPromptMessageId !== undefined &&
+              context.consumedPromptMessageId === update.messageId
+            )
+              return;
+          }
           switch (update.sessionUpdate) {
             case "state_update": {
               const toolCallId = `${context.nativeTurnId}:requires-action`;
@@ -7492,6 +7514,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startedAt,
               completed,
               itemOrdinals: new Map(),
+              outgoingPrompt:
+                (yield* Ref.get(activeSessionSetup))?.initializeResult.protocolVersion === 2
+                  ? promptParts?.prompt
+                  : undefined,
               user: { current: null, nextSegment: 0 },
               assistant: { current: null, nextSegment: 0 },
               reasoning: { current: null, nextSegment: 0 },
