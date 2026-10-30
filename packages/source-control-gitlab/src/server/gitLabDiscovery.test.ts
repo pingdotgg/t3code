@@ -53,6 +53,21 @@ ${defaultHostOnly}`;
   }),
 );
 
+it("reports an update hint instead of unauthenticated when glab predates --all", () => {
+  const auth = GitLabSourceControlProvider.discovery.parseAuth(
+    processOutput("", {
+      stderr: "ERROR\n\n  Unknown flag: --all.\n\nUsage\n\n  glab auth status [--flags]\n",
+      exitCode: ChildProcessSpawner.ExitCode(1),
+    }),
+  );
+
+  assert.strictEqual(auth.status, "unknown");
+  assert.match(
+    Option.getOrElse(auth.detail, () => ""),
+    /1\.79\.0/,
+  );
+});
+
 it.effect.each([
   {
     name: "without relying on host naming",
