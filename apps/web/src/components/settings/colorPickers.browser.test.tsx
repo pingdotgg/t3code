@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { act, render } from "../../../test/render";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
@@ -69,7 +69,29 @@ async function renderThemeField(value: string) {
   });
 }
 
+function ControlledThemeField() {
+  const [value, setValue] = useState("#408080");
+  return <ThemeColorField role="accent" value={value} onChange={(_, next) => setValue(next)} />;
+}
+
 describe("theme color field", () => {
+  it("jumps hue to both endpoints without changing saturation or brightness", async () => {
+    await using _screen = await render(<ControlledThemeField />);
+    await open("Choose Accent color color");
+
+    await press(HUE, "Home");
+    expect(slider(HUE).getAttribute("aria-valuenow")).toBe("0");
+    expect(byLabel<HTMLInputElement>("Accent color picker hex value").value).toBe("#804040");
+
+    await press(HUE, "End");
+    expect(slider(HUE).getAttribute("aria-valuenow")).toBe("360");
+    expect(byLabel<HTMLInputElement>("Accent color picker hex value").value).toBe("#804040");
+
+    await press(HUE, "ArrowRight", true);
+    expect(slider(HUE).getAttribute("aria-valuenow")).toBe("10");
+    expect(byLabel<HTMLInputElement>("Accent color picker hex value").value).toBe("#804b40");
+  });
+
   it("keeps the selected hue when a grey color is echoed back from theme settings", async () => {
     await using screen = await renderThemeField("#ff0000");
     const { onChange, echo } = screen;
