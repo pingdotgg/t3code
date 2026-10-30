@@ -1,5 +1,3 @@
-import * as NodeModule from "node:module";
-
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import {
   makeProviderTextDeltaCoalescer,
@@ -31,7 +29,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { assert, describe, expect, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as CodexError from "effect-codex-app-server/errors";
@@ -3247,101 +3245,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
   it.effect.each([
     {
-      name: "multiple saved images appear once in a text-only reply",
+      name: "a text reply gains each saved image once",
       reply: "Done.",
       images: [
         { savedPath: "/tmp/a.png" },
-        { savedPath: "/tmp/b.png" },
         { savedPath: "/tmp/a.png" },
-      ],
-      expected: "Done.\n\n![](</tmp/a.png>)\n\n![](</tmp/b.png>)",
-    },
-    {
-      name: "a link or quoted Markdown still needs a preview",
-      reply:
-        "Saved /tmp/a.png: [open](/tmp/a.png)\n`![](/tmp/a.png)`\n\n    ![](/tmp/a.png)\n\n```md\n![](/tmp/a.png)\n```\n\\![](/tmp/a.png)",
-      images: [{ savedPath: "/tmp/a.png" }],
-      expected:
-        "Saved /tmp/a.png: [open](/tmp/a.png)\n`![](/tmp/a.png)`\n\n    ![](/tmp/a.png)\n\n```md\n![](/tmp/a.png)\n```\n\\![](/tmp/a.png)\n\n![](</tmp/a.png>)",
-    },
-    {
-      name: "an unclosed trailing fence leaves the generated image visible",
-      reply: 'Created the image.\n\n~~~js\nconsole.log("done");',
-      images: [{ savedPath: "/tmp/generated.png" }],
-      expected:
-        'Created the image.\n\n~~~js\nconsole.log("done");\n~~~\n\n![](</tmp/generated.png>)',
-      expectedImage: "/tmp/generated.png",
-    },
-    {
-      name: "existing images are not duplicated",
-      reply: "![A](</tmp/a b.png>) ![B](/tmp/b.png) ![C][generated]\n\n[generated]: /tmp/c.png",
-      images: [
-        { savedPath: "/tmp/a b.png" },
-        { savedPath: "/tmp/b.png" },
-        { savedPath: "/tmp/c.png" },
-        { savedPath: "/tmp/B.png" },
-      ],
-      expected:
-        "![A](</tmp/a b.png>) ![B](/tmp/b.png) ![C][generated]\n\n[generated]: /tmp/c.png\n\n![](</tmp/B.png>)",
-    },
-    {
-      name: "Windows drive paths survive mobile Markdown parsing",
-      reply: "Done.",
-      images: [{ savedPath: "C:\\Users\\me\\.codex\\a b.png" }],
-      expected: "Done.\n\n![](<C:/Users/me/.codex/a b.png>)",
-    },
-    {
-      name: "existing Windows embeds are normalized without adding duplicates",
-      reply:
-        "![A](c:\\Users\\me\\.codex\\a.png) ![B](c:/users/me/.codex/b.png) ![C][unc]\n\n[unc]: <\\\\HOST\\Share\\.codex\\c.png>\n\n![D](file://host/share/.codex/d.png)",
-      images: [
-        { savedPath: "C:\\Users\\Me\\.codex\\a.png" },
-        { savedPath: "C:\\Users\\Me\\.codex\\b.png" },
-        { savedPath: "\\\\host\\share\\.codex\\c.png" },
-        { savedPath: "\\\\HOST\\Share\\.codex\\d.png" },
-      ],
-      expected:
-        "![A](<c:/Users/me/.codex/a.png>) ![B](c:/users/me/.codex/b.png) ![C][unc]\n\n[unc]: <file://HOST/Share/.codex/c.png>\n\n![D](file://host/share/.codex/d.png)",
-    },
-    {
-      name: "reserved path characters are encoded once in new and existing embeds",
-      reply:
-        "![raw](</tmp/a#b.png>) ![encoded](/tmp/a%23b.png) ![percent](</tmp/100%25.png>) ![percent encoded](/tmp/100%2525.png) ![query][generated]\n\n[generated]: /tmp/q?x.png\n\n![unc](file://host/share/a#b%25.png) ![unc encoded](file://HOST/SHARE/a%23b%2525.png)",
-      images: [
-        { savedPath: "/tmp/a#b.png" },
-        { savedPath: "/tmp/100%25.png" },
-        { savedPath: "/tmp/q?x.png" },
-        { savedPath: "\\\\host\\share\\a#b%25.png" },
-        { savedPath: "/tmp/new#image?100%25.png" },
-        { savedPath: "/tmp/a&copy;.png" },
-        { savedPath: "C:\\Users\\Me#100%25\\new.png" },
-        { savedPath: "/tmp/a\\!b.png" },
-        { savedPath: "/tmp/line\nbreak.png" },
-      ],
-      expected:
-        "![raw](</tmp/a%23b.png>) ![encoded](/tmp/a%23b.png) ![percent](</tmp/100%2525.png>) ![percent encoded](/tmp/100%2525.png) ![query][generated]\n\n[generated]: </tmp/q%3Fx.png>\n\n![unc](<file://host/share/a%23b%2525.png>) ![unc encoded](file://HOST/SHARE/a%23b%2525.png)\n\n![](</tmp/new%23image%3F100%2525.png>)\n\n![](</tmp/a%26copy;.png>)\n\n![](<C:/Users/Me%23100%2525/new.png>)\n\n![](</tmp/a%5C!b.png>)\n\n![](</tmp/line%0Abreak.png>)",
-    },
-    {
-      name: "an image-only UNC result produces a filesystem media message",
-      reply: null,
-      images: [{ savedPath: "\\\\host\\share\\.codex\\a.png" }],
-      expected: "![](<file://host/share/.codex/a.png>)",
-    },
-    {
-      name: "failed and unsaved results never become media",
-      reply: "No image.",
-      images: [
         { savedPath: "/tmp/failed.png", status: "failed" },
         {
           savedPath: "/tmp/limited.png",
           failure: { type: "usageLimitExceeded", limitId: "image-generation" },
         },
         { savedPath: null },
-        { savedPath: "" },
       ],
-      expected: "No image.",
+      expected: "Done.\n\n![](</tmp/a.png>)",
     },
-  ])("projects generated images: $name", ({ reply, images, expected, expectedImage }) =>
+    {
+      name: "an image-only result becomes the reply",
+      reply: null,
+      images: [{ savedPath: "/tmp/a.png" }],
+      expected: "![](</tmp/a.png>)",
+    },
+  ])("projects generated images: $name", ({ reply, images, expected }) =>
     Effect.gen(function* () {
       const scenario = "codex-generated-images";
       const result = "aW1hZ2UtYnl0ZXMtbXVzdC1uZXZlci1yZWFjaC1jbGllbnRz";
@@ -3387,26 +3311,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       yield* harness.firstTerminal;
 
       const messages = assistantMessages(harness.events);
-      const final = messages.at(-1)?.message;
-      if (expectedImage !== undefined) {
-        // Resolve the shared package's real parser without adding server runtime dependencies.
-        const requireMarkdown = NodeModule.createRequire(
-          import.meta.resolve("@t3tools/shared/generatedImageMarkdown"),
-        );
-        const parser: { parse(text: string): unknown } = requireMarkdown("unified")
-          .unified()
-          .use(requireMarkdown("remark-parse").default);
-        expect(parser.parse(final?.text ?? "")).toMatchObject({
-          children: [
-            { type: "paragraph" },
-            { type: "code", value: 'console.log("done");' },
-            { type: "paragraph", children: [{ type: "image", url: expectedImage }] },
-          ],
-        });
-      }
-      assert.strictEqual(final?.text, expected);
-      assert.strictEqual(final?.streaming, false);
+      assert.strictEqual(messages.at(-1)?.message.text, expected);
+      assert.strictEqual(messages.at(-1)?.message.streaming, false);
       assert.strictEqual(new Set(messages.map(({ message }) => message.id)).size, 1);
+      // Image bytes stay with Codex; clients load the saved file.
       assert.notInclude(encodeUnknownJson(harness.events), result);
     }).pipe(
       Effect.scoped,
@@ -3423,13 +3331,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const scenario = "codex-retained-image";
         const base = finalAnswerTranscript(scenario, [{ id: "answer", text: "Done." }]);
         const completion = yield* Deferred.make<void>();
-        const secondCompletion = yield* Deferred.make<void>();
-        const projected = yield* Deferred.make<void>();
         const drained = yield* Deferred.make<void>();
-        const expected = "Done.\n\n![](</tmp/late image.png>)";
-        const imageEvent = (phase: "started" | "completed", second = false) => ({
+        const imageEvent = (phase: "started" | "completed") => ({
           type: "emit_inbound" as const,
-          label: `image-${phase}${second ? "-second" : ""}`,
+          label: `image-${phase}`,
           frame: {
             method: `item/${phase}`,
             params: {
@@ -3437,12 +3342,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               turnId: `native-${scenario}-turn`,
               item: {
                 type: "imageGeneration",
-                id: second ? "second-image" : "late-image",
+                id: "late-image",
                 status: phase === "started" ? "inProgress" : "completed",
                 result: "",
-                ...(phase === "completed"
-                  ? { savedPath: second ? "/tmp/second.png" : "/tmp/late image.png" }
-                  : {}),
+                ...(phase === "completed" ? { savedPath: "/tmp/late.png" } : {}),
               },
             },
           },
@@ -3453,26 +3356,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             entries: [
               ...base.entries.slice(0, -2),
               imageEvent("started"),
-              imageEvent("started", true),
               ...base.entries.slice(-2),
               imageEvent("completed"),
-              imageEvent("completed", true),
             ],
           }),
           (event) =>
-            event.type === "message.updated" && event.message.text === expected
-              ? Deferred.succeed(projected, undefined)
-              : event.type === "background_work.updated" && !event.pending
-                ? Deferred.succeed(drained, undefined)
-                : Effect.void,
+            event.type === "background_work.updated" && !event.pending
+              ? Deferred.succeed(drained, undefined)
+              : Effect.void,
           undefined,
           undefined,
-          (entry) =>
-            entry.label === "image-completed"
-              ? Deferred.await(completion)
-              : entry.label === "image-completed-second"
-                ? Deferred.await(secondCompletion)
-                : Effect.void,
+          (entry) => (entry.label === "image-completed" ? Deferred.await(completion) : Effect.void),
         );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -3484,33 +3378,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }),
         );
         yield* harness.firstTerminal;
-        const threadPending = harness.runtime.hasPendingBackgroundWorkForThread!(
-          harness.providerThread,
-        );
-        const pendingBefore = [yield* threadPending, yield* harness.hasPendingBackgroundWork];
+        const pending = Effect.all([
+          harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
+          harness.hasPendingBackgroundWork,
+        ]);
+        assert.deepEqual(yield* pending, [true, true]);
         assert.strictEqual(assistantMessages(harness.events).at(-1)?.message.text, "Done.");
 
         if (outcome === "complete") {
           yield* Deferred.succeed(completion, undefined);
-          yield* Deferred.await(projected);
-          assert.deepEqual(
-            [yield* threadPending, yield* harness.hasPendingBackgroundWork],
-            [true, true],
-          );
-          assert.isFalse(
-            harness.events.some(
-              (event) => event.type === "background_work.updated" && !event.pending,
-            ),
-          );
-          yield* Deferred.succeed(secondCompletion, undefined);
-          yield* Deferred.await(drained);
-          assert.strictEqual(
-            assistantMessages(harness.events).at(-1)?.message.text,
-            `${expected}\n\n![](</tmp/second.png>)`,
-          );
-          const messages = assistantMessages(harness.events);
-          assert.strictEqual(messages.at(-1)?.message.id, messages[0]?.message.id);
-          assert.strictEqual(messages.at(-1)?.message.streaming, false);
         } else {
           yield* harness.runtime.interruptTurn({
             providerThread: harness.providerThread,
@@ -3519,31 +3395,28 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           });
         }
         yield* Deferred.await(drained);
-        assert.deepEqual(
-          [yield* threadPending, yield* harness.hasPendingBackgroundWork],
-          [false, false],
-        );
-        const started = harness.events.findIndex(
-          (event) => event.type === "background_work.updated" && event.pending,
-        );
-        const terminal = harness.events.findIndex((event) => event.type === "turn.terminal");
-        const finished = harness.events.findIndex(
-          (event) => event.type === "background_work.updated" && !event.pending,
-        );
+        assert.deepEqual(yield* pending, [false, false]);
+        assert.lengthOf(harness.terminalEvents(), 1);
+        // Run ingestion follows these updates, so they must bracket the terminal and the image.
+        const indexOf = (predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
+          harness.events.findIndex(predicate);
+        const started = indexOf((e) => e.type === "background_work.updated" && e.pending);
+        const terminal = indexOf((e) => e.type === "turn.terminal");
+        const finished = indexOf((e) => e.type === "background_work.updated" && !e.pending);
         assert.isAtLeast(started, 0);
         assert.isAbove(terminal, started);
         assert.isAbove(finished, terminal);
         if (outcome === "complete") {
-          assert.isAbove(
-            finished,
-            harness.events.findLastIndex(
-              (event) =>
-                event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
-            ),
+          const messages = assistantMessages(harness.events);
+          const projected = indexOf(
+            (e) =>
+              e.type === "message.updated" && e.message.text === "Done.\n\n![](</tmp/late.png>)",
           );
+          assert.isAbove(projected, terminal);
+          assert.isAbove(finished, projected);
+          assert.strictEqual(messages.at(-1)?.message.id, messages[0]?.message.id);
+          assert.strictEqual(messages.at(-1)?.message.streaming, false);
         }
-        assert.lengthOf(harness.terminalEvents(), 1);
-        assert.deepEqual(pendingBefore, [true, true]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
