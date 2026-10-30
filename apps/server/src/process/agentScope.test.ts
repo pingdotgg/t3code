@@ -245,6 +245,34 @@ describe("AgentScope service", () => {
     ),
   );
 
+  it.effect("caps agent memory and yields CPU, disk, and tasks to the server", () =>
+    withFakeSystemd(({ scope, calls }) =>
+      Effect.gen(function* () {
+        yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        const setProperties = calls.filter(([, verb]) => verb === "set-property");
+        expect(setProperties).toEqual([
+          [
+            "--user",
+            "set-property",
+            "--runtime",
+            "app-t3code-agents.slice",
+            expect.stringMatching(/^MemoryHigh=\d+$/),
+            expect.stringMatching(/^MemoryMax=\d+$/),
+          ],
+          [
+            "--user",
+            "set-property",
+            "--runtime",
+            "app-t3code.slice",
+            "CPUWeight=10",
+            "IOWeight=10",
+            "TasksMax=25%",
+          ],
+        ]);
+      }),
+    ),
+  );
+
   it.effect("stops agents a killed server left before the first launch", () =>
     withFakeSystemd(({ scope, units, calls, stateDir }) =>
       Effect.gen(function* () {

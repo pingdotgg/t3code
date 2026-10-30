@@ -19,6 +19,12 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 const AGENT_SLICE = "app-t3code-agents.slice";
+// Owns every agent slice and competes with the server's unit or scope under app.slice.
+const AGENTS_PARENT_SLICE = "app-t3code.slice";
+// Low weights yield CPU and disk to the server under contention, where the user manager
+// has those controllers: current systemd delegates cpu, rarely io. TasksMax keeps agents
+// below logind's 33% per-user task limit, leaving forks for the server.
+const AGENTS_PARENT_PROPERTIES = ["CPUWeight=10", "IOWeight=10", "TasksMax=25%"];
 
 export function ownedAgentSlice(stateDir: string): string {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
@@ -173,20 +179,28 @@ export const make = Effect.gen(function* () {
         yield* Effect.logInfo("Agent scopes are off: no systemd user manager");
         return undefined;
       }
+      const setProperties = Effect.fn("agentScope.setProperties")(function* (
+        slice: string,
+        properties: ReadonlyArray<string>,
+      ) {
+        const result = yield* run(systemctl, [
+          "--user",
+          "set-property",
+          "--runtime",
+          slice,
+          ...properties,
+        ]);
+        if (result._tag === "None" || result.value.code !== 0) {
+          yield* Effect.logWarning("Could not set resource limits on an agents slice", {
+            slice,
+            properties,
+            stderr: result._tag === "Some" ? result.value.stderr.trim() : undefined,
+          });
+        }
+      });
       const limits = agentSliceMemoryLimits(NodeOS.totalmem());
-      const limited = yield* run(systemctl, [
-        "--user",
-        "set-property",
-        "--runtime",
-        AGENT_SLICE,
-        `MemoryHigh=${limits.high}`,
-        `MemoryMax=${limits.max}`,
-      ]);
-      if (limited._tag === "None" || limited.value.code !== 0) {
-        yield* Effect.logWarning("Could not set memory limits on the agents slice", {
-          stderr: limited._tag === "Some" ? limited.value.stderr.trim() : undefined,
-        });
-      }
+      yield* setProperties(AGENT_SLICE, [`MemoryHigh=${limits.high}`, `MemoryMax=${limits.max}`]);
+      yield* setProperties(AGENTS_PARENT_SLICE, AGENTS_PARENT_PROPERTIES);
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
