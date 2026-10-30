@@ -20,6 +20,7 @@ export default Effect.gen(function* () {
   yield* createMessageSearchTriggers(sql);
 
   // FTS narrows cleanup to matching text; don't scan or rebuild the full message history.
+  // Deleting from FTS writes its shadow tables, whose rowids can exceed JS number range.
   yield* sql`
     DELETE FROM orchestration_v2_message_search WHERE rowid IN (
       SELECT orchestration_v2_message_search.rowid FROM orchestration_v2_message_search
@@ -28,5 +29,5 @@ export default Effect.gen(function* () {
       WHERE orchestration_v2_message_search MATCH ${`"${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT.replaceAll('"', '""')}"`}
         AND NOT (${nonPlaceholderMessageCondition(sql)})
     )
-  `;
+  `.pipe(Effect.provideService(SqlClient.SafeIntegers, true));
 });
