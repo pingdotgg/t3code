@@ -86,7 +86,9 @@ function isIgnoredReleaseNoteLine(line: string): boolean {
     normalized === "what's changed" ||
     normalized === "whats changed" ||
     normalized.startsWith("compare: ") ||
-    normalized.includes("/compare/")
+    normalized.includes("/compare/") ||
+    // The feed's HTML footer loses its compare URL to stripMarkup, leaving only the range.
+    /^full changelog: \S+\.\.\.\S+$/.test(normalized)
   );
 }
 
