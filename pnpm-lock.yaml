@@ -370,7 +370,7 @@ patchedDependencies:
   '@react-native-menu/menu@2.0.0': 910ec1bf22aa85a96fcf12299cd823bc30f702dd9b2d77b564d10b9ed709f7f6
   '@react-navigation/native-stack@7.21.0': 990d575444c4af2ce8218b3b7a8280fe244c03abbdb32b822a2e862f791dbf42
   alchemy@2.0.0-beta.84: 824006659fa28ca31e490ce1fc3611f77436005ce9fa0f638be46564133cf042
-  app-builder-lib@26.16.1: 82a34a56eb32c09b9a9572b86b7964b3827996dfa25da1c1c3da53c20e3cb8c8
+  app-builder-lib@26.16.1: f6b7e970baae57bda52af7fabf59a6a2936a8a2e3302ef23ec1ec49ca2f132d7
   dbus-next@0.10.2: cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4
   expo-audio@58.0.9: 530af071088a809fe1a97ce2b2269c78335fbb5dcd3893d6937ff5c304c85a0a
   expo-modules-core@58.0.22: f0b0fd100550ed76e5c25b4d13eb7c9ff62825f8f197c53edf7bf447c50c9fb7
@@ -17120,7 +17120,7 @@ snapshots:
 
   anynum@1.0.1: {}
 
-  app-builder-lib@26.16.1(patch_hash=82a34a56eb32c09b9a9572b86b7964b3827996dfa25da1c1c3da53c20e3cb8c8)(dmg-builder@26.16.1)(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1):
+  app-builder-lib@26.16.1(patch_hash=f6b7e970baae57bda52af7fabf59a6a2936a8a2e3302ef23ec1ec49ca2f132d7)(dmg-builder@26.16.1)(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1):
     dependencies:
       '@electron/asar': 3.4.1
       '@electron/fuses': 1.8.0
@@ -17970,7 +17970,7 @@ snapshots:
 
   dmg-builder@26.16.1(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1):
     dependencies:
-      app-builder-lib: 26.16.1(patch_hash=82a34a56eb32c09b9a9572b86b7964b3827996dfa25da1c1c3da53c20e3cb8c8)(dmg-builder@26.16.1)(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1)
+      app-builder-lib: 26.16.1(patch_hash=f6b7e970baae57bda52af7fabf59a6a2936a8a2e3302ef23ec1ec49ca2f132d7)(dmg-builder@26.16.1)(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1)
       builder-util: 26.16.0(supports-color@8.1.1)
       fs-extra: 10.1.0
       js-yaml: 4.3.2
@@ -18063,7 +18063,7 @@ snapshots:
 
   electron-builder-squirrel-windows@26.16.1(dmg-builder@26.16.1)(supports-color@8.1.1):
     dependencies:
-      app-builder-lib: 26.16.1(patch_hash=82a34a56eb32c09b9a9572b86b7964b3827996dfa25da1c1c3da53c20e3cb8c8)(dmg-builder@26.16.1)(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1)
+      app-builder-lib: 26.16.1(patch_hash=f6b7e970baae57bda52af7fabf59a6a2936a8a2e3302ef23ec1ec49ca2f132d7)(dmg-builder@26.16.1)(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1)
       builder-util: 26.16.0(supports-color@8.1.1)
       electron-winstaller: 5.4.0(supports-color@8.1.1)
     transitivePeerDependencies:
@@ -18072,7 +18072,7 @@ snapshots:
 
   electron-builder@26.16.1(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1):
     dependencies:
-      app-builder-lib: 26.16.1(patch_hash=82a34a56eb32c09b9a9572b86b7964b3827996dfa25da1c1c3da53c20e3cb8c8)(dmg-builder@26.16.1)(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1)
+      app-builder-lib: 26.16.1(patch_hash=f6b7e970baae57bda52af7fabf59a6a2936a8a2e3302ef23ec1ec49ca2f132d7)(dmg-builder@26.16.1)(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1)
       builder-util: 26.16.0(supports-color@8.1.1)
       builder-util-runtime: 9.7.0(supports-color@8.1.1)
       chalk: 4.1.2

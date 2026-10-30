@@ -17,12 +17,13 @@ diff --git a/templates/nsis/include/extractAppPackage.nsh b/templates/nsis/inclu
 index f5470bf..b91625c 100644
 --- a/templates/nsis/include/extractAppPackage.nsh
 +++ b/templates/nsis/include/extractAppPackage.nsh
-@@ -98,6 +98,36 @@
+@@ -98,6 +98,38 @@
    Pop $R0
    SetOutPath $R0
  
 +  # T3 Code: move extracted entries into $OUTDIR when it has none of that name. Copying them wrote
 +  # the whole app a second time. CopyFiles below still handles leftovers (an occupied name, another volume).
++  ${If} ${FileExists} "$PLUGINSDIR\7z-out\${APP_EXECUTABLE_FILENAME}"
 +  Push $R2
 +  Push $R3
 +  FindFirst $R2 $R3 "$PLUGINSDIR\7z-out\*"
@@ -50,6 +51,7 @@ index f5470bf..b91625c 100644
 +  Pop $R2
 +  ClearErrors
 +  StrCmp $R1 "" DoneExtract7za
++  ${EndIf}
 +
    # Retry counter
    StrCpy $R1 0
