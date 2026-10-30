@@ -10,6 +10,7 @@ const LETTER = /\p{L}/u;
  * Count words so mixed prose follows its main language; break ties with the first word.
  */
 export function textDirection(text: string): TextDirection | undefined {
+  if (!RTL_LETTER.test(text)) return LETTER.test(text) ? "ltr" : undefined;
   let rtlWords = 0;
   let ltrWords = 0;
   let first: TextDirection | undefined;
