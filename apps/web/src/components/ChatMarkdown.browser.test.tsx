@@ -177,6 +177,28 @@ describe("ChatMarkdown link tooltips", () => {
   });
 });
 
+describe("ChatMarkdown details", () => {
+  it("opens collapsed details by click, and by keyboard without losing focus", async () => {
+    setup();
+    await using screen = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={
+          "<details><summary>First</summary>\n\nHidden one\n\n</details>\n\n<details><summary>Second</summary>\n\nHidden two\n\n</details>"
+        }
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "First" }));
+    await expect.element(screen.getByText("Hidden one")).toBeVisible();
+    await userEvent.tab();
+    const second = screen.getByRole("button", { name: "Second" });
+    await expect.element(second).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByText("Hidden two")).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Second" })).toHaveFocus();
+  });
+});
+
 describe("ChatMarkdown streaming", () => {
   it("runs only a complete single-line shell block after a click", async () => {
     setup();
