@@ -877,12 +877,38 @@ describe("AntigravityAdapterV2 subagent tools", () => {
                     if (promptCount === 2) {
                       if (sessionUpdate === undefined) return yield* Effect.die("missing handler");
                       yield* sessionUpdate({
+                        sessionId: childTool.split(":")[0]!,
+                        update: {
+                          sessionUpdate: "agent_message_chunk",
+                          messageId: "resumed-message",
+                          content: { type: "text", text: "Before resumed tool" },
+                        },
+                      });
+                      yield* sessionUpdate({
                         sessionId: "mock-session-1",
                         update: {
                           sessionUpdate: "tool_call_update",
                           toolCallId: unfinishedTool,
                           status: "completed",
                           rawOutput: { combinedOutput: "child finished" },
+                        },
+                      });
+                      yield* sessionUpdate({
+                        sessionId: "mock-session-1",
+                        update: {
+                          sessionUpdate: "tool_call",
+                          toolCallId: "33e9093cd2d9d11b9df002ad1d225480:130",
+                          title: "resumed work",
+                          kind: "execute",
+                          status: "in_progress",
+                        },
+                      });
+                      yield* sessionUpdate({
+                        sessionId: childTool.split(":")[0]!,
+                        update: {
+                          sessionUpdate: "agent_message_chunk",
+                          messageId: "resumed-message",
+                          content: { type: "text", text: " after resumed tool" },
                         },
                       });
                       return { stopReason: "end_turn" };
@@ -1012,7 +1038,7 @@ describe("AntigravityAdapterV2 subagent tools", () => {
           child?.type === "subagent.updated" ? child.subagent.status : undefined,
           outcome === "end_turn" ? "idle" : outcome,
         );
-        if (outcome !== "end_turn") return;
+        if (outcome === "failed") return;
         if (sessionUpdate === undefined) return yield* Effect.die("missing handler");
         yield* sessionUpdate({
           sessionId: "mock-session-1",
@@ -1038,6 +1064,42 @@ describe("AntigravityAdapterV2 subagent tools", () => {
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runCollect,
           ),
+        );
+        const resumedMessage = nextEvents.findLast(
+          (event) => event.type === "message.updated" && event.message.threadId === childThreadId,
+        );
+        assert.equal(
+          resumedMessage?.type === "message.updated" ? resumedMessage.message.text : undefined,
+          "Before resumed tool after resumed tool",
+        );
+        const resumedChild = nextEvents.find(
+          (event) => event.type === "subagent.updated" && event.subagent.status === "running",
+        );
+        assert.isDefined(resumedChild);
+        const lateCompletionIndex = nextEvents.findIndex(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.status === "completed" &&
+            event.turnItem.nativeItemRef?.nativeId?.endsWith(unfinishedTool),
+        );
+        assert.isAbove(nextEvents.indexOf(resumedChild!), lateCompletionIndex);
+        assert.isTrue(
+          nextEvents.some(
+            (event) =>
+              event.type === "node.updated" &&
+              event.node.threadId === childThreadId &&
+              event.node.kind === "root_turn" &&
+              event.node.status === "running",
+          ),
+        );
+        const resumedTool = nextEvents.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId?.endsWith(":130"),
+        );
+        assert.equal(
+          resumedTool?.type === "turn_item.updated" ? resumedTool.turnItem.status : undefined,
+          "interrupted",
         );
         const previousChild = child?.type === "subagent.updated" ? child.subagent : undefined;
         const nextChildEvent = [...events, ...nextEvents].findLast(
