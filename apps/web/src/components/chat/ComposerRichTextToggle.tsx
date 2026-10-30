@@ -1,4 +1,4 @@
-import { FeatherIcon } from "lucide-react";
+import { PilcrowIcon } from "lucide-react";
 
 import { updateClientSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
@@ -30,7 +30,7 @@ export function ComposerRichTextToggle({
           />
         }
       >
-        <FeatherIcon />
+        <PilcrowIcon />
       </TooltipTrigger>
       <TooltipPopup>
         {showingSource ? "Show formatting" : "Show Markdown source"}

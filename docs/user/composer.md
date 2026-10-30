@@ -20,7 +20,7 @@ them. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---` become list
 task lists, quotes, headings and rules; ` ``` ` followed by Enter opens a code
 block. What you typed is what the agent receives, markers and numbering
 included, and `#1234` without a space still looks up a pull request. To see the
-plain Markdown instead, press the button beside attach; it is the same
+plain Markdown instead, press the **¶** button beside attach; it is the same
 switch as **Settings → Chat → Rich text composer**.
 
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
