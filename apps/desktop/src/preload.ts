@@ -73,6 +73,19 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  voiceInput: {
+    available: () => ipcRenderer.invoke(IpcChannels.VOICE_AVAILABLE_CHANNEL),
+    start: (id) => ipcRenderer.invoke(IpcChannels.VOICE_START_CHANNEL, id),
+    stop: (id) => ipcRenderer.invoke(IpcChannels.VOICE_STOP_CHANNEL, id),
+    cancel: (id) => ipcRenderer.invoke(IpcChannels.VOICE_CANCEL_CHANNEL, id),
+    onRecording: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, id: unknown) => {
+        if (typeof id === "string") listener(id);
+      };
+      ipcRenderer.on(IpcChannels.VOICE_RECORDING_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(IpcChannels.VOICE_RECORDING_CHANNEL, handler);
+    },
+  },
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {

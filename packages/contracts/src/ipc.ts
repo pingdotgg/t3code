@@ -1,3 +1,4 @@
+import type { DesktopVoiceTranscript } from "./desktopVoice.ts";
 import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
@@ -1012,6 +1013,13 @@ export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
+  readonly voiceInput?: {
+    available(): Promise<boolean>;
+    start(id: string): Promise<DesktopVoiceTranscript>;
+    stop(id: string): Promise<void>;
+    cancel(id: string): Promise<void>;
+    onRecording(listener: (id: string) => void): () => void;
+  };
   getAppBranding: () => DesktopAppBranding | null;
   getRelayTelemetryEnabled: () => boolean;
   getPathForFile: (file: File) => string;
