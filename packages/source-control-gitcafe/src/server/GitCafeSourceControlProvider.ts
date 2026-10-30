@@ -139,6 +139,7 @@ const PullDetail = Schema.Struct({
   sourceRepo: Schema.NullOr(
     Schema.Struct({ owner: TrimmedNonEmptyString, name: TrimmedNonEmptyString }),
   ),
+  isCrossFork: Schema.optional(Schema.Boolean),
   closedAt: Schema.NullOr(Schema.String),
   mergedAt: Schema.NullOr(Schema.String),
 });
@@ -265,6 +266,8 @@ export const make = Effect.gen(function* () {
       PullDetail,
     );
     const owner = target.repository.split("/")[0] ?? null;
+    // Pulls synced from GitHub forks report isCrossFork without naming the fork.
+    const unnamedFork = pull.sourceRepo === null && pull.isCrossFork === true;
     return {
       provider: SourceControlProviderKind.make("gitcafe"),
       number: pull.number,
@@ -278,11 +281,15 @@ export const make = Effect.gen(function* () {
       closedAt: pull.closedAt,
       mergedAt: pull.mergedAt,
       updatedAt: pull.updatedAt,
-      isCrossRepository: pull.sourceRepo !== null,
-      headRepositoryNameWithOwner: pull.sourceRepo
-        ? `${pull.sourceRepo.owner}/${pull.sourceRepo.name}`
-        : target.repository,
-      headRepositoryOwnerLogin: pull.sourceRepo?.owner ?? owner,
+      isCrossRepository: pull.sourceRepo !== null || unnamedFork,
+      ...(unnamedFork
+        ? {}
+        : {
+            headRepositoryNameWithOwner: pull.sourceRepo
+              ? `${pull.sourceRepo.owner}/${pull.sourceRepo.name}`
+              : target.repository,
+            headRepositoryOwnerLogin: pull.sourceRepo?.owner ?? owner,
+          }),
     } satisfies ChangeRequest;
   });
 

@@ -276,6 +276,42 @@ describe("GitCafeSourceControlProvider", () => {
     );
   });
 
+  it.effect("keeps a GitHub fork's pull request off the repository's own branch", () => {
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            encodeJson({
+              number: 7,
+              title: "Change",
+              state: "open",
+              draft: false,
+              sourceBranch: "main",
+              targetBranch: "main",
+              headOid: null,
+              updatedAt: null,
+              sourceRepo: null,
+              isCrossFork: true,
+              closedAt: null,
+              mergedAt: null,
+            }),
+          ),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const provider = yield* GitCafeSourceControlProvider.make;
+      const pull = yield* provider.getChangeRequest({
+        cwd: "/repo",
+        reference: "https://git.cafe/team/project/pulls/7",
+      });
+      assert.strictEqual(pull.isCrossRepository, true);
+      assert.strictEqual(pull.headRepositoryNameWithOwner, undefined);
+      assert.strictEqual(pull.headRepositoryOwnerLogin, undefined);
+    }).pipe(Effect.provide(layerFor(client)));
+  });
+
   it.effect("opens a pull request from a fork over REST with the body file's text", () => {
     const sent: Array<{ method: string; url: string; body: unknown }> = [];
     const client = HttpClient.make((request) => {
