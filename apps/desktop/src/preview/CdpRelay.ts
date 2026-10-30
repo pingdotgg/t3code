@@ -36,6 +36,29 @@ const isCommand = (value: unknown): value is CdpCommand =>
   typeof (value as { id?: unknown }).id === "number" &&
   typeof (value as { method?: unknown }).method === "string";
 
+// CDP values are plain JSON data, so their serialized size can be bounded before
+// JSON.stringify allocates it. A string counts at its length unless it holds a
+// character JSON may escape, which can take six code units.
+const MAX_CDP_PAYLOAD_SIZE = 64 * 1024 * 1024;
+const MAY_ESCAPE = /[^\x20\x21\x23-\x5b\x5d-\ud7ff\ue000-\uffff]/;
+const serializedSize = (text: string) =>
+  (MAY_ESCAPE.test(text) ? text.length * 6 : text.length) + 3;
+
+const fitsPayloadBudget = (message: unknown) => {
+  let remaining = MAX_CDP_PAYLOAD_SIZE;
+  const visit = (value: unknown): boolean => {
+    remaining -= typeof value === "string" ? serializedSize(value) : 26;
+    if (remaining < 0) return false;
+    if (typeof value !== "object" || value === null) return true;
+    if (Array.isArray(value)) return value.every(visit);
+    return Object.entries(value).every(([key, item]) => {
+      remaining -= serializedSize(key);
+      return visit(item);
+    });
+  };
+  return visit(message);
+};
+
 const BROWSER_CONTEXT_ID = "t3-preview";
 const ANNOUNCE = Symbol("announce");
 const PAGE_SESSION_ID = "t3-preview-page";
@@ -50,8 +73,30 @@ const ACKNOWLEDGED = new Set([
 export function createCdpRelayConnection(
   target: CdpRelayTarget,
   write: (message: string) => void,
+  close: () => void,
 ): CdpRelayConnection {
-  const send = (message: Record<string, unknown>) => write(JSON.stringify(message));
+  let closed = false;
+  const send = (message: Record<string, unknown>) => {
+    if (closed) return;
+    if (fitsPayloadBudget(message)) {
+      write(JSON.stringify(message));
+      return;
+    }
+    // An error reply fails only that command. A dropped event would leave
+    // Playwright out of step with the page, so the relay closes instead.
+    if (typeof message["id"] === "number") {
+      write(
+        JSON.stringify({
+          id: message["id"],
+          error: { code: -32000, message: "CDP payload too large" },
+          ...(message["sessionId"] === undefined ? {} : { sessionId: message["sessionId"] }),
+        }),
+      );
+      return;
+    }
+    closed = true;
+    close();
+  };
   let attached = false;
   /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
@@ -151,6 +196,7 @@ export function createCdpRelayConnection(
 
   return {
     receive: (raw) => {
+      if (closed) return;
       let command: unknown;
       try {
         command = JSON.parse(raw);
