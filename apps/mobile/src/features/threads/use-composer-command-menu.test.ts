@@ -62,6 +62,56 @@ describe("resolveComposerMenuSelection", () => {
 });
 
 describe("mobile slash commands", () => {
+  it.each(["code-review", "simplify", "run"])(
+    "offers Claude's /%s after other text without changing the prefix on selection",
+    (name) => {
+      const prefix = "please run ";
+      const draftMessage = `${prefix}/${name.slice(0, 3)}`;
+      const items = buildComposerSlashCommandItems({
+        query: name.slice(0, 3),
+        atMessageStart: false,
+        hasThread: false,
+        allowInteractionMode: false,
+        selectedProviderStatus: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          slashCommands: [{ name }, { name: "verify" }, { name: "compact" }],
+        },
+      });
+      const item = items.find((candidate) => candidate.type === "provider-slash-command");
+      expect(item?.label).toBe(`/${name}`);
+      if (!item) throw new Error("Missing inline Claude skill");
+      const text = `${prefix}/${name} `;
+      expect(
+        resolveComposerCommandSelection({
+          draftMessage,
+          trigger: { rangeStart: prefix.length, rangeEnd: draftMessage.length },
+          item,
+          allowInteractionMode: false,
+        }),
+      ).toEqual({ text, cursor: text.length, interactionMode: null });
+    },
+  );
+
+  it.each(["claudeAgent", "codex"])("keeps %s native commands at the message start", (driver) => {
+    const input = {
+      query: "",
+      atMessageStart: false,
+      hasThread: true,
+      hasCompactableConversation: true,
+      allowInteractionMode: false,
+      selectedProviderStatus: {
+        driver: ProviderDriverKind.make(driver),
+        slashCommands: [{ name: "verify" }, { name: "compact" }],
+      },
+    };
+    const names = (atMessageStart: boolean) =>
+      buildComposerSlashCommandItems({ ...input, atMessageStart })
+        .filter((item) => item.type === "provider-slash-command")
+        .map((item) => item.command.name);
+    expect(names(false)).toEqual([]);
+    expect(names(true)).toEqual(["verify", "compact"]);
+  });
+
   const antigravity = {
     driver: ProviderDriverKind.make("antigravity"),
     showInteractionModeToggle: false,

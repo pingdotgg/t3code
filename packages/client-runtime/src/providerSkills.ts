@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type ProviderDriverKind,
   isProviderWorkspaceSnapshotCurrent,
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
   type ProviderInstanceId,
@@ -57,6 +58,17 @@ export function getProviderSlashCommandsForSlashMenu(
 ): ServerProviderSlashCommand[] {
   const skillNames = new Set(visibleSkills.map((skill) => skill.name.trim().toLowerCase()));
   return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
+}
+
+// Claude's SDK lists bundled skills as commands without model-invocation metadata.
+// Keep unknown and user-only commands start-only until that metadata is available.
+const CLAUDE_INLINE_SKILL_COMMANDS = new Set(["code-review", "simplify", "run"]);
+
+export function isProviderSlashCommandInline(
+  driver: ProviderDriverKind | null | undefined,
+  command: Pick<ServerProviderSlashCommand, "name">,
+): boolean {
+  return driver === "claudeAgent" && CLAUDE_INLINE_SKILL_COMMANDS.has(command.name);
 }
 
 export function resolveProviderSkillSourceKind(
