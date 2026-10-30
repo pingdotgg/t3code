@@ -7,7 +7,8 @@ the desktop app, a browser, or the mobile app.
 
 ## Roll out a policy
 
-1. Write the policy as JSON, starting from the [example](#write-a-policy).
+1. Write the policy as JSON, starting from the [example](#write-a-policy). Do this even if you
+   deploy through Group Policy, so you can check the values first.
 2. Run `t3 policy check policy.json`. It prints what the policy will do, or what is wrong with it.
 3. Deploy the policy to each machine with your device management tool, in
    [one of the supported places](#where-the-policy-goes).
@@ -45,26 +46,64 @@ Every user on the machine can read the policy, so do not put credentials in it.
 
 Use one of these per machine:
 
-| OS      | Native policy                                                       | Policy file                                       |
-| ------- | ------------------------------------------------------------------- | ------------------------------------------------- |
-| macOS   | Configuration profile for `com.t3tools.t3code`                      | `/Library/Application Support/T3Code/policy.json` |
-| Windows | `Policy` string value under `HKLM\SOFTWARE\Policies\T3Tools\T3Code` | `C:\ProgramData\T3Code\policy.json`               |
-| Linux   |                                                                     | `/etc/t3code/policy.json`                         |
+| OS      | Native policy                                  | Policy file                                       |
+| ------- | ---------------------------------------------- | ------------------------------------------------- |
+| macOS   | Configuration profile for `com.t3tools.t3code` | `/Library/Application Support/T3Code/policy.json` |
+| Windows | Group Policy, from the T3 Code template        | `C:\ProgramData\T3Code\policy.json`               |
+| Linux   |                                                | `/etc/t3code/policy.json`                         |
 
 T3 Code does not merge sources. If a machine has both a native policy and a policy file, T3 Code
 refuses to start until you remove one.
 
-**Policy file.** Copy the JSON to the path for the OS. Make it writable only by administrators.
+`t3 policy templates <directory>` writes the Windows Group Policy template
+(`windows/t3code.admx` and `windows/en-US/t3code.adml`) and a macOS configuration profile
+(`macos/t3code.mobileconfig`). Add `--policy policy.json` to put your policy in the macOS profile;
+without it, the profile holds a sample policy for "Example Corp". The Windows template is the same
+either way, and you choose its values in Group Policy.
 
-**macOS configuration profile.** Add a custom settings payload for the preference domain
-`com.t3tools.t3code`. The payload's keys are the policy's top-level keys (`schemaVersion`,
-`organization`, `supportUrl`, `settings`, `limits`); JSON objects become dictionaries and lists
-become arrays. Install it as a device profile, since T3 Code ignores user profiles, and deploy only
-one profile for this domain. A profile cannot hold `null`, so use a policy file if a setting's
-value must be `null`.
+### Policy file
 
-**Windows registry.** Set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON.
-Group Policy Preferences, an Intune script, or `reg add` can all write it.
+Copy the JSON to the path for the OS. Make it writable only by administrators.
+
+### macOS configuration profile
+
+Upload `macos/t3code.mobileconfig` to your device management tool, or build a custom settings
+payload for the preference domain `com.t3tools.t3code`. The payload's keys are the policy's
+top-level keys (`schemaVersion`, `organization`, `supportUrl`, `settings`, `limits`); JSON objects
+become dictionaries and lists become arrays. Install it as a device profile, since T3 Code ignores
+user profiles, and deploy only one profile for this domain. A profile cannot hold `null`, so `t3 policy templates` refuses a policy with a
+`null` value; deploy that policy as a file instead.
+
+### Windows Group Policy
+
+Copy `t3code.admx` into a `PolicyDefinitions` folder and `t3code.adml` into its `en-US`
+subfolder. That is `C:\Windows\PolicyDefinitions` for local policy, or the
+[central store](https://learn.microsoft.com/en-us/troubleshoot/windows-client/group-policy/create-and-manage-central-store)
+for a domain. For Intune,
+[import the template](https://learn.microsoft.com/en-us/intune/device-configuration/settings-catalog/import-custom-admx-templates).
+The policies appear under **Computer Configuration > Administrative Templates > T3 Code**.
+
+Set **Organization** whenever you set any other T3 Code policy. Without it, T3 Code refuses to
+start.
+
+**Disabled** means different things for the two kinds of policy:
+
+- **Allowed clients**, **Allowed providers**, **Broadest permission mode**, and **Updates** restrict
+  only when Enabled. Disabled and Not configured both mean no restriction. To stop updates, enable
+  **Updates** and choose **Off**.
+- **Allow T3 Connect**, **Allow webhook tasks**, **Allow importing browser cookies**, and **Allow
+  usage data** block the capability when Disabled. Enabled and Not configured leave it allowed.
+
+**Managed settings (JSON)** takes the same object as a policy's [`settings`](#settings), and
+**Provider settings (JSON)** takes the same object as
+[`limits.providers.instances`](#providers). Enter each as one line of JSON. To validate them, put
+them in a policy file and run `t3 policy check` on it.
+
+T3 Code reads Group Policy through Windows PowerShell at
+`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` each time it starts, on every Windows
+machine, whether or not a policy is set. Constrained Language mode, which AppLocker and WDAC
+script rules turn on, is fine. If a rule blocks `powershell.exe` itself for the users who run
+T3 Code, T3 Code refuses to start with "the registry cannot be read", so allow it for them.
 
 ## Change or remove a policy
 
@@ -73,19 +112,22 @@ reopen the desktop app, or run `t3 service restart` for the
 [background service](./background-service.md). Reconnecting a phone or browser does not reload the
 policy. Run `t3 policy show` to confirm what applies.
 
-To remove a policy, delete the file, remove the profile, or delete the registry value, then restart
-the server. T3 Code never writes policy values into the user's own settings, so users get back the
+To remove a policy, delete the file or remove the profile. For Group Policy, set every T3 Code
+policy back to **Not configured** and refresh Group Policy, for example with `gpupdate /force`.
+Deleting the template files does not remove a policy that already applies. Then restart the
+server. T3 Code never writes policy values into the user's own settings, so users get back the
 settings they had chosen.
 
 ## When T3 Code refuses to start
 
 T3 Code refuses to start rather than run with a policy it cannot fully enforce. That includes a
 policy it cannot read or parse, a setting it does not know, a value of the wrong type, a key this
-version does not support, or a machine with both a native policy and a file. The error names where
-the policy came from and what is wrong.
+version does not support, Group Policy without **Organization**, a Windows machine where T3 Code
+cannot run [Windows PowerShell](#windows-group-policy), or a machine with both a native policy and
+a file. The error names where the policy came from and what is wrong.
 
-`t3 policy check` catches the same problems in a JSON file. For a profile or registry value, check
-the JSON before you convert it. A policy written for a newer version can use keys an older one
+`t3 policy check` catches the same problems in a JSON file. For a profile or Group Policy, check
+the same policy as a file first. A policy written for a newer version can use keys an older one
 cannot enforce, so upgrade T3 Code before you deploy a policy that uses them.
 
 ## Settings
