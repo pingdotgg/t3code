@@ -270,7 +270,7 @@ export function GuideStop({
 
         <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-border/60 pt-4">
           {nextTitle !== null ? (
-            <Button className="min-w-0" onClick={() => onStep(1)}>
+            <Button className="min-w-0 shrink" onClick={() => onStep(1)}>
               <span className="min-w-0 truncate">Next: {nextTitle}</span>
               <ArrowRightIcon aria-hidden />
             </Button>
