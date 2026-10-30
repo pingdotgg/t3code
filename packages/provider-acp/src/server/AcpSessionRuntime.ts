@@ -1504,14 +1504,17 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       catch: (cause) =>
         new EffectAcpErrors.AcpSpawnError({ command: options.spawn.command, cause }),
     });
-    yield* observePosixOwnershipLedgerContinuously({
-      childQueues: posixOwnershipChildQueues,
-      controller: posixController,
-      frontier: posixOwnershipFrontier,
-      ledger: posixOwnershipLedger,
-      root: posixOwnershipRoot,
-      rootPid: Number(child.pid),
-    }).pipe(Effect.forkIn(runtimeScope));
+    // Cgroup teardown needs only the root identity captured above.
+    if (linuxCgroupLease === undefined) {
+      yield* observePosixOwnershipLedgerContinuously({
+        childQueues: posixOwnershipChildQueues,
+        controller: posixController,
+        frontier: posixOwnershipFrontier,
+        ledger: posixOwnershipLedger,
+        root: posixOwnershipRoot,
+        rootPid: Number(child.pid),
+      }).pipe(Effect.forkIn(runtimeScope));
+    }
   }
 
   const signalOwnedProcessGroup = (signal: NodeJS.Signals) =>
