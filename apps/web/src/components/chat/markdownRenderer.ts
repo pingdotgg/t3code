@@ -8,6 +8,8 @@ import remarkRehype from "remark-rehype";
 import { type PluggableList, unified } from "unified";
 import { VFile } from "vfile";
 
+import { remarkParseWithoutUnusedSyntax } from "./markdownSyntaxGates";
+
 export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string;
 
 interface MarkdownRendererOptions {
@@ -50,6 +52,7 @@ export function createMarkdownRenderer({
 }: MarkdownRendererOptions) {
   const processor = unified()
     .use(remarkParse)
+    .use(remarkParseWithoutUnusedSyntax)
     .use(remarkPlugins)
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(rehypePlugins)
@@ -59,23 +62,24 @@ export function createMarkdownRenderer({
   // Literal raw HTML that survived the rehype plugins, and URL attributes, as react-markdown treats them.
   const prepare = (node: Nodes) => {
     if (!("children" in node)) return;
-    node.children.forEach((child, index) => {
+    const { children } = node;
+    for (let index = 0; index < children.length; index++) {
+      const child = children[index]!;
       if (child.type === "raw") {
-        node.children[index] = { type: "text", value: child.value };
-        return;
+        children[index] = { type: "text", value: child.value };
+        continue;
       }
-      if (child.type === "element") {
-        for (const [key, tags] of Object.entries(urlAttributes)) {
-          if (
-            Object.hasOwn(child.properties, key) &&
-            (tags === null || tags.includes(child.tagName))
-          ) {
-            child.properties[key] = urlTransform(String(child.properties[key] || ""), key, child);
-          }
+      if (child.type !== "element") continue;
+      const { properties } = child;
+      for (const key in properties) {
+        if (!Object.hasOwn(urlAttributes, key)) continue;
+        const tags = urlAttributes[key];
+        if (tags === null || tags?.includes(child.tagName)) {
+          properties[key] = urlTransform(String(properties[key] || ""), key, child);
         }
       }
       prepare(child);
-    });
+    }
   };
 
   return (text: string, cache: boolean): ReactElement => {
