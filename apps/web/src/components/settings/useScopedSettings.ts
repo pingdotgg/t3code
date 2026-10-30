@@ -49,7 +49,10 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  return (plan: ReturnType<typeof planScopedSettingsPatch>, onFailed?: () => void) => {
+  return async (
+    plan: ReturnType<typeof planScopedSettingsPatch>,
+    onFailed?: () => void,
+  ): Promise<{ readonly saved: boolean; readonly message: string | null }> => {
     if (plan.unavailableReason) {
       toastManager.add({
         type: "warning",
@@ -57,43 +60,50 @@ function useRunScopedPlan() {
         description: plan.unavailableReason,
       });
       onFailed?.();
-      return;
+      return { saved: false, message: plan.unavailableReason };
     }
-    void persistScopedSettingsPatch(
-      plan,
-      async (request) => {
-        const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
-          (scope) => !readEnvironmentScope(request.environmentId, scope),
+    try {
+      const { failedEnvironments, savedEnvironments, savedEnvironmentCount } =
+        await persistScopedSettingsPatch(
+          plan,
+          async (request) => {
+            const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
+              (scope) => !readEnvironmentScope(request.environmentId, scope),
+            );
+            if (missing)
+              return AsyncResult.failure(
+                Cause.fail(
+                  new EnvironmentAuthorizationError({
+                    requiredScope: missing,
+                    message: "This connection lacks permission to change these settings.",
+                  }),
+                ),
+              );
+            return persistServer(request);
+          },
+          persistClientSettingsPatch,
         );
-        if (missing)
-          return AsyncResult.failure(
-            Cause.fail(
-              new EnvironmentAuthorizationError({
-                requiredScope: missing,
-                message: "This connection lacks permission to change these settings.",
-              }),
-            ),
-          );
-        return persistServer(request);
-      },
-      persistClientSettingsPatch,
-    ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-      if (failedEnvironments.length === 0) return;
+      if (failedEnvironments.length === 0) return { saved: true, message: null };
       onFailed?.();
+      const message = [
+        ...failedEnvironments.map(({ label, message }) => `Could not save on ${label}: ${message}`),
+        ...(savedEnvironmentCount > 0
+          ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
+          : []),
+      ].join("\n");
       toastManager.add({
         type: "error",
         title:
           savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
-        description: [
-          ...failedEnvironments.map(
-            ({ label, message }) => `Could not save on ${label}: ${message}`,
-          ),
-          ...(savedEnvironmentCount > 0
-            ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
-            : []),
-        ].join("\n"),
+        description: message,
       });
-    });
+      return { saved: false, message };
+    } catch (error) {
+      onFailed?.();
+      const message = error instanceof Error ? error.message : "The save failed. Try again.";
+      toastManager.add({ type: "error", title: "Setting not saved", description: message });
+      return { saved: false, message };
+    }
   };
 }
 
@@ -110,7 +120,7 @@ export function useClearScopedSettings() {
   const run = useRunScopedPlan();
   return (keys: readonly ProjectScopedServerSettingKey[]) => {
     if (context === null) return;
-    run(planScopedSettingsClear(context.scope, context.environments, keys));
+    void run(planScopedSettingsClear(context.scope, context.environments, keys));
   };
 }
 
@@ -122,7 +132,7 @@ export function useClearProjectOverrides() {
     keys: readonly ProjectScopedServerSettingKey[],
   ) => {
     if (context === null) return;
-    run(planProjectOverridesClear(context.environments, entries, keys));
+    void run(planProjectOverridesClear(context.environments, entries, keys));
   };
 }
 

@@ -37,3 +37,12 @@ export const DesktopCuaDriverReport = Schema.Union([
   }),
 ]);
 export type DesktopCuaDriverReport = typeof DesktopCuaDriverReport.Type;
+
+/** Driver readiness is independent of the enableCua setting. */
+export const CuaHostStatus = Schema.Struct({
+  platform: Schema.Literals(["darwin", "linux", "win32", "other"]),
+  running: Schema.Boolean,
+  /** Why the last start failed, until a later start succeeds. */
+  failure: Schema.optionalKey(Schema.String),
+});
+export type CuaHostStatus = typeof CuaHostStatus.Type;

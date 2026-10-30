@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { it } from "@effect/vitest";
 import type { CuaDriverMcpConfiguration, DesktopCuaDriverReport } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { EmbeddedDriverConnection } from "@trycua/cua-driver/embedded";
 import { Deferred, Effect, Exit, Fiber, Option, PubSub, Ref, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
@@ -501,8 +502,10 @@ describe("CuaDriver", () => {
         yield* Deferred.succeed(f.result, mcp);
         expect(yield* f.service.acquire).toEqual(Option.some(mcp));
         yield* Deferred.await(f.watching);
+        expect((yield* f.service.status).running).toBe(true);
         yield* Deferred.succeed(f.exited, undefined);
         yield* Deferred.await(f.stopped);
+        expect((yield* f.service.status).running).toBe(false);
         expect(f.starts()).toBe(1);
         expect(yield* f.service.acquire).toEqual(Option.some(mcp));
         expect(f.starts()).toBe(2);
@@ -543,6 +546,70 @@ describe("CuaDriver", () => {
 });
 
 describe("Cua Driver readiness", () => {
+  it.effect("reports the host platform and runs only between readiness and disable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* fixture(false).pipe(Effect.provideService(HostProcess.Platform, "darwin"));
+        expect(yield* f.service.status).toEqual({ platform: "darwin", running: false });
+        yield* f.setEnabled(true);
+        const caller = yield* f.service.acquire.pipe(Effect.forkChild);
+        yield* Deferred.await(f.started);
+        expect(yield* f.service.status).toEqual({ platform: "darwin", running: false });
+        yield* Deferred.succeed(f.result, mcp);
+        expect(yield* Fiber.join(caller)).toEqual(Option.some(mcp));
+        expect(yield* f.service.status).toEqual({ platform: "darwin", running: true });
+        yield* f.setEnabled(false);
+        yield* Deferred.await(f.stopped);
+        expect(yield* f.service.status).toEqual({ platform: "darwin", running: false });
+        expect(yield* f.service.acquire).toEqual(Option.none());
+      }),
+    ),
+  );
+
+  it.effect("reports a host start failure until the replacement is ready", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const failure = new CuaDriver.CuaDriverStartError({
+          binaryPath: "/driver",
+          cause: new Error("native start failed"),
+        });
+        const restarting = yield* Deferred.make<void>();
+        const ready = yield* Deferred.make<CuaDriverMcpConfiguration>();
+        let attempts = 0;
+        const service = yield* makeCuaDriver({
+          enabled: Effect.succeed(true),
+          changes: Stream.empty,
+          createHost: Effect.sync(() => ({
+            start:
+              ++attempts === 1
+                ? Effect.fail(failure)
+                : Deferred.succeed(restarting, undefined).pipe(
+                    Effect.andThen(Deferred.await(ready)),
+                  ),
+            stop: Effect.void,
+            waitForExit: Effect.never,
+          })),
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+        expect(yield* service.acquire).toEqual(Option.none());
+        expect(yield* service.status).toEqual({
+          platform: "win32",
+          running: false,
+          failure: failure.message,
+        });
+        const retry = yield* service.acquire.pipe(Effect.forkChild);
+        yield* Deferred.await(restarting);
+        expect(yield* service.status).toEqual({
+          platform: "win32",
+          running: false,
+          failure: failure.message,
+        });
+        yield* Deferred.succeed(ready, mcp);
+        expect(yield* Fiber.join(retry)).toEqual(Option.some(mcp));
+        expect(yield* service.status).toEqual({ platform: "win32", running: true });
+      }),
+    ),
+  );
+
   it.effect("remembers why the last start failed until a start succeeds", () =>
     Effect.scoped(
       Effect.gen(function* () {

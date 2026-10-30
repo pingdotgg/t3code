@@ -5,12 +5,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "../../index.css";
-import type { ScopedSettingsPatch } from "./scopedSettings";
 
 type WritingStyle = typeof DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
 const state = vi.hoisted(() => ({
   styles: [] as WritingStyle[],
-  updateSettings: vi.fn<(patch: ScopedSettingsPatch) => void>(),
+  updateSettings: vi.fn<ReturnType<typeof import("./useScopedSettings").useUpdateScopedSettings>>(),
 }));
 
 vi.mock(import("@tanstack/react-router"), async (original) => ({
@@ -87,6 +86,7 @@ async function setup() {
   state.updateSettings.mockReset().mockImplementation((patch) => {
     state.styles = state.styles.map((style) => ({ ...style, ...patch.sourceControlWritingStyle }));
     void screen.rerender(content());
+    return Promise.resolve({ saved: true, message: null });
   });
   return screen;
 }
