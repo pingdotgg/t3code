@@ -16,7 +16,8 @@ export async function openThread(page: Page, title: string) {
     if ((await group.count()) === 0) break;
     await group.click();
   }
-  await item.click({ timeout: 5000 });
+  // A loaded page can block for seconds; the click waits it out rather than skipping the step.
+  await item.click({ timeout: 15_000 });
   await page
     .locator('nav[aria-label="Thread breadcrumb"]', { hasText: title })
     .waitFor({ timeout: 10_000 });
