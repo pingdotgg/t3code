@@ -59,7 +59,7 @@ const resolveEnvironmentPortTarget = (
 };
 
 // Desktop renders primary and WSL tabs locally; loopback servers require localhost even for LAN backends.
-const reachesEnvironmentLoopback = (target: ConnectionTarget): boolean =>
+export const reachesEnvironmentLoopback = (target: ConnectionTarget): boolean =>
   isElectron &&
   (target._tag === "PrimaryConnectionTarget" || isDesktopLocalConnectionTarget(target));
 
@@ -70,6 +70,14 @@ export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl:
     if (!isLoopbackHost(parsed.hostname)) return normalizedUrl;
     const target = readPreparedConnection(environmentId)?.target;
     if (target && reachesEnvironmentLoopback(target)) return normalizedUrl;
+    // The desktop preview proxy carries loopback URLs to the environment with their origin intact.
+    if (
+      isElectron &&
+      typeof window !== "undefined" &&
+      window.desktopBridge?.preview?.remoteProxy !== undefined
+    ) {
+      return normalizedUrl;
+    }
     return resolveEnvironmentPortTarget(
       environmentId,
       {

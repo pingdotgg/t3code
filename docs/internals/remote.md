@@ -152,6 +152,26 @@ of requests to the hosted origin. The browser exchanges the secret with the
 environment and strips it from its history. Moving the token into a query
 parameter would disclose it to the wrong origin.
 
+## Remote previews keep their origin
+
+A desktop tab for another environment renders locally but must reach that
+environment's loopback, never this machine's. The desktop runs one
+authenticated HTTP proxy per environment
+([RemotePreviewProxy](../../apps/desktop/src/preview/RemotePreviewProxy.ts)) and
+points that environment's preview partitions at it with `<-loopback>`, because
+Chromium otherwise bypasses proxies for loopback and PAC cannot override it.
+Loopback destinations become byte tunnels over the environment's normal
+HTTP origin, so CONNECT carries TLS and WebSockets end to end; other hosts go
+direct. A failure answers with an error, not a local dial.
+
+A tunnel is authorized by a grant
+([server](../../apps/server/src/preview/RemotePreviewProxy.ts)), not by the
+client's session token, so page traffic never carries T3 credentials. A grant
+names its ports and issuing session. The desktop renews it without the session
+token, and renewal stops when that session is revoked or expires. The server's
+own port is refused, since loopback callers can reach it in ways remote ones
+cannot.
+
 ## Access and process ownership are different
 
 Tailscale supplies an endpoint for ordinary pairing, so it needs no separate

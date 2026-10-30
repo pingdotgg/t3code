@@ -18,6 +18,10 @@ import {
   DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
+  DesktopRemotePreviewExternalAccessSchema,
+  DesktopRemotePreviewProxyConfigureInputSchema,
+  DesktopRemotePreviewProxyEnvironmentInputSchema,
+  DesktopRemotePreviewProxyStatusSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewCaptureFailure,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -33,6 +37,7 @@ import * as NodeURL from "node:url";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
+import * as RemotePreviewProxy from "../../preview/RemotePreviewProxy.ts";
 import { normalizeCaptureFailure } from "../../preview/captureErrors.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
@@ -56,6 +61,12 @@ export const installPreviewEventForwarding = Effect.fn(
   yield* manager.subscribeOpenLinks((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, event),
   );
+  const remoteProxy = yield* RemotePreviewProxy.RemotePreviewProxy;
+  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const unsubscribe = yield* remoteProxy.subscribe((status) => {
+    runFork(electronWindow.sendAll(IpcChannels.REMOTE_PREVIEW_PROXY_STATUS_CHANGE_CHANNEL, status));
+  });
+  yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
 });
 
 const setForwardedShortcuts = DesktopIpc.makeIpcMethod({
@@ -296,11 +307,19 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_GET_CONFIG_CHANNEL,
   payload: DesktopPreviewConfigInputSchema,
   result: DesktopPreviewWebviewConfigSchema,
-  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({ environmentId, profileId }) {
+  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({
+    environmentId,
+    profileId,
+    remoteProxy,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
     // Session creation installs UA and permission handlers before a guest can attach.
-    yield* manager.getBrowserSession(scope, persistent, namespace);
+    const browserSession = yield* manager.getBrowserSession(scope, persistent, namespace);
+    if (remoteProxy === true) {
+      const proxy = yield* RemotePreviewProxy.RemotePreviewProxy;
+      yield* proxy.attachSession(environmentId, browserSession);
+    }
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
@@ -416,6 +435,70 @@ const saveRecording = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const configureRemoteProxy = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REMOTE_PREVIEW_PROXY_CONFIGURE_CHANNEL,
+  payload: DesktopRemotePreviewProxyConfigureInputSchema,
+  result: DesktopRemotePreviewProxyStatusSchema,
+  handler: Effect.fn("desktop.ipc.remotePreviewProxy.configure")(function* (input) {
+    const proxy = yield* RemotePreviewProxy.RemotePreviewProxy;
+    return yield* proxy.configure(input);
+  }),
+});
+
+const remoteProxyStatus = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REMOTE_PREVIEW_PROXY_STATUS_CHANNEL,
+  payload: DesktopRemotePreviewProxyEnvironmentInputSchema,
+  result: Schema.NullOr(DesktopRemotePreviewProxyStatusSchema),
+  handler: Effect.fn("desktop.ipc.remotePreviewProxy.status")(function* ({ environmentId }) {
+    const proxy = yield* RemotePreviewProxy.RemotePreviewProxy;
+    return yield* proxy.status(environmentId);
+  }),
+});
+
+const remoteProxyStatuses = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REMOTE_PREVIEW_PROXY_STATUSES_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(DesktopRemotePreviewProxyStatusSchema),
+  handler: Effect.fn("desktop.ipc.remotePreviewProxy.statuses")(function* () {
+    const proxy = yield* RemotePreviewProxy.RemotePreviewProxy;
+    return yield* proxy.statuses();
+  }),
+});
+
+const issueRemoteProxyExternalAccess = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REMOTE_PREVIEW_PROXY_ISSUE_EXTERNAL_CHANNEL,
+  payload: DesktopRemotePreviewProxyEnvironmentInputSchema,
+  result: DesktopRemotePreviewExternalAccessSchema,
+  handler: Effect.fn("desktop.ipc.remotePreviewProxy.issueExternalAccess")(function* ({
+    environmentId,
+  }) {
+    const proxy = yield* RemotePreviewProxy.RemotePreviewProxy;
+    return yield* proxy.issueExternalAccess(environmentId);
+  }),
+});
+
+const revokeRemoteProxyExternalAccess = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REMOTE_PREVIEW_PROXY_REVOKE_EXTERNAL_CHANNEL,
+  payload: DesktopRemotePreviewProxyEnvironmentInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.remotePreviewProxy.revokeExternalAccess")(function* ({
+    environmentId,
+  }) {
+    const proxy = yield* RemotePreviewProxy.RemotePreviewProxy;
+    yield* proxy.revokeExternalAccess(environmentId);
+  }),
+});
+
+const revokeRemoteProxy = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REMOTE_PREVIEW_PROXY_REVOKE_CHANNEL,
+  payload: DesktopRemotePreviewProxyEnvironmentInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.remotePreviewProxy.revoke")(function* ({ environmentId }) {
+    const proxy = yield* RemotePreviewProxy.RemotePreviewProxy;
+    yield* proxy.revoke(environmentId);
+  }),
+});
+
 export const methods = [
   setForwardedShortcuts,
   createTab,
@@ -448,4 +531,10 @@ export const methods = [
   startRecording,
   stopRecording,
   saveRecording,
+  configureRemoteProxy,
+  remoteProxyStatus,
+  remoteProxyStatuses,
+  issueRemoteProxyExternalAccess,
+  revokeRemoteProxyExternalAccess,
+  revokeRemoteProxy,
 ] as const;

@@ -325,6 +325,35 @@ export const PreviewStopLocalServerInput = Schema.Struct({
 });
 export type PreviewStopLocalServerInput = typeof PreviewStopLocalServerInput.Type;
 
+/** Loopback ports on the environment that one desktop may reach through its preview proxy. */
+export const PreviewProxyGrantInput = Schema.Struct({
+  ports: Schema.Array(LocalServerPort).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
+});
+export type PreviewProxyGrantInput = typeof PreviewProxyGrantInput.Type;
+
+export const PreviewProxyGrant = Schema.Struct({
+  /** Opaque, short-lived; renewable only while the issuing session stays valid. */
+  grant: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtc,
+  ports: Schema.Array(LocalServerPort),
+});
+export type PreviewProxyGrant = typeof PreviewProxyGrant.Type;
+
+export class PreviewProxyGrantError extends Schema.TaggedError<PreviewProxyGrantError>()(
+  "PreviewProxyGrantError",
+  {
+    reason: Schema.Literals(["port-reserved", "issue-failed"]),
+    port: Schema.optional(LocalServerPort),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message() {
+    return this.reason === "port-reserved"
+      ? `Port ${this.port} is reserved for T3 Code and cannot be previewed.`
+      : "The environment could not issue a preview proxy grant.";
+  }
+}
+
 export class PreviewStopLocalServerError extends Schema.TaggedError<PreviewStopLocalServerError>()(
   "PreviewStopLocalServerError",
   {

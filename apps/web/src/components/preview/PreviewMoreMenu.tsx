@@ -39,6 +39,16 @@ export interface PreviewMoreMenuActions {
   readonly toggleNativePictureInPicture?: () => void;
 }
 
+export interface PreviewRemoteAccess {
+  readonly summary: string;
+  readonly deniedPorts: ReadonlyArray<number>;
+  readonly externalAccessActive: boolean;
+  readonly allowPort: (port: number) => void;
+  readonly copyExternalAccess: () => void;
+  readonly stopExternalAccess: () => void;
+  readonly turnOff: () => void;
+}
+
 interface Props {
   enabled: boolean;
   actions: PreviewMoreMenuActions;
@@ -49,6 +59,7 @@ interface Props {
   nativePictureInPicture: boolean;
   profileName: string | undefined;
   move?: { readonly label: string; readonly onMove: () => void };
+  remoteAccess?: PreviewRemoteAccess | undefined;
 }
 
 const MenuTriggerButton = () => (
@@ -76,6 +87,7 @@ export function PreviewMoreMenu({
   nativePictureInPicture,
   profileName,
   move,
+  remoteAccess,
 }: Props) {
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
   const disabled = !enabled;
@@ -161,6 +173,33 @@ export function PreviewMoreMenu({
             </Button>
           </span>
         </MenuItem>
+        {remoteAccess ? (
+          <MenuSub>
+            <MenuSubTrigger>Remote access</MenuSubTrigger>
+            <MenuSubPopup>
+              <MenuGroup>
+                <MenuGroupLabel className="max-w-64">
+                  <span className="block truncate">{remoteAccess.summary}</span>
+                </MenuGroupLabel>
+                {remoteAccess.deniedPorts.map((port) => (
+                  <MenuItem key={port} onClick={() => remoteAccess.allowPort(port)}>
+                    Allow port {port}
+                  </MenuItem>
+                ))}
+                <MenuSeparator />
+                <MenuItem onClick={remoteAccess.copyExternalAccess}>
+                  Copy proxy for another browser
+                </MenuItem>
+                {remoteAccess.externalAccessActive ? (
+                  <MenuItem onClick={remoteAccess.stopExternalAccess}>
+                    Stop other browser access
+                  </MenuItem>
+                ) : null}
+                <MenuItem onClick={remoteAccess.turnOff}>Turn off remote access</MenuItem>
+              </MenuGroup>
+            </MenuSubPopup>
+          </MenuSub>
+        ) : null}
         <MenuSeparator />
         <MenuGroup>
           {profileName ? (

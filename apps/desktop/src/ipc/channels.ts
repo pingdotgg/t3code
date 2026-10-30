@@ -112,6 +112,15 @@ export const PREVIEW_RECORDING_SAVE_CHANNEL = "desktop:preview-recording-save";
 export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 export const PREVIEW_OPEN_LINK_CHANNEL = "desktop:preview-open-link";
+export const REMOTE_PREVIEW_PROXY_CONFIGURE_CHANNEL = "desktop:remote-preview-proxy-configure";
+export const REMOTE_PREVIEW_PROXY_STATUS_CHANNEL = "desktop:remote-preview-proxy-status";
+export const REMOTE_PREVIEW_PROXY_ISSUE_EXTERNAL_CHANNEL =
+  "desktop:remote-preview-proxy-issue-external";
+export const REMOTE_PREVIEW_PROXY_REVOKE_EXTERNAL_CHANNEL =
+  "desktop:remote-preview-proxy-revoke-external";
+export const REMOTE_PREVIEW_PROXY_REVOKE_CHANNEL = "desktop:remote-preview-proxy-revoke";
+export const REMOTE_PREVIEW_PROXY_STATUS_CHANGE_CHANNEL =
+  "desktop:remote-preview-proxy-status-change";
 
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
@@ -123,3 +132,5 @@ export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";
 export const TAKE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:take-legacy-local-storage";
 export const COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:complete-legacy-local-storage";
+
+export const REMOTE_PREVIEW_PROXY_STATUSES_CHANNEL = "desktop:remote-preview-proxy-statuses";

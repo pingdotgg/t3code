@@ -39,6 +39,13 @@ import {
   useThreadPreviewState,
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import {
+  approveRemotePreviewPorts,
+  approveRemotePreviewUrl,
+  needsRemotePreviewProxy,
+  revokeRemotePreview,
+} from "~/browser/remotePreviewProxy";
+import { useRemotePreviewProxyStatus } from "~/browser/useRemotePreviewProxyStatus";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
 import {
   useEnvironment,
@@ -63,7 +70,11 @@ import { openPreviewSession } from "./openPreviewSession";
 import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
-import { PreviewMoreMenu, type PreviewMoreMenuActions } from "./PreviewMoreMenu";
+import {
+  PreviewMoreMenu,
+  type PreviewMoreMenuActions,
+  type PreviewRemoteAccess,
+} from "./PreviewMoreMenu";
 import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
 import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
@@ -235,6 +246,13 @@ export function PreviewView({
       return true;
     }
     if (runtimeTabId && previewBridge) {
+      await approveRemotePreviewUrl(threadRef.environmentId, resolvedUrl).catch((error: unknown) =>
+        toastManager.add({
+          type: "error",
+          title: "Couldn't open this port on the environment",
+          description: error instanceof Error ? error.message : "Reconnect and try again.",
+        }),
+      );
       await previewBridge.navigate(runtimeTabId, resolvedUrl);
       rememberPreviewUrl(threadRef, resolvedUrl);
       return true;
@@ -450,6 +468,66 @@ export function PreviewView({
           toggleNativePictureInPicture: () => handleNativePictureInPicture(),
         }
       : null;
+
+  const remoteProxyStatus = useRemotePreviewProxyStatus(
+    threadRef.environmentId,
+    !serverOwnsRendering &&
+      previewBridge !== null &&
+      needsRemotePreviewProxy(threadRef.environmentId),
+  );
+  const reportRemoteAccessError = (title: string) => (error: unknown) =>
+    toastManager.add({
+      type: "error",
+      title,
+      description: error instanceof Error ? error.message : "Reconnect and try again.",
+    });
+  const remoteAccess: PreviewRemoteAccess | undefined =
+    remoteProxyStatus === null
+      ? undefined
+      : {
+          summary:
+            remoteProxyStatus.state === "ready"
+              ? `${environmentLabel}: ports ${remoteProxyStatus.ports.join(", ")}`
+              : remoteProxyStatus.state === "revoked"
+                ? `${environmentLabel}: off`
+                : `${environmentLabel}: waiting for the environment`,
+          deniedPorts: remoteProxyStatus.deniedPorts,
+          externalAccessActive: remoteProxyStatus.externalAccess !== null,
+          allowPort: (port) =>
+            void approveRemotePreviewPorts(threadRef.environmentId, [port]).catch(
+              reportRemoteAccessError(`Couldn't allow port ${port}`),
+            ),
+          copyExternalAccess: () =>
+            void window.desktopBridge?.preview.remoteProxy
+              .issueExternalAccess(threadRef.environmentId)
+              .then((access) => {
+                const server = access.proxyServer;
+                return navigator.clipboard.writeText(
+                  [
+                    `Proxy: ${server} (user ${access.username}, password ${access.password})`,
+                    `Valid until ${new Date(access.expiresAt).toLocaleString()}.`,
+                    `Chrome: --proxy-server=${server} --proxy-bypass-list="<-loopback>" --user-data-dir=<new profile directory>`,
+                    `Playwright: chromium.launch({ proxy: { server: "${server}", username: "${access.username}", password: "${access.password}" } })`,
+                  ].join("\n"),
+                );
+              })
+              .then(() =>
+                toastManager.add({
+                  type: "success",
+                  title: "Proxy copied",
+                  description: `Another browser can now open ${environmentLabel}'s approved localhost ports.`,
+                }),
+              )
+              .catch(reportRemoteAccessError("Couldn't create proxy access")),
+          stopExternalAccess: () =>
+            void window.desktopBridge?.preview.remoteProxy
+              .revokeExternalAccess(threadRef.environmentId)
+              .catch(reportRemoteAccessError("Couldn't stop other browser access")),
+          turnOff: () =>
+            void revokeRemotePreview(threadRef.environmentId).catch(
+              reportRemoteAccessError("Couldn't turn off remote access"),
+            ),
+        };
 
   const handleNativePictureInPicture = () => {
     if (!previewBridge || !runtimeTabId) return;
@@ -898,6 +976,7 @@ export function PreviewView({
                 ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
                 : {})}
               profileName={activeProfileName}
+              remoteAccess={remoteAccess}
               zoomFactor={
                 serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
               }

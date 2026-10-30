@@ -295,6 +295,10 @@
       "types": "./src/preview.ts",
       "import": "./src/preview.ts"
     },
+    "./remotePreviewProxy": {
+      "types": "./src/remotePreviewProxy.ts",
+      "import": "./src/remotePreviewProxy.ts"
+    },
     "./previewViewport": {
       "types": "./src/previewViewport.ts",
       "import": "./src/previewViewport.ts"

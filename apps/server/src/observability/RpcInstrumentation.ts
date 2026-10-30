@@ -203,6 +203,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribePreviewEvents]: "preview",
   [WS_METHODS.subscribeDiscoveredLocalServers]: "preview",
   [WS_METHODS.previewStopLocalServer]: "preview",
+  [WS_METHODS.previewIssueProxyGrant]: "preview",
   [WS_METHODS.deviceConfigure]: "device",
   [WS_METHODS.deviceTestHost]: "device",
   [WS_METHODS.deviceEasAccount]: "device",
