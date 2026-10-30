@@ -1196,6 +1196,7 @@ export function ProviderInstanceCard({
       idPrefix={`provider-instance-${instanceId}`}
       variant="settings"
       onChange={updateConfig}
+      environmentId={environmentId}
     />
   ) : (
     <SettingsRow

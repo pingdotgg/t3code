@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
+  acceptsSecretReference,
   isSecretReference,
   isSecretSetting,
   type EnvironmentId,
@@ -38,6 +39,8 @@ export interface ProviderSettingsFieldModel {
   readonly clearWhenEmpty: "omit" | "persist";
   /** Kept in the server's secret store: a saved value arrives as `SECRET_REDACTED` and never shows. */
   readonly secret?: boolean | undefined;
+  /** Typed `SettingsSecretValue`: may name a secret provider reference instead of a value. */
+  readonly acceptsSecretReference?: boolean | undefined;
   readonly defaultBooleanValue?: boolean | undefined;
 
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
@@ -135,6 +138,7 @@ export function deriveProviderSettingsFields(
               : {}),
           clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
           ...(isSecretSetting(fieldSchema) ? { secret: true } : {}),
+          ...(acceptsSecretReference(fieldSchema) ? { acceptsSecretReference: true } : {}),
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
             : {}),
@@ -320,7 +324,7 @@ interface ProviderSettingsFormProps {
   readonly idPrefix: string;
   readonly variant: "card" | "dialog" | "settings";
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
-  /** Lets secret fields in the settings variant read from a secret provider on this environment. */
+  /** Where the secret providers offered for `SettingsSecretValue` fields are configured. */
   readonly environmentId?: EnvironmentId | undefined;
 }
 
@@ -490,7 +494,7 @@ function ProviderSettingsFieldRow({
           placeholder={field.placeholder}
           spellCheck={false}
         />
-      ) : field.secret && environmentId !== undefined ? (
+      ) : field.acceptsSecretReference && environmentId !== undefined ? (
         <SecretSettingsControl
           field={field}
           value={value}

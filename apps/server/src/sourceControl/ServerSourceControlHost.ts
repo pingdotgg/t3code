@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
-import { resolveSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -25,9 +24,7 @@ export const layer = Layer.effect(
         getWithSecrets: (kind) =>
           serverSettings.getSettings.pipe(
             Effect.flatMap((settings) =>
-              resolveSourceControlHostSecrets(settings.sourceControlHosts, kind, (source) =>
-                resolveSettingsSecret(secrets, source),
-              ).pipe(
+              resolveSourceControlHostSecrets(secrets, settings.sourceControlHosts, kind).pipe(
                 Effect.map((sourceControlHosts) =>
                   sourceControlHosts === settings.sourceControlHosts
                     ? settings

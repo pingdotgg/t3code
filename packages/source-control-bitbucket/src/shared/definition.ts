@@ -44,11 +44,7 @@ const text = (annotations: Schema.Annotations.Key<string>) =>
 const secret = (annotations: Schema.Annotations.Key<SettingsSecretValue>) =>
   SettingsSecretValue.pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
-    Schema.annotateKey({
-      ...annotations,
-      settingsSecret: true,
-      providerSettingsForm: { control: "password" },
-    }),
+    Schema.annotateKey({ ...annotations, providerSettingsForm: { control: "password" } }),
   );
 
 export const settings = makeProviderSettingsSchema(
@@ -114,7 +110,14 @@ export const definition = defineSourceControl({
   authorProfileUrl: () => null,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: () => null,
-  isChangeRequestReference: () => false,
+  isChangeRequestReference: (reference) => {
+    const url = URL.parse(reference);
+    return (
+      url !== null &&
+      isBitbucketHost(url.hostname) &&
+      parseChangeRequestPath(url, CHANGE_REQUEST_PATH) !== null
+    );
+  },
   checkoutChangeRequestHost: () => null,
   recognizeRemote: ({ host, hostname }) =>
     hostname === "bitbucket.org" || hostname.split(".").includes("bitbucket")
