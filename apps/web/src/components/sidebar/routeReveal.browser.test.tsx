@@ -17,6 +17,7 @@ function RevealList(props: {
         <li
           key={key}
           ref={key === props.activeKey ? (row) => revealActiveRow(row, key) : undefined}
+          tabIndex={-1}
           style={{ height: ROW_HEIGHT_PX }}
         >
           {key}
@@ -44,6 +45,24 @@ describe("useActiveRowReveal", () => {
     await screen.rerender(<RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />);
 
     await expect.element(target).toBeInViewport();
+  });
+
+  it("leaves the list where it is when the user opened the thread from its focused row", async () => {
+    const reveal = newReveal();
+    const keys = rowKeys(50);
+    await using screen = await render(
+      <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-0" />,
+      // No router: the route arrives as the activeKey prop.
+      { router: false },
+    );
+    const list = screen.getByRole("list", { name: "Threads" }).element();
+    // thread-2 is half above the top edge, where a reveal would scroll it fully in.
+    list.scrollTop = 60;
+    screen.getByText("thread-2", { exact: true }).element().focus({ preventScroll: true });
+
+    await screen.rerender(<RevealList reveal={reveal} rowKeys={keys} activeKey="thread-2" />);
+
+    expect(list.scrollTop).toBe(60);
   });
 
   it("reveals the active row when it mounts after the shells arrive", async () => {
