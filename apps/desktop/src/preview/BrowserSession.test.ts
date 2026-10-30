@@ -168,7 +168,12 @@ describe("BrowserSession", () => {
         return granted;
       };
 
-      for (const permission of ["clipboard-sanitized-write", "geolocation", "fullscreen"]) {
+      for (const permission of [
+        "clipboard-sanitized-write",
+        "geolocation",
+        "fullscreen",
+        "pointerLock",
+      ]) {
         assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
         assert.isTrue(
           checkHandler(null, permission) as boolean,

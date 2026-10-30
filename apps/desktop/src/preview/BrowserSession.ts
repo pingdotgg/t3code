@@ -24,6 +24,7 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   "geolocation",
   // DesktopWindow confines HTML fullscreen to the guest's webview.
   "fullscreen",
+  "pointerLock",
   // Deny local-fonts to untrusted previews: it exposes installed-font fingerprints and file bytes.
   // Deny notifications: pages could impersonate T3 Code; app notifications use the default session.
 ]);
