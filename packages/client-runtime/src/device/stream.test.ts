@@ -627,9 +627,13 @@ describe("shared device stream readiness and recovery", () => {
     }
   });
 
-  it.each([false, true])(
-    "retries a transient software backlog after recovery for an iOS video-only feed: %s",
-    async (videoOnly) => {
+  it.each([
+    { videoOnly: false, serveSimOnly: false, name: "device" },
+    { videoOnly: true, serveSimOnly: false, name: "Duo panel" },
+    { videoOnly: false, serveSimOnly: true, name: "Simlock device" },
+  ])(
+    "retries a transient software backlog after recovery for $name",
+    async ({ videoOnly, serveSimOnly }) => {
       const {
         client,
         Decoder,
@@ -639,7 +643,7 @@ describe("shared device stream readiness and recovery", () => {
         decodedFrame,
         configureVideo,
         overloadVideo,
-      } = recoveryFixture("ios", false, videoOnly);
+      } = recoveryFixture("ios", false, videoOnly, serveSimOnly);
       try {
         client.start();
         await vi.advanceTimersByTimeAsync(0);
@@ -666,10 +670,10 @@ describe("shared device stream readiness and recovery", () => {
 
         await overloadVideo(3);
         expect(videoBodies).toHaveLength(4);
-        if (videoOnly) {
+        if (videoOnly || serveSimOnly) {
           expect(events.onStatus).toHaveBeenLastCalledWith(
             "error",
-            "This browser cannot keep up with the Duo panel's video.",
+            `This browser cannot keep up with the ${videoOnly ? "Duo panel" : "device"}'s video.`,
           );
           expect(events.onMjpegFallback).not.toHaveBeenCalled();
         } else {
@@ -755,40 +759,6 @@ describe("shared device stream readiness and recovery", () => {
         } else {
           expect(events.onMjpegFallback).toHaveBeenCalledOnce();
         }
-      } finally {
-        client.stop();
-      }
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
-
-  it.each([
-    { videoOnly: true, serveSimOnly: false, name: "Duo panel" },
-    { videoOnly: false, serveSimOnly: true, name: "device" },
-  ])(
-    "reports software backlog without MJPEG for $name",
-    async ({ videoOnly, serveSimOnly, name }) => {
-      const { client, videoBodies, events, configureVideo, overloadVideo } = recoveryFixture(
-        "ios",
-        false,
-        videoOnly,
-        serveSimOnly,
-      );
-      try {
-        client.start();
-        await vi.advanceTimersByTimeAsync(0);
-        await configureVideo(0);
-        await overloadVideo(0);
-        await configureVideo(1);
-        await overloadVideo(1);
-        await configureVideo(2);
-        await overloadVideo(2);
-        expect(events.onStatus).toHaveBeenLastCalledWith(
-          "error",
-          `This browser cannot keep up with the ${name}'s video.`,
-        );
-        expect(events.onMjpegFallback).not.toHaveBeenCalled();
-        expect(videoBodies).toHaveLength(3);
       } finally {
         client.stop();
       }
