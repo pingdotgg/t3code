@@ -654,6 +654,29 @@ describe("GitCafePullRequestProvider", () => {
   });
 
   it.effect.each([
+    { reply: { ...pull, state: "closed", closedAt: timestamp, version: 5 } },
+    { reply: { id: "pr_one" } },
+  ])("returns the pull request GitCafe's close replied with, if any", ({ reply }) => {
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": pull,
+      "POST /repos/owner/repo/pulls/7/close": reply,
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const summary = yield* provider.runAction({ ...target, action: "close" });
+      if ("state" in reply) {
+        assert.deepInclude(summary, { state: "closed", closedAt: timestamp, headSha: headOid });
+        assert.notProperty(summary, "additions");
+        assert.notProperty(summary, "mergeability");
+      } else {
+        assert.isUndefined(summary);
+      }
+      assert.deepStrictEqual(server.writes(), ["POST /repos/owner/repo/pulls/7/close"]);
+      assert.deepStrictEqual(server.sent.at(-1)?.body, { expectedVersion: 4 });
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect.each([
     ["completed", true],
     ["failed", false],
   ] as const)("merges synchronously and reads a %s outcome", ([state, succeeds]) => {

@@ -131,6 +131,27 @@ describe("mobile PR list pagination", () => {
       "merged",
     ]);
   });
+  it("patches a row by reference unless the row is newer or already merged", () => {
+    const newer = entry(3, { updatedAt: "2026-10-20T00:00:00Z" });
+    const head = page([entry(2), entry(1, { state: "merged" }), newer]);
+    const closed = { state: "closed" as const, updatedAt: "2026-10-10T00:00:00Z" };
+    const patched = [1, 2, 3].reduce<ReturnType<typeof patchPullRequestListEntry>>(
+      (pages, number) =>
+        patchPullRequestListEntry(
+          pages,
+          head,
+          { projectId: newer.projectId, host: "GitHub.com", repository: "Org/Repo", number },
+          closed,
+          5,
+        ),
+      null,
+    );
+    expect(patched?.entries.map((row) => [row.number, row.state])).toEqual([
+      [3, "open"],
+      [2, "closed"],
+      [1, "merged"],
+    ]);
+  });
   it("refreshes the head without dropping older loaded pages or rewinding their cursor", () => {
     const first = pullRequestListHead(null, page([entry(3)], { repo: "first" }));
     const continued = appendPullRequestListPage(first, page([entry(2)], { repo: "second" }), {

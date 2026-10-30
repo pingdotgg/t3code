@@ -385,6 +385,32 @@ layer("GitLabPullRequestCli.layer", (it) => {
       }),
   );
 
+  it.effect.each([
+    { reply: mergeRequestJson({ state: "opened", merge_when_pipeline_succeeds: false }) },
+    { reply: "" },
+  ])("returns the merge request GitLab replied with when auto-merge is cancelled", ({ reply }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(reply)));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const summary = yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "disable-auto-merge",
+      });
+
+      if (reply === "") {
+        expect(summary).toBeUndefined();
+      } else {
+        expect(summary).toMatchObject({ number: 7, state: "open", autoMergeEnabled: false });
+        expect(summary).not.toHaveProperty("additions");
+        expect(summary).not.toHaveProperty("changedFiles");
+      }
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect.each(["merge", "enable-auto-merge"] as const)(
     "does not run %s when GitLab has no diff revisions",
     (action) =>

@@ -9,6 +9,7 @@ import {
   type ProviderChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
+  type ProviderChangeRequestSummary,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
@@ -104,6 +105,22 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
     updatedAt: pullRequest.updatedAt,
     reviewRequestLogins: pullRequest.reviewRequestLogins,
     labels: [],
+  };
+}
+
+/** The write's reply has no `closed_on`, line counts, or conflict state, so those stay absent. */
+function toActionSummary(pullRequest: BitbucketPullRequest): ProviderChangeRequestSummary {
+  return {
+    number: pullRequest.number,
+    title: pullRequest.title,
+    url: pullRequest.url,
+    author: pullRequest.author,
+    headBranch: pullRequest.headBranch,
+    baseBranch: pullRequest.baseBranch,
+    state: pullRequest.state,
+    isDraft: pullRequest.isDraft,
+    updatedAt: pullRequest.updatedAt,
+    ...(pullRequest.headSha ? { headSha: pullRequest.headSha } : {}),
   };
 }
 
@@ -310,7 +327,10 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
-        .pipe(Effect.mapError(fail("runAction"))),
+        .pipe(
+          Effect.mapError(fail("runAction")),
+          Effect.map((pullRequest) => pullRequest && toActionSummary(pullRequest)),
+        ),
 
     updateChangeRequest: (input) =>
       api

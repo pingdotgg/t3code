@@ -43,7 +43,7 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
       );
       return;
     }
-    refreshDetail();
+    if (response.value === undefined) refreshDetail();
     refreshActivity();
   };
   const confirm = (action: PullRequestAction, title: string, message: string) =>

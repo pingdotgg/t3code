@@ -1,5 +1,6 @@
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import { isStalePullRequestReply } from "@t3tools/client-runtime/pull-request-reply";
 import {
   ProjectId,
   resolvePullRequestAuthorFilter,
@@ -9,6 +10,7 @@ import {
   type PullRequestListInput,
   type PullRequestListResult,
   type PullRequestListStatsInput,
+  type PullRequestRef,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
 
@@ -282,21 +284,28 @@ export function shownPullRequestListPages(
 export function patchPullRequestListEntry(
   recorded: PullRequestListPages | null,
   head: PullRequestListResult | null,
-  entry: PullRequestListEntry,
+  entry: Pick<PullRequestRef, "projectId" | "host" | "repository" | "number">,
   patch: Partial<PullRequestListEntry>,
   observedAt: number,
 ): PullRequestListPages | null {
   const pages = shownPullRequestListPages(recorded, head);
-  return (
-    pages && {
-      ...pages,
-      entries: pages.entries.map((row) =>
-        pullRequestListKey(row) === pullRequestListKey(entry)
-          ? { ...row, ...patch, observedAt }
-          : row,
-      ),
-    }
-  );
+  if (!pages) return null;
+  let changed = false;
+  const entries = pages.entries.map((row) => {
+    if (
+      row.projectId !== entry.projectId ||
+      row.repository.toLowerCase() !== entry.repository.toLowerCase() ||
+      row.number !== entry.number ||
+      row.host.toLowerCase() !== entry.host?.toLowerCase() ||
+      isStalePullRequestReply(row, { state: patch.state ?? row.state, ...patch, observedAt })
+    )
+      return row;
+    changed = true;
+    return { ...row, ...patch, observedAt };
+  });
+  return changed
+    ? { ...pages, entries: entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) }
+    : pages;
 }
 
 export function pullRequestListInput(

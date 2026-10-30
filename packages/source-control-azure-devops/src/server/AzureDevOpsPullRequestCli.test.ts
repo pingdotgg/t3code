@@ -873,6 +873,37 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    { reply: json({ ...pullRequestRow, status: "abandoned", closedDate: "2026-07-02T00:00:00Z" }) },
+    { reply: "" },
+  ])("returns the pull request `pr update` printed, if any", ({ reply }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(reply)));
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+
+      const summary = yield* provider.runAction({
+        cwd: "/w",
+        repository: "platform/web",
+        host: "dev.azure.com",
+        number: 42,
+        action: "close",
+      });
+
+      expect(summary).toEqual(
+        reply === ""
+          ? undefined
+          : expect.objectContaining({
+              number: 42,
+              state: "closed",
+              closedAt: "2026-07-02T00:00:00Z",
+              updatedAt: "2026-07-02T00:00:00Z",
+              autoMergeEnabled: false,
+            }),
+      );
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect("refuses a reviewer az would read as a flag, before running anything", () =>
     Effect.gen(function* () {
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;

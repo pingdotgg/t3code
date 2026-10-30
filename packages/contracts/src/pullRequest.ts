@@ -448,6 +448,8 @@ export const PullRequestPreview = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   createdAt: IsoDateTime,
+  updatedAt: Schema.optional(IsoDateTime),
+  observedAt: Schema.optional(Schema.Finite),
 });
 export type PullRequestPreview = typeof PullRequestPreview.Type;
 
@@ -475,6 +477,10 @@ export const PullRequestSummary = Schema.Struct({
   mergeability: Schema.optional(PullRequestMergeability),
   /** Null when the host says the pull request is in no stack; absent when the read did not ask. */
   stack: Schema.optional(Schema.NullOr(PullRequestStackMembership)),
+  headSha: Schema.optional(TrimmedNonEmptyString),
+  /** Absent means the read did not report auto-merge state, not that it is off. */
+  autoMergeEnabled: Schema.optional(Schema.Boolean),
+  autoMergeMethod: Schema.optional(PullRequestMergeMethod),
 });
 export type PullRequestSummary = typeof PullRequestSummary.Type;
 

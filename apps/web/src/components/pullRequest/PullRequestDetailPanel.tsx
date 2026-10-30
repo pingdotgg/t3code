@@ -23,6 +23,7 @@ import {
   type PullRequestUpdateMethod,
   type PullRequestRef,
   type PullRequestReviewGuideStop,
+  type PullRequestSummary,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -287,7 +288,11 @@ export function PullRequestDetailPanel({
    * notification can switch it.
    */
   tabOnPage?: boolean;
-  onActed?: (action?: PullRequestAction, phase?: "sent" | "done" | "failed") => void;
+  onActed?: (
+    action?: PullRequestAction,
+    phase?: "sent" | "done" | "failed",
+    reply?: PullRequestSummary,
+  ) => void;
   onClose?: () => void;
   context?: "page" | "thread";
   composerDraftTarget?: ScopedThreadRef | DraftId;
@@ -685,10 +690,12 @@ export function PullRequestDetailPanel({
     }
     if (pullRequestActionNeedsHostRefresh(action)) {
       void refreshFromHost();
+    } else if (result.value !== undefined) {
+      if (nativeStack !== null) nativeStackQuery.refresh();
     } else {
       refreshDetail();
     }
-    onActed?.(action, "done");
+    onActed?.(action, "done", result.value);
     return true;
   };
 

@@ -1103,7 +1103,8 @@ const WsPullRequestsSetFilesViewedRpc = Rpc.make(WS_METHODS.pullRequestsSetFiles
 
 const WsPullRequestsRunActionRpc = Rpc.make(WS_METHODS.pullRequestsRunAction, {
   payload: PullRequestActionInput,
-  success: Schema.Void,
+  // Undefined when the host's reply did not carry the change request; clients then re-read.
+  success: Schema.UndefinedOr(PullRequestSummary),
   error: PullRequestRpcError,
 });
 

@@ -17,8 +17,10 @@ import type {
   PullRequestListFilters,
   PullRequestListState,
   PullRequestState,
+  PullRequestSummary,
 } from "@t3tools/contracts";
 
+import { isStalePullRequestReply } from "@t3tools/client-runtime/pull-request-reply";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { PullRequestListSort } from "./pullRequestListPreferences";
 
@@ -792,6 +794,9 @@ export interface PullRequestListOverride {
   readonly updatedAt: string;
   readonly token: number;
   readonly at: number;
+  /** Set when the host reported this state, so a newer row can outrank it. */
+  readonly fromReply?: true;
+  readonly observedAt?: number;
 }
 
 export function pullRequestOverrideAfterAction(
@@ -799,7 +804,20 @@ export function pullRequestOverrideAfterAction(
   action: PullRequestAction,
   now: Date,
   token: number,
+  reply?: PullRequestSummary,
 ): PullRequestListOverride | null {
+  if (reply !== undefined) {
+    const { state, isDraft, updatedAt, observedAt } = reply;
+    return {
+      state,
+      ...(isDraft === undefined ? {} : { isDraft }),
+      updatedAt,
+      ...(observedAt === undefined ? {} : { observedAt }),
+      fromReply: true,
+      token,
+      at: now.getTime(),
+    };
+  }
   const stamp = { updatedAt: now.toISOString(), token, at: now.getTime() };
   switch (action) {
     case "close":
@@ -826,7 +844,9 @@ export function applyPullRequestOverrides<Entry extends PullRequestListEntry>(
   if (overrides.size === 0 && state === "all") return entries;
   const out: Entry[] = [];
   for (const entry of entries) {
-    const override = overrides.get(keyOf(entry));
+    const held = overrides.get(keyOf(entry));
+    const override =
+      held?.fromReply === true && isStalePullRequestReply(entry, held) ? undefined : held;
     if (state !== "all" && (override?.state ?? entry.state) !== state) continue;
     out.push(override === undefined ? entry : { ...entry, ...override });
   }

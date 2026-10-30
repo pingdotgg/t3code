@@ -86,9 +86,11 @@ import type { SourceControlProviderContext } from "@t3tools/source-control-core/
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   type ProviderChangeRequest,
+  type ProviderChangeRequestDetail,
   type ProviderDiffFilePaths,
   type ProviderFilterOptionPage,
   type ProviderListCursor,
+  type ProviderChangeRequestSummary,
   type ProviderChangeRequestWatchFingerprint,
   type PullRequestProviderApi,
   PullRequestProviderError,
@@ -246,7 +248,9 @@ export class PullRequestService extends Context.Service<
     readonly changeBreakdown: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestChangeBreakdown, PullRequestError>;
-    readonly runAction: (input: PullRequestActionInput) => Effect.Effect<void, PullRequestError>;
+    readonly runAction: (
+      input: PullRequestActionInput,
+    ) => Effect.Effect<PullRequestSummary | undefined, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
     readonly updateComment: (
@@ -1605,6 +1609,54 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const toSummary = (
+    project: SupportedProject,
+    changeRequest: ProviderChangeRequestSummary | ProviderChangeRequestDetail,
+    observedAt: number,
+    reply = false,
+  ): PullRequestSummary => ({
+    provider: project.api.kind,
+    projectId: project.project.id,
+    repository: project.repository,
+    number: changeRequest.number,
+    title: changeRequest.title,
+    url: changeRequest.url,
+    state: changeRequest.state,
+    headBranch: changeRequest.headBranch,
+    baseBranch: changeRequest.baseBranch,
+    // An action reply may not carry these, and null would erase a time a client already holds.
+    ...(changeRequest.closedAt === undefined && reply
+      ? {}
+      : { closedAt: changeRequest.closedAt ?? null }),
+    ...(changeRequest.mergedAt === undefined && reply
+      ? {}
+      : { mergedAt: changeRequest.mergedAt ?? null }),
+    updatedAt: changeRequest.updatedAt,
+    observedAt,
+    ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
+    ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
+    ...(changeRequest.additions === undefined ? {} : { additions: changeRequest.additions }),
+    ...(changeRequest.deletions === undefined ? {} : { deletions: changeRequest.deletions }),
+    ...(changeRequest.changedFiles === undefined
+      ? {}
+      : { changedFiles: changeRequest.changedFiles }),
+    ...(changeRequest.reviewDecision === undefined
+      ? {}
+      : { reviewDecision: changeRequest.reviewDecision }),
+    ...(changeRequest.checksState === undefined ? {} : { checksState: changeRequest.checksState }),
+    ...(changeRequest.mergeability === undefined
+      ? {}
+      : { mergeability: changeRequest.mergeability }),
+    ...(changeRequest.stack === undefined ? {} : { stack: changeRequest.stack }),
+    ...(changeRequest.headSha == null ? {} : { headSha: changeRequest.headSha }),
+    ...(changeRequest.autoMergeEnabled === undefined
+      ? {}
+      : { autoMergeEnabled: changeRequest.autoMergeEnabled }),
+    ...(changeRequest.autoMergeMethod === undefined
+      ? {}
+      : { autoMergeMethod: changeRequest.autoMergeMethod }),
+  });
+
   const summaryUncached: PullRequestService["Service"]["summary"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project) => {
@@ -1614,49 +1666,17 @@ export const make = Effect.gen(function* () {
           host: project.host,
           number: input.number,
         };
-        const read =
+        const read: Effect.Effect<
+          ProviderChangeRequestSummary | ProviderChangeRequestDetail,
+          PullRequestProviderError
+        > =
           project.api.getChangeRequestSummary === undefined
             ? project.api.getChangeRequest(providerInput)
             : project.api.getChangeRequestSummary(providerInput);
         return read.pipe(
           Effect.mapError(toPullRequestError("summary")),
           observeRead,
-          Effect.map(({ value: changeRequest, observedAt }): PullRequestSummary => ({
-            provider: project.api.kind,
-            projectId: project.project.id,
-            repository: project.repository,
-            number: changeRequest.number,
-            title: changeRequest.title,
-            url: changeRequest.url,
-            state: changeRequest.state,
-            headBranch: changeRequest.headBranch,
-            baseBranch: changeRequest.baseBranch,
-            closedAt: changeRequest.closedAt ?? null,
-            mergedAt: changeRequest.mergedAt ?? null,
-            updatedAt: changeRequest.updatedAt,
-            observedAt,
-            ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
-            ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
-            ...(changeRequest.additions === undefined
-              ? {}
-              : { additions: changeRequest.additions }),
-            ...(changeRequest.deletions === undefined
-              ? {}
-              : { deletions: changeRequest.deletions }),
-            ...(changeRequest.changedFiles === undefined
-              ? {}
-              : { changedFiles: changeRequest.changedFiles }),
-            ...(changeRequest.reviewDecision === undefined
-              ? {}
-              : { reviewDecision: changeRequest.reviewDecision }),
-            ...(changeRequest.checksState === undefined
-              ? {}
-              : { checksState: changeRequest.checksState }),
-            ...(changeRequest.mergeability === undefined
-              ? {}
-              : { mergeability: changeRequest.mergeability }),
-            ...(changeRequest.stack === undefined ? {} : { stack: changeRequest.stack }),
-          })),
+          Effect.map(({ value, observedAt }) => toSummary(project, value, observedAt)),
         );
       }),
     );
@@ -1930,9 +1950,15 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
+  type ActionOutcome = {
+    readonly repository: string;
+    readonly summary: PullRequestSummary | undefined;
+  };
+  const runAction = (
+    input: PullRequestActionInput,
+  ): Effect.Effect<ActionOutcome, PullRequestError> =>
     requireProject(input).pipe(
-      Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
+      Effect.flatMap((project): Effect.Effect<ActionOutcome, PullRequestError> => {
         if (input.action === "delete-branch" && project.api.capabilities.deleteBranch !== true) {
           return Effect.fail(
             new PullRequestOperationError({
@@ -1992,7 +2018,7 @@ export const make = Effect.gen(function* () {
           "runAction",
           input.action === "update-branch",
         ).pipe(
-          Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
+          Effect.flatMap((viewer): Effect.Effect<ActionOutcome, PullRequestError> => {
             const stackRebase = input.stackNumber !== undefined && input.action === "update-branch";
             if (
               stackRebase ? viewer.stackRebase !== true : !viewer.actions.includes(input.action)
@@ -2061,9 +2087,17 @@ export const make = Effect.gen(function* () {
                         : refreshAfterTurn(project.project.id),
                     ),
                     Effect.mapError(toPullRequestError("runAction")),
-                    Effect.as(
-                      project.repositoryKey !== null ? input.repository.trim() : project.repository,
-                    ),
+                    observeRead,
+                    Effect.map(({ value, observedAt }) => ({
+                      repository:
+                        project.repositoryKey !== null
+                          ? input.repository.trim()
+                          : project.repository,
+                      summary:
+                        value === undefined || input.stackNumber !== undefined
+                          ? undefined
+                          : toSummary(project, value, observedAt, true),
+                    })),
                   ),
               ),
             );
@@ -3513,7 +3547,7 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const ref = yield* canonicalRef(input);
     yield* readCache.invalidate(refScope(ref));
-    const repository = yield* runAction(input).pipe(
+    const { repository, summary } = yield* runAction(input).pipe(
       Effect.ensuring(readCache.invalidate(refScope(ref))),
     );
     bumpRefEpoch({ ...ref, repository });
@@ -3521,21 +3555,28 @@ export const make = Effect.gen(function* () {
     yield* SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
     if (input.action === "merge") {
       // A successful merge action can merely enqueue the PR or enable auto-merge.
-      const confirmed = yield* summaryUncached({ ...input, repository }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to confirm pull request merge", { error }).pipe(
-            Effect.as(null),
-          ),
-        ),
-      );
-      if (confirmed?.state !== "merged") return;
-      yield* PubSub.publish(mergedPullRequests, {
-        projectId: input.projectId,
-        repository,
-        number: input.number,
-        mergedAt: DateTime.formatIso(yield* DateTime.now),
-      });
+      const merged = summary?.state === "merged" ? summary : null;
+      const confirmed =
+        merged?.mergedAt != null
+          ? merged
+          : yield* summaryUncached({ ...input, repository }).pipe(
+              Effect.map((reread) => (reread.state === "merged" ? reread : merged)),
+              Effect.catch((error) =>
+                Effect.logWarning("failed to confirm pull request merge", { error }).pipe(
+                  Effect.as(merged),
+                ),
+              ),
+            );
+      if (confirmed?.state === "merged") {
+        yield* PubSub.publish(mergedPullRequests, {
+          projectId: input.projectId,
+          repository,
+          number: input.number,
+          mergedAt: confirmed.mergedAt ?? DateTime.formatIso(yield* DateTime.now),
+        });
+      }
     }
+    return summary;
   });
 
   const credentialCached =

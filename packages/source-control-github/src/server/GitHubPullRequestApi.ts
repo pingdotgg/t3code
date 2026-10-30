@@ -50,7 +50,10 @@ import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
-import { PullRequestMutationsGraphQLGroup } from "./pullRequestMutations.graphql.ts";
+import {
+  PullRequestMutationsGraphQLGroup,
+  type PullRequestActionSummary,
+} from "./pullRequestMutations.graphql.ts";
 import { PullRequestReadsGraphQLGroup } from "./pullRequestReads.graphql.ts";
 import { PullRequestReviewsGraphQLGroup } from "./pullRequestReviews.graphql.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -73,6 +76,7 @@ import {
   toRepositoryAuthors,
   toRepositoryLabels,
   toPullRequestActivityPage,
+  toPullRequestActionSummary,
   toPullRequestCommitStats,
   toPullRequestCheckContextsPage,
   toPullRequestCore,
@@ -658,7 +662,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
-    }) => Effect.Effect<void, GitHubPullRequestApiError>;
+    }) => Effect.Effect<ProviderChangeRequestSummary | void, GitHubPullRequestApiError>;
 
     readonly commentOnPullRequest: (input: {
       readonly cwd: string;
@@ -1348,48 +1352,35 @@ export const make = Effect.gen(function* () {
   const readAllCheckContexts = Effect.fn("GitHubPullRequestApi.readAllCheckContexts")(function* (
     input: Parameters<GitHubPullRequestApi["Service"]["getPullRequestDetail"]>[0],
     allowReserve: boolean,
+    first: NonNullable<ReturnType<typeof toPullRequestCheckContextsPage>>,
   ) {
     const { owner, name } = parseRepositorySelector(input.repository);
     const target = { ...input, operation: "getPullRequestDetail", allowReserve };
-    let headSha: string | null = null;
-    const { pages, truncated } = yield* readPages(
-      GraphQLClient.pages(client.PullRequestCheckContexts, {
-        variables: { owner, name, number: input.number, required: asksRequired(input.host) },
-        connection: (result) => {
-          const page = toPullRequestCheckContextsPage(result);
-          if (page === null) return null;
-          headSha ??= page.headSha;
-          return {
-            ...page,
-            // Past the first page a different head is a push mid-walk.
-            changed: page.headSha !== headSha,
-            pageInfo: { hasNextPage: page.nextCursor !== null, endCursor: page.nextCursor },
-          };
-        },
-      }).pipe(
-        Stream.mapEffect((page) =>
-          page.changed
-            ? Effect.fail(
-                readError(
-                  input.cwd,
-                  "getPullRequestDetail",
-                  new Error("Pull request head changed while reading checks."),
-                ),
-              )
-            : Effect.succeed(page),
-        ),
-      ),
-      {
-        ...target,
-        maxPages: CHECK_CONTEXT_PAGES,
-        hasNextPage: (page) => page.nextCursor !== null,
-      },
-    ).pipe(graphql(target));
-    return {
-      headSha: pages[0]?.headSha ?? null,
-      contexts: pages.flatMap((page) => page.contexts),
-      truncated,
-    };
+    const contexts = [...first.contexts];
+    let after = first.nextCursor;
+    for (let page = 1; after !== null && page < CHECK_CONTEXT_PAGES; page++) {
+      const result = yield* client
+        .PullRequestCheckContexts({
+          owner,
+          name,
+          number: input.number,
+          required: asksRequired(input.host),
+          after,
+        })
+        .pipe(graphql(target));
+      const next = toPullRequestCheckContextsPage(result);
+      if (next === null || next.headSha !== first.headSha) {
+        return yield* readError(
+          input.cwd,
+          "getPullRequestDetail",
+          new Error("Pull request head changed while reading checks."),
+        );
+      }
+      if (next.nextCursor === after) return { contexts, truncated: true };
+      contexts.push(...next.contexts);
+      after = next.nextCursor;
+    }
+    return { contexts, truncated: first.nextCursor === null || after !== null };
   });
 
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
@@ -1409,29 +1400,24 @@ export const make = Effect.gen(function* () {
         read(100).pipe(
           Effect.catchIf(isRefusedRequestedReviewersOnly, () => read(0)),
           graphql({ ...input, operation, allowReserve }),
-          Effect.map(toPullRequestCore),
-          Effect.flatMap(found({ ...input, operation })),
-          // Past a hundred checks the first page would let the rest imply success, so the whole
-          // rollup is walked instead.
-          Effect.filterOrElse(
-            (core) => !core.checksTruncated,
-            (core) =>
-              readAllCheckContexts(input, allowReserve).pipe(
-                Effect.filterOrFail(
-                  (all) => all.headSha === core.headSha,
-                  () =>
-                    readError(
-                      input.cwd,
-                      operation,
-                      new Error("Pull request head changed while reading checks."),
-                    ),
-                ),
-                Effect.map((all) => ({
-                  ...core,
-                  ...pullRequestChecksFromContexts(all.contexts),
-                  checksTruncated: all.truncated,
-                })),
+          Effect.flatMap((result) =>
+            found({ ...input, operation })(toPullRequestCore(result)).pipe(
+              Effect.filterOrElse(
+                (core) => !core.checksTruncated,
+                (core) =>
+                  readAllCheckContexts(
+                    input,
+                    allowReserve,
+                    toPullRequestCheckContextsPage(result)!,
+                  ).pipe(
+                    Effect.map((all) => ({
+                      ...core,
+                      ...pullRequestChecksFromContexts(all.contexts),
+                      checksTruncated: all.truncated,
+                    })),
+                  ),
               ),
+            ),
           ),
         ),
       ),
@@ -1582,16 +1568,38 @@ export const make = Effect.gen(function* () {
 
   const simpleActionMutations = {
     "disable-auto-merge": (pullRequestId: string) =>
-      client.DisablePullRequestAutoMerge({ pullRequestId }).pipe(Effect.asVoid),
+      client
+        .DisablePullRequestAutoMerge({ pullRequestId })
+        .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
     ready: (pullRequestId: string) =>
-      client.MarkPullRequestReadyForReview({ pullRequestId }).pipe(Effect.asVoid),
+      client
+        .MarkPullRequestReadyForReview({ pullRequestId })
+        .pipe(Effect.map((result) => result.markPullRequestReadyForReview?.pullRequest)),
     draft: (pullRequestId: string) =>
-      client.ConvertPullRequestToDraft({ pullRequestId }).pipe(Effect.asVoid),
+      client
+        .ConvertPullRequestToDraft({ pullRequestId })
+        .pipe(Effect.map((result) => result.convertPullRequestToDraft?.pullRequest)),
     close: (pullRequestId: string) =>
-      client.ClosePullRequest({ pullRequestId }).pipe(Effect.asVoid),
+      client
+        .ClosePullRequest({ pullRequestId })
+        .pipe(Effect.map((result) => result.closePullRequest?.pullRequest)),
     reopen: (pullRequestId: string) =>
-      client.ReopenPullRequest({ pullRequestId }).pipe(Effect.asVoid),
+      client
+        .ReopenPullRequest({ pullRequestId })
+        .pipe(Effect.map((result) => result.reopenPullRequest?.pullRequest)),
   } satisfies Partial<Record<PullRequestAction, unknown>>;
+
+  /** The mutation already landed, so a reply that does not decode only loses the summary. */
+  const actionSummary = <E, R>(
+    effect: Effect.Effect<PullRequestActionSummary | null | undefined, E, R>,
+  ) =>
+    effect.pipe(
+      Effect.map(toPullRequestActionSummary),
+      Effect.catchIf(
+        (error) => isGraphQlClientError(error) && error.reason._tag === "DecodeError",
+        () => Effect.void,
+      ),
+    );
 
   /** Preserve policy errors; map not-found per lookup and other failures to read errors. */
   const batchedRead = <A, E, R>(
@@ -2502,7 +2510,9 @@ export const make = Effect.gen(function* () {
         const mutate = simpleActionMutations[action as keyof typeof simpleActionMutations];
         return pullRequestNodeId({ ...input, operation: "runPullRequestAction" }).pipe(
           Effect.flatMap((pullRequestId) =>
-            mutate(pullRequestId).pipe(graphql({ ...input, operation: "runPullRequestAction" })),
+            actionSummary(mutate(pullRequestId)).pipe(
+              graphql({ ...input, operation: "runPullRequestAction" }),
+            ),
           ),
         );
       }
@@ -2530,7 +2540,11 @@ export const make = Effect.gen(function* () {
               expectedHeadOid: state.headRefOid,
               updateMethod: input.updateMethod === "rebase" ? "REBASE" : "MERGE",
             })
-            .pipe(graphql(target), Effect.asVoid);
+            .pipe(
+              Effect.map((result) => result.updatePullRequestBranch?.pullRequest),
+              actionSummary,
+              graphql(target),
+            );
         }
         let body: string | undefined;
         let expectedHead: string | undefined;
@@ -2568,10 +2582,14 @@ export const make = Effect.gen(function* () {
           ...(expectedHead === undefined ? {} : { expectedHeadOid: expectedHead }),
           ...(body === undefined ? {} : { commitBody: body }),
         };
-        yield* (
+        return yield* actionSummary(
           auto
-            ? client.EnablePullRequestAutoMerge({ input: merge }).pipe(Effect.asVoid)
-            : client.MergePullRequest({ input: merge }).pipe(Effect.asVoid)
+            ? client
+                .EnablePullRequestAutoMerge({ input: merge })
+                .pipe(Effect.map((result) => result.enablePullRequestAutoMerge?.pullRequest))
+            : client
+                .MergePullRequest({ input: merge })
+                .pipe(Effect.map((result) => result.mergePullRequest?.pullRequest)),
         ).pipe(graphql(target));
       });
     }),

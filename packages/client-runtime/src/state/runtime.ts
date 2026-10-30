@@ -476,6 +476,10 @@ export async function settlePromise<A>(
   }
 }
 
+/** Where a query's answer is persisted, so an action's reply can be saved where a read would be. */
+export const queryPersistenceKey = (label: string, input: unknown): string =>
+  JSON.stringify([label, input]);
+
 function environmentRpcKey<Input>(target: {
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
@@ -757,7 +761,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
               );
         if (!options.persistence) return answer();
         const persistence = options.persistence;
-        const cacheKey = JSON.stringify([options.label, target.input]);
+        const cacheKey = queryPersistenceKey(options.label, target.input);
         const previous = Option.flatMap(
           get.self<AsyncResult.AsyncResult<A, unknown>>(),
           AsyncResult.value,

@@ -320,6 +320,21 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    { reply: pullRequestJson({ state: "MERGED" }), state: "merged" },
+    { reply: JSON.stringify({ type: "task", task_status: "PENDING" }), state: undefined },
+  ])("returns the pull request a merge replied with, if any", ({ reply, state }) =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(reply)));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const merged = yield* api.runAction({ repository: "acme/web", number: 7, action: "merge" });
+
+      assert.strictEqual(merged?.state, state);
+      assert.strictEqual(mockedRequest.mock.calls.length, 1);
+    }),
+  );
+
   it.effect("asks for the time a pull request closed, which Bitbucket leaves out by default", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(

@@ -9,6 +9,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
 import {
   EMPTY_PULL_REQUEST_STATS_CACHE,
+  patchPullRequestListEntry,
   pullRequestListHead,
   withAnsweredPullRequestStats,
   withListedPullRequests,
@@ -21,10 +22,14 @@ export const pullRequestListPagesKey = (target: {
   readonly input: PullRequestListInput;
 }) => JSON.stringify([target.environmentId, target.input]);
 
+const pullRequestListPagesEnvironments = new WeakMap<object, EnvironmentId>();
 /** The pages loaded past each listing's head, keyed by {@link pullRequestListPagesKey}. */
-export const pullRequestListPagesFamily = Atom.family((_key: string) =>
-  Atom.make<PullRequestListPages | null>(null).pipe(Atom.setIdleTTL(5 * 60_000)),
-);
+export const pullRequestListPagesFamily = Atom.family((key: string) => {
+  const atom = Atom.make<PullRequestListPages | null>(null).pipe(Atom.setIdleTTL(5 * 60_000));
+  const [environmentId]: [EnvironmentId] = JSON.parse(key);
+  pullRequestListPagesEnvironments.set(atom, environmentId);
+  return atom;
+});
 
 /** Diff stats each environment has answered so far, so rows keep them when they scroll away. */
 export const pullRequestListStatsFamily = Atom.family((_environmentId: string) =>
@@ -34,6 +39,19 @@ export const pullRequestListStatsFamily = Atom.family((_environmentId: string) =
 );
 
 export const composerPullRequests = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
+  // Rows on pages past each listing's head; the head itself is patched where it is cached.
+  actionReply: (target, reply, registry) =>
+    Effect.sync(() => {
+      const { state, isDraft, updatedAt, observedAt } = reply;
+      const patch = { state, ...(isDraft === undefined ? {} : { isDraft }), updatedAt };
+      for (const atom of registry.getNodes().keys()) {
+        if (typeof atom === "string") continue;
+        if (pullRequestListPagesEnvironments.get(atom) !== target.environmentId) continue;
+        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) =>
+          patchPullRequestListEntry(pages, null, target.input, patch, observedAt ?? Date.now()),
+        );
+      }
+    }),
   // A new head can change which files GitHub still counts as viewed, so the viewed-files read is
   // refreshed where the new head lands. The detail atom still holds the previous answer here.
   detail: (target, value, registry) =>

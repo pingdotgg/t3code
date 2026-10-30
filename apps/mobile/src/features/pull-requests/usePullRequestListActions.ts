@@ -94,6 +94,7 @@ export function usePullRequestListActions(
         throw new Error(`This action isn't available for this ${terminology.singular}.`);
       const result = await run({ ...target, input: { ...target.input, action } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      if (result.value !== undefined) return;
       onChanged(
         entry,
         action === "close"
