@@ -361,6 +361,40 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect.each([
+    {
+      name: "a final diagnostic",
+      prefix: "api_key=",
+      suffix: "\nFinal synthetic crash diagnostic.",
+      expected: undefined,
+    },
+    { name: "no complete line", prefix: "api_key=", suffix: "", expected: undefined },
+    {
+      name: "a clipped private-key header",
+      prefix: "-----BEGIN PRIVATE KEY-----\n",
+      suffix: "\n-----END PRIVATE KEY-----",
+      expected: undefined,
+    },
+  ])("omits a credential cut by the stderr tail boundary with $name", (testCase) =>
+    Effect.gen(function* () {
+      const stderr = `${testCase.prefix}${"fixturecredential".repeat(600)}${testCase.suffix}`;
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          command: process.execPath,
+          args: ["-e", `process.stderr.write(${JSON.stringify(stderr)}, () => process.exit(23));`],
+          extendEnv: false,
+          env: {},
+        },
+      });
+      const error = yield* runtime.start().pipe(Effect.flip);
+      assert.instanceOf(error, EffectAcpErrors.AcpProcessExitedError);
+      assert.equal(error.code, 23);
+      assert.isFalse(error.stderr?.includes("fixturecredential") ?? false);
+      assert.equal(error.stderr, testCase.expected);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("drains large stderr output and keeps auth-sized logging chunks", () =>
     Effect.gen(function* () {
       const lengths: Array<number> = [];

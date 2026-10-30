@@ -41,6 +41,8 @@ import {
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
 
+import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
+
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
   crypto: undefined as never,
@@ -127,6 +129,88 @@ const layerSession = Layer.mergeAll(
   McpProviderSessions.layer,
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
+
+describe("AntigravityAdapterV2 process failures", () => {
+  it.effect("keeps a crashed child's exit code and redacted stderr in the run failure", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const crypto = yield* Crypto.Crypto;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-exit-test-" });
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("antigravity-exit-test");
+      const threadId = ThreadId.make("thread-antigravity-exit-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [
+                "-e",
+                `process.stderr.write("Synthetic configuration failed.\\nAuthorization: Bearer fixture-only-token\\n"); import(${JSON.stringify(mockAgentPath)});`,
+              ],
+              cwd: workspace,
+              extendEnv: false,
+              env: {
+                HOME: workspace,
+                USERPROFILE: workspace,
+                T3_ACP_ANTIGRAVITY: "1",
+                T3_ACP_CRASH_PROMPT: "1",
+              },
+            },
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - The optional model result is undefined.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-exit-test"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* session.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection,
+          now: yield* DateTime.now,
+          messageText: "crash now",
+        }),
+      );
+      const events = yield* session.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      const terminal = Array.from(events).find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "failed");
+      assert.include(terminal?.failure?.message ?? "", "ACP process exited with code 23");
+      assert.include(terminal?.failure?.message ?? "", "Synthetic configuration failed.");
+      assert.notInclude(terminal?.failure?.message ?? "", "fixture-only-token");
+      assert.equal(terminal?.failure?.code, "23");
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
 
 describe("AntigravityAdapterV2 session open", () => {
   it.effect.each([

@@ -41,6 +41,155 @@ it("redacts credentials and URL secrets from provider failures", () => {
   assert.notInclude(failure.message, "sk-abcdefghijklmnop");
 });
 
+it("keeps structured ACP exit details through cause wrappers without reading arbitrary messages", () => {
+  const cause = {
+    _tag: "AcpProcessExitedError",
+    code: 23,
+    stderr: "Synthetic configuration failed.\napi_key=fixture-only-key",
+    message: "Untrusted alternative message",
+  };
+  for (const value of [
+    cause,
+    Cause.fail(cause),
+    { _tag: "ProviderAdapterTurnStartError", cause },
+  ]) {
+    const failure = makeProviderFailure({ cause: value, class: "provider_error" });
+    assert.equal(failure.code, "23");
+    assert.equal(
+      failure.message,
+      "ACP process exited with code 23\nSynthetic configuration failed.\n[REDACTED credential diagnostic]",
+    );
+  }
+  assert.equal(
+    makeProviderFailure({ cause, message: "Explicit failure", code: "explicit" }).message,
+    "Explicit failure",
+  );
+  assert.equal(makeProviderFailure({ cause, code: "explicit" }).code, "explicit");
+  assert.equal(
+    makeProviderFailure({ cause: { _tag: "AcpProcessExitedError", signal: "SIGTERM" } }).message,
+    "ACP process exited after signal SIGTERM",
+  );
+  assert.equal(
+    makeProviderFailure({ cause: { _tag: "AcpProcessExitedError", signal: "SIGTERM" } }).code,
+    "SIGTERM",
+  );
+  assert.equal(
+    makeProviderFailure({
+      cause: { _tag: "AcpProcessExitedError", code: NaN, signal: "unsafe signal" },
+    }).message,
+    "ACP process exited",
+  );
+});
+
+it("redacts prefixed credential fields and escaped quoted values in ACP stderr", () => {
+  const stderr = [
+    "Synthetic configuration failed.",
+    "MISTRAL_API_KEY=FixtureOnly0123456789abcdefABCDEF",
+    "GEMINI_API_KEY=AIzaFixtureOnly0123456789",
+    JSON.stringify({
+      refresh_token: "fixture-refresh-value",
+      client_secret: "fixture-client-secret",
+      private_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE",
+      token: 'fixture"secret-tail',
+    }),
+  ].join("\n");
+  const failure = makeProviderFailure({
+    cause: { _tag: "AcpProcessExitedError", code: 23, stderr },
+  });
+  assert.include(failure.message, "Synthetic configuration failed.");
+  for (const value of [
+    "FixtureOnly",
+    "AIzaFixture",
+    "fixture-refresh",
+    "fixture-client",
+    "FIXTURE",
+    "secret-tail",
+  ]) {
+    assert.notInclude(failure.message, value);
+  }
+});
+
+it("withholds whole ACP stderr lines containing credential markers", () => {
+  for (const line of [
+    "AWS_SECRET_ACCESS_KEY=FixtureOnlyValue0123",
+    "SECRET_KEY=FixtureOnlyValue0123",
+    "STRIPE_SECRET_KEY=FixtureOnlyValue0123",
+    JSON.stringify({ clientSecret: "fixture-client-value", refreshToken: "fixture-refresh-value" }),
+    "secretAccessKey: FixtureOnlyValue",
+    "Authorization: token FixtureOnlyValue",
+    "Diagnostic only mentions a password; no value is present.",
+    "CLIENTSECRET=FixtureOnlyValue",
+    "GOOGLE_KEY=FixtureOnlyValue",
+    "Unknown configuration key; no credential is present.",
+  ]) {
+    const failure = makeProviderFailure({
+      cause: {
+        _tag: "AcpProcessExitedError",
+        code: 23,
+        stderr: `Synthetic configuration failed.\n${line}\nFinal diagnostic.`,
+      },
+    });
+    assert.equal(
+      failure.message,
+      "ACP process exited with code 23\nSynthetic configuration failed.\n[REDACTED credential diagnostic]\nFinal diagnostic.",
+    );
+  }
+});
+
+it("withholds multiline private-key bodies, including unterminated keys", () => {
+  for (const end of ["-----END PRIVATE KEY-----", ""]) {
+    const failure = makeProviderFailure({
+      cause: {
+        _tag: "AcpProcessExitedError",
+        code: 23,
+        stderr: `Synthetic configuration failed.\n-----BEGIN PRIVATE KEY-----\nZml4dHVyZS1wcml2YXRlLWJvZHk=\n${end}`,
+      },
+    });
+    assert.include(failure.message, "ACP process exited with code 23");
+    assert.notInclude(failure.message, "Zml4dHVyZS1wcml2YXRlLWJvZHk=");
+  }
+});
+
+it("redacts standalone service tokens in ACP exit diagnostics", () => {
+  const failure = makeProviderFailure({
+    cause: {
+      _tag: "AcpProcessExitedError",
+      code: 23,
+      stderr:
+        "Synthetic failure: ghp_fixture0123456789 xoxb-fixture-0123456789 github_pat_fixture_123 gho_fixture123 ghu_fixture123 ghs_fixture123 ghr_fixture123",
+    },
+  });
+  assert.equal(
+    failure.message,
+    "ACP process exited with code 23\nSynthetic failure: [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED]",
+  );
+});
+
+it("redacts before bounding the tail of ACP exit diagnostics", () => {
+  const failure = makeProviderFailure({
+    cause: {
+      _tag: "AcpProcessExitedError",
+      code: 23,
+      stderr: `api_key=${"fixturecredential".repeat(600)}\n${"old diagnostic\n".repeat(600)}Final synthetic diagnostic.`,
+    },
+  });
+  assert.isAtMost(failure.message.length, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
+  assert.isTrue(failure.message.startsWith("ACP process exited with code 23\n…"));
+  assert.isTrue(failure.message.endsWith("Final synthetic diagnostic."));
+  assert.notInclude(failure.message, "fixturecredential");
+});
+
+it("does not split a surrogate pair at the start of an ACP stderr tail", () => {
+  for (const suffix of ["Final.", "Final.!"]) {
+    const failure = makeProviderFailure({
+      cause: { _tag: "AcpProcessExitedError", code: 23, stderr: `${"🚀".repeat(3_000)}${suffix}` },
+    });
+    assert.isAtMost(failure.message.length, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
+    assert.notMatch(failure.message, /[\uD800-\uDFFF]/u);
+    assert.isTrue(failure.message.endsWith(suffix));
+  }
+});
+
 it("redacts credentials whose key names end in a credential word", () => {
   const failure = makeProviderFailure({
     code: '{"refresh_token":"code value"}',

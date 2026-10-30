@@ -68,12 +68,13 @@ const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
 
 /**
  * Walks a cause chain for curated text without reading arbitrary provider
- * defect text. `known` is the message of a domain error T3 raised itself;
+ * defect text. `known` is a domain message or a redacted ACP exit diagnostic;
  * `category` is the generic message of the innermost provider wrapper seen.
  */
 function curatedCauseMessages(cause: unknown): {
   readonly known: string | undefined;
   readonly category: string | undefined;
+  readonly code?: string | undefined;
 } {
   const seen = new Set<unknown>();
   let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
@@ -94,6 +95,10 @@ function curatedCauseMessages(cause: unknown): {
       if (typeof cause !== "object") break;
       const tag = (cause as Record<string, unknown>)._tag;
       switch (tag) {
+        case "AcpProcessExitedError": {
+          const diagnostic = acpProcessExitDiagnostic(cause as Record<string, unknown>);
+          return { known: diagnostic.message, code: diagnostic.code, category: categoryMessage() };
+        }
         case "ContextHandoffBudgetError":
           return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
         case "ContextHandoffBackgroundWorkError":
@@ -191,6 +196,7 @@ function replaceUnsafeControlCharacters(value: string): string {
 
 function redactProviderFailureText(value: string): string {
   return replaceUnsafeControlCharacters(value)
+    .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*/giu, "[REDACTED private key]")
     .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)
     .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [REDACTED]")
     .replace(
@@ -202,7 +208,48 @@ function redactProviderFailureText(value: string): string {
       "$1[REDACTED]",
     )
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")
+    .replace(
+      /\b(?:github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|xox[a-zA-Z]-[A-Za-z0-9-]+)\b/gu,
+      "[REDACTED]",
+    )
     .trim();
+}
+
+function acpProcessExitDiagnostic(error: Record<string, unknown>) {
+  const code =
+    typeof error.code === "number" && Number.isSafeInteger(error.code)
+      ? String(error.code)
+      : undefined;
+  const signal =
+    typeof error.signal === "string" && /^SIG[A-Z0-9]{1,16}$/.test(error.signal)
+      ? error.signal
+      : undefined;
+  const summary = signal
+    ? `ACP process exited after signal ${signal}`
+    : code === undefined
+      ? "ACP process exited"
+      : `ACP process exited with code ${code}`;
+  const stderr =
+    typeof error.stderr === "string"
+      ? redactProviderFailureText(error.stderr)
+          .split(/\r\n?|\n/u)
+          .map((line) =>
+            /token|secret|pass(?:word|wd)|credential|authorization|key/u.test(
+              line.normalize("NFKC").toLowerCase(),
+            )
+              ? "[REDACTED credential diagnostic]"
+              : line,
+          )
+          .join("\n")
+      : "";
+  const available = MAX_PROVIDER_FAILURE_MESSAGE_LENGTH - summary.length - 1;
+  let start = Math.max(0, stderr.length - available + 1);
+  if (start > 0 && /[\uDC00-\uDFFF]/u.test(stderr[start] ?? "")) start += 1;
+  const excerpt = stderr.length > available ? `…${stderr.slice(start)}` : stderr;
+  return {
+    message: excerpt.length === 0 ? summary : `${summary}\n${excerpt}`,
+    code: code ?? signal,
+  };
 }
 
 function boundedText(value: string, maxLength: number): string {
@@ -228,7 +275,7 @@ export function makeProviderFailure(input: {
   const rawMessage =
     input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
-  const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
+  const rawCode = input.code ?? curated.code ?? stringField(input.cause, "code") ?? null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 
