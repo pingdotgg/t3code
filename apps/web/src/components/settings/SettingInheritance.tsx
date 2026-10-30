@@ -87,7 +87,10 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
     }
     if ("model" in value && typeof value.model === "string") return value.model;
     if ("mode" in value && typeof value.mode === "string") {
-      return WRITING_STYLE_LABELS[value.mode] ?? value.mode;
+      if (key === "worktreeCleanup") return value.mode === "off" ? "Off" : "Custom";
+      return key === "sourceControlWritingStyle"
+        ? (WRITING_STYLE_LABELS[value.mode] ?? value.mode)
+        : value.mode;
     }
   }
   return "Custom";
