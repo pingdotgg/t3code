@@ -24,6 +24,7 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { getProviderOptionCurrentLabel, getProviderOptionStatedValue } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -452,7 +453,7 @@ export function presentProviderGoal(
   }
   return {
     title: goal.status === "active" && !working ? "Goal set" : PROVIDER_GOAL_TITLES[goal.status],
-    objective: goal.objective,
+    objective: replaceComposerContextReferences(goal.objective, (reference) => reference.label),
     usage: usage.length === 0 ? null : usage.join(" · "),
     canResume: goal.status !== "active" && goal.status !== "complete",
   };

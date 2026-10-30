@@ -60,6 +60,7 @@ import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
+import { restoreComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
   CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER,
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
@@ -1760,6 +1761,13 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
+// `<synthetic>` command output such as "Goal set: …" echoes the prompt Claude was
+// sent, so it is shown the way the user wrote it rather than as the projection.
+function assistantTextFromClaudeMessage(message: SDKAssistantMessage["message"]): string {
+  const text = textFromClaudeContent(message.content);
+  return message.model === "<synthetic>" ? restoreComposerContextReferences(text) : text;
+}
+
 // Claude 5.1+ emits at most one pre-tool text block as thinking; treat only a second consecutive thinking block as text.
 function claudeWritesUpdatesAsThinking(model: string): boolean {
   const match = /claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?!\d)/u.exec(model);
@@ -1780,7 +1788,7 @@ function nextClaudeGoal(
     if (message.parent_tool_use_id !== null || message.message.model !== "<synthetic>") {
       return undefined;
     }
-    const text = textFromClaudeContent(message.message.content).trim();
+    const text = assistantTextFromClaudeMessage(message.message).trim();
     if (text.startsWith(CLAUDE_GOAL_SET_PREFIX)) {
       const objective = text.slice(CLAUDE_GOAL_SET_PREFIX.length).trim();
       return objective.length === 0 ? undefined : { objective, status: "active", checks: 0 };
@@ -1805,10 +1813,11 @@ function nextClaudeGoal(
   }
   const prefix = `Stop hook feedback:\n[${current.objective}]: `;
   const content = message.message.content;
-  const text =
+  const text = restoreComposerContextReferences(
     typeof content === "string"
       ? content
-      : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+      : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
+  );
   if (!text.startsWith(prefix)) return undefined;
   return {
     ...current,
@@ -1845,7 +1854,7 @@ function assistantTextFromSdkMessage(
   }
   return {
     nativeItemId: message.uuid,
-    text: textFromClaudeContent(message.message.content),
+    text: assistantTextFromClaudeMessage(message.message),
   };
 }
 
@@ -9119,8 +9128,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           if (isClaudeGoalAcknowledgement(message)) {
             // The CLI repeats a local command's output as the turn's result text.
-            if (assistantText !== null) {
-              context.assistant.noticeTexts.add(normalizeClaudeResultText(assistantText.text));
+            if (message.type === "assistant") {
+              context.assistant.noticeTexts.add(
+                normalizeClaudeResultText(textFromClaudeContent(message.message.content)),
+              );
             }
             return;
           }
@@ -10140,7 +10151,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             yield* rememberProviderThread(turnInput.providerThread);
             if (!goalsByNativeThread.has(nativeThreadId)) {
-              goalsByNativeThread.set(nativeThreadId, turnInput.providerThread.goal ?? null);
+              const goal = turnInput.providerThread.goal;
+              goalsByNativeThread.set(
+                nativeThreadId,
+                goal
+                  ? { ...goal, objective: restoreComposerContextReferences(goal.objective) }
+                  : null,
+              );
             }
             if (!pdfBudgets.has(nativeThreadId)) {
               // Older sessions did not record retained attachments. Keep their

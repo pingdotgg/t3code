@@ -1,3 +1,4 @@
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import {
   makeProviderTextDeltaCoalescer,
@@ -6963,6 +6964,50 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       events.flatMap((event) =>
         event.type === "provider_thread.updated" ? [event.providerThread.goal?.status ?? null] : [],
       );
+
+    it.effect("restores context references in Codex goal updates", () =>
+      Effect.gen(function* () {
+        const objective = "Report to [Coaching Hub](t3-context://v1/thread/thread_abc).";
+        const projected = projectComposerContextForProvider({ text: objective, records: [] });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-context",
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId: "goal-turn",
+              prompt: "Continue",
+            }),
+            notification("goal complete", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn",
+              goal: { ...codexGoal("complete", 12), objective: projected },
+            }),
+            notification("turn done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn", status: "completed" }),
+            }),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, "Continue"));
+        yield* harness.firstTerminal;
+        assert.equal(
+          harness.events
+            .flatMap((event) =>
+              event.type === "provider_thread.updated"
+                ? [event.providerThread.goal?.objective]
+                : [],
+            )
+            .at(-1),
+          objective,
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
 
     it.effect("keeps a /goal run open across the turns Codex continues on its own", () =>
       Effect.gen(function* () {

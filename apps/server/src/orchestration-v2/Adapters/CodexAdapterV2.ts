@@ -39,6 +39,7 @@ import {
   type ProviderSetupError,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { restoreComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -892,7 +893,8 @@ const CODEX_GOAL_STATUSES = {
 } as const satisfies Record<CodexThreadGoal["status"], OrchestrationV2ProviderGoal["status"]>;
 
 function providerGoalFromCodex(goal: CodexThreadGoal): OrchestrationV2ProviderGoal | null {
-  const objective = goal.objective.trim();
+  // Codex keeps the objective it was sent, context projection included.
+  const objective = restoreComposerContextReferences(goal.objective).trim();
   if (objective.length === 0) return null;
   return {
     objective,

@@ -31,6 +31,7 @@ import {
   ChatImageAttachment,
   CheckpointId,
   ClaudeSettings,
+  type ComposerContextId,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -70,6 +71,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
@@ -15132,6 +15134,74 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    it.effect.each([false, true])("shows attached goal context (persisted: %s)", (persisted) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const condition = "Report to [Coaching Hub](t3-context://v1/thread/thread_abc).";
+        const projected = projectComposerContextForProvider({
+          text: condition,
+          records: [
+            {
+              version: 1,
+              kind: "thread",
+              contextId: "thread_abc" as ComposerContextId,
+              label: "Coaching Hub",
+              environmentId: EnvironmentId.make("env-1"),
+              threadId: ThreadId.make("abc"),
+              title: "Coaching Hub",
+            },
+          ],
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: {
+              ...harness.providerThread,
+              ...(persisted
+                ? { goal: { objective: projected, status: "active" as const, checks: 2 } }
+                : {}),
+            },
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-context-attempt"),
+            text: `/goal ${projected}`,
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          ...(persisted ? [] : [syntheticFrame("goal-context-set", `Goal set: ${projected}`)]),
+          stopHookFeedback("goal-context-check", projected, "Not reported yet."),
+          makeResultFrame({
+            uuid: "goal-context-result",
+            result: "",
+            terminalReason: "hook_stopped",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        if (!persisted)
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.text === `Goal set: ${condition}`,
+            ),
+          );
+        assert.deepEqual(goalStatuses(harness.events).at(-1), {
+          objective: condition,
+          status: "active",
+          checks: persisted ? 3 : 1,
+          lastCheck: "Not reported yet.",
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
     it.effect(
       "defers goal completion until an ambient subagent finishes and Claude checks again",
       () =>
@@ -15303,53 +15373,60 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
-    it.effect("keeps the CLI's goal confirmation out of the conversation", () =>
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const condition = "all tests pass";
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: {
-              ...harness.providerThread,
-              goal: { objective: condition, status: "active", checks: 1 },
-            },
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("goal-clear-attempt"),
-            text: "/goal clear",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          syntheticFrame("goal-clear", `Goal cleared: ${condition}`),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          makeResultFrame({
-            uuid: "goal-clear-result",
-            result: `Goal cleared: ${condition}\n`,
-            numTurns: 0,
-          }),
-        );
-        yield* Queue.take(harness.terminalReceipts);
-        assert.isTrue(
-          harness.events.some(
-            (event) =>
-              event.type === "provider_thread.updated" && event.providerThread.goal === null,
+    it.effect.each([false, true])(
+      "keeps the CLI's goal confirmation out of the conversation (context: %s)",
+      (withContext) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const condition = withContext
+            ? projectComposerContextForProvider({
+                text: "Report to [Coaching Hub](t3-context://v1/thread/thread_abc).",
+                records: [],
+              })
+            : "all tests pass";
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: {
+                ...harness.providerThread,
+                goal: { objective: condition, status: "active", checks: 1 },
+              },
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("goal-clear-attempt"),
+              text: "/goal clear",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            syntheticFrame("goal-clear", `Goal cleared: ${condition}`),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: "goal-clear-result",
+              result: `Goal cleared: ${condition}\n`,
+              numTurns: 0,
+            }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "provider_thread.updated" && event.providerThread.goal === null,
+            ),
+          );
+          assert.isFalse(
+            harness.events.some(
+              (event) => event.type === "message.updated" && event.message.role === "assistant",
+            ),
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
           ),
-        );
-        assert.isFalse(
-          harness.events.some(
-            (event) => event.type === "message.updated" && event.message.role === "assistant",
-          ),
-        );
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
-      ),
     );
   });
 });
