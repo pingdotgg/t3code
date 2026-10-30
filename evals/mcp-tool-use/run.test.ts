@@ -400,16 +400,28 @@ it("gives each launched thread its own id, and reading it back shows that thread
     message: "Fix reconnect",
   });
   const batch = t3Default(sample, "create_threads", {
-    threads: [{ title: "CSV", prompt: "Fix CSV dates" }, { prompt: "Fix admin expiry" }],
+    threads: [
+      { title: "CSV", prompt: "Fix CSV dates" },
+      { prompt: "Fix admin expiry", target: { providerInstanceId: "muse", model: "muse-wonder" } },
+    ],
   });
+  const created = (batch as { threads: Array<{ providerInstanceId: string; model: string }> })
+    .threads;
+  assert.deepEqual(
+    created.map((thread) => [thread.providerInstanceId, thread.model]),
+    [
+      ["claudeAgent", "claude-sonnet-5-5"],
+      ["muse", "muse-wonder"],
+    ],
+  );
   const ids = [one, ...(batch as { threads: Array<unknown> }).threads].map(
     (thread) => (thread as { threadId: string }).threadId,
   );
   assert.equal(new Set(ids).size, 3);
   const read = (threadId: unknown) =>
     t3Default(sample, "t3_thread_read", { threadId }) as {
-      thread: { title: string; status: string };
-      items: Array<{ text: string }>;
+      thread: { title: string; status: string; createdBy?: string };
+      items: Array<{ text: string; createdBy: string; creationSource: string }>;
     };
   const idle = t3Default(sample, "create_threads", { threads: [{ title: "Later" }] }) as {
     threads: Array<{ threadId: string; status: string; runId?: string }>;
@@ -420,6 +432,11 @@ it("gives each launched thread its own id, and reading it back shows that thread
   assert.deepEqual(read(idle.threads[0]?.threadId).items, []);
   assert.equal(read(ids[1]).thread.title, "CSV");
   assert.equal(read(ids[2]).items[0]?.text, "Fix admin expiry");
+  assert.equal(read(ids[2]).thread.createdBy, "agent");
+  assert.deepEqual(
+    [read(ids[2]).items[0]?.createdBy, read(ids[2]).items[0]?.creationSource],
+    ["agent", "mcp"],
+  );
   assert.equal(
     read("11111111-1111-4111-8111-111111111111").thread.title,
     "Fix the flaky reconnect test",
