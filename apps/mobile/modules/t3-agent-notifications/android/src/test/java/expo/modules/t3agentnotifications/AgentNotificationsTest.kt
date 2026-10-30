@@ -67,6 +67,12 @@ class AgentNotificationsTest {
     "alert_path" to "/threads/environment/thread",
   )
 
+  private fun finished(alertId: String, expiresAt: Long) = update(alertId, false) + mapOf(
+    "activity_line_0" to "Done\tTest thread\tTest project",
+    "activity_phase" to "completed",
+    "activity_expires_at" to expiresAt.toString(),
+  )
+
   @Test
   fun alertHistoryEvictsOnlyTheOldestEntryAfterCapacity() {
     lifecycle.currentState = Lifecycle.State.RESUMED
@@ -124,8 +130,8 @@ class AgentNotificationsTest {
     AgentNotifications.receive(context, update("running", true))
     lifecycle.currentState = Lifecycle.State.CREATED
 
-    val completion = update("completion", false) +
-      ("activity_expires_at" to (System.currentTimeMillis() + 900000).toString())
+    val expiresAt = System.currentTimeMillis() + 900000
+    val completion = finished("completion", expiresAt)
     AgentNotifications.receive(context, completion)
     AgentNotifications.receive(context, completion)
     AgentNotifications.receive(context, completion.filterKeys { !it.startsWith("alert_") })
@@ -136,6 +142,19 @@ class AgentNotificationsTest {
     assertFalse(alert.notification.flags and Notification.FLAG_ONGOING_EVENT != 0)
     AgentNotifications.receive(context, update("next-run", true))
     assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+
+    // An alert for another thread, or a card that also lists another result, stays.
+    AgentNotifications.receive(
+      context,
+      finished("other-thread", expiresAt + 60000) + ("alert_path" to "/threads/other/thread")
+    )
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+    AgentNotifications.receive(
+      context,
+      finished("with-muted-result", expiresAt + 120000) +
+        ("activity_line_1" to "Done\tMuted thread\tOther project")
+    )
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
   }
 
   @Test
@@ -144,8 +163,7 @@ class AgentNotificationsTest {
     manager.getNotificationChannel("agent-alerts").importance = NotificationManager.IMPORTANCE_NONE
     AgentNotifications.receive(
       context,
-      update("completion", false) +
-        ("activity_expires_at" to (System.currentTimeMillis() + 900000).toString())
+      finished("completion", System.currentTimeMillis() + 900000)
     )
     assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
   }
@@ -337,10 +355,20 @@ class AgentNotificationsTest {
     AgentNotifications.receive(context, update("new", true) + ("updated_at" to now.toString()))
     AgentNotifications.receive(
       context,
-      update("older-alert", false) + ("updated_at" to (now - 1000).toString())
+      finished("older-alert", now + 900000) + ("updated_at" to (now - 1000).toString())
     )
     assertEquals(4, manager.activeNotifications.size)
     assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+    // A newer replay of a finish can show its card before the original alert lands.
+    val finish = finished("finish", now + 960000)
+    AgentNotifications.receive(
+      context,
+      finish.filterKeys { !it.startsWith("alert_") } + ("updated_at" to (now + 2000).toString())
+    )
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+    AgentNotifications.receive(context, finish + ("updated_at" to (now + 1000).toString()))
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+    assertTrue(manager.activeNotifications.any { it.id == "finish".hashCode() })
     shadowOf(manager).setNotificationsEnabled(false)
     AgentNotifications.receive(context, update("revoked-permission", true))
     assertEquals(4, manager.activeNotifications.size)
@@ -546,7 +574,7 @@ class AgentNotificationsTest {
     val expiresAt = System.currentTimeMillis() + 900000
     AgentNotifications.receive(
       context,
-      update("done", false) - "alert_id" + ("activity_expires_at" to expiresAt.toString())
+      update("done", false) + ("activity_expires_at" to expiresAt.toString())
     )
     val oldExpiry = alarms.scheduledAlarms.single().operation!!
     AgentNotifications.receive(context, update("next-run", true))
@@ -556,7 +584,7 @@ class AgentNotificationsTest {
     AgentNotifications.expire(context, expiresAt + 60_000)
     assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
     AgentNotifications.expire(context, expiresAt + 2 * 60 * 60 * 1000L)
-    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
+    assertEquals(2, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
     assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
     assertTrue(alarms.scheduledAlarms.isEmpty())
   }

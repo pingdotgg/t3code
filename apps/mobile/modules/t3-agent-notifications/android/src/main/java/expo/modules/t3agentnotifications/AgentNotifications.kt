@@ -226,8 +226,17 @@ object AgentNotifications {
     updatedAt: Long,
     alerted: Boolean
   ) {
-    if (updatedAt < prefs.getLong("lastUpdate", 0)) return
-    prefs.edit().putLong("lastUpdate", updatedAt).apply()
+    val terminal = singleTerminal(data)
+    // Only a one-row card on the alert's own thread is known to show nothing more
+    // than the alert. Grouped alerts and cards with other rows stay visible.
+    val covered = alerted && terminal != null && data["alert_path"] == data["activity_path"]
+    if (covered) prefs.edit().putString("coveredTerminal", terminal).apply()
+    if (updatedAt < prefs.getLong("lastUpdate", 0)) {
+      // A newer replay of this same finish may already show the card.
+      if (isCovered(prefs, prefs.getString("lastTerminal", null))) cancelActivity(context)
+      return
+    }
+    prefs.edit().putLong("lastUpdate", updatedAt).putString("lastTerminal", terminal).apply()
     val active = data["active"] == "true"
     // Use absolute state expiry: a replay must not extend a finished card or
     // make an abandoned host look active indefinitely. Older relays omit it.
@@ -244,16 +253,26 @@ object AgentNotifications {
     // Dismissing a run includes its finished card. A new run, or toggling
     // activity off/on, arms it again; terminal replays stay dismissed.
     if (active && !wasActive) prefs.edit().putBoolean("dismissed", false).apply()
-    // The posted alert already shows this finish, so a finished card would
-    // duplicate it. Dismissing keeps later replays from bringing the card back.
-    if (alerted && !active) prefs.edit().putBoolean("dismissed", true).apply()
-    if (prefs.getBoolean("dismissed", false)) {
+    if (prefs.getBoolean("dismissed", false) || isCovered(prefs, terminal)) {
       cancelActivity(context)
     } else {
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
       showActivity(context, scheme, data, active, remainingMs)
     }
   }
+
+  /** Identifies a finished one-thread card by its path, phase and absolute expiry. */
+  private fun singleTerminal(data: Map<String, String>): String? {
+    val phase = data["activity_phase"]
+    val finished = phase == "completed" || phase == "failed"
+    val single = data.containsKey("activity_line_0") && !data.containsKey("activity_line_1")
+    val expiresAt = data["activity_expires_at"]
+    return "${data["activity_path"]}\n$phase\n$expiresAt"
+      .takeIf { finished && single && expiresAt != null }
+  }
+
+  private fun isCovered(prefs: SharedPreferences, terminal: String?) =
+    terminal != null && terminal == prefs.getString("coveredTerminal", null)
 
   private fun showActivity(
     context: Context,
