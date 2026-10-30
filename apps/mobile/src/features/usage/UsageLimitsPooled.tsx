@@ -189,7 +189,7 @@ function PoolWindowCard({
   const inlineName = wide && segmentWidth >= 220;
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   // With several accounts, each account screen carries its own amounts.
-  const spent = pool.members.length === 1 ? formatSpend(pool.members[0]!.window) : null;
+  const spent = pool.columns.length === 1 ? formatSpend(pool.members[0]!.window) : null;
   const spentLine = spent ? (
     <Text className="text-xs tabular-nums text-foreground-muted">{spent} spent</Text>
   ) : null;

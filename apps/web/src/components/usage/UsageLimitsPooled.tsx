@@ -545,7 +545,7 @@ function PoolWindowCard({
 }) {
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   // With several accounts, each segment's popover carries its own amounts.
-  const spent = pool.members.length === 1 ? formatSpend(pool.members[0]!.window) : null;
+  const spent = pool.columns.length === 1 ? formatSpend(pool.members[0]!.window) : null;
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
