@@ -2,6 +2,7 @@ import { makeProviderSettingsSchema, SourceControlProviderKind } from "@t3tools/
 import {
   buildCommitUrl,
   changeRequestUrlBelow,
+  type ChangeRequestHostIdentity,
   defineSourceControl,
   hostCredentialSettingsFields,
   isChangeRequestInProjectRepository,
@@ -32,6 +33,16 @@ const KIND = SourceControlProviderKind.make("github");
 function isGitHubHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   return host === "github.com" || host.endsWith(".ghe.com") || host.split(".").includes("github");
+}
+
+/** SSH remotes under github.com share github.com's API host and credentials. */
+export function gitHubApiHostOf(host: string): string {
+  const normalized = host.toLowerCase();
+  return normalized.replace(/:\d+$/, "").endsWith(".github.com") ? "github.com" : normalized;
+}
+
+function changeRequestHost(identity: ChangeRequestHostIdentity): string {
+  return gitHubApiHostOf(projectChangeRequestHost(identity, KIND));
 }
 
 function isRepositoryPath(repository: string): boolean {
@@ -135,7 +146,8 @@ export const definition = defineSourceControl({
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
-  checkoutChangeRequestHost: (identity) => projectChangeRequestHost(identity, KIND),
+  checkoutChangeRequestHost: changeRequestHost,
+  changeRequestHost,
   changeRequestHeadRef: (number) => `refs/pull/${number}/head`,
   // `*.ghe.com` is GitHub Enterprise Cloud with data residency, one subdomain per enterprise.
   recognizeRemote: ({ host, hostname }) =>
@@ -147,9 +159,9 @@ export const definition = defineSourceControl({
         }
       : null,
   isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
+    isChangeRequestInProjectRepository(changeRequestHost(identity), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
-    isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
+    isChangeRequestOnProjectHost(changeRequestHost(identity), identity, link),
   mediaUrl: gitHubMediaUrl,
   settings,
 });

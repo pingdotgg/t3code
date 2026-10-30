@@ -1,3 +1,4 @@
+import type { ChangeRequestProjectIdentity } from "@t3tools/source-control-core/shared/definition";
 import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -119,6 +120,31 @@ describe("GitHub remotes", () => {
   it("does not claim ghe.com itself or a label that only contains github", () => {
     expect(recognize("https://ghe.com/owner/repo.git")).toBeNull();
     expect(recognize("https://notgithub.example.com/owner/repo.git")).toBeNull();
+  });
+});
+
+describe("GitHub change request hosts", () => {
+  const project = (host: string): ChangeRequestProjectIdentity => ({
+    canonicalKey: `${host}/acme/web`,
+    displayName: "acme/web",
+    locator: { source: "git-remote", remoteName: "origin", remoteUrl: `git@${host}:acme/web.git` },
+  });
+
+  it("names GitHub subdomain checkouts by their API host and preserves enterprise ports", () => {
+    for (const [host, expected] of [
+      ["ssh.github.com", "github.com"],
+      ["work.github.com:8443", "github.com"],
+      ["github.example.com:8443", "github.example.com:8443"],
+    ] as const) {
+      expect(definition.changeRequestHost(project(host))).toBe(expected);
+      expect(definition.checkoutChangeRequestHost(project(host))).toBe(expected);
+    }
+  });
+
+  it("matches github.com pull requests to a checkout behind a github.com subdomain", () => {
+    const link = { host: "github.com", repository: "acme/web", number: 7 };
+    expect(definition.isChangeRequestInRepository(project("work.github.com"), link)).toBe(true);
+    expect(definition.canReadChangeRequestOnHost(project("work.github.com"), link)).toBe(true);
   });
 });
 

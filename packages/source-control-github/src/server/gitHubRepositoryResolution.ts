@@ -1,7 +1,7 @@
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
-import { definition } from "../shared/definition.ts";
+import { definition, gitHubApiHostOf } from "../shared/definition.ts";
 import { isGitHubHost } from "./GitHubCredentials.ts";
 
 export interface GitHubRepositoryLocator {
@@ -21,7 +21,10 @@ export function parseFetchRemotes(
     .map((match) => ({ name: match[1]!, url: match[2]! }));
 }
 
-/** gh priority: marked default, upstream/github/origin, sole remote. Null if ambiguous or SSH-aliased. */
+/**
+ * gh priority: marked default, upstream/github/origin, sole remote. Null if ambiguous,
+ * SSH-aliased, or on another API host.
+ */
 export function selectGitHubBaseRepository(input: {
   readonly remotes: string;
   readonly resolved: string;
@@ -31,7 +34,8 @@ export function selectGitHubBaseRepository(input: {
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
   for (const remote of parseFetchRemotes(input.remotes)) {
     const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
-    if (remoteHost !== host || !owner || !name || rest.length > 0) return null;
+    if (!remoteHost || gitHubApiHostOf(remoteHost) !== host || !owner || !name || rest.length > 0)
+      return null;
     repositories.set(remote.name, { owner, name });
   }
   const marks = input.resolved
@@ -146,18 +150,21 @@ export function parsePullRequestReference(
   return { kind: "branch", headSelector: trimmed };
 }
 
-/** SSH aliases without a domain cannot identify an API host; default to github.com. */
+/** Dotless GitHub SSH aliases and github.com subdomains use github.com for API requests. */
 export function gitHubApiHostForRemote(remoteUrl: string): string | null {
   const remote = parseGitRemoteHost(remoteUrl);
   if (remote === null) return null;
   const host = new URL(`https://${remote.host}`).host.toLowerCase();
+  if (gitHubApiHostOf(host) === "github.com") return "github.com";
   if (isSshRemoteUrl(remoteUrl) && !host.includes(".")) {
     return host.includes("github") ? "github.com" : null;
   }
   return definition.recognizeRemote(remote) === null ? null : host;
 }
 
-function apiHostForHint(host: string): string {
+export function apiHostForHint(host: string): string {
   const normalized = host.toLowerCase();
-  return !normalized.includes(".") && normalized.includes("github") ? "github.com" : normalized;
+  return !normalized.includes(".") && normalized.includes("github")
+    ? "github.com"
+    : gitHubApiHostOf(normalized);
 }

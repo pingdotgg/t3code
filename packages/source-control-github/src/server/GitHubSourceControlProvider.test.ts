@@ -288,6 +288,152 @@ describe("GitHubSourceControlProvider repository resolution", () => {
       assert.deepStrictEqual(paths, ["github.com repos/acme/web"]);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("prefers a marked GitHub subdomain origin over upstream", () => {
+    const targets: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(
+        ["origin", "git@work.github.com:me/web.git"],
+        ["upstream", "git@github.com:acme/web.git"],
+      ),
+      resolved: "remote.origin.gh-resolved base",
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            targets.push(`${input.host} ${input.path}`);
+            return restResponse({
+              full_name: "me/web",
+              html_url: "https://github.com/me/web",
+              ssh_url: "git@github.com:me/web.git",
+              default_branch: "main",
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      assert.strictEqual(yield* provider.getDefaultBranch({ cwd: "/repo" }), "main");
+      assert.deepStrictEqual(targets, ["github.com repos/me/web"]);
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+  });
+
+  it.effect(
+    "reads GitHub subdomain remotes through github.com and preserves enterprise ports",
+    () =>
+      Effect.gen(function* () {
+        for (const [remote, host, apiHost] of [
+          ["ssh://git@ssh.github.com:443/acme/web.git", "ssh.github.com", "github.com"],
+          ["git@work.github.com:acme/web.git", "work.github.com", "github.com"],
+          [
+            "https://github.example.com:8443/acme/web.git",
+            "github.example.com:8443",
+            "github.example.com:8443",
+          ],
+        ] as const) {
+          const requests: string[] = [];
+          const { layer } = harness({
+            remotes: remotesOutput(["origin", remote]),
+            api: {
+              rest: (input) =>
+                Effect.sync(() => {
+                  requests.push(`${input.host} ${input.path}`);
+                  return restResponse({
+                    full_name: "acme/web",
+                    html_url: `https://${apiHost}/acme/web`,
+                    ssh_url: `git@${apiHost}:acme/web.git`,
+                    default_branch: "trunk",
+                  });
+                }),
+            },
+          });
+          yield* Effect.gen(function* () {
+            const gh = yield* GitHubSourceControlProvider.make;
+            assert.strictEqual(yield* gh.getDefaultBranch({ cwd: "/repo" }), "trunk");
+            assert.strictEqual(
+              yield* gh.getDefaultBranch({
+                cwd: "/repo",
+                context: { ...githubContext(host), remoteUrl: remote },
+              }),
+              "trunk",
+            );
+            assert.deepStrictEqual(requests, [
+              `${apiHost} repos/acme/web`,
+              `${apiHost} repos/acme/web`,
+            ]);
+          }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+        }
+      }),
+  );
+
+  it.effect("reads a GH_REPO owner/name behind a github.com subdomain through github.com", () => {
+    const hosts: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", "git@work.github.com:acme/web.git"]),
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            hosts.push(`${input.host} ${input.path}`);
+            return restResponse({
+              full_name: "chosen/repo",
+              html_url: "https://github.com/chosen/repo",
+              ssh_url: "git@github.com:chosen/repo.git",
+              default_branch: "main",
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      assert.strictEqual(
+        yield* gh.getDefaultBranch({ cwd: "/repo", context: githubContext("work.github.com") }),
+        "main",
+      );
+      assert.strictEqual(yield* gh.getDefaultBranch({ cwd: "/repo" }), "main");
+      assert.deepStrictEqual(hosts, [
+        "github.com repos/chosen/repo",
+        "github.com repos/chosen/repo",
+      ]);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcess.Environment, {
+        GH_REPO: "chosen/repo",
+        GH_HOST: "ssh.github.com",
+      }),
+    );
+  });
+
+  it.effect("uses github.com for a GH_HOST alias when cloning without a checkout remote", () => {
+    const requests: string[] = [];
+    const { layer } = harness({
+      remotes: "",
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            requests.push(`${input.host} ${input.path}`);
+            return restResponse({
+              full_name: "chosen/repo",
+              html_url: "https://github.com/chosen/repo",
+              ssh_url: "git@github.com:chosen/repo.git",
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      assert.deepStrictEqual(
+        yield* gh.getRepositoryCloneUrls({ cwd: "/repo", repository: "chosen/repo" }),
+        {
+          nameWithOwner: "chosen/repo",
+          url: "https://github.com/chosen/repo",
+          sshUrl: "git@github.com:chosen/repo.git",
+        },
+      );
+      assert.deepStrictEqual(requests, ["github.com repos/chosen/repo"]);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcess.Environment, { GH_HOST: "work.github.com" }),
+    );
+  });
 });
 
 describe("GitHubSourceControlProvider change request lookups by head", () => {
@@ -457,6 +603,50 @@ describe("GitHubSourceControlProvider writes", () => {
       assert.deepStrictEqual(requests, ["GET user", "POST orgs/acme/repos"]);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("creates repositories on the API host named by GH_HOST", () =>
+    Effect.gen(function* () {
+      for (const [host, apiHost] of [
+        ["work.github.com", "github.com"],
+        ["github.example.com:8443", "github.example.com:8443"],
+      ]) {
+        const requests: string[] = [];
+        const { layer } = harness({
+          remotes: "",
+          api: {
+            rest: (input) =>
+              Effect.sync(() => {
+                requests.push(`${input.host} ${input.method ?? "GET"} ${input.path}`);
+                return input.path === "user"
+                  ? restResponse({ login: "me" })
+                  : restResponse({
+                      full_name: "acme/new",
+                      html_url: `https://${apiHost}/acme/new`,
+                      ssh_url: `git@${apiHost}:acme/new.git`,
+                    });
+              }),
+          },
+        });
+        yield* Effect.gen(function* () {
+          const gh = yield* GitHubSourceControlProvider.make;
+          yield* gh.createRepository({
+            cwd: "/repo",
+            repository: "acme/new",
+            visibility: "private",
+          });
+          yield* gh.createRepository({ cwd: "/repo", repository: "new", visibility: "private" });
+          assert.deepStrictEqual(requests, [
+            `${apiHost} GET user`,
+            `${apiHost} POST orgs/acme/repos`,
+            `${apiHost} POST user/repos`,
+          ]);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.provideService(HostProcess.Environment, { GH_HOST: host }),
+        );
+      }
+    }),
+  );
 
   it.effect("looks up a bare repository name under the signed-in account on that host", () => {
     const requests: Array<string> = [];
