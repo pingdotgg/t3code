@@ -182,13 +182,16 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  planSidebarStatusBumps,
   planSidebarThreadDrop,
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
+  resolveSidebarStatusBumps,
   resolveSidebarThreadSection,
+  type SidebarStatusGroup,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
@@ -321,6 +324,9 @@ const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 
 const inboxReturns = createInboxReturnTracker();
+// Module scope, like inboxReturns, so a status change while the sidebar is
+// unmounted (Settings, a closed sheet) still bumps the thread when it returns.
+let sidebarStatusGroups = new Map<string, SidebarStatusGroup>();
 
 type SidebarOptimisticDrop = {
   readonly key: string;
@@ -891,6 +897,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const statusBumpEnabled = useClientSettings((s) => s.sidebarStatusBumpEnabled);
+  // A hold can release before every bump write lands, so the next bump waits
+  // for the write loop rather than planning from half-written keys.
+  const [statusBumpWriting, setStatusBumpWriting] = useState(false);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -1361,6 +1371,87 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const count = threadSearchResults.length;
     setActiveSearchResultIndex((activeSearchResultIndex + step + count) % count);
   };
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists bumps for thread status changes that arrive from the server
+  useEffect(() => {
+    // Order keys are still landing, so plan once they settle.
+    if (dragState !== null || optimisticDrop !== null || statusBumpWriting) return;
+    // Boring mode lists threads by latest message, so a bump would only move them elsewhere.
+    if (!statusBumpEnabled || workingShelfEnabled || boringSidebarEnabled) {
+      sidebarStatusGroups = new Map();
+      return;
+    }
+    const { groups, bumpedKeys } = resolveSidebarStatusBumps({
+      previousGroups: sidebarStatusGroups,
+      threads: activeThreads.map((thread) => [threadShellKey(thread), thread] as const),
+      openThreadKey: routeRowThreadKey,
+    });
+    sidebarStatusGroups = groups;
+    if (bumpedKeys.length === 0) return;
+    const { order, writes } = planSidebarStatusBumps({
+      bumpedKeys,
+      activeOrder: activeKeys,
+      activeKeysById,
+      canWrite: (key) => {
+        const thread = threadByKey.get(key);
+        return (
+          thread !== undefined &&
+          activeReorderableThreadKeys.has(key) &&
+          canOperateThreads([thread])
+        );
+      },
+    });
+    if (writes.length === 0) return;
+    const drop: SidebarOptimisticDrop = {
+      key: writes[0]!.id,
+      sourceSection: "active",
+      section: "active",
+      occurredAt: new Date().toISOString(),
+      clearsSnooze: false,
+      order,
+      keysAtDrop: activeKeysById,
+      assignedKeys: new Map(writes.map(({ id, orderKey }) => [id, orderKey])),
+    };
+    // oxlint-disable-next-line react/set-state-in-effect -- The bump reacts to status changes from the thread store and holds its order while the writes land, as a drop does.
+    setOptimisticDrop(drop);
+    void (async () => {
+      setStatusBumpWriting(true);
+      for (const { id, orderKey } of writes) {
+        const thread = threadByKey.get(id)!;
+        const result = await reorderActiveThread(
+          scopeThreadRef(thread.environmentId, thread.id),
+          orderKey,
+        );
+        if (result._tag === "Success") continue;
+        setOptimisticDrop((current) => (current === drop ? null : current));
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to reorder active threads",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+    })().finally(() => setStatusBumpWriting(false));
+  }, [
+    dragState,
+    optimisticDrop,
+    statusBumpWriting,
+    statusBumpEnabled,
+    workingShelfEnabled,
+    boringSidebarEnabled,
+    activeThreads,
+    routeRowThreadKey,
+    activeKeys,
+    activeKeysById,
+    activeReorderableThreadKeys,
+    threadByKey,
+    reorderActiveThread,
+  ]);
 
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
   // Read changing maps/sets through refs so streamed events preserve row callbacks.
