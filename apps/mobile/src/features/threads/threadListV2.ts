@@ -20,6 +20,7 @@ import {
   pipelineStepLabel,
   pipelineStepsOfParents,
   type PipelineLiveRuns,
+  type PipelineNestable,
   type PipelineNesting,
 } from "@t3tools/client-runtime/state/pipeline-nesting";
 import {
@@ -314,10 +315,10 @@ export function resolveThreadListV2Status(
 
 /** What a pipeline's parent row shows for its steps and live run; the row merges it with its own status. */
 export function resolveThreadListV2StepStatus(
-  steps: ReadonlyArray<Parameters<typeof resolveThreadListV2Status>[0]>,
-  run?: Pick<PipelineRunSummary, "status"> | null,
+  steps: ReadonlyArray<Parameters<typeof resolveThreadListV2Status>[0] & PipelineNestable>,
+  run?: Pick<PipelineRunSummary, "status" | "currentStepIndex" | "steps"> | null,
 ) {
-  return aggregatePipelineStepStatus(steps.map(resolveThreadListV2Status), run);
+  return aggregatePipelineStepStatus(steps, resolveThreadListV2Status, run);
 }
 
 /**

@@ -96,11 +96,39 @@ export function livePipelineRunOf(
     : runs?.get(runKey(shell.environmentId, shell.pipeline.runId));
 }
 
+type PausedRunInput = Pick<PipelineRunSummary, "status" | "currentStepIndex" | "steps">;
+
+/**
+ * The thread of a paused run's current step, if it has one. A run paused
+ * before a gated step has not started that step, so it has none.
+ */
+function pausedRunCurrentStep<T extends PipelineNestable>(
+  run: PausedRunInput,
+  steps: readonly T[],
+): T | undefined {
+  const childThreadId = run.steps[run.currentStepIndex]?.childThreadId;
+  return childThreadId == null ? undefined : steps.find((step) => step.id === childThreadId);
+}
+
+/**
+ * Whether a paused run waits on the user. It does unless its current step is
+ * busy again: a step can keep working or monitoring after its turn ended
+ * without a handoff, or after the user nudged a failed or stopped step.
+ */
+function pausedRunWaitsOnUser<T extends PipelineNestable>(
+  run: PausedRunInput,
+  steps: readonly T[],
+  isBusy: (step: T) => boolean,
+): boolean {
+  const current = pausedRunCurrentStep(run, steps);
+  return current === undefined || !isBusy(current);
+}
+
 /**
  * Whether a pipeline's group is active for shelf placement: the parent or any
  * of its steps is, by the predicate the shelf already uses. A parent with no
- * active step is placed as itself. A paused run waits on the user, so like any
- * thread needing input it is never active.
+ * active step is placed as itself. A paused run is active only while its
+ * current step is, since otherwise it waits on the user like any thread needing input.
  */
 export function isPipelineGroupActive<T extends PipelineNestable>(
   parent: T,
@@ -108,11 +136,10 @@ export function isPipelineGroupActive<T extends PipelineNestable>(
   isActive: (shell: T) => boolean,
   liveRuns?: PipelineLiveRuns,
 ): boolean {
-  if (livePipelineRunOf(liveRuns, parent)?.status === "paused") return false;
-  return (
-    isActive(parent) ||
-    (stepsOfParent.get(shellKey(parent))?.some((step) => isActive(step)) ?? false)
-  );
+  const steps = stepsOfParent.get(shellKey(parent)) ?? [];
+  const run = livePipelineRunOf(liveRuns, parent);
+  if (run?.status === "paused") return !pausedRunWaitsOnUser(run, steps, isActive);
+  return isActive(parent) || steps.some((step) => isActive(step));
 }
 
 function timestampMs(iso: string): number {
@@ -200,16 +227,26 @@ export function pipelineStepLabel(
 const URGENT_STEP_STATUSES = ["approval", "input", "request", "working"] as const;
 export type PipelineStepStatus = (typeof URGENT_STEP_STATUSES)[number];
 
+/** Thread statuses of a step that is still running or monitoring, so nothing waits on the user. */
+const BUSY_THREAD_STATUSES: ReadonlySet<string> = new Set(["working", "waiting"]);
+
 /**
  * The most urgent status among a pipeline's steps (needs you before running), or null. A paused
- * run counts as `input`: it waits on Continue, or on a failed or stopped step.
+ * run counts as `input` while it waits on the user: on Continue, a handoff, or a failed or
+ * stopped step. Once its current step is busy again, the step's own status shows.
  */
-export function aggregatePipelineStepStatus(
-  statuses: Iterable<string>,
-  run?: Pick<PipelineRunSummary, "status"> | null,
+export function aggregatePipelineStepStatus<T extends PipelineNestable>(
+  steps: readonly T[],
+  threadStatus: (step: T) => string,
+  run?: PausedRunInput | null,
 ): PipelineStepStatus | null {
-  const seen = new Set(statuses);
-  if (run?.status === "paused") seen.add("input");
+  const seen = new Set(steps.map(threadStatus));
+  if (
+    run?.status === "paused" &&
+    pausedRunWaitsOnUser(run, steps, (step) => BUSY_THREAD_STATUSES.has(threadStatus(step)))
+  ) {
+    seen.add("input");
+  }
   return URGENT_STEP_STATUSES.find((status) => seen.has(status)) ?? null;
 }
 
@@ -277,9 +314,12 @@ export function pipelineProgressSegments<T extends PipelineNestable & { readonly
       steps.find((step) => step.id === entry.childThreadId) ??
       latestByStepId.get(entry.stepId) ??
       null;
-    // A paused run waits on the user at its current step: Continue before it, or its handoff.
+    // A paused run waits on the user at its current step (Continue before it, or its handoff)
+    // unless that step is busy again.
     const awaitsUser =
-      (run.status === "paused" && index === run.currentStepIndex) ||
+      (run.status === "paused" &&
+        index === run.currentStepIndex &&
+        (thread === null || !BUSY_THREAD_STATUSES.has(threadStatus(thread)))) ||
       (thread !== null && ATTENTION_THREAD_STATUSES.has(threadStatus(thread)));
     const status: PipelineProgressStatus =
       entry.status === "stopped" || entry.status === "cancelled" ? "stopped" : entry.status;

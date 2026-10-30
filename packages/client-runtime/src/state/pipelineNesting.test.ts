@@ -30,15 +30,31 @@ function shell(
   return { id: ThreadId.make(id), environmentId, createdAt, pipeline: pipeline ?? null };
 }
 
-function liveRun(id: string, status: "running" | "paused", stepNames: ReadonlyArray<string> = []) {
+function liveRun(
+  id: string,
+  status: "running" | "paused",
+  stepNames: ReadonlyArray<string> = [],
+  currentStep: { index: number; threadId: string } | null = null,
+) {
   return {
     id: PipelineRunId.make(id),
     status,
-    steps: stepNames.map((name) => ({ stepId: name.toLowerCase(), name })),
+    currentStepIndex: currentStep?.index ?? 0,
+    steps: stepNames.map((name, index) => ({
+      stepId: name.toLowerCase(),
+      name,
+      childThreadId: currentStep?.index === index ? ThreadId.make(currentStep.threadId) : null,
+    })),
   } as unknown as PipelineRunSummary;
 }
 const liveRuns = indexPipelineLiveRuns([
-  { environmentId: env, runs: [liveRun("r1", "paused", ["Plan"]), liveRun("r2", "running")] },
+  {
+    environmentId: env,
+    runs: [
+      liveRun("r1", "paused", ["Plan", "Build"], { index: 1, threadId: "s2" }),
+      liveRun("r2", "running"),
+    ],
+  },
 ]);
 
 const parent = (id: string, runId: string, createdAt = "2026-01-01T00:00:00Z") =>
@@ -176,6 +192,27 @@ describe("pipelineStepLabel", () => {
 });
 
 describe("pipeline parent status", () => {
+  // Step threads s0, s1, ... with the given statuses; s0 is the run's current step.
+  const statusSteps = (statuses: ReadonlyArray<string>) =>
+    statuses.map((status, index) => ({
+      ...step(`s${index}`, "r1", `step-${index}`, "2026-01-01T00:01:00Z"),
+      status,
+    }));
+  const statusOf = (s: { status: string }) => s.status;
+  const runWith = (status: "running" | "paused", currentThreadId: string | null) =>
+    ({
+      status,
+      currentStepIndex: 0,
+      steps: [
+        {
+          stepId: "step-0",
+          name: "",
+          status: "running",
+          childThreadId: currentThreadId === null ? null : ThreadId.make(currentThreadId),
+        },
+      ],
+    }) as unknown as PipelineRunSummary;
+
   it.each([
     { steps: [], expected: null },
     { steps: ["ready", "waiting", "failed"], expected: null },
@@ -183,17 +220,35 @@ describe("pipeline parent status", () => {
     { steps: ["working", "input", "ready"], expected: "input" },
     { steps: ["working", "request", "approval"], expected: "approval" },
   ])("aggregates $steps to $expected", ({ steps, expected }) => {
-    expect(aggregatePipelineStepStatus(steps)).toBe(expected);
+    expect(aggregatePipelineStepStatus(statusSteps(steps), statusOf)).toBe(expected);
   });
 
   it.each([
-    { steps: [], run: "paused", expected: "input" },
-    { steps: ["working"], run: "paused", expected: "input" },
-    { steps: ["approval"], run: "paused", expected: "approval" },
-    { steps: ["working"], run: "running", expected: "working" },
-    { steps: [], run: "running", expected: null },
-  ] as const)("a $run run with steps $steps shows $expected", ({ steps, run, expected }) => {
-    expect(aggregatePipelineStepStatus(steps, { status: run })).toBe(expected);
+    { name: "a paused run before its step starts", steps: [], run: "paused", expected: "input" },
+    { name: "a paused run whose step ended", steps: ["ready"], run: "paused", expected: "input" },
+    {
+      name: "a paused run whose step works again",
+      steps: ["working"],
+      run: "paused",
+      expected: "working",
+    },
+    { name: "a paused run whose step monitors", steps: ["waiting"], run: "paused", expected: null },
+    {
+      name: "a paused run whose step asks",
+      steps: ["approval"],
+      run: "paused",
+      expected: "approval",
+    },
+    { name: "a running run", steps: ["working"], run: "running", expected: "working" },
+    { name: "a running run with no steps", steps: [], run: "running", expected: null },
+  ] as const)("$name shows $expected", ({ steps, run, expected }) => {
+    expect(
+      aggregatePipelineStepStatus(
+        statusSteps(steps),
+        statusOf,
+        runWith(run, steps.length === 0 ? null : "s0"),
+      ),
+    ).toBe(expected);
   });
 
   it.each([
@@ -222,7 +277,21 @@ describe("isPipelineGroupActive", () => {
     { name: "only the parent is active", parent: "p", active: ["p"], expected: true },
     { name: "another run's step is active", parent: "idle", active: ["s2"], expected: false },
     { name: "nothing is active", parent: "p", active: [], expected: false },
-    { name: "its run is paused", parent: "p", active: ["s2"], expected: false, live: true },
+    { name: "its paused run's step is idle", parent: "p", active: [], expected: false, live: true },
+    {
+      name: "only an earlier step of its paused run is active",
+      parent: "p",
+      active: ["s1"],
+      expected: false,
+      live: true,
+    },
+    {
+      name: "its paused run's current step is active again",
+      parent: "p",
+      active: ["s2"],
+      expected: true,
+      live: true,
+    },
     { name: "its run is running", parent: "idle", active: ["t1"], expected: true, live: true },
   ])("$name", ({ parent: parentId, active, expected, live }) => {
     const target = shells.find((shell) => shell.id === parentId)!;
@@ -298,6 +367,22 @@ describe("pipelineProgressSegments", () => {
     } as PipelineRunSummary;
     expect(summarize(pipelineProgressSegments(awaitingHandoff, [], () => "ready"))[0]).toBe(
       "Plan:attention:-",
+    );
+    // Once that step works or monitors again, nothing waits on the user.
+    const resumed = {
+      ...awaitingHandoff,
+      steps: awaitingHandoff.steps.map((entry, index) =>
+        index === 0 ? { ...entry, childThreadId: ThreadId.make("s1") } : entry,
+      ),
+    } as PipelineRunSummary;
+    const plan = [titled("s1", "plan", "2026-01-01T00:01:00Z", "P · Plan")];
+    for (const busy of ["working", "waiting"]) {
+      expect(summarize(pipelineProgressSegments(resumed, plan, () => busy))[0]).toBe(
+        "Plan:running:s1",
+      );
+    }
+    expect(summarize(pipelineProgressSegments(resumed, plan, () => "ready"))[0]).toBe(
+      "Plan:attention:s1",
     );
   });
 
