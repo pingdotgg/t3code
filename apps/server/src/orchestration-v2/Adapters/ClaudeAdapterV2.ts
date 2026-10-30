@@ -233,6 +233,28 @@ function claudePromptCacheTtlMs(
   return undefined;
 }
 
+// Claude reads a token count or a k/M suffix and clamps it to 100k-1M. Only --autocompact also
+// takes "auto" and reads 100 to 1000 as thousands.
+function parseClaudeAutoCompactWindow(raw: string | null | undefined, source: "env" | "flag") {
+  const value = raw?.trim().toLowerCase();
+  if (value === "auto") return source === "flag" ? "auto" : undefined;
+  const match = value === undefined ? null : /^(\d+(?:\.\d+)?)([km])?$/.exec(value);
+  if (match === null) return undefined;
+  const amount = Number(match[1]);
+  const scale =
+    match[2] === "k"
+      ? 1_000
+      : match[2] === "m"
+        ? 1_000_000
+        : source === "flag" && amount >= 100 && amount <= 1_000
+          ? 1_000
+          : 1;
+  const tokens = amount * scale;
+  return Number.isInteger(tokens) && tokens > 0
+    ? Math.min(1_000_000, Math.max(100_000, tokens))
+    : undefined;
+}
+
 // Claude caps the window at the model's context, so a setting at or above it never applies.
 function claudeAutoCompactThreshold(
   autoCompactWindow: number | undefined,
@@ -2628,7 +2650,7 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
     ),
   ),
 );
-const ClaudeAutoCompactWindowSetting = Schema.Union([Schema.Finite, Schema.Literal("auto")]);
+const ClaudeAutoCompactWindowSetting = Schema.Union([Schema.Int, Schema.Literal("auto")]);
 const ClaudeAutoCompactSettings = Schema.Struct({
   autoCompactWindow: Schema.optionalKey(ClaudeAutoCompactWindowSetting),
   modelSettings: Schema.optionalKey(
@@ -4623,15 +4645,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     },
   );
 
-  // Claude Code's auto-compact window: its env var, then T3's setting (sent as flag settings), then
-  // --settings, then settings files. In one source, modelSettings.<model>.autoCompactWindow (what
-  // /autocompact writes) replaces the top-level value; "auto" keeps Claude's tuned window.
+  // Claude Code's auto-compact window: its env var, then --autocompact, then T3's setting (sent as
+  // flag settings), then --settings, then settings files. In one source,
+  // modelSettings.<model>.autoCompactWindow (what /autocompact writes) replaces the top-level
+  // value; "auto" keeps Claude's tuned window.
   const resolveAutoCompactWindow = Effect.fn("ClaudeAdapterV2.resolveAutoCompactWindow")(function* (
     cwd: string | null,
     modelSelection: ModelSelection,
   ) {
-    const fromEnvironment = Number(adapterOptions.environment.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
-    if (fromEnvironment > 0) return fromEnvironment;
+    const fromEnvironment = parseClaudeAutoCompactWindow(
+      adapterOptions.environment.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+      "env",
+    );
+    if (typeof fromEnvironment === "number") return fromEnvironment;
+    const fromFlag = parseClaudeAutoCompactWindow(
+      parseCliArgs(adapterOptions.settings.launchArgs).flags.autocompact,
+      "flag",
+    );
+    if (fromFlag !== undefined) return fromFlag === "auto" ? undefined : fromFlag;
     const fromT3 = Number(adapterOptions.settings.autoCompactWindow);
     if (fromT3 > 0) return fromT3;
     const model = compileClaudeModelSelection(modelSelection).apiModelId.replace(/\[1m\]$/i, "");

@@ -149,7 +149,8 @@ describe("latestProviderTurnTokenUsage", () => {
       const providerThread = {
         contextUsage: {
           usedTokens,
-          maxTokens: 200_000,
+          maxTokens: 1_000_000,
+          autoCompactThreshold: 200_000,
           cost: { amount: 0.42, currency: "USD" },
         },
         updatedAt: DateTime.makeUnsafe("2026-10-19T12:10:00.000Z"),
@@ -160,6 +161,7 @@ describe("latestProviderTurnTokenUsage", () => {
       expect(snapshot).toMatchObject({
         usedTokens,
         maxTokens: 200_000,
+        remainingTokens: 200_000 - usedTokens,
         cost: { amount: 0.42, currency: "USD" },
         updatedAt: "2026-10-19T12:10:00.000Z",
       });
