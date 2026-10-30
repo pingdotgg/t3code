@@ -2031,7 +2031,17 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
               "session/set_config_option",
               requestPayload,
               acp.agent.setSessionConfigOption(requestPayload),
-            ).pipe(Effect.tap((response) => updateConfigOptions(response)));
+            ).pipe(
+              Effect.tap((response) => updateConfigOptions(response)),
+              Effect.tap((response) =>
+                existing?.category === "mode" && typeof value === "string"
+                  ? updateCurrentModeId(
+                      parseSessionModeState({ configOptions: response.configOptions })
+                        ?.currentModeId ?? value,
+                    )
+                  : Effect.void,
+              ),
+            );
           }),
         ),
       ),

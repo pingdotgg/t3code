@@ -1168,6 +1168,94 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  // regression: #27646 an agent leaving its native mode on its own must not keep the next turn there
+  it.live("reapplies the selected native mode after the agent switches mode itself", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-agent-mode-drift");
+      const threadId = ThreadId.make("thread-acp-agent-mode-drift");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: { T3_ACP_SELF_SWITCH_MODE_ON_FIRST_PROMPT: "ask" },
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = {
+        instanceId,
+        model: "default",
+        options: [{ id: "mode", value: "architect" }],
+      } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-agent-mode-drift"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const runTurn = Effect.fnUntraced(function* (ordinal: number) {
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal,
+            modelSelection,
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        const modeSetsBeforePrompt: Array<unknown> = [];
+        while (true) {
+          const event = yield* Queue.take(protocolEvents);
+          if (event.direction !== "outgoing") continue;
+          const method = rawProtocolMethod(event);
+          if (method === "session/prompt") return modeSetsBeforePrompt;
+          if (
+            method === "session/set_config_option" &&
+            rawProtocolRequestParam(event, "configId") === "mode"
+          ) {
+            modeSetsBeforePrompt.push(rawProtocolRequestParam(event, "value"));
+          }
+        }
+      });
+
+      assert.deepEqual(yield* runTurn(1), ["architect"]);
+      assert.deepEqual(
+        yield* runTurn(2),
+        ["architect"],
+        "the agent left architect mode during turn 1, so turn 2 must set it back before prompting",
+      );
+      assert.deepEqual(yield* runTurn(3), [], "an unchanged mode is not re-sent");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   // regression: #21499 turns blocked only on T3 thread waits must show as waiting
   it.effect.each(["agent_message_chunk"] as const)(
     "keeps named ACP %s open while deriving thread wait execution state",
