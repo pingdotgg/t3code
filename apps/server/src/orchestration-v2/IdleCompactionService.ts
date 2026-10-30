@@ -35,6 +35,20 @@ export const make = Effect.gen(function* () {
       // Loops once after the wait: the thread may have moved on.
       while (true) {
         const current = yield* settings.getSettings;
+        const thread = yield* projections.getThread(threadId);
+        const claudeInstance = Object.hasOwn(current.providerInstances, thread.providerInstanceId)
+          ? current.providerInstances[thread.providerInstanceId]?.driver === "claudeAgent"
+          : thread.providerInstanceId === "claudeAgent";
+        if (
+          !claudeInstance ||
+          resolveIdleCompaction(current, thread.providerInstanceId) !== "beforeCacheExpires" ||
+          !resolveProjectProviderInstanceEnabled(
+            current,
+            thread.projectId,
+            thread.providerInstanceId,
+          )
+        )
+          return;
         const records = yield* projections.getThreadRecords(
           threadId,
           [
