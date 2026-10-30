@@ -120,6 +120,7 @@ import {
   visibleDeltaRunOrdinals,
 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
+import { limitTitleMessage } from "@t3tools/provider-core/server/threadTitleContext";
 import {
   cancelledBeforeStart,
   continuationFailedBeforePrompt,
@@ -143,7 +144,11 @@ import {
 } from "./GuestShareDecider.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
-import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
+import type {
+  OrchestrationEffectRequestV2,
+  PendingOrchestrationEffectV2,
+  ThreadTitleGenerationKind,
+} from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
@@ -672,12 +677,12 @@ const decodeUserInputAnswers = Schema.decodeUnknownEffect(
   ),
 );
 
+const TITLE_SOURCE_CHARS = 8_000;
+
 function pendingThreadTitleGenerationEffect(
   commandId: CommandId,
   threadId: ThreadId,
-  kind:
-    | { readonly type: "initial"; readonly messageId: MessageId }
-    | { readonly type: "regenerate" },
+  kind: ThreadTitleGenerationKind,
 ): PendingOrchestrationEffectV2 {
   return {
     id: `effect:${commandId}:thread-title.generate`,
@@ -4548,9 +4553,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
         ...existing,
-        pendingThreadTitleGenerationEffect(command.commandId, command.threadId, {
-          type: "regenerate",
-        }),
+        pendingThreadTitleGenerationEffect(
+          command.commandId,
+          command.threadId,
+          command.titleSource === undefined
+            ? { type: "regenerate" }
+            : // Bounded so a long source cannot bloat the effect outbox.
+              { type: "source", text: limitTitleMessage(command.titleSource, TITLE_SOURCE_CHARS) },
+        ),
       ]);
     }
 

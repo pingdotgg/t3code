@@ -437,6 +437,46 @@ describe("ThreadTitleRegenerationService", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("titles a thread without messages from the supplied source text", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () => Effect.succeed({ title: "Flaky login test" }),
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:source:create",
+          thread: "thread:title:source",
+        });
+        const requestId = CommandId.make("command:title:source:1");
+        yield* threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: requestId,
+          threadId,
+          regenerateTitle: true,
+          titleSource: "Investigate the flaky login test",
+        });
+        const [effect] = yield* outbox.listByCommandId(requestId);
+        assert.deepEqual(effect?.request, {
+          type: "thread-title.generate",
+          kind: { type: "source", text: "Investigate the flaky login test" },
+        });
+        if (effect?.request.type !== "thread-title.generate") return;
+
+        yield* titleRegeneration.execute({ threadId, requestId, kind: effect.request.kind });
+
+        const call = harness.generateThreadTitle.mock.calls[0]?.[0];
+        assert.equal(call?.message, "Investigate the flaky login test");
+        assert.isUndefined(call?.previousTitle);
+        const projection = yield* threads.getThreadProjection(threadId);
+        assert.equal(projection.thread.title, "Flaky login test");
+        assert.isNotOk(projection.thread.titleRegeneration);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("titles a fork's first message with the source history up to the fork point", () =>
     Effect.gen(function* () {
       const harness = makeHarness();

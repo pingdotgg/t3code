@@ -141,10 +141,11 @@ const advancePatch = (run: PipelineRun, now: string): PipelineStore.PipelineRunP
   };
 };
 
+/** Placeholder until the generated title lands, and the fallback if generation fails. */
 const parentTitle = (run: PipelineRun) => {
   const firstLine = run.input.split(/\r?\n/).find((line) => line.trim().length > 0) ?? "";
   const excerpt = firstLine.trim().slice(0, PARENT_TITLE_INPUT_CHARS).trim();
-  return excerpt.length === 0 ? run.definition.name : `${run.definition.name}: ${excerpt}`;
+  return excerpt.length === 0 ? run.definition.name : excerpt;
 };
 
 export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
@@ -294,7 +295,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     if (first === undefined) {
       return yield* pipelineError("Pipeline has no steps.", { runId: run.id });
     }
-    yield* threads
+    const created = yield* threads
       .dispatch({
         type: "thread.create",
         commandId: commandIdFor(run.id, "parent"),
@@ -311,9 +312,9 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
         creationSource: run.creationSource,
       })
       .pipe(
-        Effect.asVoid,
+        Effect.as(true),
         // A replay or an earlier attempt already created it.
-        Effect.catchTags({ OrchestratorThreadAlreadyExistsError: () => Effect.void }),
+        Effect.catchTags({ OrchestratorThreadAlreadyExistsError: () => Effect.succeed(false) }),
         Effect.mapError((cause) =>
           pipelineError(failureMessage(cause, "Could not create the pipeline's parent thread."), {
             runId: run.id,
@@ -321,6 +322,19 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
           }),
         ),
       );
+    const titleSource = run.input.trim();
+    if (!created || titleSource.length === 0) return;
+    // Title the run like a chat: the parent has no messages, so name it from the run's input.
+    yield* bestEffort(
+      "Could not request the pipeline parent's title",
+      threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: commandIdFor(run.id, "parent-title"),
+        threadId: run.parentThreadId,
+        regenerateTitle: true,
+        titleSource,
+      }),
+    );
   });
 
   /** Best effort: lets the parent group with the work once a step's thread has a workspace. */

@@ -456,14 +456,27 @@ it.effect("start creates the parent thread and launches step 0 with the skill pr
       const [parent] = commandOfType(harness.commands, "thread.create");
       assert.strictEqual(parent?.commandId, `pipeline-run:${run.id}:parent`);
       assert.strictEqual(parent?.threadId, run.parentThreadId);
-      assert.strictEqual(parent?.title, "Review: Fix the bug");
+      assert.strictEqual(parent?.title, "Fix the bug");
       assert.strictEqual(parent?.interactionMode, "default");
       assert.deepStrictEqual(parent?.pipeline, { runId: run.id, stepId: null });
+      // The parent is titled like a chat, from the run's input.
+      const titleRequests = commandOfType(harness.commands, "thread.metadata.update").filter(
+        (command) => command.regenerateTitle === true,
+      );
+      assert.strictEqual(titleRequests.length, 1);
+      assert.strictEqual(titleRequests[0]?.threadId, run.parentThreadId);
+      assert.strictEqual(titleRequests[0]?.titleSource, "Fix the bug\nwith details");
 
       // A replayed commandId resolves to the same run and creates nothing more.
       const replay = yield* service.start(startInput("cmd-1"));
       assert.strictEqual(replay.run.id, run.id);
       assert.strictEqual(commandOfType(harness.commands, "thread.create").length, 1);
+      assert.strictEqual(
+        commandOfType(harness.commands, "thread.metadata.update").filter(
+          (command) => command.regenerateTitle === true,
+        ).length,
+        1,
+      );
     }),
   ),
 );
@@ -484,7 +497,9 @@ it.effect("a finished step feeds the next one in its workspace, and the last ste
         worktreePath: `/wt/${first.threadId}`,
         branch: "feature",
       });
-      const [sync] = commandOfType(harness.commands, "thread.metadata.update");
+      const [sync] = commandOfType(harness.commands, "thread.metadata.update").filter(
+        (command) => command.regenerateTitle !== true,
+      );
       assert.strictEqual(sync?.threadId, run.parentThreadId);
       assert.strictEqual(sync?.worktreePath, `/wt/${first.threadId}`);
 
