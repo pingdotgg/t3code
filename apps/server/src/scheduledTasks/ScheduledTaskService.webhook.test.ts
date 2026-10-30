@@ -481,6 +481,33 @@ it.effect("keeps credential headers and query values out of the delivery log", (
   ),
 );
 
+it.effect("drops a character split by the delivery log's body limit", () =>
+  withService(({ service }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* webhookTaskInput({ enabled: false }));
+      const limit = 64 * 1024;
+      const euro = new TextEncoder().encode("€");
+      const body = new Uint8Array(limit - 1 + euro.length).fill(0x61);
+      body.set(euro, limit - 1);
+      yield* service.triggerWebhook(
+        requestFor(task, { body, bodyText: new TextDecoder().decode(body) }),
+      );
+      const [summary] = (yield* service.listWebhookDeliveries({
+        id: task.id,
+        acceptAnyOutcome: true,
+      })).deliveries;
+      const { delivery } = yield* service.getWebhookDelivery({
+        id: task.id,
+        deliveryId: summary!.id,
+      });
+      assert.isTrue(delivery.bodyTruncated);
+      assert.equal(delivery.bodyBytes, body.byteLength);
+      assert.equal(delivery.body.slice(-3), "aaa");
+      assert.equal(delivery.body.length, limit - 1);
+    }),
+  ),
+);
+
 const queuedDeliveryCases = [
   {
     change: "paused",

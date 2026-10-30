@@ -1456,8 +1456,11 @@ export const layer = Layer.effect(
       const truncated = request.body.byteLength > WEBHOOK_DELIVERY_LOG_BODY_LIMIT;
       return {
         truncated,
+        // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
         body: truncated
-          ? new TextDecoder().decode(request.body.subarray(0, WEBHOOK_DELIVERY_LOG_BODY_LIMIT))
+          ? new TextDecoder().decode(request.body.subarray(0, WEBHOOK_DELIVERY_LOG_BODY_LIMIT), {
+              stream: true,
+            })
           : request.bodyText,
       };
     };
