@@ -118,7 +118,8 @@ export function resolveCyberAccessProgram(
     : Effect.fail(
         new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: `Cyber access program ${String(chosen.value)} was requested for ${requested.model}, but this thread's program for that model is ${parentValue}. Omit it; the user chooses one in the composer's model options.`,
+          message:
+            "The requested cyber access program is not valid for this thread. Omit it; the user chooses one in the composer's model options.",
         }),
       );
 }
