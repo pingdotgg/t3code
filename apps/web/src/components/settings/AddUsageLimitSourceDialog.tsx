@@ -18,6 +18,11 @@ import { sourceIdFromUrl } from "./AddUsageLimitSourceDialog.logic";
 import { SecretInput } from "./SecretInput";
 import { Label } from "../ui/label";
 
+const SOURCE_KIND_LABELS = {
+  cliproxy: "CLIProxyAPI hub",
+  credits: "API credit balance endpoint",
+} as const;
+
 /** Send the management key once to server secret storage; settings retain only a redaction marker. */
 export function AddUsageLimitSourceDialog({
   open,
@@ -92,29 +97,38 @@ export function AddUsageLimitSourceDialog({
               <Label htmlFor="usage-source-kind">Source type</Label>
               <Select
                 value={kind}
+                items={SOURCE_KIND_LABELS}
                 onValueChange={(value) => setKind(value === "credits" ? "credits" : "cliproxy")}
               >
                 <SelectTrigger id="usage-source-kind">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectPopup>
-                  <SelectItem value="cliproxy">CLIProxyAPI hub</SelectItem>
-                  <SelectItem value="credits">API credit balance endpoint</SelectItem>
+                  <SelectItem value="cliproxy">{SOURCE_KIND_LABELS.cliproxy}</SelectItem>
+                  <SelectItem value="credits">{SOURCE_KIND_LABELS.credits}</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-url">Hub URL</Label>
+              <Label htmlFor="usage-source-url">
+                {kind === "credits" ? "Endpoint URL" : "Hub URL"}
+              </Label>
               <Input
                 id="usage-source-url"
-                placeholder="https://hub.example.ts.net:8318"
+                placeholder={
+                  kind === "credits"
+                    ? "http://127.0.0.1:3774/credits"
+                    : "https://hub.example.ts.net:8318"
+                }
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
                 autoFocus
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-key">Management key</Label>
+              <Label htmlFor="usage-source-key">
+                {kind === "credits" ? "Bearer credential" : "Management key"}
+              </Label>
               <SecretInput
                 id="usage-source-key"
                 value={managementKey}
@@ -125,7 +139,7 @@ export function AddUsageLimitSourceDialog({
               <Label htmlFor="usage-source-label">Label (optional)</Label>
               <Input
                 id="usage-source-label"
-                placeholder="Defaults to the hub's host name"
+                placeholder="Defaults to the host name"
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
               />

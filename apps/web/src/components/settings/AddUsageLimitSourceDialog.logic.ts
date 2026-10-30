@@ -1,6 +1,6 @@
 import { type UnifiedSettings, UsageLimitSourceId } from "@t3tools/contracts";
 
-type UsageLimitSourceKind = UnifiedSettings["usageLimitSources"][string]["kind"];
+type UsageLimitSourceKind = UnifiedSettings["usageLimitSources"][UsageLimitSourceId]["kind"];
 
 export function sourceIdFromUrl(
   url: string,
