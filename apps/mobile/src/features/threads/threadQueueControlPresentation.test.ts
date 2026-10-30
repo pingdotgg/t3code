@@ -24,16 +24,20 @@ describe("threadQueueControlPresentation", () => {
     },
   );
 
-  it("rejects steering a goal into an active turn", () => {
-    const controls = resolveThreadQueueRowControls({
-      busy: false,
-      canPromoteToSteer: true,
-      canSendNow: false,
-      steerRejectionReason: "Goal commands must run as a separate turn.",
-      text: "/goal finish the refactor",
-    });
-    expect(controls.canSend).toBe(false);
-  });
+  it.each([false, true])(
+    "gates a queued goal with compaction skip %s",
+    (promoteSkipsCompaction) => {
+      const controls = resolveThreadQueueRowControls({
+        busy: false,
+        canPromoteToSteer: true,
+        canSendNow: false,
+        steerRejectionReason: "Goal commands must run as a separate turn.",
+        text: "/goal finish the refactor",
+        promoteSkipsCompaction,
+      });
+      expect(controls.canSend).toBe(promoteSkipsCompaction);
+    },
+  );
 
   it("shows an assistant quote as its quoted text", () => {
     const href = formatAssistantCitationHref({

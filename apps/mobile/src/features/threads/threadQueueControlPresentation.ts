@@ -17,6 +17,7 @@ export function resolveThreadQueueRowControls(input: {
   readonly busy: boolean;
   readonly canPromoteToSteer: boolean;
   readonly canSendNow: boolean;
+  readonly promoteSkipsCompaction?: boolean;
   /** Something else holds the composer, such as an open question. */
   readonly editBlocked?: boolean;
   readonly isEditing?: boolean;
@@ -37,7 +38,9 @@ export function resolveThreadQueueRowControls(input: {
     canSend:
       mutationEnabled &&
       !isEditing &&
-      (input.canSendNow || (input.canPromoteToSteer && input.steerRejectionReason === null)),
+      (input.canSendNow ||
+        (input.canPromoteToSteer &&
+          (input.promoteSkipsCompaction === true || input.steerRejectionReason === null))),
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     // Editing and sending keep the original text so quoted citations stay linked.
     displayText: isAttachmentOnlyBootstrapPrompt(input.text)

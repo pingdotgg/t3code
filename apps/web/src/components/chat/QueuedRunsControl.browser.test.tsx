@@ -8,6 +8,7 @@ import { page } from "vite-plus/test/browser";
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
+  runCommand: vi.fn(async (_input: unknown) => undefined),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => ({
@@ -31,7 +32,7 @@ vi.mock(import("../../state/query"), async (importOriginal) => ({
 
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => async () => undefined) as never,
+  useAtomCommand: (() => state.runCommand) as never,
 }));
 
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
@@ -47,6 +48,7 @@ import { QueuedRunsControl, type QueuedRunsControlHandle } from "./QueuedRunsCon
 function setup() {
   state.projection = null;
   state.workflow = null;
+  state.runCommand.mockClear();
 }
 
 const baseProps = {
@@ -204,12 +206,17 @@ it("stays inside the timeline scroller instead of growing the chat column", asyn
   expect(column.scrollHeight).toBe(column.clientHeight);
 });
 
-it.each([false, true])("gates queued command sending with send-now %s", async (canSendNow) => {
+it.each([
+  { canSendNow: false, promoteSkipsCompaction: false },
+  { canSendNow: true, promoteSkipsCompaction: false },
+  { canSendNow: false, promoteSkipsCompaction: true },
+])("gates queued command sending with %j", async ({ canSendNow, promoteSkipsCompaction }) => {
   setup();
   state.projection = { projection: { messages: [] } };
   state.workflow = {
     activeRun: { id: "run:active" },
     canSendNow,
+    promoteSkipsCompaction,
     canPromoteToSteer: !canSendNow,
     canReorder: true,
     queuedRuns: [
@@ -234,7 +241,7 @@ it.each([false, true])("gates queued command sending with send-now %s", async (c
     name: "Send now",
     exact: true,
   });
-  if (canSendNow) await expect.element(steerButtons.nth(0)).toBeEnabled();
+  if (canSendNow || promoteSkipsCompaction) await expect.element(steerButtons.nth(0)).toBeEnabled();
   else await expect.element(steerButtons.nth(0)).toBeDisabled();
   await expect.element(steerButtons.nth(1)).toBeEnabled();
 
@@ -244,7 +251,10 @@ it.each([false, true])("gates queued command sending with send-now %s", async (c
       input: expect.objectContaining(
         canSendNow
           ? { runId: "run:goal" }
-          : { queuedRunId: "run:plain", targetRunId: "run:active" },
+          : {
+              queuedRunId: promoteSkipsCompaction ? "run:goal" : "run:plain",
+              targetRunId: "run:active",
+            },
       ),
     }),
   );

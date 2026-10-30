@@ -243,6 +243,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
           steerRejectionReason,
+          promoteSkipsCompaction: workflow?.promoteSkipsCompaction ?? false,
           text,
         });
         const title =
@@ -265,7 +266,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                           {
                             id: "steer",
                             title: "Send now",
-                            ...(!workflow?.canSendNow && steerRejectionReason
+                            ...(!workflow?.canSendNow &&
+                            !workflow?.promoteSkipsCompaction &&
+                            steerRejectionReason
                               ? { subtitle: steerRejectionReason }
                               : {}),
                             attributes: { disabled: !controls.canSend },
