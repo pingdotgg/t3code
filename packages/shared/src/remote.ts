@@ -6,6 +6,8 @@ const HOSTED_PAIRING_LABEL_PARAM = "label";
 const PAIRING_APP_LINK_PARAM = "pairingUrl";
 const APP_LINK_PROTOCOL = /^t3code(?:-[a-z]+)?:$/;
 const SUPPORTED_REMOTE_BACKEND_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
+const URL_SCHEME_PREFIX = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//;
+const IPV4_HOSTNAME = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 
 export const readHashParams = (url: URL): URLSearchParams =>
   new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
@@ -71,6 +73,26 @@ export const RemotePairingTargetError = Schema.Union([
 ]);
 export type RemotePairingTargetError = typeof RemotePairingTargetError.Type;
 
+const isDirectAddressHost = (host: string): boolean => {
+  if (!URL.canParse(`http://${host}`)) return false;
+  const { hostname } = new URL(`http://${host}`);
+  return (
+    hostname.startsWith("[") ||
+    IPV4_HOSTNAME.test(hostname) ||
+    hostname === "localhost" ||
+    hostname.endsWith(".local")
+  );
+};
+
+/**
+ * Gives a scheme-less host `http://` when it is an IP literal, `localhost`, or an mDNS
+ * `.local` name, where a T3 server reached directly serves plain HTTP, and `https://` otherwise.
+ */
+export const withDefaultRemoteScheme = (value: string): string => {
+  if (URL_SCHEME_PREFIX.test(value)) return value;
+  return `${isDirectAddressHost(value) ? "http" : "https"}://${value}`;
+};
+
 const hasSupportedRemoteBackendProtocol = (url: URL): boolean =>
   SUPPORTED_REMOTE_BACKEND_PROTOCOLS.has(url.protocol);
 
@@ -84,9 +106,7 @@ const normalizeRemoteBaseUrl = (
   }
 
   const withoutLeadingSlashes = trimmed.replace(/^\/+/, "");
-  const normalizedInput = /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(withoutLeadingSlashes)
-    ? withoutLeadingSlashes
-    : `https://${withoutLeadingSlashes}`;
+  const normalizedInput = withDefaultRemoteScheme(withoutLeadingSlashes);
   let url: URL;
   try {
     url = new URL(normalizedInput);

@@ -15,6 +15,12 @@ describe("buildPairingUrl", () => {
     );
   });
 
+  it("uses HTTP for a schemeless mDNS .local hostname", () => {
+    expect(buildPairingUrl("studio.local:3773", "pairing-token")).toBe(
+      "http://studio.local:3773/#token=pairing-token",
+    );
+  });
+
   it("preserves an explicit scheme for an IP address", () => {
     expect(buildPairingUrl("https://192.168.1.100:3773", "pairing-token")).toBe(
       "https://192.168.1.100:3773/#token=pairing-token",

@@ -182,8 +182,9 @@ to your server; a hosted pairing link does not make an unreachable backend
 reachable or convert HTTP to HTTPS.
 
 For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
-open it, or pair from the desktop app. On mobile, an IP address entered without a
-scheme uses HTTP, so include `https://` when your server uses HTTPS.
+open it, or pair from the desktop app. When you add an environment, a host entered
+without a scheme uses HTTP if it is an IP address, `localhost`, or a `.local` name,
+and HTTPS otherwise. Include `https://` when such a server uses HTTPS.
 
 ## Desktop-managed SSH
 

@@ -2,6 +2,7 @@ import type { DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  parsePairingUrlFields,
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
@@ -121,5 +122,19 @@ describe("selectQrEndpointOption", () => {
     expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(
       "tailscale-ip:http://100.84.12.7:4780",
     );
+  });
+});
+
+describe("parsePairingUrlFields", () => {
+  it("uses plain http for a schemeless pairing url on an IP literal", () => {
+    vi.stubGlobal("window", { location: { origin: "http://localhost:5733" } });
+    try {
+      expect(parsePairingUrlFields("10.0.0.10:3773/pair#token=abc")).toEqual({
+        host: "http://10.0.0.10:3773",
+        pairingCode: "abc",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
