@@ -211,6 +211,58 @@ describe("thread details limits", () => {
     expect(resolved).toEqual({ limits: fresher, sourceLabel: "hub-b" });
   });
 
+  it("keeps one login's hub accounts apart when the instances report it in two workspaces", () => {
+    const signedIn = (id: string, workspaceId: string): ServerProvider => {
+      const base = claudeInstance(limitsAt(10));
+      return {
+        ...base,
+        instanceId: ProviderInstanceId.make(id),
+        auth: { ...base.auth, email: "me@example.com", workspaceId },
+      };
+    };
+    const fresher = { ...limitsAt(25), checkedAt: "2026-10-30T11:59:30.000Z" };
+    const resolved = resolveThreadDetailsLimits(
+      instanceId,
+      [claudeInstance(unsupported), signedIn("claude-a", "team-a"), signedIn("claude-b", "team-b")],
+      [
+        hub("hub", [
+          {
+            id: "claude-a.json",
+            email: "me@example.com",
+            workspaceId: "team-a",
+            limits: limitsAt(19),
+          },
+          { id: "claude-x.json", email: "me@example.com", limits: fresher },
+        ]),
+      ],
+      now,
+    );
+
+    expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
+  });
+
+  it("does not borrow a hub account in a different workspace of the same login", () => {
+    const base = claudeInstance(unsupported);
+    const inTeamA = {
+      ...base,
+      auth: { ...base.auth, email: "me@example.com", workspaceId: "team-a" },
+    };
+    const hubIn = (workspaceId: string) => [
+      hub("hub", [
+        { id: "claude-a.json", email: "me@example.com", workspaceId, limits: limitsAt(19) },
+      ]),
+    ];
+
+    expect(resolveThreadDetailsLimits(instanceId, [inTeamA], hubIn("team-b"), now)).toEqual({
+      limits: unsupported,
+      sourceLabel: null,
+    });
+    expect(resolveThreadDetailsLimits(instanceId, [inTeamA], hubIn("team-a"), now)).toEqual({
+      limits: limitsAt(19),
+      sourceLabel: "hub",
+    });
+  });
+
   it("falls back to the one hub account when a Codex instance's own probe failed", () => {
     const resolved = resolveThreadDetailsLimits(
       codexId,
