@@ -3407,6 +3407,14 @@ export function permissionResultFromDecision(input: {
   };
 }
 
+function wholeToolAllowRules(updates: ReadonlyArray<PermissionUpdate>): Array<string> {
+  return updates.flatMap((update) =>
+    update.type === "addRules" && update.behavior === "allow"
+      ? update.rules.flatMap((rule) => (rule.ruleContent === undefined ? [rule.toolName] : []))
+      : [],
+  );
+}
+
 function toSessionPermissionUpdates(
   toolName: string,
   suggestions: ReadonlyArray<PermissionUpdate> | undefined,
@@ -3974,6 +3982,9 @@ interface ClaudeLiveQueryContext {
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
+  // Tools granted for the whole session while in Plan in this CLI process. In Plan the
+  // CLI keeps asking despite the session rule it was given, so the adapter honors the grant.
+  readonly sessionAllowedTools: Set<string>;
 }
 
 interface ActiveClaudeToolCall {
@@ -9635,6 +9646,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          const liveQuery = yield* Ref.get(queryContext);
+          // Outside Plan the CLI honors session rules itself, so a callback there is a
+          // safety check or ask the cached grant must not answer.
+          const mayUseStandingGrant =
+            liveQuery?.permissionMode === "plan" &&
+            callbackOptions.suppressAlwaysAllowRule !== true &&
+            callbackOptions.matchedAskRule === undefined;
+          if (mayUseStandingGrant && liveQuery.sessionAllowedTools.has(toolName)) {
+            return {
+              behavior: "allow",
+              updatedInput: toolInput,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
           const requestKind = providerRequestKindFromClaudeTool(toolName);
           // The user approves the command itself; Claude's title and description only summarize it.
           const command = inputRecordValue(nativeToolInput, "command");
@@ -9700,7 +9726,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
           );
 
-          return permissionResultFromDecision({
+          const result = permissionResultFromDecision({
             toolName,
             ...resolvedDecision,
             toolInput,
@@ -9709,6 +9735,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { suggestions: callbackOptions.suggestions }),
           });
+          if (mayUseStandingGrant && result.behavior === "allow" && result.updatedPermissions) {
+            for (const allowedTool of wholeToolAllowRules(result.updatedPermissions)) {
+              liveQuery.sessionAllowedTools.add(allowedTool);
+            }
+          }
+          return result;
         });
 
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
@@ -10040,6 +10072,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 (subagent) => subagent.task.status === "running",
               ),
             ),
+            sessionAllowedTools: new Set(),
           };
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
