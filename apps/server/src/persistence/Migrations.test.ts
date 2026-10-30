@@ -29,10 +29,10 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect("adds explicit grouping after attachment search cleanup", () =>
+  it.effect("adds explicit grouping after subagent delivery state", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 74 });
+      yield* runMigrations({ toMigrationInclusive: 75 });
       const before = yield* history;
       yield* sql`
         INSERT INTO projection_projects
@@ -40,8 +40,8 @@ describe("runMigrations", () => {
         VALUES ('sdk-project', 'SDK', '/work/sdk', '[]', '2026-10-27', '2026-10-27')
       `;
 
-      assert.deepStrictEqual(yield* runMigrations(), [[75, "ProjectGroupingIdentity"]]);
-      assert.deepStrictEqual(yield* history, [...before, [75, "ProjectGroupingIdentity"]]);
+      assert.deepStrictEqual(yield* runMigrations(), [[76, "ProjectGroupingIdentity"]]);
+      assert.deepStrictEqual(yield* history, [...before, [76, "ProjectGroupingIdentity"]]);
       assert.deepStrictEqual(
         yield* sql`SELECT project_id, title, workspace_root, grouping_identity FROM projection_projects`,
         [
