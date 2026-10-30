@@ -340,7 +340,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Send now, queued message ${index + 1}`}
-                    {...(!workflow?.canSendNow && steerRejectionReason
+                    {...(!workflow?.canSendNow &&
+                    !workflow?.promoteSkipsCompaction &&
+                    steerRejectionReason
                       ? { accessibilityHint: steerRejectionReason }
                       : {})}
                     disabled={!controls.canSend}

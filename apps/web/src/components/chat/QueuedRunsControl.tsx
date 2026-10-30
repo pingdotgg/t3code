@@ -309,7 +309,9 @@ export function QueuedRunsControl({
                         </Button>
                       </TooltipTrigger>
                       <TooltipPopup>
-                        {!workflow?.canSendNow && item.steerRejectionReason
+                        {!workflow?.canSendNow &&
+                        !workflow?.promoteSkipsCompaction &&
+                        item.steerRejectionReason
                           ? item.steerRejectionReason
                           : `${workflow?.canSendNow ? "Start a turn with this message" : workflow?.promoteSkipsCompaction ? "Skip compaction and send this message" : "Send into the current turn"}${item.runId === nextSteerable?.run.id && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                       </TooltipPopup>
