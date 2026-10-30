@@ -19,7 +19,7 @@ const commands = vi.hoisted(() => ({
 }));
 const router = vi.hoisted(() => ({
   navigate: vi.fn(async () => {}),
-  state: { matches: [{ params: {} as Record<string, string> }] },
+  state: { location: { href: "/" }, matches: [{ params: {} as Record<string, string> }] },
 }));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/session", async (original) => ({
@@ -34,7 +34,11 @@ vi.mock("react", async (original) => ({
 }));
 vi.mock("@tanstack/react-router", () => ({ useRouter: () => router }));
 vi.mock("./useSettings", () => ({ useClientSettings: () => false }));
-vi.mock("./useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
+vi.mock("./useHandleNewThread", () => ({
+  useNewThreadHandler: () => async () => {
+    router.state.location.href = "/draft/project";
+  },
+}));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
 vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
 vi.mock("../uiStateStore", () => ({ useUiStateStore: () => vi.fn() }));
@@ -94,6 +98,7 @@ beforeEach(() => {
     command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   }
   router.navigate.mockClear();
+  router.state.location.href = "/";
   router.state.matches[0]!.params = {};
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
@@ -198,6 +203,32 @@ describe("archive Undo", () => {
         params: { environmentId: target.environmentId, threadId: target.threadId },
       }),
     );
+  });
+});
+
+describe("archive navigation", () => {
+  it.each([
+    { destination: "/undo-env/thread", expected: "/draft/project" },
+    { destination: "/undo-env/other-thread", expected: "/undo-env/other-thread" },
+    { destination: "/settings", expected: "/settings" },
+  ])("ends at $expected after opening $destination while archiving", async (route) => {
+    router.state.location.href = "/undo-env/thread";
+    router.state.matches[0]!.params = {
+      environmentId: target.environmentId,
+      threadId: target.threadId,
+    };
+    let finishArchive!: () => void;
+    commands.archive.mockReturnValue(
+      new Promise((resolve) => {
+        finishArchive = () => resolve({ _tag: "Success", value: undefined });
+      }),
+    );
+    const archived = useThreadActions().archiveThread(target);
+    router.state.location.href = route.destination;
+    finishArchive();
+    expect((await archived)._tag).toBe("Success");
+    expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Archived" });
+    expect(router.state.location.href).toBe(route.expected);
   });
 });
 
