@@ -712,6 +712,63 @@ function makeManualProviderMaintenanceCapabilities(
   });
 }
 
+const decodeNpmViewVersion = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Union([Schema.String, Schema.Tuple([Schema.String])])),
+);
+
+const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup")(function* (
+  capabilities: ProviderMaintenanceCapabilities,
+) {
+  const packageName = capabilities.packageName;
+  if (!packageName || capabilities.latestVersion !== undefined) {
+    return capabilities;
+  }
+  const npmPath = yield* resolveCommandPath("npm");
+  if (!npmPath) return capabilities;
+  const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
+  const update = capabilities.update;
+  const prefixIndex = update?.lockKey.startsWith("npm-global:")
+    ? update.args.indexOf("--prefix")
+    : -1;
+  const prefix = prefixIndex >= 0 ? update?.args[prefixIndex + 1] : undefined;
+  const lookup = runProbe(
+    npmPath,
+    [
+      "view",
+      "--global",
+      ...(prefix ? ["--prefix", prefix] : []),
+      "--json",
+      `${packageName}@latest`,
+      "version",
+    ],
+    {},
+  ).pipe(
+    Effect.map((stdout) => {
+      const value = stdout ? Option.getOrNull(decodeNpmViewVersion(stdout.trim())) : null;
+      return nonEmptyString(typeof value === "string" ? value : value?.[0]);
+    }),
+    Effect.tap((version) =>
+      version === null
+        ? Effect.logWarning("Configured npm version lookup failed", { packageName })
+        : Effect.void,
+    ),
+    Effect.provideContext(services),
+  );
+  return {
+    ...capabilities,
+    // npm owns registry, scoped auth and proxy configuration; failure must not retry public npm.
+    latestVersion: null,
+    lookupLatestVersion: capabilities.lookupLatestVersion
+      ? capabilities.lookupLatestVersion.pipe(
+          Effect.filterOrElse(
+            (version) => version !== null,
+            () => lookup,
+          ),
+        )
+      : lookup,
+  };
+});
+
 export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
 )(function* (
@@ -746,7 +803,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     env,
     platform: yield* HostProcess.Platform,
   });
-});
+}, Effect.flatMap(withConfiguredNpmVersionLookup));
 
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",
@@ -840,10 +897,11 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
 
 /** The installer's own answer is cached apart from the npm registry entry. */
 function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
+  if (!capabilities.lookupLatestVersion) return null;
   const update = capabilities.update;
-  return capabilities.lookupLatestVersion && update
+  return update
     ? [update.lockKey, update.executable, ...update.args].join("\0")
-    : null;
+    : capabilities.packageName && `npm-registry\0${capabilities.packageName}`;
 }
 
 export function latestProviderVersionCacheKeys(

@@ -10,6 +10,7 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
@@ -127,7 +128,9 @@ function stdoutSpawner(
   });
 }
 
-it.layer(NodeServices.layer)("providerMaintenance", (it) => {
+it.layer(
+  NodeServices.layer.pipe(Layer.merge(Layer.succeed(HostProcess.Environment, { PATH: "" }))),
+)("providerMaintenance", (it) => {
   it.effect("prefers the installer's own latest version over the npm registry", () =>
     resolveLatestProviderVersion({ ...manualPackageTool, latestVersion: "1.2.0" }).pipe(
       Effect.provide(ProviderLatestVersions.layer),
@@ -198,6 +201,96 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         });
       }),
     ),
+  );
+
+  it.effect.each([
+    { install: "native", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
+    { install: "manual", stdout: '["1.2.0"]', exitCode: 0, latest: "1.2.0" },
+    { install: "npm", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
+    { install: "native", stdout: "", exitCode: 1, latest: null },
+    { install: "npm", stdout: '"1.2.0"', exitCode: 1, latest: null },
+    { install: "native", stdout: "not json", exitCode: 0, latest: null },
+    { install: "manual", stdout: '["1.2.0", "1.3.0"]', exitCode: 0, latest: null },
+    { install: "manual", stdout: '""', exitCode: 0, latest: null },
+  ])(
+    "uses npm's registry for $install installs (exit $exitCode, output $stdout)",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-registry-version");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath =
+          fixture.install === "npm"
+            ? linkIntoPackage(tempDir, "package-tool", [
+                "lib",
+                "node_modules",
+                "@example",
+                "package-tool",
+              ])
+            : NodePath.join(tempDir, ".local/bin/native-package-tool");
+        if (fixture.install !== "npm") writeExecutable(binaryPath);
+        let probes = 0;
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          fixture.install === "native" ? nativePackageToolUpdate : packageToolUpdate,
+          { binaryPath, env: { PATH: "" } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (command, args) => {
+                probes++;
+                expect(command).toBe(NodePath.join(npmBinDir, "npm"));
+                expect(args).toEqual([
+                  "view",
+                  "--global",
+                  ...(fixture.install === "npm" ? ["--prefix", tempDir] : []),
+                  "--json",
+                  `${capabilities.packageName}@latest`,
+                  "version",
+                ]);
+                return fixture.stdout;
+              },
+              () => fixture.exitCode,
+            ),
+          ),
+        );
+        const program = Effect.gen(function* () {
+          yield* enrichProviderSnapshotWithVersionAdvisory(
+            installedPackageToolProvider,
+            capabilities,
+            { enableProviderUpdateChecks: false },
+          );
+          expect(probes).toBe(0);
+          const snapshot = yield* enrichProviderSnapshotWithVersionAdvisory(
+            installedPackageToolProvider,
+            capabilities,
+          );
+          expect(snapshot.versionAdvisory?.latestVersion).toBe(fixture.latest);
+          expect(probes).toBe(1);
+          expect(yield* resolveLatestProviderVersion(capabilities)).toBe(fixture.latest);
+          expect(probes).toBe(1);
+          yield* invalidateLatestProviderVersion(capabilities);
+          expect(yield* resolveLatestProviderVersion(capabilities)).toBe(fixture.latest);
+          expect(probes).toBe(2);
+        });
+        yield* program.pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([
+              ["@example/package-tool", "9.9.9"],
+              ["@example/native-package-tool", "9.9.9"],
+            ]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() =>
+              Effect.die("a configured npm lookup must not fall back to public npm"),
+            ),
+          ),
+        );
+      }),
+    { skip: !symlinksSupported || windowsHost },
   );
 
   it("pins the advertised stable version in a pnpm-global update command", () => {
@@ -674,14 +767,35 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       case: "the eligible release",
       outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
       exitCode: 1,
+      npmOutput: '"1.2.0"',
       expected: "1.1.0",
     },
-    { case: "no update during cooldown", outdated: {}, exitCode: 0, expected: "1.0.0" },
     {
-      case: "the npm fallback when the pnpm probe fails",
+      case: "no update during cooldown",
+      outdated: {},
+      exitCode: 0,
+      npmOutput: '"1.2.0"',
+      expected: "1.0.0",
+    },
+    {
+      case: "the public registry fallback when pnpm fails and npm is unavailable",
       outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
       exitCode: 2,
       expected: "9.9.9",
+    },
+    {
+      case: "the configured npm registry when the pnpm probe fails",
+      outdated: {},
+      exitCode: 2,
+      npmOutput: '"1.2.0"',
+      expected: "1.2.0",
+    },
+    {
+      case: "an unknown version when both configured lookups fail",
+      outdated: {},
+      exitCode: 2,
+      npmOutput: "not json",
+      expected: null,
     },
   ])(
     "advertises $case for pnpm-global installs",
@@ -690,6 +804,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const tempDir = yield* makeTempDir("t3-pnpm-latest");
         const pnpmBinDir = NodePath.join(tempDir, "pnpm-bin");
         writeExecutable(NodePath.join(pnpmBinDir, "pnpm"));
+        if (fixture.npmOutput !== undefined) writeExecutable(NodePath.join(pnpmBinDir, "npm"));
         const link = linkIntoPackage(tempDir, "package-tool", [
           ".local",
           "share",
@@ -701,6 +816,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           "package-tool",
         ]);
 
+        let npmProbes = 0;
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
           { binaryPath: link, env: { PATH: "" } },
@@ -709,12 +825,17 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner(
-              (_command, args) =>
-                args[0] === "outdated"
+              (_command, args) => {
+                if (args[0] === "view") {
+                  npmProbes++;
+                  return fixture.npmOutput ?? "";
+                }
+                return args[0] === "outdated"
                   ? JSON.stringify(fixture.outdated)
                   : JSON.stringify([
                       { dependencies: { "@example/package-tool": { version: "1.0.0" } } },
-                    ]),
+                    ]);
+              },
               (args) => (args[0] === "outdated" ? fixture.exitCode : 0),
             ),
           ),
@@ -734,10 +855,16 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           ),
         );
         expect(provider.versionAdvisory).toMatchObject({
-          status: fixture.expected === "1.0.0" ? "current" : "behind_latest",
+          status:
+            fixture.expected === null
+              ? "unknown"
+              : fixture.expected === "1.0.0"
+                ? "current"
+                : "behind_latest",
           currentVersion: "1.0.0",
           latestVersion: fixture.expected,
         });
+        expect(npmProbes).toBe(fixture.exitCode === 2 && fixture.npmOutput !== undefined ? 1 : 0);
       }),
     { skip: !symlinksSupported || windowsHost },
   );
