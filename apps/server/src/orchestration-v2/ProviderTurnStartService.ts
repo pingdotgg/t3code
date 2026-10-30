@@ -118,6 +118,8 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly willRetry?: boolean;
+    /** Fails the still-starting run with this error instead of starting it. */
+    readonly failBeforeStart?: Error;
   }) => Effect.Effect<void, ProviderTurnStartError>;
 }
 
@@ -303,6 +305,7 @@ export const layer: Layer.Layer<
       readonly threadId: ThreadId;
       readonly runId: RunId;
       readonly willRetry?: boolean;
+      readonly failBeforeStart?: Error;
     }) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
@@ -490,6 +493,24 @@ export const layer: Layer.Layer<
           });
         },
       );
+      if (input.failBeforeStart !== undefined) {
+        yield* settleRunBeforeStart({
+          signal: "provider-turn-restart-failure",
+          status: "failed",
+          now: yield* DateTime.now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "error",
+            title: "Provider restart failed",
+            failure: makeProviderFailure({
+              cause: input.failBeforeStart,
+              class: "provider_error",
+            }),
+          },
+        });
+        return;
+      }
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
@@ -675,11 +696,13 @@ export const layer: Layer.Layer<
           // Older versions could fail the run without stopping its provider.
           // Recover that exact turn before reusing its native conversation.
           const recovered = yield* Effect.result(
-            liveSession.value.interruptTurn({
-              providerThread,
-              providerTurnId: abandonedTurn.id,
-              requestRuntimeRestart: true,
-            }),
+            liveSession.value
+              .interruptTurn({
+                providerThread,
+                providerTurnId: abandonedTurn.id,
+                requestRuntimeRestart: true,
+              })
+              .pipe(Effect.timeout(RunExecutionService.PROVIDER_CONTROL_TIMEOUT)),
           );
           if (recovered._tag === "Failure") {
             if (input.willRetry === true) return yield* recovered.failure;
@@ -715,24 +738,26 @@ export const layer: Layer.Layer<
         if (!repaired.committed) return;
       }
       const sessionResult = yield* Effect.result(
-        providerSessions.open({
-          threadId: projection.thread.id,
-          providerSessionId,
-          modelSelection: run.modelSelection,
-          runtimePolicy: resolvedRuntimePolicy,
-          ...(existingSessionProjection === undefined
-            ? {}
-            : { resumeFromSession: existingSessionProjection }),
-          ...(providerThread.nativeThreadRef?.nativeId == null
-            ? {}
-            : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
-          ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
-            ? {}
-            : {
-                initialProviderItemIdentityVersion:
-                  providerThread.nativeMetadata.itemIdentityVersion,
-              }),
-        }),
+        providerSessions
+          .open({
+            threadId: projection.thread.id,
+            providerSessionId,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+            ...(existingSessionProjection === undefined
+              ? {}
+              : { resumeFromSession: existingSessionProjection }),
+            ...(providerThread.nativeThreadRef?.nativeId == null
+              ? {}
+              : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+            ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+              ? {}
+              : {
+                  initialProviderItemIdentityVersion:
+                    providerThread.nativeMetadata.itemIdentityVersion,
+                }),
+          })
+          .pipe(Effect.timeout(RunExecutionService.PROVIDER_CONTROL_TIMEOUT)),
       );
       if (sessionResult._tag === "Failure") {
         const failure = sessionResult.failure;
@@ -753,7 +778,9 @@ export const layer: Layer.Layer<
       const loadFromProvider = Effect.fn("ProviderTurnStartService.loadFromProvider")(function* (
         load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,
       ) {
-        const loaded = yield* Effect.result(load);
+        const loaded = yield* Effect.result(
+          Effect.timeout(load, RunExecutionService.PROVIDER_CONTROL_TIMEOUT),
+        );
         if (loaded._tag === "Success") return loaded.success;
         if (input.willRetry === true) return yield* loaded.failure;
         yield* settleStartFailure({
@@ -1107,12 +1134,14 @@ export const layer: Layer.Layer<
                   cause: "Uncertain native history injection",
                 }),
               )
-            : session.resumeThread({
-                providerThread,
-                threadId: projection.thread.id,
-                modelSelection: run.modelSelection,
-                runtimePolicy: resolvedRuntimePolicy,
-              }),
+            : session
+                .resumeThread({
+                  providerThread,
+                  threadId: projection.thread.id,
+                  modelSelection: run.modelSelection,
+                  runtimePolicy: resolvedRuntimePolicy,
+                })
+                .pipe(Effect.timeout(RunExecutionService.PROVIDER_CONTROL_TIMEOUT)),
         );
         if (resumed._tag === "Success") {
           const context = handoffContextForThread(resumed.success);
@@ -1508,6 +1537,16 @@ export const layer: Layer.Layer<
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
+        // Ending the session stops the process, so a turn it accepted without
+        // answering cannot keep editing the workspace. The next start reopens
+        // the session and resumes the native conversation.
+        containUnansweredStart: providerSessions
+          .release({
+            providerSessionId,
+            reason: "runtime_error",
+            detail: "The provider did not answer the turn start.",
+          })
+          .pipe(Effect.ignore({ log: true })),
         loadRunInterruptReason: runControls.loadRunInterruptReason,
         message: {
           messageId: message.id,

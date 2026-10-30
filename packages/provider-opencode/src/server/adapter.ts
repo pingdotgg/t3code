@@ -3231,6 +3231,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               });
               yield* updateProviderSession("running", null);
               if (isCompaction) {
+                // summarize resolves only when compaction finishes, so it runs
+                // past turn start; the turn's terminal event reports its outcome.
                 yield* sdkCall(
                   "session.summarize",
                   { sessionID: sessionId, ...parsedModel, auto: false },
@@ -3254,6 +3256,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                     }),
                   ),
                   Effect.ensuring(Deferred.succeed(admissionSettled, undefined)),
+                  Effect.ignore,
+                  Effect.forkIn(scope),
                 );
                 return;
               }

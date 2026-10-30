@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
+  MessageId,
   NodeId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
@@ -14,19 +15,24 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import { PROVIDER_CONTROL_TIMEOUT } from "./RunExecutionService.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -337,4 +343,146 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
+);
+
+it.effect("a steer that times out after its turn completes is not offered as a follow-up", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:unanswered-steer");
+    const providerSessionId = ProviderSessionId.make("provider-session:unanswered-steer");
+    const providerThreadId = ProviderThreadId.make("provider-thread:unanswered-steer");
+    const providerTurnId = ProviderTurnId.make("provider-turn:unanswered-steer");
+    const messageId = MessageId.make("message:unanswered-steer");
+    const runId = RunId.make("run:unanswered-steer");
+    const turnStatus = yield* Ref.make<"running" | "completed">("running");
+    const steerRequested = yield* Deferred.make<void>();
+    const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
+      instanceId: providerInstanceId,
+      driver,
+      providerSessionId,
+      providerSession: {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "running",
+        cwd: "/workspace",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+      events: Stream.empty,
+      ensureThread: () => Effect.die("unused ensureThread"),
+      resumeThread: () => Effect.die("unused resumeThread"),
+      startTurn: () => Effect.die("unused startTurn"),
+      // The provider accepts the input and finishes the turn, but the
+      // acknowledgement never arrives.
+      steerTurn: () =>
+        Ref.set(turnStatus, "completed").pipe(
+          Effect.andThen(Deferred.succeed(steerRequested, undefined)),
+          Effect.andThen(Effect.never),
+        ),
+      interruptTurn: () => Effect.die("unused interruptTurn"),
+      respondToRuntimeRequest: () => Effect.die("unused respondToRuntimeRequest"),
+      readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
+      rollbackThread: () => Effect.die("unused rollbackThread"),
+      forkThread: () => Effect.die("unused forkThread"),
+    };
+    const layerProjection = Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getProviderControlContext: () =>
+        Effect.gen(function* () {
+          return {
+            providerThread: {
+              id: providerThreadId,
+              driver,
+              providerInstanceId,
+              providerSessionId,
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "active" as const,
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+            providerTurn: {
+              id: providerTurnId,
+              providerThreadId,
+              nodeId: NodeId.make("node:unanswered-steer"),
+              runAttemptId: RunAttemptId.make("run-attempt:unanswered-steer"),
+              nativeTurnRef: null,
+              ordinal: 1,
+              status: yield* Ref.get(turnStatus),
+              startedAt: now,
+              completedAt: null,
+            },
+            attempt: undefined,
+            message: {
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+              id: messageId,
+              threadId,
+              runId,
+              nodeId: null,
+              role: "user" as const,
+              text: "also check the tests",
+              attachments: [],
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+            },
+            run: {
+              id: runId,
+              threadId,
+              ordinal: 1,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId,
+              userMessageId: MessageId.make("message:unanswered-steer-run"),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "running" as const,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          };
+        }),
+    });
+    const layerSessionManager = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+      get: () => Effect.succeedSome(runtime),
+    });
+
+    const exit = yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      const steer = yield* control
+        .steer({ threadId, providerSessionId, providerThreadId, providerTurnId, messageId })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(steerRequested);
+      yield* TestClock.adjust(PROVIDER_CONTROL_TIMEOUT);
+      return yield* Fiber.join(steer);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        ProviderTurnControlService.layer.pipe(
+          Layer.provide(Layer.merge(layerProjection, layerSessionManager)),
+        ),
+      ),
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      const error = Cause.squash(exit.cause);
+      assert.instanceOf(error, ProviderTurnControlService.ProviderTurnControlError);
+      assert.isFalse(error.turnCompleted);
+      assert.isTrue(Cause.isTimeoutError(error.cause));
+    }
+  }),
 );

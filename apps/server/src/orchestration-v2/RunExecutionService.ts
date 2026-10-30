@@ -544,6 +544,11 @@ export class RunExecutionIngestError extends Schema.TaggedError<RunExecutionInge
   }
 }
 
+// A provider that stays alive but stops answering control requests would
+// otherwise hold an effect worker forever. Healthy starts finish within ~33s;
+// this bounds each control call, not the agent turn that follows acceptance.
+export const PROVIDER_CONTROL_TIMEOUT = Duration.minutes(2);
+
 export const RunExecutionServiceV2Error = Schema.Union([
   RunExecutionStartError,
   RunExecutionIngestError,
@@ -572,6 +577,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+  /** Runs when the start outlives its deadline; the provider may have accepted it unanswered. */
+  readonly containUnansweredStart?: Effect.Effect<void>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -1689,7 +1696,10 @@ export const layer: Layer.Layer<
               }),
             ))
           : input.session.startTurn(turnInput);
-        yield* Effect.andThen(shouldStart, startTurn).pipe(
+        yield* Effect.andThen(
+          shouldStart,
+          Effect.timeout(startTurn, PROVIDER_CONTROL_TIMEOUT),
+        ).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.
           Effect.tap(() =>
@@ -1704,6 +1714,11 @@ export const layer: Layer.Layer<
               cause,
             }).pipe(
               Effect.andThen(Fiber.interrupt(providerEventFiber)),
+              Effect.andThen(
+                Cause.isTimeoutError(Cause.squash(cause))
+                  ? (input.containUnansweredStart ?? Effect.void)
+                  : Effect.void,
+              ),
               Effect.andThen(Ref.get(latestProviderThread)),
               Effect.flatMap((providerThread) =>
                 Ref.get(latestTurnItemOrdinal).pipe(

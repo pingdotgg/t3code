@@ -33,6 +33,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -1389,6 +1390,66 @@ describe("OpenCodeAdapterV2", () => {
       );
       assert.isTrue(
         events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("returns from compaction start while a long summarize keeps the turn active", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const summarizeStarted = promiseGate<void>();
+      const summarizeResult = promiseGate<{ data: boolean }>();
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "long-compact",
+        "native-opencode-long-compact",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: { id: "native-opencode-long-compact", time: { created: 1, updated: 1 } },
+            }),
+            summarize: () => {
+              summarizeStarted.resolve();
+              return summarizeResult.promise;
+            },
+          },
+        },
+      );
+      const events = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      // Orchestration bounds turn start as a control call; a summarize that
+      // outlives that bound must not hold the start open.
+      const start = yield* harness
+        .startTurn("/compact")
+        .pipe(Effect.timeout("2 minutes"), Effect.exit, Effect.forkScoped);
+      yield* Effect.promise(() => summarizeStarted.promise);
+      yield* TestClock.adjust("3 minutes");
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(start)));
+      summarizeResult.resolve({ data: true });
+      const received = Array.from(yield* Fiber.join(events));
+      const terminals = received.filter((event) => event.type === "turn.terminal");
+      assert.deepEqual(
+        terminals.map((event) => event.status),
+        ["completed"],
+      );
+      assert.isTrue(
+        received.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "compaction" &&
+            event.turnItem.status === "completed",
+        ),
       );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
