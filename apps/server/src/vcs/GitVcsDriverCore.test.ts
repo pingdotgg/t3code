@@ -5,6 +5,7 @@ import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -2772,6 +2773,57 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           stage: { filePaths: status.workingTree.files.map((file) => file.path) },
         });
         assert.equal(yield* git(cwd, ["status", "--porcelain"]), "");
+      }),
+    );
+
+    it.effect("sorts changed files once after adding files without numstat", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "d.txt", "one\n");
+        yield* writeTextFile(cwd, "c.bin", "binary\0one");
+        yield* writeTextFile(cwd, "b.txt", "one\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add files"]);
+        yield* writeTextFile(cwd, "d.txt", "two\n");
+        yield* writeTextFile(cwd, "c.bin", "binary\0two");
+        yield* writeTextFile(cwd, "b.txt", "one\ntwo\n");
+        yield* writeTextFile(cwd, "e-new.txt", "new\n");
+        yield* writeTextFile(cwd, "a-new.txt", "new\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const sorts = [vi.spyOn(Array.prototype, "sort"), vi.spyOn(Array.prototype, "toSorted")];
+        const sortedLists: Array<ReadonlyArray<unknown>> = [];
+
+        const status = yield* driver.statusDetailsLocal(cwd).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              for (const sort of sorts) {
+                // Read the recorded receivers first: mockRestore clears them.
+                sortedLists.push(...sort.mock.contexts.filter((list) => Array.isArray(list)));
+                sort.mockRestore();
+              }
+            }),
+          ),
+        );
+
+        assert.deepEqual(status.workingTree.files, [
+          { path: "a-new.txt", insertions: 0, deletions: 0 },
+          { path: "b.txt", insertions: 1, deletions: 0 },
+          { path: "c.bin", insertions: 0, deletions: 0 },
+          { path: "d.txt", insertions: 1, deletions: 1 },
+          { path: "e-new.txt", insertions: 0, deletions: 0 },
+        ]);
+        assert.equal(status.workingTree.insertions, 2);
+        assert.equal(status.workingTree.deletions, 1);
+        // Every array sorted while reading status that holds a returned file entry.
+        const statusFiles = new Set<unknown>(status.workingTree.files);
+        const fileListSorts = sortedLists.filter((list) =>
+          list.some((file) => statusFiles.has(file)),
+        );
+        assert.deepEqual(
+          fileListSorts.map((list) => list.length),
+          [status.workingTree.files.length],
+        );
       }),
     );
 

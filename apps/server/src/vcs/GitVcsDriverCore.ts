@@ -2277,13 +2277,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     let insertions = 0;
     let deletions = 0;
-    const files = Array.from(fileStatMap.entries())
-      .map(([filePath, stat]) => {
-        insertions += stat.insertions;
-        deletions += stat.deletions;
-        return { path: filePath, insertions: stat.insertions, deletions: stat.deletions };
-      })
-      .toSorted((a, b) => a.path.localeCompare(b.path));
+    const files = Array.from(fileStatMap.entries()).map(([filePath, stat]) => {
+      insertions += stat.insertions;
+      deletions += stat.deletions;
+      return { path: filePath, insertions: stat.insertions, deletions: stat.deletions };
+    });
 
     for (const filePath of changedFilesWithoutNumstat) {
       if (fileStatMap.has(filePath)) continue;
