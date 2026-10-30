@@ -282,6 +282,18 @@ describe("thread action permissions", () => {
     },
   );
 
+  it("names an archived thread in its delete confirmation and preserves it on cancel", async () => {
+    state.threads = [];
+    state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
+    state.confirm.mockResolvedValue(false);
+    await useThreadActions().confirmAndDeleteThread(target, "Archived release notes");
+    expect(state.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('Delete thread "Archived release notes"?'),
+      { variant: "destructive" },
+    );
+    expect(state.requests).toEqual([]);
+  });
+
   it("deletes an archived thread only with its own environment's grant", async () => {
     state.threads = [];
     const actions = useThreadActions();
