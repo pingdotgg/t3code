@@ -331,6 +331,14 @@ it.effect.each([
     false,
     { "filter.lfs.process": "git-lfs filter-process --skip" },
   ],
+  [
+    "uses a differently spelled LFS filter",
+    STOCK_LFS_CONFIG,
+    "lfs",
+    undefined,
+    true,
+    { "filter.lfs.process": "git lfs filter-process" },
+  ],
 ] as const)("LFS pull after a clone that %s", ([, config, contents, skipSmudge, pulls, checkout]) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

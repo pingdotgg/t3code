@@ -413,9 +413,9 @@ export const make = Effect.gen(function* () {
     destinationPath: string,
     options?: SourceControlCloneOptions,
   ) {
-    // The pre-clone read can see a repo around the destination, whose config this checkout lacks.
+    // The pre-clone read can miss this checkout's config, which may not want LFS content at all.
     const filter = yield* git.readConfigValue(destinationPath, "filter.lfs.process");
-    if (filter !== STOCK_LFS_FILTER) return;
+    if (filter === null || filter.includes("--skip")) return;
     const lfsFiles = yield* git
       .execute({
         operation: "SourceControlRepositoryService.listLfsFiles",
