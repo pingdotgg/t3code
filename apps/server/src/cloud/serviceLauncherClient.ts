@@ -3,6 +3,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -134,6 +135,22 @@ export const resolveServiceLauncherMode = Effect.fn("cloud.service_launcher_clie
   function* () {
     const { managed } = yield* resolveStartup();
     return { managed };
+  },
+);
+
+/** Completes when the launcher asks this server to stop, which Windows cannot signal. */
+export const awaitServiceLauncherStop = Effect.fn("cloud.service_launcher_client.await_stop")(
+  function* (options?: { readonly currentVersion?: string }) {
+    const startup = yield* resolveStartup(options).pipe(Effect.option);
+    if (Option.isNone(startup) || !startup.value.managed) return yield* Effect.never;
+    const { host } = startup.value;
+    return yield* Effect.callback<void>((resume) => {
+      const onMessage = (...args: ReadonlyArray<unknown>) => {
+        if (decodeServiceLauncherParentMessage(args[0])?.type === "stop") resume(Effect.void);
+      };
+      host.on("message", onMessage);
+      return Effect.sync(() => host.off("message", onMessage));
+    });
   },
 );
 

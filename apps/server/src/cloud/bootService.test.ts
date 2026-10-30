@@ -45,7 +45,13 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-it("reads the served T3 home back out of a rendered unit or plist", () => {
+const windowsTaskOptions = {
+  userId: "PC\\theo",
+  homeDir: "C:\\Users\\theo",
+  conhostPath: "C:\\Windows\\System32\\conhost.exe",
+};
+
+it("reads the served T3 home back out of a rendered unit, plist, or task", () => {
   const plan = (baseDir: string) => ({
     program: [`${baseDir}/runtime/versions/1.2.3/t3`, "__service-launcher"],
     baseDir,
@@ -69,6 +75,11 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
       }),
     ),
   ).toBe("/Users/theo/a&b");
+  expect(
+    BootService.bootServiceBaseDirOf(
+      BootService.renderBootServiceTask(plan("C:\\Users\\theo\\T3 a&b\\"), windowsTaskOptions),
+    ),
+  ).toBe("C:\\Users\\theo\\T3 a&b\\");
   expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
 });
 
@@ -98,6 +109,12 @@ it.each([
     "/Users/theo/a&b <c>",
     (plan: BootService.BootServicePlan) =>
       BootService.renderBootServicePlist(plan, { homeDir: "/Users/theo", environmentPath: "" }),
+  ],
+  [
+    "a task",
+    "C:\\Users\\theo\\T3 a&b <c>",
+    (plan: BootService.BootServicePlan) =>
+      BootService.renderBootServiceTask(plan, windowsTaskOptions),
   ],
 ] as const)("reads the launcher back out of %s", (_, baseDir, render) => {
   const program = `${baseDir}/runtime/versions/1.2.3/t3`;
@@ -199,7 +216,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 ],
               })
             : input.args[0] === "--version"
-              ? `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
+              ? `t3 v${/versions[\\/]([^\\/]+)[\\/]/.exec(input.command)?.[1] ?? "1.2.3"}\n`
               : input.command === "loginctl" && input.args[0] === "show-user"
                 ? `${control.linger ?? ""}\n`
                 : input.args[1] === "is-enabled"
@@ -265,6 +282,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
               env: {
                 HOME: home,
                 ...(xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: xdgConfigHome }),
+                USERPROFILE: home,
+                LOCALAPPDATA: path.join(home, "AppData", "Local"),
+                USERDOMAIN: "PC",
+                USERNAME: "theo",
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
@@ -1221,6 +1242,71 @@ process.disconnect();
       expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.t3code.service")).toEqual(
         Duration.seconds(120),
       );
+    }),
+  );
+
+  it.effect("installs, reports a stopped launcher, and uninstalls on Windows", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, runtime } = yield* makeHarness("win32");
+      const path = yield* Path.Path;
+      const plan = yield* service.install();
+      const task = yield* fs.readFileString(plan.unitPath);
+
+      expect(plan.unitPath).toBe(
+        path.join(path.dirname(plan.baseDir), "AppData", "Local", "t3code", "t3code-task.xml"),
+      );
+      expect(BootService.bootServiceProgramOf(task)).toBe(runtime.entryPath);
+      expect(BootService.bootServiceBaseDirOf(task)).toBe(plan.baseDir);
+      expect(task).toContain("<UserId>PC\\theo</UserId>");
+      expect(task).toContain("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>");
+      expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.2.3",
+      });
+      expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual([
+        `schtasks /Create /XML ${plan.unitPath} /TN t3code /F`,
+        "schtasks /Run /TN t3code",
+      ]);
+      // No launcher answers the control pipe here.
+      expect(yield* service.status).toMatchObject({
+        installed: true,
+        current: false,
+        problems: ["service-stopped"],
+      });
+
+      commands.length = 0;
+      expect(yield* service.uninstall).toBe(true);
+      expect(commands).toEqual([
+        "schtasks /Change /TN t3code /DISABLE",
+        "schtasks /End /TN t3code",
+        "schtasks /Delete /TN t3code /F",
+      ]);
+      expect((yield* service.status).installed).toBe(false);
+    }),
+  );
+
+  it.effect("hands an in-service install and restart to Task Scheduler on Windows", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, makeService } = yield* makeHarness("win32");
+      const plan = yield* service.install();
+      const inside = yield* makeService(undefined, "1.2.4", undefined, true);
+      const handoff = [
+        `schtasks /Create /XML ${plan.unitPath} /TN t3code /F`,
+        "schtasks /End /TN t3code",
+        "schtasks /Run /TN t3code",
+      ];
+      commands.length = 0;
+
+      expect(yield* inside.install()).toMatchObject({ handedOff: true, logPath: plan.logPath });
+      expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual(handoff);
+      expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe("1.2.4");
+      expect(
+        yield* fs.readFileString(`${plan.baseDir}/runtime/${SERVICE_RESTART_PENDING_FILE}`),
+      ).toBe("1.2.4\n");
+
+      commands.length = 0;
+      expect(yield* inside.restart).toBe("queued");
+      expect(commands).toEqual(handoff);
     }),
   );
 

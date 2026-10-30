@@ -24,21 +24,28 @@ const unquoteSystemdValue = (raw: string) =>
 const unescapeXmlText = (value: string) =>
   value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 
+const unquoteWindowsArgument = (raw: string) =>
+  unescapeXmlText(raw).replace(/(\\+)$/, (slashes) => slashes.slice(slashes.length / 2));
+
 export function serviceUnitBaseDirOf(contents: string): string | undefined {
   const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
   if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
   const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
-  return plist === undefined ? undefined : unescapeXmlText(plist);
+  if (plist !== undefined) return unescapeXmlText(plist);
+  const task = /<Arguments>[^<]* "--base-dir" "([^"]*)"/.exec(contents)?.[1];
+  return task === undefined ? undefined : unquoteWindowsArgument(task);
 }
 
-/** The executable an installed unit or plist starts: the launcher's runtime. */
+/** The executable an installed unit, plist, or task starts: the launcher's runtime. */
 export function serviceUnitProgramOf(contents: string): string | undefined {
   const systemd = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(contents)?.[1];
   if (systemd !== undefined) return unquoteSystemdValue(systemd);
   const plist = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/.exec(
     contents,
   )?.[1];
-  return plist === undefined ? undefined : unescapeXmlText(plist);
+  if (plist !== undefined) return unescapeXmlText(plist);
+  const task = /<Arguments>--headless "([^"]*)"/.exec(contents)?.[1];
+  return task === undefined ? undefined : unquoteWindowsArgument(task);
 }
 
 export interface PendingServiceUpdate {
@@ -86,6 +93,10 @@ export type ServiceLauncherParentMessage =
   | {
       readonly type: "committed";
       readonly updateId: string;
+    }
+  | {
+      /** Shut down as on SIGTERM, which Windows cannot deliver. */
+      readonly type: "stop";
     };
 
 const SEMVER_NUMBER = "(?:0|[1-9]\\d*)";
@@ -284,6 +295,7 @@ export function decodeServiceLauncherParentMessage(
   if (value.type === "update-accepted" && typeof value.updateId === "string") {
     return { type: value.type, updateId: value.updateId };
   }
+  if (value.type === "stop") return { type: value.type };
   return value.type === "committed" && typeof value.updateId === "string"
     ? { type: value.type, updateId: value.updateId }
     : undefined;
