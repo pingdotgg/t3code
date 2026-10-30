@@ -72,6 +72,7 @@ export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeS
 export class ServerRuntimeStartup extends Context.Service<
   ServerRuntimeStartup,
   {
+    readonly awaitConnectionReady: Effect.Effect<void, ServerRuntimeStartupError>;
     readonly awaitCommandReady: Effect.Effect<void, ServerRuntimeStartupError>;
     readonly markHttpListening: Effect.Effect<void>;
     readonly enqueueCommand: <A, E>(
@@ -456,6 +457,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
 
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
+  const connectionReady = yield* Deferred.make<void, ServerRuntimeStartupError>();
   const effectWorkerFiber = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
 
   yield* Effect.addFinalizer(() =>
@@ -516,6 +518,9 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         ),
       ),
     );
+
+    yield* Deferred.await(httpListening);
+    yield* Deferred.succeed(connectionReady, undefined);
 
     const welcomeBase = yield* resolveWelcomeBase;
     const environment = yield* serverEnvironment.getDescriptor;
@@ -699,6 +704,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         return Effect.logError("server runtime startup failed", {
           cause: Cause.pretty(startupExit.cause),
         }).pipe(
+          Effect.andThen(Deferred.fail(connectionReady, error)),
           Effect.andThen(commandGate.failCommandReady(error)),
           Effect.andThen(options?.abort?.(error) ?? Effect.void),
         );
@@ -707,6 +713,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
   );
 
   return {
+    awaitConnectionReady: Deferred.await(connectionReady),
     awaitCommandReady: commandGate.awaitCommandReady,
     markHttpListening: Deferred.succeed(httpListening, undefined),
     enqueueCommand: commandGate.enqueueCommand,
