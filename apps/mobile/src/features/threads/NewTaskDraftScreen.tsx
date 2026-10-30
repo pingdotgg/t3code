@@ -918,6 +918,7 @@ export function NewTaskDraftScreen(props: {
           <Text className="text-foreground-muted">
             Your draft is saved on this device. Connect to an environment to choose its first model.
           </Text>
+          {shareTemplatePicker}
           <ComposerEditor
             draftKey={flow.draftKey}
             value={flow.prompt}
