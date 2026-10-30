@@ -89,6 +89,16 @@ const threadRef: ScopedThreadRef = {
 };
 const container = { width: 1200, height: 800 };
 const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
+const linkedPullRequest: ThreadPullRequestLink = {
+  host: "github.com",
+  repository: "pingdotgg/t3code",
+  number: 27513,
+  url: "https://github.com/pingdotgg/t3code/pull/27513",
+  source: "manual",
+  linkedAt: "2026-10-30T00:00:00.000Z",
+  snapshot: null,
+  stack: null,
+};
 
 function setup(input: {
   workspaceRoot: string;
@@ -141,6 +151,7 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         showOpenInPicker={false}
         openInShortcutEnabled={false}
         gitCwd={state.folder}
+        workspaceMutationId={null}
         isGitRepo={false}
         envLocked
         availableEnvironments={[]}
@@ -159,10 +170,14 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
   );
 }
 
-it("offers no git controls in a No project thread", async () => {
-  using fixture = setup({ workspaceRoot: SCRATCH_ROOT, folder: `${SCRATCH_ROOT}/thread` });
+it("offers no git controls in a No project thread, but shows its linked pull request", async () => {
+  using fixture = setup({
+    workspaceRoot: SCRATCH_ROOT,
+    folder: `${SCRATCH_ROOT}/thread`,
+    pullRequests: [linkedPullRequest],
+  });
   await using _screen = await render(<Panel fixture={fixture} />);
-  await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
+  await expect.element(page.getByText("#27513")).toBeVisible();
   await expect
     .element(page.getByRole("button", { name: "Initialize Git" }))
     .not.toBeInTheDocument();
@@ -172,18 +187,7 @@ it("shows a linked pull request in a folder that is not a git repository", async
   using fixture = setup({
     workspaceRoot: "/work/plain",
     folder: "/work/plain",
-    pullRequests: [
-      {
-        host: "github.com",
-        repository: "pingdotgg/t3code",
-        number: 27513,
-        url: "https://github.com/pingdotgg/t3code/pull/27513",
-        source: "manual",
-        linkedAt: "2026-10-30T00:00:00.000Z",
-        snapshot: null,
-        stack: null,
-      },
-    ],
+    pullRequests: [linkedPullRequest],
   });
   await using _screen = await render(<Panel fixture={fixture} />);
   await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
