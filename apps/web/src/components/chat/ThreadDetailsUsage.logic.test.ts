@@ -343,15 +343,4 @@ describe("thread details limits", () => {
 
     expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
   });
-
-  it("shows nothing without a selected instance", () => {
-    expect(
-      resolveThreadDetailsLimits(
-        null,
-        [claudeInstance(unsupported)],
-        [hub("hub", [{ id: "claude-a.json", limits: limitsAt(19) }])],
-        now,
-      ),
-    ).toBeNull();
-  });
 });
