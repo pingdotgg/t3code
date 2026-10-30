@@ -1700,6 +1700,36 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
+  const resolveDefaultWorktreeBaseRef = Effect.fn("GitVcsDriver.resolveDefaultWorktreeBaseRef")(
+    function* (cwd: string) {
+      const remotes = yield* listRemoteNames(cwd);
+      const remoteName = remotes.includes("origin") ? "origin" : remotes[0];
+      if (remoteName !== undefined) {
+        const cached = yield* resolveDefaultBranchName(cwd, remoteName);
+        if (cached !== null) return `refs/remotes/${remoteName}/${cached}`;
+        // Empty clones do not cache remote HEAD, even after the first push.
+        const advertised = yield* executeGit(
+          "GitVcsDriver.resolveDefaultWorktreeBaseRef.remoteHead",
+          cwd,
+          ["ls-remote", "--symref", "--", remoteName, "HEAD"],
+          { timeoutMs: 20_000, env: STATUS_UPSTREAM_REFRESH_ENV },
+        ).pipe(Effect.orElseSucceed(() => null));
+        const branch =
+          advertised === null
+            ? undefined
+            : /^ref: refs\/heads\/([^\t\r\n]+)\tHEAD\r?$/m.exec(advertised.stdout)?.[1];
+        if (branch !== undefined) return `refs/remotes/${remoteName}/${branch}`;
+      }
+      // Missing or unreachable remote HEAD must not prevent saving a task in a
+      // usable local repository. Prefer conventional branches before HEAD.
+      return (
+        (yield* resolveBranchName(cwd, "refs/heads/main")) ??
+        (yield* resolveBranchName(cwd, "refs/heads/master")) ??
+        (yield* resolveBranchName(cwd, "HEAD"))
+      );
+    },
+  );
+
   const resolvePushRemoteName = Effect.fn("resolvePushRemoteName")(function* (
     cwd: string,
     refName: string,
@@ -4419,6 +4449,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const remoteNames = (yield* listRemoteNames(input.cwd)).toSorted(
         (left, right) => right.length - left.length,
       );
+      if (input.refName.startsWith("refs/remotes/")) {
+        const target = parseRemoteRefWithRemoteNames(
+          input.refName.slice("refs/remotes/".length),
+          remoteNames,
+        );
+        return target === null
+          ? null
+          : { remoteName: target.remoteName, branchName: target.branchName };
+      }
       // Upstream atoms read config even before the tracking ref has been fetched.
       // Match the exact local ref: for-each-ref also returns its descendants.
       const localBranch = yield* runGitStdout("GitVcsDriver.resolveWorktreeBaseRemote", input.cwd, [
@@ -4877,6 +4916,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ensureRemote: Effect.fnUntraced(function* (input) {
       return yield* withListRefsInvalidation(input.cwd, ensureRemote(input));
     }),
+    resolveDefaultWorktreeBaseRef,
     resolvePrimaryRemoteName,
     resolveDefaultBranchName,
     fetchRemote: Effect.fnUntraced(function* (input) {

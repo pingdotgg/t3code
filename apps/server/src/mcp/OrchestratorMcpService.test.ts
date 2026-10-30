@@ -10,6 +10,7 @@ import {
   OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
+  type ScheduledTaskUpsertInput,
   ScheduledTaskId,
   ProjectId,
   ProviderDriverKind,
@@ -26,12 +27,14 @@ import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../config.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
@@ -50,6 +53,7 @@ import {
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
@@ -69,6 +73,12 @@ const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/projects",
+      isScratchProject: () => Effect.succeed(false),
+    }),
+  ),
 );
 
 describe("OrchestratorMcpService", () => {
@@ -2241,6 +2251,416 @@ describe("OrchestratorMcpService provider resolution", () => {
           ),
         ),
       );
+
+    describe("scheduled task workspace strategies", () => {
+      it.effect.each(["create", "unbind"] as const)(
+        "%s saves an unbound Scratch task at root without invoking Git",
+        (operation) =>
+          Effect.gen(function* () {
+            const shell = {
+              ...liveThreadShell(boundThreadId, { runtimeMode: "approval-required" }),
+              projectId,
+            };
+            const existing = task({ threadId: boundThreadId, workspaceStrategy: { type: "root" } });
+            const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+            const gitCalls = yield* Ref.make(0);
+            const scope: McpInvocationScope = {
+              ...supervisedClient,
+              client: undefined,
+              thread: {
+                threadId: boundThreadId,
+                providerSessionId: "provider:scratch-scheduled",
+                providerInstanceId: shell.providerInstanceId,
+              },
+            };
+            const dependencies = Layer.mergeAll(
+              NodeServices.layer,
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+              Layer.mock(GitVcsDriver.GitVcsDriver)({
+                resolveDefaultWorktreeBaseRef: () =>
+                  Ref.update(gitCalls, (count) => count + 1).pipe(
+                    Effect.andThen(Effect.die("Scratch is deliberately not a Git repository")),
+                  ),
+              }),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/projects",
+                isScratchProject: (id) => Effect.succeed(id === projectId),
+              }),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({
+                getThreadShell: () => Effect.succeed(shell),
+                getThreadRecords: () => Effect.succeed(idleThreadProjection(shell)),
+              }),
+              ServerSettings.layerTest(),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+              Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                list: () => Effect.succeed([]),
+              }),
+              Layer.mock(ProjectService.ProjectService)({
+                getById: () =>
+                  Effect.succeedSome({
+                    id: projectId,
+                    title: "Scratch",
+                    workspaceRoot: "/scratch",
+                    defaultModelSelection: existing.modelSelection,
+                    scripts: [],
+                    createdAt: existing.createdAt,
+                    updatedAt: existing.updatedAt,
+                    deletedAt: null,
+                  }),
+              }),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+              Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                list: () => Effect.succeed({ tasks: [existing] }),
+                upsert: (input) =>
+                  Ref.update(saved, (inputs) => [...inputs, input]).pipe(
+                    Effect.as({ task: existing }),
+                  ),
+              }),
+            );
+            const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+              Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))),
+            );
+            if (operation === "create") {
+              yield* mcp.scheduleTask(scope, {
+                prompt: "Check Scratch",
+                schedule: { type: "interval", everyMs: 60_000 },
+                bindToCurrentThread: false,
+              });
+            } else {
+              yield* mcp.updateScheduledTask(scope, {
+                scheduledTaskId: existing.id,
+                bindToCurrentThread: false,
+              });
+            }
+            const inputs = yield* Ref.get(saved);
+            assert.equal(inputs.length, 1);
+            assert.equal(inputs[0]!.threadId, null);
+            assert.deepEqual(inputs[0]!.workspaceStrategy, { type: "root" });
+            assert.equal(yield* Ref.get(gitCalls), 0);
+          }),
+      );
+
+      it.live.each([
+        { operation: "create", defaultBranch: "master", bound: false },
+        { operation: "create", defaultBranch: "main", bound: false },
+        { operation: "update", defaultBranch: "master", bound: false },
+        { operation: "update", defaultBranch: "main", bound: false },
+      ] as const)(
+        "$operation uses the project's $defaultBranch default branch when unbound",
+        ({ operation, defaultBranch, bound }) =>
+          checkWorkspaceStrategy(operation, defaultBranch, bound),
+      );
+
+      it.live.each(["create", "update"] as const)(
+        "%s keeps bound tasks in the project root",
+        (operation) => checkWorkspaceStrategy(operation, "master", true),
+      );
+
+      it.live("preserves an explicit workspace when updating only the prompt", () =>
+        checkWorkspaceStrategy("update", "master", undefined),
+      );
+
+      it.live.each(["create", "update"] as const)(
+        "%s resolves the advertised master default without cached remote HEAD",
+        (operation) =>
+          checkWorkspaceStrategy(operation, "master", false, { cacheRemoteHead: false }),
+      );
+
+      it.live.each(["create", "update"] as const)(
+        "%s uses local main without a remote",
+        (operation) => checkWorkspaceStrategy(operation, "main", false, { hasRemote: false }),
+      );
+
+      it.live.each([
+        { operation: "create", cacheRemoteHead: true },
+        { operation: "update", cacheRemoteHead: true },
+        { operation: "create", cacheRemoteHead: false },
+        { operation: "update", cacheRemoteHead: false },
+      ] as const)(
+        "$operation fetches upstream master without a local default (cached HEAD: $cacheRemoteHead)",
+        ({ operation, cacheRemoteHead }) =>
+          checkWorkspaceStrategy(operation, "master", false, {
+            remoteName: "upstream",
+            removeLocalDefault: true,
+            cacheRemoteHead,
+          }),
+      );
+
+      it.live.each(["create", "update"] as const)(
+        "%s saves using local main when the remote is unreachable and HEAD is uncached",
+        (operation) =>
+          checkWorkspaceStrategy(operation, "main", false, {
+            cacheRemoteHead: false,
+            unreachableRemote: true,
+          }),
+      );
+
+      it.live.each(["create", "update"] as const)(
+        "%s uses local main when the reachable remote advertises no HEAD symref",
+        (operation) =>
+          checkWorkspaceStrategy(operation, "main", false, {
+            cacheRemoteHead: false,
+            missingRemoteHead: true,
+          }),
+      );
+
+      const checkWorkspaceStrategy = Effect.fn("test.checkScheduledTaskWorkspace")(
+        function* (
+          operation: "create" | "update",
+          defaultBranch: string,
+          bindToCurrentThread: boolean | undefined,
+          options: {
+            hasRemote?: boolean;
+            cacheRemoteHead?: boolean;
+            remoteName?: string;
+            removeLocalDefault?: boolean;
+            unreachableRemote?: boolean;
+            missingRemoteHead?: boolean;
+          } = {},
+        ) {
+          const {
+            hasRemote = true,
+            cacheRemoteHead = true,
+            remoteName = "origin",
+            removeLocalDefault = false,
+            unreachableRemote = false,
+            missingRemoteHead = false,
+          } = options;
+          const fs = yield* FileSystem.FileSystem;
+          const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scheduled-workspace-" });
+          const workspaceRoot = `${directory}/project`;
+          const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(GitVcsDriver.layer));
+          const runGit = (cwd: string, args: ReadonlyArray<string>) =>
+            git.execute({ operation: "test.scheduledWorkspace", cwd, args: [...args] });
+          if (hasRemote) {
+            yield* runGit(directory, [
+              "init",
+              "--bare",
+              `--initial-branch=${defaultBranch}`,
+              "origin.git",
+            ]);
+            yield* runGit(directory, ["clone", "--origin", remoteName, "origin.git", "project"]);
+          } else {
+            yield* runGit(directory, ["init", `--initial-branch=${defaultBranch}`, "project"]);
+          }
+          yield* runGit(workspaceRoot, [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "initial",
+          ]);
+          if (hasRemote) {
+            yield* runGit(workspaceRoot, ["push", "-u", remoteName, defaultBranch]);
+            const head = yield* git.execute({
+              operation: "test.remoteHead",
+              cwd: workspaceRoot,
+              args: ["symbolic-ref", `refs/remotes/${remoteName}/HEAD`],
+              allowNonZeroExit: true,
+            });
+            assert.notEqual(head.exitCode, 0);
+            if (cacheRemoteHead) {
+              yield* runGit(workspaceRoot, [
+                "symbolic-ref",
+                `refs/remotes/${remoteName}/HEAD`,
+                `refs/remotes/${remoteName}/${defaultBranch}`,
+              ]);
+            }
+          }
+          yield* runGit(workspaceRoot, ["switch", "-c", "feature/root"]);
+          yield* runGit(workspaceRoot, [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "feature only",
+          ]);
+          const defaultHead = yield* git.resolveCommit({
+            cwd: workspaceRoot,
+            revision: defaultBranch,
+          });
+          if (removeLocalDefault) {
+            yield* runGit(workspaceRoot, ["branch", "-D", defaultBranch]);
+            yield* runGit(workspaceRoot, [
+              "update-ref",
+              "-d",
+              `refs/remotes/${remoteName}/${defaultBranch}`,
+            ]);
+          }
+          if (missingRemoteHead) {
+            yield* runGit(directory, [
+              "--git-dir=origin.git",
+              "symbolic-ref",
+              "HEAD",
+              "refs/heads/missing",
+            ]);
+          }
+          if (unreachableRemote) {
+            yield* runGit(workspaceRoot, [
+              "remote",
+              "set-url",
+              remoteName,
+              `${directory}/missing.git`,
+            ]);
+          }
+          const shell = {
+            ...liveThreadShell(boundThreadId, { runtimeMode: "approval-required" }),
+            projectId,
+          };
+          const explicitWorkspace = {
+            type: "worktree",
+            baseRef: "release/custom-base",
+            startFromOrigin: false,
+          } as const;
+          const existing = task({
+            threadId: bindToCurrentThread === undefined ? null : boundThreadId,
+            workspaceStrategy:
+              bindToCurrentThread === undefined ? explicitWorkspace : { type: "root" },
+          });
+          const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+          const scope: McpInvocationScope = {
+            ...supervisedClient,
+            client: undefined,
+            thread: {
+              threadId: boundThreadId,
+              providerSessionId: "provider:scheduled",
+              providerInstanceId: shell.providerInstanceId,
+            },
+          };
+          const dependencies = Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+            Layer.succeed(GitVcsDriver.GitVcsDriver, git),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+              isScratchProject: () => Effect.succeed(false),
+            }),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadShell: () => Effect.succeed(shell),
+              getThreadRecords: () => Effect.succeed(idleThreadProjection(shell)),
+            }),
+            ServerSettings.layerTest(),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+              list: () => Effect.succeed([]),
+            }),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({
+                  id: projectId,
+                  title: "Scheduled project",
+                  workspaceRoot,
+                  defaultModelSelection: existing.modelSelection,
+                  scripts: [],
+                  createdAt: existing.createdAt,
+                  updatedAt: existing.updatedAt,
+                  deletedAt: null,
+                }),
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+              list: () => Effect.succeed({ tasks: [existing] }),
+              upsert: (input) =>
+                Ref.update(saved, (inputs) => [...inputs, input]).pipe(
+                  Effect.as({ task: existing }),
+                ),
+            }),
+          );
+          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+            Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))),
+          );
+          const mutation =
+            operation === "create"
+              ? mcp.scheduleTask(scope, {
+                  prompt: "Check the project",
+                  schedule: { type: "interval", everyMs: 60_000 },
+                  bindToCurrentThread,
+                })
+              : mcp.updateScheduledTask(scope, {
+                  scheduledTaskId: existing.id,
+                  prompt: "Check the project again",
+                  ...(bindToCurrentThread === undefined ? {} : { bindToCurrentThread }),
+                });
+          yield* mutation;
+          const inputs = yield* Ref.get(saved);
+          assert.equal(inputs.length, 1);
+          assert.equal(inputs[0]!.threadId, bindToCurrentThread ? boundThreadId : null);
+          assert.deepEqual(
+            inputs[0]!.workspaceStrategy,
+            bindToCurrentThread === undefined
+              ? explicitWorkspace
+              : bindToCurrentThread
+                ? { type: "root" }
+                : {
+                    type: "worktree",
+                    baseRef:
+                      hasRemote && !unreachableRemote && !missingRemoteHead
+                        ? `refs/remotes/${remoteName}/${defaultBranch}`
+                        : defaultBranch,
+                    startFromOrigin: true,
+                  },
+          );
+          if (bindToCurrentThread === false) {
+            const strategy = inputs[0]!.workspaceStrategy;
+            assert.equal(strategy.type, "worktree");
+            if (strategy.type === "worktree") {
+              // Saving offline must still permit a launch after connectivity returns.
+              if (unreachableRemote) {
+                yield* runGit(workspaceRoot, [
+                  "remote",
+                  "set-url",
+                  remoteName,
+                  `${directory}/origin.git`,
+                ]);
+              }
+              const target = yield* git.resolveWorktreeBaseRemote({
+                cwd: workspaceRoot,
+                refName: strategy.baseRef,
+              });
+              assert.deepEqual(
+                target,
+                hasRemote ? { remoteName, branchName: defaultBranch } : null,
+              );
+              const fetched =
+                target === null
+                  ? null
+                  : yield* git.fetchWorktreeBaseCommit({
+                      cwd: workspaceRoot,
+                      refName: strategy.baseRef,
+                    });
+              if (hasRemote) assert.isNotNull(fetched);
+              yield* git.createWorktree({
+                cwd: workspaceRoot,
+                path: `${directory}/fresh`,
+                newRefName: "feature/scheduled",
+                refName: fetched?.commitSha ?? strategy.baseRef,
+                baseRefName:
+                  fetched === null ? strategy.baseRef : `refs/remotes/${fetched.remoteRefName}`,
+              });
+              const freshHead = yield* git.resolveCommit({
+                cwd: `${directory}/fresh`,
+                revision: "HEAD",
+              });
+              assert.equal(freshHead.commitSha, defaultHead.commitSha);
+            }
+          }
+        },
+        Effect.scoped,
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "scheduled-config-" }).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      );
+    });
 
     it.effect("hides a webhook URL from a caller below the task's modes", () =>
       Effect.gen(function* () {
