@@ -201,6 +201,9 @@ it("app-stream-assistant-turn", async () => {
       .element(page.getByText(`word${STREAM_DELTAS - 1}`, { exact: false }))
       .toBeVisible();
   });
+  // Only the streaming row changes; history rows must not re-render with it.
+  expect(counted.components.UserTimelineRow).toBeUndefined();
+  expect(counted.components.AssistantTimelineRow).toBe(STREAM_DELTAS);
   await report("app-stream-assistant-turn", [counted], { commits: false });
 });
 
