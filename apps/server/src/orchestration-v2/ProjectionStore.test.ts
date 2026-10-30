@@ -861,8 +861,41 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     ["running", settledRun, "running", null],
     ["active-run-delivered", activeRun, "completed", "delivered"],
   ] as const;
-  for (const [name, run, status, delivery] of subagents) {
+  for (const [index, [name, run, status, delivery]] of subagents.entries()) {
     const id = NodeId.make(`node:settled-subagents:${name}`);
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:item:${name}`),
+      type: "turn-item.updated",
+      threadId,
+      runId: run.id,
+      nodeId: id,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`item:settled-subagents:${name}`),
+        type: "subagent",
+        threadId,
+        runId: run.id,
+        nodeId: id,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 100 + index,
+        status: status === "running" ? "running" : "completed",
+        title: name,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+        updatedAt: now,
+        subagentId: id,
+        origin: "app_owned",
+        driver,
+        providerInstanceId,
+        childThreadId: null,
+        prompt: "Do the work",
+        result: null,
+      },
+    });
     yield* store.apply({
       id: EventId.make(`event:settled-subagents:${name}`),
       type: "subagent.updated",
@@ -911,6 +944,27 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     subagentNames(yield* store.getThreadRecords(threadId, ["subagents"])),
     subagents.map(([name]) => name).toSorted(),
   );
+  // A command about one settled task keeps it, and reads only its node and turn item.
+  const deliveredId = NodeId.make("node:settled-subagents:delivered");
+  const forTask = yield* store.getThreadRecords(threadId, ["subagents", "nodes", "turnItems"], {
+    omitSettledSubagents: { except: [deliveredId] },
+    nodeIds: [NodeId.make("node:settled-leaf-nodes:settled-tool")],
+    turnItemNodeIds: [deliveredId],
+  });
+  assert.deepEqual(subagentNames(forTask), [
+    "active-run-delivered",
+    "claimed",
+    "delivered",
+    "no-delivery",
+    "pending-delivery",
+    "running",
+  ]);
+  assert.deepEqual(nodeNames(forTask), ["settled-tool"]);
+  assert.deepEqual(
+    forTask.turnItems.map((item) => item.title),
+    ["delivered"],
+  );
+  assert.strictEqual(yield* store.getSubagentCount(threadId), subagents.length);
 });
 
 const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
