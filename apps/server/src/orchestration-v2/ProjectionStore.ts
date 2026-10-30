@@ -337,6 +337,8 @@ export interface ProjectionRecordFilter {
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
   readonly omitSettledLeafNodes?: boolean;
+  /** Skips ended subagents whose completion was acknowledged, delivered or disposed, unless their run is active. */
+  readonly omitSettledSubagents?: boolean;
 }
 
 // A fork inherits its source's history before it has messages of its own,
@@ -496,6 +498,10 @@ export interface ProjectionStoreV2Shape {
     readonly autoResume: boolean;
     readonly snooze: boolean;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
+  /** Epoch ms of the next armed reset or snooze end after `now`, when a waiting thread becomes a candidate. */
+  readonly getLimitRecoveryWakeAt: (
+    now: DateTime.Utc,
+  ) => Effect.Effect<number | null, ProjectionStoreV2Error>;
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
@@ -3258,9 +3264,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
-            FROM orchestration_v2_projection_subagents
+            FROM orchestration_v2_projection_subagents AS subagent
             WHERE thread_id = ${threadId}
               ${filter?.subagentIds === undefined ? sql`` : sql`AND subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentIds)}))`}
+              ${
+                filter?.omitSettledSubagents === true
+                  ? sql`AND NOT (
+                      subagent.status IN ('completed', 'failed', 'cancelled', 'interrupted')
+                      AND COALESCE(json_extract(subagent.payload_json, '$.completionDelivery.state'), '')
+                        IN ('acknowledged', 'delivered', 'disposed')
+                      AND NOT EXISTS (
+                        SELECT 1 FROM orchestration_v2_projection_runs AS run
+                        WHERE run.run_id = subagent.run_id
+                          AND run.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                      )
+                    )`
+                  : sql``
+              }
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
           `
               : sql<PayloadRow>`
@@ -3859,6 +3879,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           });
         }
         return candidates;
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    const getLimitRecoveryWakeAt = Effect.fn("ProjectionStore.getLimitRecoveryWakeAt")(
+      function* (now: DateTime.Utc) {
+        const nowIso = DateTime.formatIso(now);
+        const rows = yield* sql<{
+          readonly reset_ms: number | null;
+          readonly snooze_ms: number | null;
+        }>`
+          SELECT
+            MIN(CASE WHEN julianday(reset_at) > julianday(${nowIso})
+              THEN (julianday(reset_at) - 2440587.5) * 86400000 END) AS reset_ms,
+            MIN(CASE WHEN julianday(snoozed_until) > julianday(${nowIso})
+              THEN (julianday(snoozed_until) - 2440587.5) * 86400000 END) AS snooze_ms
+          FROM (
+            SELECT json_extract(payload_json, '$.limitRecovery.resetAt') AS reset_at,
+              json_extract(payload_json, '$.snoozedUntil') AS snoozed_until
+            FROM orchestration_v2_projection_threads
+            WHERE deleted_at IS NULL
+              AND json_extract(payload_json, '$.limitRecovery.autoResume') = 1
+          )
+        `;
+        const wakes = [rows[0]?.reset_ms, rows[0]?.snooze_ms].filter(
+          (value): value is number => value != null,
+        );
+        return wakes.length === 0 ? null : Math.round(Math.min(...wakes));
       },
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
@@ -6926,6 +6974,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getPlan: readOnReader(getPlan),
       getProviderControlContext: readOnReader(getProviderControlContext),
       getLimitRecoveryCandidates: readOnReader(getLimitRecoveryCandidates),
+      getLimitRecoveryWakeAt: readOnReader(getLimitRecoveryWakeAt),
       getRecoveryThreadIds: readOnReader(getRecoveryThreadIds),
       getUnreadableThreadIds: readOnReader(getUnreadableThreadIds),
       getThreadSnapshot: readOnReader(getThreadSnapshot),

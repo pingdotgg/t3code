@@ -1945,7 +1945,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
 
         // Only new model output proves recovery; local item/completed can arrive during upstream retries.
-        const completeProviderRetry = Effect.fn("CodexAdapterV2.completeProviderRetry")(function* (
+        // Runs on every model output frame and is almost always a no-op; only a pending retry gets a span.
+        const completeProviderRetry = Effect.fnUntraced(function* (
           context: ActiveCodexTurnContext,
           updatedAt: DateTime.Utc,
         ) {
@@ -1965,7 +1966,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             type: "turn_item.updated",
             driver: CODEX_PROVIDER,
             turnItem: codexRetryTurnItem(context, providerRetry, "completed", updatedAt),
-          });
+          }).pipe(Effect.withSpan("CodexAdapterV2.completeProviderRetry"));
         });
 
         const registerRootTurn = Effect.fn("CodexAdapterV2.registerRootTurn")(function* (input: {

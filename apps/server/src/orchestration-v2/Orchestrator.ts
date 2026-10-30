@@ -1153,6 +1153,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           turnItemTypes: ["user_message", "error"],
           messageRoles: ["user"],
           omitSettledLeafNodes: true,
+          // Commands here read only undelivered or active tasks; a dispatcher thread keeps
+          // thousands of delivered ones, each carrying its full prompt.
+          omitSettledSubagents: true,
         },
       )
       .pipe(
