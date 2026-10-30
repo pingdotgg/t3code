@@ -1,3 +1,5 @@
+import type { IncomingShareDraft } from "./incoming-share-model";
+
 export interface IncomingSharePresentationState {
   readonly presentedShareId: string | null;
   readonly dismissedShareId: string | null;
@@ -62,5 +64,23 @@ export function transitionIncomingSharePresentation(
       dismissedShareId: null,
     },
     shareIdToPresent: input.pendingShareId,
+  };
+}
+
+/**
+ * Draft route params for presenting a share. A share reserved by an interrupted
+ * import resumes in its reserved project; without it the draft would fall back
+ * to another project and the reservation would reject the import.
+ */
+export function incomingShareDraftParams(share: Pick<IncomingShareDraft, "id" | "destination">): {
+  readonly incomingShareId: string;
+  readonly environmentId?: string;
+  readonly projectId?: string;
+} {
+  if (!share.destination) return { incomingShareId: share.id };
+  return {
+    incomingShareId: share.id,
+    environmentId: share.destination.environmentId,
+    projectId: share.destination.projectId,
   };
 }

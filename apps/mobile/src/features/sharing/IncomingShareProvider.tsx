@@ -40,6 +40,7 @@ import {
 } from "../../state/use-composer-drafts";
 import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
+  incomingShareDraftParams,
   transitionIncomingSharePresentation,
 } from "./incoming-share-presentation";
 import {
@@ -262,16 +263,17 @@ export function presentPendingIncomingShare(): void {
   if (!rootNavigationRef.isReady()) return;
   const state = rootNavigationRef.getRootState();
   if (!state) return;
+  const pendingShare = snapshot.drafts[0] ?? null;
   const transition = transitionIncomingSharePresentation(presentation, {
     isShareSheetPresented: isDraftThreadRoute(state.routes[state.index]),
-    pendingShareId: snapshot.drafts[0]?.id ?? null,
+    pendingShareId: pendingShare?.id ?? null,
   });
   presentation = transition.state;
-  if (!transition.shareIdToPresent) return;
+  if (!transition.shareIdToPresent || !pendingShare) return;
   rootNavigationRef.dispatch(
     selectWorkspaceDetail({
       name: "Thread",
-      params: { draft: { incomingShareId: transition.shareIdToPresent } },
+      params: { draft: incomingShareDraftParams(pendingShare) },
     }),
   );
 }
