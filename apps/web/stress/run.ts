@@ -6,24 +6,49 @@
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { chromium, type Page } from "playwright";
 
 import { longFrameScripts, summarizeFrames, summarizeProfile, type CpuProfile } from "./analyze.ts";
 import { installStressProbe } from "./probe.ts";
+import {
+  changeFile,
+  fixturesDir,
+  freePort,
+  log,
+  parsePullRequest,
+  prepareHome,
+  repo,
+  startServer,
+  t3,
+  webDir,
+  type RecordedChange,
+} from "./stack.ts";
+import {
+  expandDiffs,
+  linkPullRequest,
+  openPullRequestPanel,
+  openThread,
+  selectPullRequestTab,
+} from "./ui.ts";
 
-const repo = NodePath.resolve(import.meta.dirname, "../../..");
-const webDir = NodePath.join(repo, "apps/web");
-const serverBin = NodePath.join(repo, "apps/server/src/bin.ts");
-const replayAgent = NodePath.join(repo, "apps/server/scripts/dev-replay-agent.ts");
+function recordedChange(input: { repository: string; number: number }): RecordedChange {
+  const file = changeFile(input.repository, input.number);
+  if (!NodeFS.existsSync(file)) {
+    throw new Error(
+      `${input.repository}#${input.number} is not recorded; run \`vp run stress:record-pr ${input.repository}#${input.number}\` first.`,
+    );
+  }
+  return JSON.parse(NodeFS.readFileSync(file, "utf8")) as RecordedChange;
+}
 
 const { values: options } = NodeUtil.parseArgs({
   options: {
     threads: { type: "string", default: "5" },
     duration: { type: "string", default: "60" },
     "turns-per-thread": { type: "string", default: "4" },
+    pr: { type: "string" },
     out: { type: "string" },
     "skip-build": { type: "boolean", default: false },
     headed: { type: "boolean", default: false },
@@ -32,116 +57,47 @@ const { values: options } = NodeUtil.parseArgs({
 const THREADS = Number(options.threads);
 const DURATION_MS = Number(options.duration) * 1000;
 const TURNS_PER_THREAD = Number(options["turns-per-thread"]);
+const pullRequest = options.pr === undefined ? undefined : parsePullRequest(options.pr);
+const pullRequestTitle = pullRequest ? recordedChange(pullRequest).title : "";
 const runId = new Date().toISOString().replaceAll(":", "-").replace(/\..+/, "");
 const outDir = NodePath.resolve(options.out ?? NodePath.join(repo, ".t3/stress/runs", runId));
 const home = NodePath.join(repo, ".t3/stress/home");
-const log = (message: string) => console.error(`[stress] ${message}`);
 
-const freePort = () =>
-  new Promise<number>((resolve, reject) => {
-    const server = NodeNet.createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() =>
-        typeof address === "object" && address
-          ? resolve(address.port)
-          : reject(new Error("no port")),
-      );
-    });
-  });
-
-const t3 = (...args: string[]) =>
-  NodeChildProcess.execFileSync(process.execPath, [serverBin, ...args, "--base-dir", home], {
-    cwd: repo,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-function prepareHome(): string {
-  NodeFS.rmSync(home, { recursive: true, force: true });
-  NodeFS.mkdirSync(NodePath.join(home, "userdata"), { recursive: true });
-  // The entry `vp run dev` seeds, written up front because this server runs without a dev URL.
-  NodeFS.writeFileSync(
-    NodePath.join(home, "userdata/settings.json"),
-    JSON.stringify({
-      providerInstances: {
-        devReplay: {
-          driver: "acpRegistry",
-          displayName: "Replay (dev)",
-          config: { source: "local", commandPath: process.execPath, commandArgs: [replayAgent] },
-        },
-      },
-    }),
-  );
-  const workspace = NodePath.join(home, "workspace");
-  NodeFS.mkdirSync(workspace, { recursive: true });
-  NodeFS.writeFileSync(NodePath.join(workspace, "README.md"), "# Stress workspace\n");
-  NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: workspace });
-  NodeChildProcess.execFileSync("git", ["add", "."], { cwd: workspace });
-  NodeChildProcess.execFileSync(
-    "git",
-    ["-c", "user.name=stress", "-c", "user.email=stress@example.com", "commit", "-qm", "init"],
-    { cwd: workspace },
-  );
-  return workspace;
-}
-
-async function startServer(port: number) {
-  const child = NodeChildProcess.spawn(
-    process.execPath,
-    [serverBin, "serve", "--base-dir", home, "--port", String(port), "--no-browser"],
-    {
-      cwd: repo,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, NODE_ENV: "production" },
-    },
-  );
-  const serverLog = NodeFS.createWriteStream(NodePath.join(outDir, "server.log"));
-  child.stdout.pipe(serverLog);
-  child.stderr.pipe(serverLog);
-  const pairingUrl = await new Promise<string>((resolve, reject) => {
-    let buffered = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      buffered += chunk.toString();
-      const match = /Pairing URL: (\S+)/.exec(buffered);
-      if (match) resolve(match[1]!);
-    });
-    child.once("exit", (code) => reject(new Error(`server exited with ${code}; see server.log`)));
-  });
-  return { child, pairingUrl };
-}
-
-// Threads sit in sidebar groups (Working, Settled) that start collapsed.
-async function threadItem(page: Page, title: string) {
-  const item = page.getByRole("treeitem", { name: new RegExp(`${title}\\b`) }).first();
-  // Expanding one group re-renders the tree, so look for the next collapsed group each time.
-  for (let attempt = 0; attempt < 5 && !(await item.isVisible()); attempt++) {
-    const group = page.getByRole("treeitem", { expanded: false }).first();
-    if ((await group.count()) === 0) break;
-    await group.click();
-  }
-  return item;
-}
-
-async function act(page: Page, step: number) {
-  const thread = `Stress ${(step % THREADS) + 1}`;
-  await (await threadItem(page, thread)).click({ timeout: 5000 });
-  await page.waitForTimeout(1500);
-  const approve = page.getByRole("button", { name: "Approve", exact: true });
+const approvePending = async (page: Page) => {
+  const approve = page.locator("button", { hasText: /^Approve$/ });
   if (await approve.first().isVisible()) await approve.first().click();
-  if (step % 3 === 0) {
-    const composer = page.getByRole("textbox", { name: /^Message/ });
-    await composer.click();
-    await composer.pressSequentially("checking how this behaves under load", { delay: 20 });
-    await composer.press("ControlOrMeta+a");
-    await composer.press("Backspace");
+};
+
+/**
+ * One step of a busy user. Without a pull request it tours the threads. With one, odd steps
+ * work in its panel beside Stress 1, which keeps streaming, and even steps visit another thread
+ * to approve its edit before coming back.
+ */
+async function act(page: Page, step: number) {
+  if (!pullRequest || step % 2 === 0) {
+    await openThread(page, `Stress ${(step % THREADS) + 1}`);
+    await page.waitForTimeout(1500);
+    await approvePending(page);
+    if (step % 3 === 0) {
+      const composer = page.locator('[contenteditable="true"][aria-label^="Message"]');
+      await composer.click();
+      await composer.pressSequentially("checking how this behaves under load", { delay: 20 });
+      await composer.press("ControlOrMeta+a");
+      await composer.press("Backspace");
+    }
+    await page.mouse.wheel(0, step % 4 === 0 ? -1500 : 1500);
+    if (!pullRequest) return;
   }
-  if (step % 4 === 1) {
-    await page.getByRole("button", { name: "Toggle right panel" }).click();
-    await page.waitForTimeout(1000);
-    await page.getByRole("button", { name: "Toggle right panel" }).click();
-  }
-  await page.mouse.wheel(0, step % 2 === 0 ? -1500 : 1500);
+  await openThread(page, "Stress 1");
+  await approvePending(page);
+  const tabs = page.locator('nav[aria-label="Pull request tabs"]');
+  if (!(await tabs.isVisible())) await openPullRequestPanel(page, pullRequestTitle);
+  const tab = step % 6 === 5 ? "Timeline" : "Code";
+  await selectPullRequestTab(page, tab);
+  if (tab === "Code") await expandDiffs(page, 4);
+  // Scroll the panel, which sits on the right half of the window.
+  await page.mouse.move(1150, 500);
+  for (let tick = 0; tick < 6; tick++) await page.mouse.wheel(0, 900);
 }
 
 async function main() {
@@ -153,19 +109,24 @@ async function main() {
       stdio: "inherit",
     });
   }
-  const workspace = prepareHome();
-  const port = await freePort();
-  const { child, pairingUrl } = await startServer(port);
-  const stopServer = () => {
-    if (child.exitCode === null) child.kill("SIGTERM");
-  };
-  process.once("exit", stopServer);
+  const workspace = prepareHome(
+    home,
+    pullRequest && `https://github.com/${pullRequest.repository}.git`,
+  );
+  const server = await startServer({
+    home,
+    port: await freePort(),
+    logFile: NodePath.join(outDir, "server.log"),
+    ...(pullRequest ? { env: { T3CODE_PR_FIXTURES: fixturesDir } } : {}),
+  });
+  const { pairingUrl } = server;
   try {
-    t3("project", "add", workspace);
+    t3(home, "project", "add", workspace);
     const threadIds: string[] = [];
     for (let index = 1; index <= THREADS; index++) {
       const started = JSON.parse(
         t3(
+          home,
           "thread",
           "start",
           workspace,
@@ -183,7 +144,7 @@ async function main() {
       if (!threadId) throw new Error(`thread start printed no id for Stress ${index}`);
       threadIds.push(threadId);
       for (let turn = 1; turn < TURNS_PER_THREAD; turn++)
-        t3("thread", "send", threadId, "Next stress turn");
+        t3(home, "thread", "send", threadId, "Next stress turn");
     }
     log(`${THREADS} threads started with ${TURNS_PER_THREAD} turns each`);
 
@@ -197,19 +158,23 @@ async function main() {
     page.on("pageerror", (error) => consoleErrors.push(error.message.slice(0, 300)));
     await page.addInitScript(installStressProbe);
     await page.goto(pairingUrl);
-    await page.getByRole("treeitem").first().waitFor({ timeout: 60_000 });
-    await (
-      await threadItem(page, "Stress 1")
-    )
-      .waitFor({ timeout: 30_000 })
-      .catch(async (error: Error) => {
-        await page.screenshot({ path: NodePath.join(outDir, "startup-failure.png") });
-        NodeFS.writeFileSync(
-          NodePath.join(outDir, "startup-failure.txt"),
-          await page.innerText("body"),
-        );
-        throw error;
-      });
+    await page.getByRole("navigation", { name: "Threads" }).waitFor({ timeout: 60_000 });
+    await openThread(page, "Stress 1").catch(async (error: Error) => {
+      await page.screenshot({ path: NodePath.join(outDir, "startup-failure.png") });
+      NodeFS.writeFileSync(
+        NodePath.join(outDir, "startup-failure.txt"),
+        await page.innerText("body"),
+      );
+      throw error;
+    });
+    if (pullRequest) {
+      await linkPullRequest(
+        page,
+        `https://github.com/${pullRequest.repository}/pull/${pullRequest.number}`,
+      );
+      await openPullRequestPanel(page, pullRequestTitle);
+      await selectPullRequestTab(page, "Code");
+    }
     await page.waitForTimeout(3000);
 
     const cdp = await context.newCDPSession(page);
@@ -233,9 +198,15 @@ async function main() {
     log(`recording for ${DURATION_MS / 1000}s`);
     let step = 0;
     while (Date.now() - started < DURATION_MS) {
-      await act(page, step++).catch((error: Error) =>
-        log(`step ${step} failed: ${error.message.split("\n")[0]}`),
-      );
+      await act(page, step++).catch((error: Error) => {
+        const lines = error.message.split("\n");
+        const target = lines.find((line) => line.includes("waiting for")) ?? "";
+        log(`step ${step} failed: ${lines[0]} ${target.trim()}`);
+        if (process.env.STRESS_DEBUG) {
+          log(error.message);
+          void page.screenshot({ path: NodePath.join(outDir, `failed-step-${step}.png`) });
+        }
+      });
       const sample = await metrics();
       samples.push({
         atMs: Date.now() - started,
@@ -264,7 +235,7 @@ async function main() {
     const crashed = await page.getByText("Something went wrong").count();
     await browser.close();
 
-    const threads = threadIds.map((threadId) => t3("thread", "show", threadId, "--json"));
+    const threads = threadIds.map((threadId) => t3(home, "thread", "show", threadId, "--json"));
     const seconds = (key: string) => Math.round(((after[key] ?? 0) - (before[key] ?? 0)) * 1000);
     const summary = {
       runId,
@@ -313,12 +284,13 @@ async function main() {
     console.log(report(summary));
     log(`artifacts in ${outDir}`);
   } finally {
-    stopServer();
+    server.stop();
   }
 }
 
 function report(summary: {
   runId: string;
+  pullRequest: string | null;
   config: Record<string, number>;
   mainThreadMs: Record<string, number>;
   frames: ReturnType<typeof summarizeFrames>;
@@ -339,7 +311,7 @@ function report(summary: {
   const { frames, longAnimationFrames: laf, memory, react, cpu, health } = summary;
   return `# Stress run ${summary.runId}
 
-${summary.config.threads} streaming threads, ${summary.config.durationS}s, ${summary.config.steps} user steps.
+${summary.config.threads} streaming threads${summary.pullRequest ? `, pull request ${summary.pullRequest} open` : ""}, ${summary.config.durationS}s, ${summary.config.steps} user steps.
 
 | Measure | Value |
 | --- | ---: |
@@ -350,7 +322,7 @@ ${summary.config.threads} streaming threads, ${summary.config.durationS}s, ${sum
 | JS heap: start / end / max | ${memory.heapMbStart} / ${memory.heapMbEnd} / ${memory.heapMbMax} MB |
 | DOM nodes at end | ${memory.domNodesEnd} |
 | React commits / component renders | ${react.commits} / ${react.renders} |
-| CPU busy (profile) | ${cpu.busyMs} ms |
+| CPU busy (profile), of which outside page scripts | ${cpu.busyMs} / ${cpu.outsidePageMs} ms |
 | Error boundaries / page errors / console errors | ${health.errorBoundaries} / ${health.pageErrors.length} / ${health.consoleErrors.length} |
 
 ## CPU self time by module

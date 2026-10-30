@@ -85,18 +85,43 @@ function moduleOwners(assetsDir: string): Map<string, string[]> {
   return owners;
 }
 
-/** Self time by function and by source module or package, idle excluded. */
+/**
+ * Self time by function and by source module or package, idle excluded. Samples with no page
+ * script on the stack are the rig's own work (Playwright's injected selectors) or the browser's,
+ * so they are counted apart and left out of the rankings.
+ */
 export function summarizeProfile(profile: CpuProfile, assetsDir: string, top = 25) {
   const byId = new Map(profile.nodes.map((node) => [node.id, node]));
+  const parent = new Map<number, number>();
+  for (const node of profile.nodes)
+    for (const child of node.children ?? []) parent.set(child, node.id);
+  const fromPage = new Map<number, boolean>();
+  const isFromPage = (id: number): boolean => {
+    const known = fromPage.get(id);
+    if (known !== undefined) return known;
+    const node = byId.get(id);
+    const parentId = parent.get(id);
+    const result =
+      node !== undefined &&
+      (/^https?:/.test(node.callFrame.url) || (parentId !== undefined && isFromPage(parentId)));
+    fromPage.set(id, result);
+    return result;
+  };
   const owners = moduleOwners(assetsDir);
   const byFunction = new Map<string, number>();
   const byModule = new Map<string, number>();
   let busyUs = 0;
+  let outsidePageUs = 0;
   profile.samples.forEach((id, index) => {
     const node = byId.get(id);
     const delta = profile.timeDeltas[index + 1] ?? 0;
     if (!node || ["(idle)", "(program)"].includes(node.callFrame.functionName)) return;
     busyUs += delta;
+    const garbage = node.callFrame.functionName === "(garbage collector)";
+    if (!garbage && !isFromPage(id)) {
+      outsidePageUs += delta;
+      return;
+    }
     const file = node.callFrame.url.split("/").pop() ?? "";
     const fn = `${node.callFrame.functionName || "(anonymous)"} ${file}:${node.callFrame.lineNumber + 1}`;
     byFunction.set(fn, (byFunction.get(fn) ?? 0) + delta);
@@ -111,6 +136,7 @@ export function summarizeProfile(profile: CpuProfile, assetsDir: string, top = 2
       .slice(0, top);
   return {
     busyMs: Math.round(busyUs / 1000),
+    outsidePageMs: Math.round(outsidePageUs / 1000),
     byFunction: ranked(byFunction),
     byModule: ranked(byModule),
   };
