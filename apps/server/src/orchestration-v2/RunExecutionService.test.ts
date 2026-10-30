@@ -1991,6 +1991,76 @@ it.effect("refreshes inherited background items after event subscription", () =>
   }),
 );
 
+it.effect.each(["completed", "cancelled", "failed"] as const)(
+  "ingests the final background item before the empty roster after a %s root",
+  (status) =>
+    Effect.gen(function* () {
+      const observed = yield* Ref.make<ReadonlyArray<string>>([]);
+      const pending = yield* Ref.make(true);
+      const now = yield* DateTime.now;
+      yield* captureRootRunTermination({
+        key: `background-roster:${status}`,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        hasPendingBackgroundWorkForThread: () => Ref.get(pending),
+        events: (ids) => {
+          const roster = (pending: boolean) =>
+            ({
+              type: "provider_thread.updated",
+              driver,
+              providerThread: {
+                id: ids.providerThreadId,
+                driver,
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                providerSessionId: ProviderSessionId.make("session:background-roster"),
+                appThreadId: ids.threadId,
+                ownerNodeId: null,
+                nativeThreadRef: null,
+                nativeConversationHeadRef: null,
+                status: "idle",
+                firstRunOrdinal: 1,
+                lastRunOrdinal: 1,
+                handoffIds: [],
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
+                pendingBackgroundTasks: pending
+                  ? [{ taskId: "monitor-1", kind: "background_task" }]
+                  : [],
+              },
+            }) satisfies ProviderAdapter.ProviderAdapterV2Event;
+          return Stream.fromIterable([
+            roster(true),
+            backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+            rootTerminalEvent(ids, status),
+            backgroundTurnItemEvent(ids, "command_execution", "completed", 2),
+            roster(false),
+          ]).pipe(Stream.concat(Stream.never));
+        },
+        ingestNormalized: ({ event }) =>
+          Effect.gen(function* () {
+            yield* Ref.update(observed, (current) => [
+              ...current,
+              event.type === "turn_item.updated" ? event.turnItem.status : event.type,
+            ]);
+            if (event.type === "provider_thread.updated") {
+              yield* Ref.set(
+                pending,
+                (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+              );
+            }
+            return [];
+          }),
+      });
+      assert.deepEqual(yield* Ref.get(observed), [
+        "provider_thread.updated",
+        "running",
+        "turn.terminal",
+        "completed",
+        "provider_thread.updated",
+      ]);
+    }),
+);
+
 it.effect(
   "cascade-terminalizes run-owned subagent rows on interrupt before root finalization",
   () =>

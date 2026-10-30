@@ -1248,7 +1248,17 @@ export const layer: Layer.Layer<
             terminal.status !== "completed" &&
             !childTurnsContinue(terminal)
           ) {
-            return true;
+            if (
+              terminal.threadDisposition !== "reusable" ||
+              (yield* Ref.get(providerThreadOwnerLost)) ||
+              input.session.hasPendingBackgroundWorkForThread === undefined
+            ) {
+              return true;
+            }
+            const latestProviderThreadSnapshot = yield* Ref.get(latestProviderThread);
+            return !(yield* input.session
+              .hasPendingBackgroundWorkForThread(latestProviderThreadSnapshot)
+              .pipe(Effect.catchCause(() => Effect.succeed(false))));
           }
           // Newly owned items depend on adapters emitting a non-terminal event before the root
           // terminal. Owner loss (a newer run claimed lastRunOrdinal) must not close this stream

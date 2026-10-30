@@ -29,6 +29,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
@@ -50,6 +51,7 @@ import {
   MuseItemEvent,
   MuseSessionResult,
   MuseSubscriptionUsage,
+  MuseTaskList,
   MuseTokenUsageEvent,
   MuseTodoList,
   MuseTurnRetryScheduled,
@@ -339,6 +341,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const pending = new Map<RuntimeRequestId, PendingRequest>();
       const seenTerminals = new Set<string>();
       const observedChildren = new Map<string, ActiveTurn>();
+      // Other running tasks from Muse's task list (a `monitor` has no item), by task id.
+      const registryTasks = new Map<string, string>();
+      let taskInventoryUncertain = false;
       const childrenByItemId = new Map<string, ChildContext>();
       const agentTitles = new Map<string, string>();
       const finishedBackground: Array<BackgroundWorkReport> = [];
@@ -671,21 +676,75 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           }
         }
       });
+      // Later revisions can omit the flag; keep tracking the call until it settles.
+      const isBackgroundItem = (item: MuseItem) =>
+        observedChildren.has(item.itemId) ||
+        item.kind === "subagent" ||
+        item.kind === "workflow" ||
+        (item.kind === "toolCall" && item.background === true);
       const syncBackground = Effect.fnUntraced(function* () {
         yield* updateThread({
-          pendingBackgroundTasks: [...observedChildren].flatMap(([itemId, owner]) => {
-            const item = owner.items.get(itemId);
-            const description = item?.objective ?? item?.entryId ?? item?.fallbackText;
-            return [
-              {
+          pendingBackgroundTasks: [
+            ...[...observedChildren].map(([itemId, owner]) => {
+              const item = owner.items.get(itemId);
+              const description =
+                item?.objective ?? item?.entryId ?? item?.fallbackText ?? item?.tool;
+              return {
                 taskId: itemId,
                 kind:
                   item?.kind === "subagent" ? ("subagent" as const) : ("background_task" as const),
                 ...(description ? { description } : {}),
-              },
-            ];
-          }),
+              };
+            }),
+            ...[...registryTasks].map(([taskId, description]) => ({
+              taskId,
+              kind: "background_task" as const,
+              description,
+            })),
+          ],
         });
+      });
+      // Registry tasks have no terminal event. Read at turn completion and idle release,
+      // under the event permit, without request()'s host-closing timeout handling.
+      const refreshTasks = Effect.fnUntraced(function* () {
+        const wasUncertain = taskInventoryUncertain;
+        const result = yield* Effect.tryPromise({
+          try: () => host.connection.request("task/list", { sessionId: nativeSessionId }),
+          catch: (cause) => (cause instanceof MspError ? cause : new Cause.UnknownError(cause)),
+        }).pipe(
+          Effect.timeout(options.requestTimeoutMs ?? 30_000),
+          Effect.flatMap((value) => decode(MuseTaskList, value)),
+          Effect.catch((cause) => {
+            if (cause instanceof MspError && cause.kind === "methodNotFound") {
+              taskInventoryUncertain = false;
+              registryTasks.clear();
+              // Unsupported discovery says nothing about directly observed items' lifetimes.
+              return Effect.void;
+            }
+            taskInventoryUncertain = true;
+            return Effect.logWarning("Could not read Muse's background tasks", cause).pipe(
+              Effect.as(undefined),
+            );
+          }),
+        );
+        if (result) {
+          taskInventoryUncertain = false;
+          registryTasks.clear();
+          for (const task of result.tasks)
+            if (task.status === "inProgress" && !observedChildren.has(task.taskId))
+              registryTasks.set(task.taskId, task.tool ?? task.kind);
+        }
+        // A new turn's snapshot can predate rows already published by this host.
+        const listed = thread?.pendingBackgroundTasks ?? [];
+        const running = [...observedChildren.keys(), ...registryTasks.keys()];
+        if (
+          wasUncertain !== taskInventoryUncertain ||
+          listed.length !== running.length ||
+          listed.some((task, index) => task.taskId !== running[index])
+        )
+          // Publish even an empty recovery so waiting run ingestion can finish.
+          yield* syncBackground();
+        return result;
       });
       const publishItem = Effect.fnUntraced(function* (
         turn: ActiveTurn,
@@ -703,13 +762,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           return;
         const time = yield* DateTime.now;
         const status = terminal ?? itemStatus(item);
-        if (item.kind === "subagent" || item.kind === "workflow") {
-          const wasRunning = observedChildren.has(item.itemId);
+        const wasRunning = observedChildren.has(item.itemId);
+        if (isBackgroundItem(item)) {
           if (status === "running") observedChildren.set(item.itemId, turn);
           else if (observedChildren.delete(item.itemId) && active !== turn)
             finishedBackground.push({
               kind: item.kind === "subagent" ? "subagent" : "background_task",
-              label: item.objective ?? item.entryId ?? item.fallbackText,
+              label: item.objective ?? item.entryId ?? item.fallbackText ?? item.tool,
               outcome:
                 status === "completed"
                   ? "completed"
@@ -717,7 +776,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "cancelled"
                     : "failed",
             });
-          if (wasRunning !== observedChildren.has(item.itemId)) yield* syncBackground();
+          // A clearing roster can end run ingestion, so publish it after the terminal items.
+          if (!wasRunning && status === "running") yield* syncBackground();
         }
         const streaming = status === "running";
         const base = {
@@ -728,6 +788,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         };
         if (item.kind === "subagent") {
           yield* publishNativeSubagent(turn, item, base, status, time);
+          if (wasRunning && status !== "running") yield* syncBackground();
           return;
         }
         const text = item.text ?? item.summary?.join("\n") ?? item.fallbackText ?? "";
@@ -793,6 +854,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         });
         yield* emit({ type: "turn_item.updated", driver: MUSE_PROVIDER, turnItem });
         if (item.kind === "workflow") yield* publishWorkflowAgents(turn, item, base, status);
+        if (wasRunning && status !== "running") yield* syncBackground();
       });
       const publishWorkflowAgents = Effect.fnUntraced(function* (
         turn: ActiveTurn,
@@ -898,6 +960,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           if (item) yield* publishItem(owner, item, status);
         }
         observedChildren.clear();
+        registryTasks.clear();
+        taskInventoryUncertain = false;
         if (thread?.pendingBackgroundTasks?.length) yield* syncBackground();
         for (const entry of pending.values()) yield* resolvePending(entry, "cancelled");
       });
@@ -945,11 +1009,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         seenTerminals.add(turn.nativeId);
         const completedAt = yield* DateTime.now;
         for (const item of turn.items.values()) {
+          // Inventory can omit a tool whose terminal item is still queued.
           if (
-            (item.kind === "subagent" || item.kind === "workflow") &&
+            isBackgroundItem(item) &&
             item.status === "inProgress" &&
-            status === "completed" &&
-            disposition === "reusable"
+            disposition === "reusable" &&
+            (status === "completed" || item.kind === "toolCall")
           )
             continue;
           if (turn.dirty.has(item.itemId) || item.status === "inProgress")
@@ -1328,7 +1393,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           : undefined;
         if (itemEvent) {
           const owner = observedChildren.get(itemEvent.itemId);
-          if (owner && owner !== active && itemEvent.turnId === owner.nativeId) {
+          if (
+            owner &&
+            owner !== active &&
+            typeof itemEvent.turnId === "string" &&
+            owns(owner, itemEvent.turnId)
+          ) {
             const previous = owner.items.get(itemEvent.itemId);
             if (!previous || itemEvent.revision > previous.revision) {
               owner.items.set(itemEvent.itemId, itemEvent);
@@ -1467,6 +1537,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "interrupted"
                     : "cancelled"
                   : "failed";
+            // Stop is confirmed by the native terminal, even if the inventory read stalls.
+            yield* Deferred.succeed(turn.done, undefined);
+            yield* refreshTasks();
             yield* finish(
               turn,
               status,
@@ -1783,6 +1856,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const register = Effect.fnUntraced(function* (
         args: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
       ) {
+        // Native Stop can be acknowledged while its terminal inventory read is still pending.
+        if (active && Option.isSome(yield* Deferred.poll(active.done)))
+          yield* eventPermit.withPermits(1)(Effect.void);
         if (closed || (broken && !relaunchable))
           return yield* protocolError("Muse host is unavailable; reopen the session");
         if (broken) {
@@ -1957,6 +2033,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         compact = false,
       ) {
+        if (active && Option.isSome(yield* Deferred.poll(active.done)))
+          yield* eventPermit.withPermits(1)(Effect.void);
         if (!validateThread(turnInput.providerThread) || broken || closed)
           return yield* protocolError("Muse thread is not attached to this host");
         if (active)
@@ -2149,10 +2227,28 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         providerSession: session,
         events: Stream.fromQueue(events),
         backgroundTasksEndWithProcess: true,
-        // A running workflow or a held Muse turn keeps the host: idle release must wait.
-        hasPendingBackgroundWork: Effect.sync(
-          () => observedChildren.size > 0 || wake !== undefined,
-        ),
+        // Running background work or a held Muse turn keeps the host: idle release must wait.
+        hasPendingBackgroundWork: Effect.gen(function* () {
+          if (closed || broken) return false;
+          if (registryTasks.size > 0 || taskInventoryUncertain) yield* refreshTasks();
+          return (
+            observedChildren.size > 0 ||
+            wake !== undefined ||
+            registryTasks.size > 0 ||
+            taskInventoryUncertain
+          );
+        }).pipe(eventPermit.withPermits(1)),
+        // Holds the run's event stream open until the run has read the update that clears the
+        // rows, even when the adapter cleared them first.
+        hasPendingBackgroundWorkForThread: (providerThread) =>
+          Effect.sync(
+            () =>
+              validateThread(providerThread) &&
+              (observedChildren.size > 0 ||
+                registryTasks.size > 0 ||
+                taskInventoryUncertain ||
+                (providerThread.pendingBackgroundTasks?.length ?? 0) > 0),
+          ),
         ensureThread: (args) =>
           register(args).pipe(
             commands.withPermits(1),
