@@ -221,6 +221,16 @@ describe("provider projection", () => {
     expect(project("a\n")).toContain("3 | a\n4 | \n</context>");
   });
 
+  it("emits no terminal lines when the captured range is inverted", () => {
+    const projected = projectComposerContextForProvider({
+      text: "[log](t3-context://v1/terminal/ctx_t)",
+      records: [{ ...terminal, lineStart: 10, lineEnd: 5, text: "a\nb\nc\nd\ne\nf" }],
+    });
+    expect(projected).toContain('<context kind="terminal" id="ctx_t">');
+    expect(projected).toContain("terminal: Terminal 1\n</context>");
+    expect(projected).not.toContain(" | ");
+  });
+
   it("emits every marker in place and each payload once, escaped, in first-reference order", () => {
     const text = [
       "Look at ![shot.png](t3-context://v1/image/ctx_i) and [T1](t3-context://v1/terminal/ctx_t).",

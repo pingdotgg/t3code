@@ -253,9 +253,10 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
         `attachmentId: ${record.attachmentId}`,
       ].join("\n");
     case "terminal": {
+      const lineCount = Math.max(0, record.lineEnd - record.lineStart + 1);
       const lines = record.text
         .split("\n")
-        .slice(0, record.lineEnd - record.lineStart + 1)
+        .slice(0, lineCount)
         .map((line, index) => `${record.lineStart + index} | ${line}`);
       return [`terminal: ${record.terminalLabel}`, ...lines].join("\n");
     }
