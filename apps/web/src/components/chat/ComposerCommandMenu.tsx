@@ -29,6 +29,7 @@ import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../compo
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ComposerBanner } from "./ComposerBanner";
@@ -239,9 +240,17 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             props.item.label
           )}
         </span>
-        <span className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs">
-          {props.item.description}
-        </span>
+        <Tooltip open={props.isActive && props.item.description.length > 0}>
+          <TooltipTrigger
+            tabIndex={-1}
+            render={
+              <span className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs" />
+            }
+          >
+            {props.item.description}
+          </TooltipTrigger>
+          <TooltipPopup>{props.item.description}</TooltipPopup>
+        </Tooltip>
         {skillSourceKind ? (
           <SkillSourceBadge
             kind={skillSourceKind}
