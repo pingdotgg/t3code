@@ -42,8 +42,10 @@ by the permission mode. See [ACP Registry permissions](./providers-acp.md#permis
 
 Claude can still ask in **Full access** when its settings disable bypass permissions or require
 approval for an action, or when Claude Code's own safety checks flag a command. Turn on
-**Approve safety checks in Full access** in the Claude provider settings to approve those flagged
-commands without asking.
+**Approve safety checks in Full access** in the Claude provider settings to approve the main
+agent's safety checks without asking. Claude still asks for a subagent's safety checks, checks it
+says you must answer yourself, checks inside compound commands such as `cd dir && rm …`, commands
+that match your ask rules, and any check before Claude confirms Full access for the session.
 While a Claude approval is pending, type a text reply to decline that request and give feedback
 directly to the agent that asked, including a subagent. Other pending requests stay unanswered.
 
