@@ -2510,7 +2510,10 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
-        a.revertTurnCount === bm.revertTurnCount
+        a.revertTurnCount === bm.revertTurnCount &&
+        a.groupedWithPrevious === bm.groupedWithPrevious &&
+        a.groupedWithNext === bm.groupedWithNext &&
+        a.continuesSteer === bm.continuesSteer
       );
     }
   }

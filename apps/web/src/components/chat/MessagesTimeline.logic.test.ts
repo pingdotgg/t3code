@@ -1413,25 +1413,38 @@ describe("deriveMessagesTimelineRows", () => {
         streaming: false,
       },
     });
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        message("prompt", 0, "user", "turn_start"),
-        {
-          kind: "work",
-          id: "work",
-          createdAt: time(4),
-          entry: { id: "work", createdAt: time(4), runId, label: "Ran command", tone: "tool" },
-        },
-        message("first-steer", 10, "user", "steer"),
+    const prompt = message("prompt", 0, "user", "turn_start");
+    const work: TimelineEntry = {
+      kind: "work",
+      id: "work",
+      createdAt: time(4),
+      entry: { id: "work", createdAt: time(4), runId, label: "Ran command", tone: "tool" },
+    };
+    const firstSteer = message("first-steer", 10, "user", "steer");
+    const deriveRows = (timelineEntries: TimelineEntry[]) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(30) },
+        isWorking: false,
+        expandedRunIds: new Set(),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+    // The second steer arrives while the first message object is reused, as live updates do.
+    const before = computeStableMessagesTimelineRows(deriveRows([prompt, work, firstSteer]), {
+      result: [],
+      byId: new Map(),
+    });
+    const rows = computeStableMessagesTimelineRows(
+      deriveRows([
+        prompt,
+        work,
+        firstSteer,
         message("second-steer", 12, "user", "steer"),
         message("final", 30, "assistant"),
-      ],
-      latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(30) },
-      isWorking: false,
-      expandedRunIds: new Set(),
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    });
+      ]),
+      before,
+    ).result;
 
     const byId = new Map(rows.map((row) => [row.id, row]));
     expect(byId.get("prompt")).not.toHaveProperty("groupedWithNext");
