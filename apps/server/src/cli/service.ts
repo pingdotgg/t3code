@@ -101,6 +101,14 @@ function formatServiceStatus(
       `  Next: Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to manage it.`,
     ].join("\n");
   }
+  if (status.unknownBaseDir === true) {
+    return [
+      "T3 Code service",
+      "  Status: installed for a T3 home this CLI cannot read",
+      `  Unit: ${status.unitPath}`,
+      "  Next: Install leaves it unchanged. To replace it with this home's service, run `t3 service uninstall` first; it keeps every T3 data directory.",
+    ].join("\n");
+  }
   const installedVersion = status.installedVersion ?? cliVersion;
   const problems = (status.problems ?? []).map(
     (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
@@ -387,6 +395,12 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     );
     return "skipped" as const;
   }
+  if (installed && (status.otherBaseDir !== undefined || status.unknownBaseDir === true)) {
+    yield* Console.log(
+      `The background service on this machine serves ${status.otherBaseDir ?? "a T3 home this CLI cannot read"}. Leaving it unchanged.`,
+    );
+    return "skipped" as const;
+  }
   const platform = yield* HostProcess.Platform;
   const wanted = yield* Prompt.run(
     Prompt.Confirm({
@@ -441,6 +455,7 @@ export const recoverServiceOnboardingOffer = <R>(
       BootServiceUpdatePendingError: reportServiceSetupFailure,
       BootServiceDowngradeRefusedError: reportServiceSetupFailure,
       BootServiceOtherBaseDirError: reportServiceSetupFailure,
+      BootServiceUnknownBaseDirError: reportServiceSetupFailure,
     }),
   );
 

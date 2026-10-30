@@ -46,6 +46,33 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
     ),
   ).toBe("/Users/theo/a&b");
   expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
+
+  const plist = (value: string, between = "") =>
+    `<plist version="1.0">\n<dict>\n\t<key>T3CODE_HOME</key>${between}\n\t<string>${value}</string>\n</dict>\n</plist>\n`;
+  expect(BootService.bootServiceBaseDirOf(plist("/tmp/T3&#32;saved&#x2F;&quot;a&apos;"))).toBe(
+    `/tmp/T3 saved/"a'`,
+  );
+  expect(BootService.bootServiceBaseDirOf(plist("/tmp/&amp;#32;"))).toBe("/tmp/&#32;");
+  const unit = BootService.renderBootServiceUnit(plan("/home/theo/.t3"));
+  // Hand-written homes this parser cannot read with certainty stay unknown, not misread.
+  for (const unknown of [
+    plist("/tmp/T3", "<!-- moved -->"),
+    plist("/tmp/&#0;"),
+    plist("/tmp/&#xD800;"),
+    plist("/tmp/&nbsp;"),
+    plist("/tmp/&constructor;"),
+    plist("/tmp/a&b"),
+    `${plist("/tmp/a")}${plist("/tmp/b")}`,
+    '[Service]\nEnvironment="T3CODE_HOME=/srv/t3"\n',
+    "[Service]\nEnvironment=PORT=3773 T3CODE_HOME=/srv/t3\n",
+    '[Service]\nEnvironment=T3CODE_HOME="/srv/t3" PORT=3773\n',
+    "[Service]\nEnvironment=T3CODE_HOME=%h/.t3\n",
+    '[Service]\nEnvironment=T3CODE_HOME="/srv/t3\\n"\n',
+    `${unit}EnvironmentFile=/srv/t3.env\n`,
+    `${unit}Environment=T3CODE_HOME=/srv/t3\n`,
+  ]) {
+    expect(BootService.bootServiceBaseDirOf(unknown), unknown).toBeUndefined();
+  }
 });
 
 it("protects the server unit from agents under CPU and memory pressure", () => {
@@ -511,10 +538,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const path = yield* Path.Path;
       yield* service.install();
       const newer = yield* makeService(undefined, "1.2.4");
-      const unitPath = (yield* service.status).unitPath;
-      yield* fs.remove(unitPath);
-      yield* fs.makeDirectory(unitPath);
-      yield* fs.writeFileString(path.join(unitPath, "occupied"), "");
+      yield* fs.remove(statePath);
+      yield* fs.makeDirectory(statePath);
+      yield* fs.writeFileString(path.join(statePath, "occupied"), "");
 
       const error = yield* newer.install({ start: false }).pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceInstallError");
@@ -625,6 +651,40 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(commands).toEqual([]);
       expect((yield* other.status).otherBaseDir).toBe(baseDir);
     }),
+  );
+
+  it.effect.each([
+    ["linux", '[Service]\nEnvironment="T3CODE_HOME=/srv/t3"\nExecStart=/srv/t3/t3\n'],
+    ["linux", "[Service]\nEnvironment=PORT=3773 T3CODE_HOME=/srv/t3\nExecStart=/srv/t3/t3\n"],
+    ["linux", "[Service]\nEnvironmentFile=/srv/t3.env\nExecStart=/srv/t3/t3\n"],
+    [
+      "darwin",
+      "<plist>\n<dict>\n\t<key>T3CODE_HOME</key><!-- moved -->\n\t<string>/srv/t3</string>\n</dict>\n</plist>\n",
+    ],
+    ["linux", undefined],
+  ] as const)(
+    "restart and install leave a %s service whose T3 home they cannot read alone",
+    ([platform, contents]) =>
+      Effect.gen(function* () {
+        const { service, fs, commands } = yield* makeHarness(platform);
+        const { unitPath } = yield* service.status;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(contents === undefined ? unitPath : path.dirname(unitPath), {
+          recursive: true,
+        });
+        if (contents !== undefined) yield* fs.writeFileString(unitPath, contents);
+        commands.length = 0;
+
+        expect(yield* service.restart).toBe("skipped");
+        expect((yield* service.install().pipe(Effect.flip))._tag).toBe(
+          contents === undefined ? "BootServiceInstallError" : "BootServiceUnknownBaseDirError",
+        );
+        expect(commands).toEqual([]);
+        if (contents !== undefined) {
+          expect(yield* fs.readFileString(unitPath)).toBe(contents);
+          expect(yield* service.status).toMatchObject({ unknownBaseDir: true, current: false });
+        }
+      }),
   );
 
   it.effect("hands the whole install to systemd without changing the running service", () =>
