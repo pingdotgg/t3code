@@ -111,77 +111,79 @@ export function PipelineFeedbackSheet({ route }: StaticScreenProps<PipelineFeedb
     !sending &&
     (target === "coordinator" ? true : canRevise);
 
+  const deliver = async () => {
+    if (run === null) return;
+    if (coordinatorText !== null) {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+        Dialog.alert("Could not send feedback", "You cannot message this pipeline.");
+        return;
+      }
+      const metadata = makeQueuedMessageMetadata();
+      await enqueueThreadOutboxMessage({
+        environmentId,
+        threadId: run.parentThreadId,
+        messageId: MessageId.make(metadata.messageId),
+        commandId: CommandId.make(metadata.commandId),
+        text: coordinatorText,
+        attachments: [],
+        createdAt: metadata.createdAt,
+      });
+      navigation.dispatch(
+        StackActions.replace("PipelineCoordinator", {
+          environmentId: params.environmentId,
+          threadId: String(run.parentThreadId),
+        }),
+      );
+      return;
+    }
+    if (target === "coordinator") return;
+    const result = await revise({
+      environmentId,
+      input: {
+        runId: run.id,
+        stepIndex: target,
+        feedback: trimmed,
+        ...(params.quote ? { quote: params.quote } : {}),
+        ...(params.sourceStepId ? { sourceStepId: PipelineStepId.make(params.sourceStepId) } : {}),
+      },
+    });
+    if (result._tag === "Success") {
+      navigation.goBack();
+      const revisedThreadId = run.steps[target]?.childThreadId ?? null;
+      Dialog.alert(
+        "Feedback sent",
+        `${stepName(run, target)} is revising. Later steps redo their work after it.`,
+        revisedThreadId === null
+          ? undefined
+          : [
+              { text: "Done", style: "cancel" },
+              {
+                text: "Open step",
+                onPress: () =>
+                  openThread({
+                    environmentId: params.environmentId,
+                    threadId: String(revisedThreadId),
+                  }),
+              },
+            ],
+      );
+    } else if (!isAtomCommandInterrupted(result)) {
+      Dialog.alert("Could not send feedback", String(squashAtomCommandFailure(result)));
+    }
+  };
+
   const send = async () => {
     if (run === null || !canSend) return;
     setSending(true);
     try {
-      if (coordinatorText !== null) {
-        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-          Dialog.alert("Could not send feedback", "You cannot message this pipeline.");
-          return;
-        }
-        const metadata = makeQueuedMessageMetadata();
-        await enqueueThreadOutboxMessage({
-          environmentId,
-          threadId: run.parentThreadId,
-          messageId: MessageId.make(metadata.messageId),
-          commandId: CommandId.make(metadata.commandId),
-          text: coordinatorText,
-          attachments: [],
-          createdAt: metadata.createdAt,
-        });
-        navigation.dispatch(
-          StackActions.replace("PipelineCoordinator", {
-            environmentId: params.environmentId,
-            threadId: String(run.parentThreadId),
-          }),
-        );
-        return;
-      }
-      if (target === "coordinator") return;
-      const result = await revise({
-        environmentId,
-        input: {
-          runId: run.id,
-          stepIndex: target,
-          feedback: trimmed,
-          ...(params.quote ? { quote: params.quote } : {}),
-          ...(params.sourceStepId
-            ? { sourceStepId: PipelineStepId.make(params.sourceStepId) }
-            : {}),
-        },
-      });
-      if (result._tag === "Success") {
-        navigation.goBack();
-        const revisedThreadId = run.steps[target]?.childThreadId ?? null;
-        Dialog.alert(
-          "Feedback sent",
-          `${stepName(run, target)} is revising. Later steps redo their work after it.`,
-          revisedThreadId === null
-            ? undefined
-            : [
-                { text: "Done", style: "cancel" },
-                {
-                  text: "Open step",
-                  onPress: () =>
-                    openThread({
-                      environmentId: params.environmentId,
-                      threadId: String(revisedThreadId),
-                    }),
-                },
-              ],
-        );
-      } else if (!isAtomCommandInterrupted(result)) {
-        Dialog.alert("Could not send feedback", String(squashAtomCommandFailure(result)));
-      }
+      await deliver();
     } catch (error) {
       Dialog.alert(
         "Could not send feedback",
         error instanceof Error ? error.message : String(error),
       );
-    } finally {
-      setSending(false);
     }
+    setSending(false);
   };
 
   const targetName =
