@@ -55,6 +55,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./azureDevOpsMedia": {
+      "types": "./src/azureDevOpsMedia.ts",
+      "import": "./src/azureDevOpsMedia.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"

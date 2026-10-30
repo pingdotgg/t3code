@@ -18,6 +18,7 @@ import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { markdownImageSources } from "../../lib/markdownImageSources";
+import { normalizeNativeMarkdownUrl } from "../../lib/markdownLinks";
 import { FilePreviewGallery, useFilePreviewGallery } from "../../components/FilePreviewGallery";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
 import {
@@ -70,7 +71,9 @@ function MarkdownImage(props: {
     <ThreadMarkdownImageView
       uri={media.uri}
       sourceKey={props.href}
-      unavailable={media.unavailable || !/^https?:\/\//i.test(props.href)}
+      unavailable={
+        media.unavailable || !/^https?:\/\//i.test(normalizeNativeMarkdownUrl(props.href))
+      }
       alt={props.alt}
       onPressPreview={(source) =>
         props.onPreview(
@@ -121,6 +124,7 @@ function PullRequestMarkdownContent(props: {
   const gallery: FilePreviewItem[] = markdownImageSources(
     props.imageGroupMarkdown ?? props.markdown,
   )
+    .map(normalizeNativeMarkdownUrl)
     .filter(
       (uri) =>
         /^https?:\/\//i.test(uri) &&
