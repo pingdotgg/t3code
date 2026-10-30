@@ -307,8 +307,8 @@ interface ThreadState {
   >;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
-  /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` if no report preceded it. */
-  readonly externalPrompts: Map<string, { readonly text: string; readonly leads: boolean }>;
+  /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` the next wake if no report preceded it. */
+  readonly externalPrompts: Map<string, { readonly text: string; leads: boolean }>;
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
@@ -2222,6 +2222,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const { delivered, stopped } = yield* takeReports(state);
       if (stopped) return;
       const route = state.providerThread.appThreadId;
+      // History begins at whichever OpenCode queued first: a report or another client's prompt.
+      // A prompt leads only this wake, so one dropped undelivered cannot move a later boundary.
+      const leading = [...state.externalPrompts].find(([, prompt]) => prompt.leads)?.[0];
+      for (const prompt of state.externalPrompts.values()) prompt.leads = false;
       const wake: Wake = {
         messageId:
           route === null
@@ -2233,10 +2237,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         detail: delivered.length === 0 ? null : delivered.map((entry) => entry.text).join("\n\n"),
         dropped: false,
         after: delivered.at(-1)?.inboxId,
-        // History begins at whichever OpenCode queued first: a report or another client's prompt.
-        first:
-          [...state.externalPrompts].find(([, prompt]) => prompt.leads)?.[0] ??
-          delivered[0]?.inboxId,
+        first: leading ?? delivered[0]?.inboxId,
         children: new Set(),
       };
       state.wakes.push(wake);
@@ -2481,7 +2482,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ) {
         const text = event.data.item.payload.text;
         if (state.subagent === undefined) {
-          state.externalPrompts.set(event.data.inboxID, { text, leads: state.reports.size === 0 });
+          state.externalPrompts.set(event.data.inboxID, {
+            text,
+            leads: !held && state.reports.size === 0,
+          });
         } else state.subagent.prompt ??= text;
         return;
       }
