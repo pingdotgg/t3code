@@ -11,6 +11,7 @@ import {
   DeviceOperationError,
   type DevicePlatform,
   type EasDeviceHostConfig,
+  type SettingsSecretValue,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -32,6 +33,8 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { findEasProjectId } from "./easProjectId.ts";
 import { type ExpoApi, makeExpoApi, resolveExpoCredential } from "./ExpoApi.ts";
@@ -139,11 +142,21 @@ const decodePathSegment = (segment: string): string | null => {
   }
 };
 
+/**
+ * The Expo credential a host's setting holds or names. Every session bills the account behind
+ * it, so a named secret that cannot be read fails rather than falling back to another login.
+ */
+export const resolveSavedExpoCredential = (
+  secrets: SecretResolver.SecretResolver["Service"],
+  saved: SettingsSecretValue,
+) => requireSettingsSecret(secrets, saved).pipe(Effect.flatMap(resolveExpoCredential));
+
 export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDeviceHostConfig) {
   const http = yield* HttpClient.HttpClient;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const server = yield* ServerConfig.ServerConfig;
+  const secrets = yield* SecretResolver.SecretResolver;
   const services = yield* Effect.context<
     FileSystem.FileSystem | Path.Path | Effect.Services<ReturnType<typeof findEasProjectId>>
   >();
@@ -197,7 +210,8 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
       ...(cause === undefined ? {} : { cause }),
     });
 
-  const api: Effect.Effect<ExpoApi, DeviceHostUnavailableError> = resolveExpoCredential(
+  const api: Effect.Effect<ExpoApi, DeviceHostUnavailableError> = resolveSavedExpoCredential(
+    secrets,
     config.accessToken,
   ).pipe(
     Effect.map((credential) => makeExpoApi(http, credential)),
@@ -877,7 +891,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
   // Each server signs in on its own, so one with no Expo credential answers for itself. Reading
   // the credential is local; whether Expo accepts it is only known once a session starts.
   const platformAvailability = (platform: DevicePlatform) =>
-    resolveExpoCredential(config.accessToken).pipe(
+    resolveSavedExpoCredential(secrets, config.accessToken).pipe(
       Effect.provide(services),
       Effect.as({ platform, available: true }),
       Effect.catch((error) =>

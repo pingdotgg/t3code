@@ -18,6 +18,7 @@ import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -443,6 +444,11 @@ describe("device setup consent", () => {
       expect((yield* Ref.get(settings)).deviceOnboardingCompleted).toBe(true);
     }).pipe(Effect.scoped),
   );
+});
+
+const layerSecretResolver = Layer.succeed(SecretResolver.SecretResolver, {
+  read: (references) => Effect.succeed(references.map(() => undefined)),
+  invalidate: () => Effect.void,
 });
 
 it.effect("publishes boot progress and does not restore sessions after support is disabled", () =>
@@ -1296,7 +1302,9 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
     expect(removedFiles).toHaveLength(1);
   }).pipe(
     Effect.scoped,
-    Effect.provide(Layer.mergeAll(ServerSettings.layerTest(), NodeServices.layer)),
+    Effect.provide(
+      Layer.mergeAll(ServerSettings.layerTest(), layerSecretResolver, NodeServices.layer),
+    ),
   ),
 );
 
@@ -1354,6 +1362,7 @@ it.effect("a failed tool update reports npm's exit code but not its output", () 
     Effect.provide(
       Layer.mergeAll(
         ServerSettings.layerTest({ enableDeviceSupport: true }),
+        layerSecretResolver,
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-update-" }),
         NodeCrypto.layer,
         NetService.layer,

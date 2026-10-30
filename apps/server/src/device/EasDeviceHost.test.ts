@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { EasDeviceHostConfig } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import { type EasDeviceHostConfig, SecretProviderId } from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -210,9 +211,24 @@ const fakeExpo = (
   return { http, named, stopped, allowPreview, allowCreate, previews };
 };
 
+const makeSecretResolver = (values: Record<string, string> = {}) =>
+  Layer.succeed(SecretResolver.SecretResolver, {
+    read: (references) =>
+      Effect.succeed(references.map((reference) => values[reference.reference])),
+    invalidate: () => Effect.void,
+  });
+
+const layerWith = (secrets: Layer.Layer<SecretResolver.SecretResolver>) =>
+  Layer.mergeAll(
+    ProcessRunner.layer,
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-eas-host-" }),
+    secrets,
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+
 const layer = Layer.mergeAll(
   ProcessRunner.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-eas-host-" }),
+  makeSecretResolver(),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const makeHost = (
@@ -278,6 +294,35 @@ describe("EAS Simulator host", () => {
       expect(expo.named("T3StopEasSimulatorSession").map((call) => call.variables.id)).toEqual([
         "session-1",
       ]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("reads its token from the secret provider the setting names", () =>
+    Effect.gen(function* () {
+      const expo = fakeExpo();
+      const source = { provider: SecretProviderId.make("homelab"), reference: "expo#token" };
+      const host = yield* makeHost(expo, config({ accessToken: source }), yield* Scope.make());
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [catalogDevice] = (yield* ready.devices.list).devices;
+      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerWith(makeSecretResolver({ "expo#token": "expo-token" }))),
+    ),
+  );
+
+  it.effect("fails instead of using another Expo login when its secret cannot be read", () =>
+    Effect.gen(function* () {
+      const expo = fakeExpo();
+      const source = { provider: SecretProviderId.make("homelab"), reference: "expo#token" };
+      const host = yield* makeHost(expo, config({ accessToken: source }), yield* Scope.make()).pipe(
+        Effect.provideService(HostProcess.Environment, { EXPO_TOKEN: "expo-token" }),
+      );
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [catalogDevice] = (yield* ready.devices.list).devices;
+      const failure = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
+      expect(failure.message).toContain('secret provider "homelab"');
+      expect(expo.named("T3CreateEasSimulatorSession")).toHaveLength(0);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

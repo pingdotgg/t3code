@@ -4,19 +4,48 @@ import {
   type ServerSettings,
   type SettingsSecretValue,
 } from "@t3tools/contracts";
-import type * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import type * as SecretResolverCore from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { collectSourceControlHostSecretReferences } from "../sourceControl/sourceControlHostSecrets.ts";
 
-/** An unreadable secret comes back as `""`, so a credential that is missing behaves as unset. */
-export const resolveSettingsSecret = Effect.fn("SettingsSecrets.resolve")(function* (
-  resolver: SecretResolver.SecretResolver["Service"],
+type SecretResolverShape = SecretResolverCore.SecretResolver["Service"];
+
+export class SettingsSecretUnresolvedError extends Schema.TaggedError<SettingsSecretUnresolvedError>()(
+  "SettingsSecretUnresolvedError",
+  { provider: Schema.String },
+) {
+  override get message(): string {
+    return `Could not read the credential from the secret provider "${this.provider}". Unlock or fix it in Settings, then try again.`;
+  }
+}
+
+/**
+ * The secret a credential setting holds or names. A named secret that cannot be read, or reads
+ * empty, fails instead of passing for a missing token, so callers that would fall back to another
+ * credential cannot silently switch accounts.
+ */
+export const requireSettingsSecret = Effect.fn("SettingsSecrets.require")(function* (
+  resolver: SecretResolverShape,
   value: SettingsSecretValue,
 ) {
   if (!isSecretReference(value)) return value;
   const [secret] = yield* resolver.read([value]);
-  return secret ?? "";
+  if (secret === undefined || secret.trim() === "") {
+    return yield* new SettingsSecretUnresolvedError({ provider: value.provider });
+  }
+  return secret;
+});
+
+/** An unreadable secret comes back as `""`, for credentials whose documented fallback is acceptable. */
+export const resolveSettingsSecret = Effect.fn("SettingsSecrets.resolve")(function* (
+  resolver: SecretResolverShape,
+  value: SettingsSecretValue,
+) {
+  return yield* requireSettingsSecret(resolver, value).pipe(
+    Effect.catchTags({ SettingsSecretUnresolvedError: () => Effect.succeed("") }),
+  );
 });
 
 const collectUsageLimitSecretReferences = (
@@ -28,7 +57,7 @@ const collectUsageLimitSecretReferences = (
 
 /** Settings that cannot be read clear every cached secret, so a refresh never keeps a stale one. */
 export const invalidateSettingsSecrets = Effect.fn("SettingsSecrets.invalidate")(function* <E>(
-  resolver: SecretResolver.SecretResolver["Service"],
+  resolver: SecretResolverShape,
   settings: Effect.Effect<Pick<ServerSettings, "sourceControlHosts" | "usageLimitSources">, E>,
 ) {
   const references = yield* settings.pipe(

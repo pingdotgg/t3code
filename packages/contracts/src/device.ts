@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { SettingsSecretValue } from "./settingsSecretValue.ts";
 
 export const DevicePlatform = Schema.Literals(["ios", "android"]);
 export type DevicePlatform = typeof DevicePlatform.Type;
@@ -40,11 +41,11 @@ export const EasDeviceHostConfig = Schema.Struct({
   /** EAS project that sessions run under, when the project's app config does not name one. */
   appId: Schema.optional(TrimmedNonEmptyString),
   /**
-   * Expo access token, kept in the secret store. When empty the server uses
-   * EXPO_TOKEN, then the `eas login` session. This is `secretSetting` from
-   * settings.ts, which imports this module.
+   * Expo access token, kept in the secret store, or the secret provider to read
+   * it from. When empty the server uses EXPO_TOKEN, then the `eas login` session.
+   * This is `secretSetting` from settings.ts, which imports this module.
    */
-  accessToken: TrimmedString.pipe(
+  accessToken: SettingsSecretValue.pipe(
     Schema.withDecodingDefaultKey(Effect.succeed("")),
     Schema.annotateKey({ settingsSecret: true }),
   ),
@@ -116,7 +117,7 @@ export const SimlockDeviceHostConfigs = Schema.Array(SimlockDeviceHostConfig).ch
 export const DeviceEasAccountInput = Schema.Struct({
   /** A saved EAS host whose stored token is checked when no new token is given. */
   hostId: Schema.optional(DeviceHostId),
-  accessToken: Schema.optional(TrimmedString),
+  accessToken: Schema.optional(SettingsSecretValue),
 });
 export type DeviceEasAccountInput = typeof DeviceEasAccountInput.Type;
 
