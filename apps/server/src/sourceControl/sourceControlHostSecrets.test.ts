@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { SecretProviderId } from "@t3tools/contracts";
+import { SecretProviderId, UsageLimitSourceId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -125,7 +125,10 @@ it.effect("reads a collected reference again once it is invalidated", () =>
       accessToken: "stale",
     });
     current = "rotated";
-    yield* invalidateSettingsSecrets(resolver, Effect.succeed({ sourceControlHosts: hosts }));
+    yield* invalidateSettingsSecrets(
+      resolver,
+      Effect.succeed({ sourceControlHosts: hosts, usageLimitSources: {} }),
+    );
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "rotated",
@@ -136,5 +139,39 @@ it.effect("reads a collected reference again once it is invalidated", () =>
       email: "me@example.test",
       accessToken: "rotated again",
     });
+  }),
+);
+
+it.effect("invalidates the management keys of usage limit sources with the host tokens", () =>
+  Effect.gen(function* () {
+    const invalidated: Array<ReadonlyArray<string> | undefined> = [];
+    const resolver = SecretResolver.SecretResolver.of({
+      read: () => Effect.succeed([]),
+      invalidate: (references) =>
+        Effect.sync(() => void invalidated.push(references?.map(({ reference }) => reference))),
+    });
+    yield* invalidateSettingsSecrets(
+      resolver,
+      Effect.succeed({
+        sourceControlHosts: hosts,
+        usageLimitSources: {
+          [UsageLimitSourceId.make("referenced")]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: source("cliproxy#key"),
+            enabled: true,
+          },
+          [UsageLimitSourceId.make("literal")]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: "plain-key",
+            enabled: true,
+          },
+        },
+      }),
+    );
+    assert.deepEqual(invalidated, [
+      ["github#token", "missing#token", "bitbucket#token", "cliproxy#key"],
+    ]);
   }),
 );
