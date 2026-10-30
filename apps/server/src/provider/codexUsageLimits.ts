@@ -22,10 +22,13 @@ export interface CodexRateLimitSnapshot {
   readonly rateLimitReachedType?: string | null | undefined;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
-  readonly individualLimit?: {
-    readonly remainingPercent: number;
-    readonly resetsAt: number;
-  } | null;
+  readonly individualLimit?:
+    | {
+        readonly remainingPercent: number;
+        readonly resetsAt: number;
+      }
+    | null
+    | undefined;
   readonly credits?:
     | {
         readonly hasCredits: boolean;
