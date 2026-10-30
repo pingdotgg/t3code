@@ -1,15 +1,20 @@
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
+import { makeInMemoryStdio } from "./_internal/stdio.ts";
 
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
@@ -153,6 +158,54 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       );
 
       assert.equal(initialized.userAgent, "mock-codex-app-server");
+    }),
+  );
+
+  it.effect("warns once about a notification that fails to decode and keeps dispatching", () =>
+    Effect.gen(function* () {
+      const secret = "codex-notification-secret-sentinel";
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const warnings: Array<unknown> = [];
+      const client = yield* CodexClient.make(stdio).pipe(
+        Effect.provide(
+          Logger.layer([
+            Logger.make(({ logLevel, fiber }) => {
+              if (logLevel === "Warn")
+                warnings.push(fiber.getRef(References.CurrentLogAnnotations));
+            }),
+          ]),
+        ),
+      );
+      const delivered = yield* Deferred.make<unknown>();
+      yield* client.handleServerNotification("item/agentMessage/delta", (payload) =>
+        Deferred.succeed(delivered, payload).pipe(Effect.asVoid),
+      );
+
+      const send = (params: unknown) =>
+        Queue.offer(
+          input,
+          new TextEncoder().encode(
+            `${JSON.stringify({ method: "item/agentMessage/delta", params })}\n`,
+          ),
+        );
+      const malformed = { itemId: "item-1", threadId: "thread-1", turnId: secret };
+      yield* send(malformed);
+      yield* send(malformed);
+      yield* send({ delta: "ok", itemId: "item-1", threadId: "thread-1", turnId: "turn-1" });
+
+      assert.deepEqual(yield* Deferred.await(delivered), {
+        delta: "ok",
+        itemId: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+      });
+      assert.lengthOf(warnings, 1);
+      expect(warnings[0]).toMatchObject({
+        operation: "decode-notification-payload",
+        method: "item/agentMessage/delta",
+        issueKinds: expect.arrayContaining(["MissingKey"]),
+      });
+      assert.notInclude(JSON.stringify(warnings), secret);
     }),
   );
 });
