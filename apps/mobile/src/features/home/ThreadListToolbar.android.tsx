@@ -62,7 +62,6 @@ export function ThreadListToolbar(props: ThreadListToolbarProps) {
           onOpenEnvironments={props.onOpenEnvironments}
         />
       }
-      sidebar={false}
       search={{
         value: props.searchQuery,
         onChangeText: onSearchQueryChange,

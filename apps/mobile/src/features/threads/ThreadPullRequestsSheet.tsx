@@ -113,7 +113,6 @@ export function ThreadPullRequestsSheet(
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
       <AppBar
         sheet
-        sidebar={false}
         title={title}
         hideBottomBorder
         onBack={() => navigation.goBack()}

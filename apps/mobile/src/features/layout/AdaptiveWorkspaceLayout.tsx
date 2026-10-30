@@ -81,6 +81,7 @@ import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
+import { PaneContext } from "../../components/ui/Pane";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
 import {
@@ -799,6 +800,7 @@ function AdaptiveWorkspaceLayoutContent(
     setPrimarySidebarSearchQuery,
     showInspector,
     toggleAuxiliaryPane,
+    sidebarToggleable: layout.usesSplitView && !primarySidebarPinned && !workspacePage,
     togglePrimarySidebar,
     setPrimarySidebarVisible,
     openWorkspaceTab,
@@ -851,43 +853,45 @@ function AdaptiveWorkspaceLayoutContent(
           ]}
         >
           <Animated.View className="flex-1" style={listPaneAnimatedStyle}>
-            <RenderErrorBoundary
-              renderFallback={(fallback) => (
-                <RenderFailureView
-                  {...fallback}
-                  title="The sidebar couldn't be displayed"
-                  exit={{ label: "Open settings", onPress: handleOpenSettings }}
-                />
-              )}
-            >
-              <AndroidWorkspaceSidebar
-                onRequestVisibility={revealPrimarySidebar}
-                selectedPullRequestKey={props.selectedPullRequestKey ?? null}
-              >
-                <AndroidHomeFabLayout
-                  sidebar
-                  disabled={workspacePage}
-                  paneWidth={layout.listPaneWidth}
-                  onStartNewTask={handleStartNewTask}
-                >
-                  <ThreadNavigationSidebar
-                    width={layout.listPaneWidth}
-                    visible={panes.primarySidebarVisible}
-                    onRequestVisibility={revealPrimarySidebar}
-                    selectedThreadKey={selectedThreadKey}
-                    onOpenSettings={handleOpenSettings}
-                    onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
-                    onNewThreadInProject={handleNewThreadInProject}
-                    onNewThreadOnBranch={handleNewThreadOnBranch}
-                    onOpenPendingTask={handleOpenPendingTask}
-                    onSelectThread={handleSelectThread}
-                    onOpenThreadPullRequests={handleOpenThreadPullRequests}
-                    onSearchQueryChange={setPrimarySidebarSearchQuery}
-                    searchQuery={primarySidebarSearchQuery}
+            <PaneContext value="sidebar">
+              <RenderErrorBoundary
+                renderFallback={(fallback) => (
+                  <RenderFailureView
+                    {...fallback}
+                    title="The sidebar couldn't be displayed"
+                    exit={{ label: "Open settings", onPress: handleOpenSettings }}
                   />
-                </AndroidHomeFabLayout>
-              </AndroidWorkspaceSidebar>
-            </RenderErrorBoundary>
+                )}
+              >
+                <AndroidWorkspaceSidebar
+                  onRequestVisibility={revealPrimarySidebar}
+                  selectedPullRequestKey={props.selectedPullRequestKey ?? null}
+                >
+                  <AndroidHomeFabLayout
+                    sidebar
+                    disabled={workspacePage}
+                    paneWidth={layout.listPaneWidth}
+                    onStartNewTask={handleStartNewTask}
+                  >
+                    <ThreadNavigationSidebar
+                      width={layout.listPaneWidth}
+                      visible={panes.primarySidebarVisible}
+                      onRequestVisibility={revealPrimarySidebar}
+                      selectedThreadKey={selectedThreadKey}
+                      onOpenSettings={handleOpenSettings}
+                      onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
+                      onNewThreadInProject={handleNewThreadInProject}
+                      onNewThreadOnBranch={handleNewThreadOnBranch}
+                      onOpenPendingTask={handleOpenPendingTask}
+                      onSelectThread={handleSelectThread}
+                      onOpenThreadPullRequests={handleOpenThreadPullRequests}
+                      onSearchQueryChange={setPrimarySidebarSearchQuery}
+                      searchQuery={primarySidebarSearchQuery}
+                    />
+                  </AndroidHomeFabLayout>
+                </AndroidWorkspaceSidebar>
+              </RenderErrorBoundary>
+            </PaneContext>
             {/* Keep the pill under the content throughout the sidebar's clipping animation. */}
             {floatingTabsEnabled && !workspacePage ? (
               <FloatingWorkspaceTabs
@@ -946,7 +950,9 @@ function AdaptiveWorkspaceLayoutContent(
                 }
               >
                 <View className="flex-1">
-                  <SettingsWorkspaceLayout>{children}</SettingsWorkspaceLayout>
+                  <PaneContext value="content">
+                    <SettingsWorkspaceLayout>{children}</SettingsWorkspaceLayout>
+                  </PaneContext>
                 </View>
               </SafeAreaInsetsContext>
               {floatingTabsEnabled &&
@@ -963,15 +969,17 @@ function AdaptiveWorkspaceLayoutContent(
           </WorkspaceContentWidthContext>
         </View>
       </View>
-      <WorkspaceInspectorPane
-        pathname={props.pathname}
-        renderedInspectorWidth={renderedInspectorWidth}
-        active={workspaceInspector?.active ?? false}
-        panes={panes}
-        renderInspector={workspaceInspector?.render}
-        setAuxiliaryPaneWidth={setFileInspectorPreferredWidth}
-        onClosed={handleWorkspaceInspectorClosed}
-      />
+      <PaneContext value="inspector">
+        <WorkspaceInspectorPane
+          pathname={props.pathname}
+          renderedInspectorWidth={renderedInspectorWidth}
+          active={workspaceInspector?.active ?? false}
+          panes={panes}
+          renderInspector={workspaceInspector?.render}
+          setAuxiliaryPaneWidth={setFileInspectorPreferredWidth}
+          onClosed={handleWorkspaceInspectorClosed}
+        />
+      </PaneContext>
       {shouldRenderNavigationRail && navigationRailWidth > 0 ? (
         // The rail reserves its slot above and draws over the panes, so it can widen over
         // the list in place. It takes the whole workspace only while it is open.
