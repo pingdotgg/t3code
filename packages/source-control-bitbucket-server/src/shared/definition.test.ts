@@ -26,9 +26,29 @@ describe("Data Center URLs", () => {
         host: "code.example.com",
         repository,
         number: 43,
+        remoteUrl: "ssh://git@code.example.com:7999/PROJ/web.git",
         webUrl: repositoryUrl,
       }),
     ).toBe(`${repositoryUrl}/pull-requests/43`);
+  });
+
+  it("only constructs PR links when the web address is known", () => {
+    const input = { host: "code.example.com", repository: "PROJ/web", number: 43 };
+    for (const remoteUrl of [
+      "ssh://git@code.example.com:7999/PROJ/web.git",
+      "git@code.example.com:PROJ/web.git",
+      undefined,
+    ]) {
+      expect(
+        definition.changeRequestUrl({ ...input, ...(remoteUrl ? { remoteUrl } : {}) }),
+      ).toBeNull();
+    }
+    expect(
+      definition.changeRequestUrl({
+        ...input,
+        remoteUrl: "https://code.example.com:8443/stash/scm/PROJ/web.git",
+      }),
+    ).toBe("https://code.example.com:8443/stash/projects/PROJ/repos/web/pull-requests/43");
   });
 
   it.each([

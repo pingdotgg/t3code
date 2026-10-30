@@ -79,15 +79,13 @@ export const definition = defineSourceControl({
   publishHost: (signedInHost) => signedInHost ?? "your server",
   newRepositoryOwner: () => null,
   defaultCloneTransport: "https",
-  changeRequestUrl: ({ host, repository, number, remoteUrl, webUrl }) => {
+  changeRequestUrl: ({ repository, number, remoteUrl, webUrl }) => {
     if (webUrl) return `${webUrl.replace(/\/(browse)?$/u, "")}/pull-requests/${number}`;
     const [project, slug, ...rest] = repository.split("/");
     if (!project || !slug || rest.length > 0) return null;
     const remote = URL.parse(remoteUrl ?? "");
-    const root =
-      remote && /^https?:$/u.test(remote.protocol)
-        ? `${remote.origin}${/^(.*?)\/scm\//u.exec(remote.pathname)?.[1] ?? ""}`
-        : `https://${host}`;
+    if (!remote || !/^https?:$/u.test(remote.protocol)) return null;
+    const root = `${remote.origin}${/^(.*?)\/scm\//u.exec(remote.pathname)?.[1] ?? ""}`;
     return `${root}/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(slug)}/pull-requests/${number}`;
   },
   parseChangeRequestUrl,
