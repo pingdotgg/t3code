@@ -40,7 +40,6 @@ import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
-
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
@@ -874,6 +873,18 @@ describe("AntigravityAdapterV2 subagent tools", () => {
                 prompt: () =>
                   Effect.gen(function* () {
                     promptCount += 1;
+                    if (promptCount === 3) {
+                      if (sessionUpdate === undefined) return yield* Effect.die("missing handler");
+                      yield* sessionUpdate({
+                        sessionId: childTool.split(":")[0]!,
+                        update: {
+                          sessionUpdate: "agent_message_chunk",
+                          messageId: "text-only-continuation",
+                          content: { type: "text", text: "Child text without another tool" },
+                        },
+                      });
+                      return { stopReason: "end_turn" };
+                    }
                     if (promptCount === 2) {
                       if (sessionUpdate === undefined) return yield* Effect.die("missing handler");
                       yield* sessionUpdate({
@@ -1130,6 +1141,31 @@ describe("AntigravityAdapterV2 subagent tools", () => {
         assert.equal(nextTool?.ordinal, previousTool?.ordinal);
         assert.deepEqual(nextTool?.startedAt, previousTool?.startedAt);
         assert.equal(nextTool?.status, "completed");
+        yield* session.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            modelSelection,
+            ordinal: 3,
+            now: yield* DateTime.now,
+          }),
+        );
+        const textOnlyEvents = Array.from(
+          yield* session.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        );
+        const textOnlyMessage = textOnlyEvents.findLast(
+          (event) => event.type === "message.updated" && event.message.threadId === childThreadId,
+        );
+        assert.equal(
+          textOnlyMessage?.type === "message.updated" ? textOnlyMessage.message.text : undefined,
+          "Child text without another tool",
+        );
+        assert.isFalse(textOnlyEvents.some((event) => event.type === "app_thread.created"));
       }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
