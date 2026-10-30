@@ -5,7 +5,16 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 
@@ -385,6 +394,81 @@ describe("server browser drag", () => {
       expect(unobserved).toEqual([]);
     } finally {
       process.off("unhandledRejection", onUnhandled);
+    }
+  });
+});
+
+describe("server browser capture", () => {
+  it("fails a capture the page never answers instead of waiting for it", async () => {
+    vi.useFakeTimers();
+    try {
+      const cdp = { send: () => new Promise(() => {}) } as unknown as CDPSession;
+      const capture = ServerBrowserPage.captureViewport(cdp, { format: "jpeg" }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await capture).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends no new screenshot while an earlier one is unanswered", async () => {
+    vi.useFakeTimers();
+    try {
+      const firstAnswer = Promise.withResolvers<{ data: string }>();
+      const send = vi
+        .fn()
+        .mockReturnValueOnce(firstAnswer.promise)
+        .mockResolvedValue({ data: "second" });
+      const cdp = { send } as unknown as CDPSession;
+      const outcome = (capture: Promise<string>) =>
+        capture.then(
+          (data) => data,
+          (error: unknown) => error,
+        );
+
+      const first = outcome(ServerBrowserPage.captureViewport(cdp, { format: "jpeg" }));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await first).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+
+      const blocked = outcome(ServerBrowserPage.captureViewport(cdp, { format: "jpeg" }));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await blocked).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+      expect(send).toHaveBeenCalledTimes(1);
+
+      firstAnswer.resolve({ data: "first" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await ServerBrowserPage.captureViewport(cdp, { format: "jpeg" })).toBe("second");
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets only one waiting capture send once the unanswered one settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const firstAnswer = Promise.withResolvers<{ data: string }>();
+      const send = vi
+        .fn()
+        .mockReturnValueOnce(firstAnswer.promise)
+        .mockReturnValue(new Promise(() => {}));
+      const cdp = { send } as unknown as CDPSession;
+      const captures = [1, 2, 3].map(() =>
+        ServerBrowserPage.captureViewport(cdp, { format: "jpeg" }).catch(() => null),
+      );
+
+      firstAnswer.resolve({ data: "first" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(send).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await Promise.all(captures);
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

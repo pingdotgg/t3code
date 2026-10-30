@@ -206,6 +206,8 @@ const withoutTreeDataPayloads = (tree: string) =>
 // The broker waits 15s for the host; a snapshot, retry included, answers well before.
 const SNAPSHOT_TIMEOUT_MS = 10_000;
 const FRAME_ANSWER_MS = 1_000;
+// A tab that draws no frames never answers a screenshot, and callers hold the tab's queue while waiting.
+const CAPTURE_TIMEOUT_MS = 5_000;
 
 // Include password and CSS-masked text in open shadow roots, normalized like accessible text.
 const DOTTED_SCRIPT = `(() => {
@@ -236,6 +238,12 @@ const tooBusy = () =>
   new ServerBrowserOperationError(
     "PreviewAutomationTimeoutError",
     "The page was too busy to capture a snapshot in time. Wait for it to settle and take another snapshot.",
+  );
+
+const noFrame = () =>
+  new ServerBrowserOperationError(
+    "PreviewAutomationTimeoutError",
+    "The page drew no frame to capture in time. Try again once the tab is showing or has settled.",
   );
 
 const VALUE_TOO_LONG = "A password field holds a value too long to hide, so no snapshot was taken.";
@@ -444,17 +452,41 @@ const readPageMetrics = async (cdp: CDPSession) => {
   );
 };
 
+// CDP cannot cancel a screenshot, so a session keeps at most one unanswered.
+const unansweredCaptures = new WeakMap<CDPSession, Promise<void>>();
+
 // Never pass a clip scale: Chromium mirrors the top-left of the page into a `backdrop-filter`
 // in any capture it shrinks.
 export const captureViewport = async (
   cdp: CDPSession,
   options: { readonly format: "png" | "jpeg"; readonly quality?: number },
 ) => {
-  const { data } = await cdp.send("Page.captureScreenshot", {
-    format: options.format,
-    ...(options.quality === undefined ? {} : { quality: options.quality }),
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(noFrame()), CAPTURE_TIMEOUT_MS);
   });
-  return data;
+  try {
+    // Callers waiting on the same capture wake together; only the first may send.
+    for (
+      let unanswered = unansweredCaptures.get(cdp);
+      unanswered;
+      unanswered = unansweredCaptures.get(cdp)
+    ) {
+      await Promise.race([unanswered, expired]);
+    }
+    const captured = cdp.send("Page.captureScreenshot", {
+      format: options.format,
+      ...(options.quality === undefined ? {} : { quality: options.quality }),
+    });
+    const settled = captured.then(constVoid, constVoid);
+    unansweredCaptures.set(cdp, settled);
+    void settled.then(() => {
+      if (unansweredCaptures.get(cdp) === settled) unansweredCaptures.delete(cdp);
+    });
+    return (await Promise.race([captured, expired])).data;
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 /** Runs in the page's own isolated world, as the server has no image library. */
