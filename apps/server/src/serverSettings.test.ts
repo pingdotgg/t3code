@@ -1538,51 +1538,35 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           provider: SecretProviderId.make("personal"),
           reference: "op://Private/Bitbucket/token",
         };
+        const gitHubReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/GitHub/token",
+        };
         yield* serverSettings.updateSettings({
-          sourceControlHosts: { bitbucket: { accessToken: "bb-access" } },
+          sourceControlHosts: {
+            bitbucket: { accessToken: "bb-access" },
+            github: { tokens: { "github.com": "ghp_dotcom", "ghe.acme.test": "ghp_ghe" } },
+          },
         });
         assert.isTrue(Option.isSome(yield* stored("bitbucket", "accessToken", null)));
+        assert.isTrue(Option.isSome(yield* stored("github", "tokens", "github.com")));
         const referenced = yield* serverSettings.updateSettings({
-          sourceControlHosts: { bitbucket: { accessToken: reference } },
+          sourceControlHosts: {
+            bitbucket: { accessToken: reference },
+            github: { tokens: { "github.com": gitHubReference, "ghe.acme.test": "ghp_ghe" } },
+          },
         });
         assert.deepEqual(referenced.sourceControlHosts.bitbucket?.accessToken, reference);
         assert.isTrue(Option.isNone(yield* stored("bitbucket", "accessToken", null)));
-        assert.deepEqual(
-          ServerSettingsModule.redactServerSettingsForClient(referenced).sourceControlHosts
-            .bitbucket?.accessToken,
-          reference,
-        );
+        assert.isTrue(Option.isNone(yield* stored("github", "tokens", "github.com")));
+        assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
+        const redacted =
+          ServerSettingsModule.redactServerSettingsForClient(referenced).sourceControlHosts;
+        assert.deepEqual(redacted.bitbucket?.accessToken, reference);
+        const tokens = redacted.github?.tokens as Record<string, unknown>;
+        assert.deepEqual(tokens["github.com"], gitHubReference);
+        assert.notEqual(tokens["ghe.acme.test"], "ghp_ghe");
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
-  );
-
-  it.effect("keeps a per-host token reference as written and drops the literal it replaces", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const secrets = yield* ServerSecretStore.ServerSecretStore;
-      const reference = {
-        provider: SecretProviderId.make("personal"),
-        reference: "op://Private/GitHub/token",
-      };
-      const stored = (serverHost: string) =>
-        secrets.get(sourceControlHostSecretName({ kind: "github", field: "tokens", serverHost }));
-
-      yield* serverSettings.updateSettings({
-        sourceControlHosts: { github: { tokens: { "github.com": "ghp_dotcom" } } },
-      });
-      assert.isTrue(Option.isSome(yield* stored("github.com")));
-
-      const saved = yield* serverSettings.updateSettings({
-        sourceControlHosts: {
-          github: { tokens: { "github.com": reference, "ghe.acme.test": "ghp_ghe" } },
-        },
-      });
-      assert.isTrue(Option.isNone(yield* stored("github.com")));
-      assert.isTrue(Option.isSome(yield* stored("ghe.acme.test")));
-      const tokens = ServerSettingsModule.redactServerSettingsForClient(saved).sourceControlHosts
-        .github?.tokens as Record<string, unknown>;
-      assert.deepEqual(tokens["github.com"], reference);
-      assert.notEqual(tokens["ghe.acme.test"], "ghp_ghe");
-    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
   it.effect("keeps the retired keys for another load when a token cannot be copied", () => {

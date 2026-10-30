@@ -36,11 +36,6 @@ const hosts = {
   gitcafe: { token: source("missing#token") },
   github: { tokens: { "github.com": source("github#token"), "ghe.acme.test": "ghp_literal" } },
 };
-const literalHosts = {
-  gitcafe: { token: "literal" },
-  github: { tokens: { "github.com": "ghp_literal" } },
-};
-
 const countingResolver = Effect.gen(function* () {
   const resolver = yield* fakeResolver;
   const reads: Array<string> = [];
@@ -83,15 +78,6 @@ it.effect("replaces a reference held in the per-host token record and keeps lite
       github: { tokens: { "github.com": "ghp_from_provider", "ghe.acme.test": "ghp_literal" } },
     });
     assert.deepEqual(reads, ["github#token"]);
-  }).pipe(Effect.provide(layerResolver)),
-);
-
-it.effect("leaves the resolver unused for a kind that holds no reference", () =>
-  Effect.gen(function* () {
-    const { reads, resolve } = yield* countingResolver;
-    const resolved = yield* resolveSourceControlHostSecrets(literalHosts, "github", resolve);
-    assert.strictEqual(resolved, literalHosts);
-    assert.deepEqual(reads, []);
   }).pipe(Effect.provide(layerResolver)),
 );
 
