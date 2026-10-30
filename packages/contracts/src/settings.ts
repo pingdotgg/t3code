@@ -52,6 +52,7 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { LinearDefaultWorkspace, LinearMapping } from "./linear.ts";
 import {
   CloudSpeechModelId,
   SpeechAcceleration,
@@ -991,6 +992,26 @@ export class TextGeneratorError extends Schema.TaggedError<TextGeneratorError>()
   }
 }
 
+export const LinearSettings = Schema.Struct({
+  /** Personal API key. Stored in the server secret store; clients only ever see the redaction marker. */
+  apiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
+  /** Team/project → T3 project. A project mapping overrides its team's. */
+  mappings: Schema.Array(LinearMapping).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Move the issue when launching; null stateId = the team's first `started` state. */
+  moveToStateEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  moveToStateId: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  commentEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  defaultWorkspace: LinearDefaultWorkspace.pipe(
+    Schema.withDecodingDefault(Effect.succeed("worktree" as const)),
+  ),
+  includeSubIssues: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  includeComments: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  includeLinkedPrs: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type LinearSettings = typeof LinearSettings.Type;
+
 export const SecretProviderKind = SecretProviderSlug.pipe(Schema.brand("SecretProviderKind"));
 export type SecretProviderKind = typeof SecretProviderKind.Type;
 
@@ -1546,6 +1567,7 @@ export const ServerSettings = Schema.Struct({
   secretProviders: Schema.Record(SecretProviderId, SecretProviderConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  linear: LinearSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1926,6 +1948,20 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   secretProviders: Schema.optionalKey(
     Schema.Record(SecretProviderId, Schema.NullOr(SecretProviderConfigWrite)),
+  ),
+  // Shallow-merged; arrays replace. A redaction marker in `apiKey` keeps the stored key.
+  linear: Schema.optionalKey(
+    Schema.Struct({
+      apiKey: Schema.optionalKey(TrimmedString),
+      mappings: Schema.optionalKey(Schema.Array(LinearMapping)),
+      moveToStateEnabled: Schema.optionalKey(Schema.Boolean),
+      moveToStateId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+      commentEnabled: Schema.optionalKey(Schema.Boolean),
+      defaultWorkspace: Schema.optionalKey(LinearDefaultWorkspace),
+      includeSubIssues: Schema.optionalKey(Schema.Boolean),
+      includeComments: Schema.optionalKey(Schema.Boolean),
+      includeLinkedPrs: Schema.optionalKey(Schema.Boolean),
+    }),
   ),
 
   usagePriceOverrides: Schema.optionalKey(

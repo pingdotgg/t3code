@@ -104,6 +104,28 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
   },
   mention: { ...base, kind: "mention", label: "@src/index.ts", path: "src/index.ts" },
   skill: { ...base, kind: "skill", label: "$pinchtab", name: "pinchtab" },
+  "linear-issue": {
+    ...base,
+    kind: "linear-issue",
+    label: "ATT-612 · Add retry",
+    issueId: "issue-1",
+    identifier: "ATT-612",
+    title: "Add retry",
+    url: "https://linear.app/acme/issue/ATT-612",
+    teamName: "Attio",
+    projectName: "Reliability",
+    milestoneName: null,
+    stateName: "Todo",
+    stateType: "unstarted",
+    priorityLabel: "High",
+    assigneeName: "Ada",
+    labels: ["bug"],
+    branchName: "ada/att-612-add-retry",
+    description: "Retry failed calls.",
+    subIssues: [{ identifier: "ATT-613", title: "Backoff", stateType: "started" }],
+    comments: [{ author: "Ada", createdAt: "2026-01-01T00:00:00.000Z", body: "ping" }],
+    linkedPullRequests: ["#1362"],
+  },
   thread: {
     ...base,
     kind: "thread",
@@ -231,5 +253,31 @@ describe("OrchestrationMessageContext", () => {
         records: [knownRecords.skill, { ...knownRecords.terminal, contextId: " ctx_1 " }],
       }),
     ).toThrow();
+  });
+});
+
+describe("linear-issue context record", () => {
+  it("rejects over-long comment bodies and too many sub-issues", () => {
+    const record = knownRecords["linear-issue"];
+    expect(
+      Option.isNone(
+        decodeRecord({
+          ...record,
+          comments: [{ author: null, createdAt: "x", body: "a".repeat(2_001) }],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Option.isNone(
+        decodeRecord({
+          ...record,
+          subIssues: Array.from({ length: 51 }, () => ({
+            identifier: "A-1",
+            title: "t",
+            stateType: "started",
+          })),
+        }),
+      ),
+    ).toBe(true);
   });
 });

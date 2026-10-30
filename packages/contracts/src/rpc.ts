@@ -403,6 +403,28 @@ import {
   PipelineRunSubscribeInput,
   PipelineUpsertInput,
 } from "./pipeline.ts";
+import {
+  LinearActivityResult,
+  LinearConnectInput,
+  LinearConnectionStatus,
+  LinearCustomView,
+  LinearError,
+  LinearIssue,
+  LinearIssueDetail,
+  LinearIssueFilter,
+  LinearIssueIdInput,
+  LinearIssueListResult,
+  LinearMilestone,
+  LinearMilestonesInput,
+  LinearProject,
+  LinearProjectsInput,
+  LinearRecordLaunchInput,
+  LinearRecordLaunchResult,
+  LinearSearchInput,
+  LinearTeam,
+  LinearTeamIdInput,
+  LinearTeamMetadata,
+} from "./linear.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -596,6 +618,23 @@ export const WS_METHODS = {
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
 
+  linearStatus: "linear.status",
+  linearConnect: "linear.connect",
+  linearDisconnect: "linear.disconnect",
+  linearResync: "linear.resync",
+  linearRefresh: "linear.refresh",
+  linearTeams: "linear.teams",
+  linearTeamMetadata: "linear.teamMetadata",
+  linearProjects: "linear.projects",
+  linearMilestones: "linear.milestones",
+  linearIssues: "linear.issues",
+  linearIssueDetail: "linear.issueDetail",
+  linearSubIssues: "linear.subIssues",
+  linearViews: "linear.views",
+  linearSearch: "linear.search",
+  linearActivity: "linear.activity",
+  linearRecordLaunch: "linear.recordLaunch",
+  linearSubscribeRefreshes: "linear.subscribeRefreshes",
   pullRequestsList: "pullRequests.list",
   pullRequestsListStats: "pullRequests.listStats",
   pullRequestsFilterOptions: "pullRequests.filterOptions",
@@ -1069,6 +1108,111 @@ const PullRequestRpcError = Schema.Union([
   PullRequestOperationError,
   EnvironmentAuthorizationError,
 ]);
+
+const LinearRpcError = Schema.Union([LinearError, EnvironmentAuthorizationError]);
+
+const WsLinearStatusRpc = Rpc.make(WS_METHODS.linearStatus, {
+  payload: Schema.Struct({}),
+  success: LinearConnectionStatus,
+  error: LinearRpcError,
+});
+
+const WsLinearConnectRpc = Rpc.make(WS_METHODS.linearConnect, {
+  payload: LinearConnectInput,
+  success: LinearConnectionStatus,
+  error: LinearRpcError,
+});
+
+const WsLinearDisconnectRpc = Rpc.make(WS_METHODS.linearDisconnect, {
+  payload: Schema.Struct({}),
+  success: LinearConnectionStatus,
+  error: LinearRpcError,
+});
+
+const WsLinearResyncRpc = Rpc.make(WS_METHODS.linearResync, {
+  payload: Schema.Struct({}),
+  success: Schema.Void,
+  error: LinearRpcError,
+});
+
+const WsLinearRefreshRpc = Rpc.make(WS_METHODS.linearRefresh, {
+  payload: Schema.Struct({}),
+  success: Schema.Void,
+  error: LinearRpcError,
+});
+
+const WsLinearTeamsRpc = Rpc.make(WS_METHODS.linearTeams, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(LinearTeam),
+  error: LinearRpcError,
+});
+
+const WsLinearTeamMetadataRpc = Rpc.make(WS_METHODS.linearTeamMetadata, {
+  payload: LinearTeamIdInput,
+  success: LinearTeamMetadata,
+  error: LinearRpcError,
+});
+
+const WsLinearProjectsRpc = Rpc.make(WS_METHODS.linearProjects, {
+  payload: LinearProjectsInput,
+  success: Schema.Array(LinearProject),
+  error: LinearRpcError,
+});
+
+const WsLinearMilestonesRpc = Rpc.make(WS_METHODS.linearMilestones, {
+  payload: LinearMilestonesInput,
+  success: Schema.Array(LinearMilestone),
+  error: LinearRpcError,
+});
+
+const WsLinearIssuesRpc = Rpc.make(WS_METHODS.linearIssues, {
+  payload: LinearIssueFilter,
+  success: LinearIssueListResult,
+  error: LinearRpcError,
+});
+
+const WsLinearIssueDetailRpc = Rpc.make(WS_METHODS.linearIssueDetail, {
+  payload: LinearIssueIdInput,
+  success: LinearIssueDetail,
+  error: LinearRpcError,
+});
+
+const WsLinearSubIssuesRpc = Rpc.make(WS_METHODS.linearSubIssues, {
+  payload: LinearIssueIdInput,
+  success: Schema.Array(LinearIssue),
+  error: LinearRpcError,
+});
+
+const WsLinearViewsRpc = Rpc.make(WS_METHODS.linearViews, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(LinearCustomView),
+  error: LinearRpcError,
+});
+
+const WsLinearSearchRpc = Rpc.make(WS_METHODS.linearSearch, {
+  payload: LinearSearchInput,
+  success: Schema.Array(LinearIssue),
+  error: LinearRpcError,
+});
+
+const WsLinearActivityRpc = Rpc.make(WS_METHODS.linearActivity, {
+  payload: Schema.Struct({}),
+  success: LinearActivityResult,
+  error: LinearRpcError,
+});
+
+const WsLinearRecordLaunchRpc = Rpc.make(WS_METHODS.linearRecordLaunch, {
+  payload: LinearRecordLaunchInput,
+  success: LinearRecordLaunchResult,
+  error: LinearRpcError,
+});
+
+const WsLinearSubscribeRefreshesRpc = Rpc.make(WS_METHODS.linearSubscribeRefreshes, {
+  payload: Schema.Struct({}),
+  success: NonNegativeInt,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
 
 const WsPullRequestsListRpc = Rpc.make(WS_METHODS.pullRequestsList, {
   payload: PullRequestListInput,
@@ -2264,6 +2408,23 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
+  WsLinearStatusRpc,
+  WsLinearConnectRpc,
+  WsLinearDisconnectRpc,
+  WsLinearResyncRpc,
+  WsLinearRefreshRpc,
+  WsLinearTeamsRpc,
+  WsLinearTeamMetadataRpc,
+  WsLinearProjectsRpc,
+  WsLinearMilestonesRpc,
+  WsLinearIssuesRpc,
+  WsLinearIssueDetailRpc,
+  WsLinearSubIssuesRpc,
+  WsLinearViewsRpc,
+  WsLinearSearchRpc,
+  WsLinearActivityRpc,
+  WsLinearRecordLaunchRpc,
+  WsLinearSubscribeRefreshesRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsFilterOptionsRpc,
