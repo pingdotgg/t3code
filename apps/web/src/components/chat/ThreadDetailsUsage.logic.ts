@@ -48,9 +48,9 @@ interface HubAccount {
 }
 
 /**
- * The one usable hub account serving a driver, or null when none or several do.
- * An account is its login (driver + email, else credential) and workspace, so one login reported by
- * two hubs is one account and its freshest snapshot wins; two workspaces stay two accounts.
+ * The one hub account serving a driver, if its limits are usable. Unreadable accounts still count,
+ * since the hub may route the thread through them. An account is a login (driver + email, else
+ * credential) plus workspace: one login from two hubs is one account, its freshest snapshot wins.
  */
 function onlyHubAccount(
   provider: ServerProvider,
@@ -70,7 +70,8 @@ function onlyHubAccount(
     }
   }
   const [only, ...rest] = freshestByAccount.values();
-  return only && rest.length === 0 ? only : null;
+  if (!only || rest.length > 0) return null;
+  return limitsNotice(only.account.usageLimits) === null ? only : null;
 }
 
 function hubAccountKey({ source, account }: HubAccount): string {
@@ -83,11 +84,9 @@ const checkedAtMs = ({ account }: HubAccount) => Date.parse(account.usageLimits.
 
 const normalizeEmail = (email: string | undefined) => email?.trim().toLowerCase() || undefined;
 
-/** A usable hub account for the instance's driver, unless both sides name different logins. */
+/** A hub account for the instance's driver, unless both sides name different logins. */
 function canServeInstance(provider: ServerProvider, account: SourceAccount): boolean {
-  if (account.driver !== provider.driver || limitsNotice(account.usageLimits) !== null) {
-    return false;
-  }
+  if (account.driver !== provider.driver) return false;
   const own = normalizeEmail(provider.auth.email);
   const hub = normalizeEmail(account.email);
   return !own || !hub || own === hub;
