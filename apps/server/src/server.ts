@@ -173,6 +173,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as CuaDriver from "./cua/CuaDriver.ts";
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
@@ -264,6 +265,13 @@ const layerHostPowerMonitor = HostPowerMonitor.layer.pipe(
 
 // A fresh receiver layer would open a second reader on the desktop telemetry fd.
 const layerDesktopAppUpdate = DesktopAppUpdate.layer.pipe(
+  Layer.provide(layerDesktopTelemetryReceiver),
+);
+
+// The environment's one Cua Driver host. It shares the receiver because the
+// desktop backend asks its Electron parent for the driver over that fd.
+const layerCuaDriver = CuaDriver.layer.pipe(
+  Layer.provide(layerServerSettings),
   Layer.provide(layerDesktopTelemetryReceiver),
 );
 
@@ -646,6 +654,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.mergeAll(
       AntigravityInstallation.AntigravityInstallation.layer,
       CodexInstallation.CodexInstallation.layer,
+      layerCuaDriver,
     ),
   ),
 );

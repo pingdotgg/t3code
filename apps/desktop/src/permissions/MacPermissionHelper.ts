@@ -9,14 +9,10 @@ import {
 } from "./MacSettingsWindow.ts";
 
 import { MAC_PERMISSION_TITLES, type MacPermission } from "./MacPermission.ts";
+import { isMacPermissionGranted } from "./macPermissionStatus.ts";
 
-const permissionGranted = (permission: MacPermission) => {
-  if (permission === "screen-recording")
-    return Electron.systemPreferences.getMediaAccessStatus("screen") === "granted";
-  if (permission === "accessibility")
-    return Electron.systemPreferences.isTrustedAccessibilityClient(false);
-  return false;
-};
+const permissionGranted = (permission: MacPermission) =>
+  permission === "full-disk-access" ? false : isMacPermissionGranted(permission);
 
 function macAppBundlePath(executable: string): string | undefined {
   return /^(.+\.app)\/Contents\/MacOS\/[^/]+$/.exec(executable)?.[1];

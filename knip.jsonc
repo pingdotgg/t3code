@@ -61,7 +61,13 @@
       // The Vite+ web build prerequisite.
       // Native and disk-loaded provider packages stay external to the bundle; the
       // CLI archive and desktop sidecar stage them from this manifest.
-      "ignoreDependencies": ["@effect/platform-node-shared", "@t3tools/web", "@napi-rs/keyring"],
+      // @ubjs/node: direct only so staged release installs carry its asar patch.
+      "ignoreDependencies": [
+        "@effect/platform-node-shared",
+        "@t3tools/web",
+        "@napi-rs/keyring",
+        "@ubjs/node",
+      ],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
@@ -82,7 +88,8 @@
       ],
       // The injected runtime resolves Playwright by string; release tooling runs
       // electron-builder from this workspace, outside its package scripts.
-      "ignoreDependencies": ["playwright-core", "electron-builder"],
+      // @ubjs/node: direct only so staged release installs carry its asar patch.
+      "ignoreDependencies": ["playwright-core", "electron-builder", "@ubjs/node"],
     },
     "apps/web": {
       // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
