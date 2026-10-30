@@ -3,7 +3,119 @@ import { unified } from "unified";
 import rehypeRaw from "rehype-raw";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
-import { CHAT_MARKDOWN_REHYPE_PLUGINS, CHAT_MARKDOWN_REMARK_PLUGINS } from "./markdownPipeline.ts";
+import {
+  CHAT_MARKDOWN_REHYPE_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS,
+  remarkAssistantInsights,
+} from "./markdownPipeline.ts";
+
+const insightRule = "─".repeat(20);
+const insightFence = (body: string, wrap = "") =>
+  [`${wrap}★ Insight ${insightRule}${wrap}`, body, `${wrap}${insightRule}${wrap}`].join("\n");
+
+it.each(["", "`"])("groups %j insight fences while preserving surrounding markdown", (wrap) => {
+  const markdown = [
+    "Before **bold** and [reference][src].",
+    "",
+    insightFence("- Also [reference][src].", wrap),
+    "",
+    "After.",
+    "",
+    '[src]:\n  https://example.com\n  "Source"',
+  ].join("\n");
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkAssistantInsights)
+    .use(remarkRehype)
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const tree = processor.runSync(processor.parse(markdown), markdown);
+  expect(
+    tree.children.filter((node) => node.type === "element").map((node) => node.tagName),
+  ).toEqual(["p", "blockquote", "p"]);
+  expect(
+    tree.children.find((node) => node.type === "element" && node.tagName === "blockquote"),
+  ).toMatchObject({ properties: { dataAlert: "insight" } });
+  expect(JSON.stringify(tree).match(/"href":"https:\/\/example.com"/g)).toHaveLength(2);
+  expect(JSON.stringify(tree)).toContain('"tagName":"strong"');
+  expect(JSON.stringify(tree)).not.toContain(insightRule);
+});
+
+it.each([
+  ["```text", "★ Insight " + insightRule, "literal", insightRule, "```"].join("\n"),
+  ["- ```text", "  ★ Insight " + insightRule, "  literal", "  " + insightRule, "  ```"].join("\n"),
+  ["    ★ Insight " + insightRule, "    literal", "    " + insightRule].join("\n"),
+  ["Paragraph.", "    ★ Insight " + insightRule, "    literal", "    " + insightRule].join("\n"),
+  ["`example", "★ Insight " + insightRule, "literal", insightRule, "`"].join("\n"),
+  insightFence("quoted")
+    .split("\n")
+    .map((line) => "> " + line)
+    .join("\n"),
+])("leaves literal and nested insight examples unchanged: %s", (markdown) => {
+  const processor = unified().use(remarkParse).use(remarkAssistantInsights);
+  const tree = processor.parse(markdown);
+  expect(processor.runSync(structuredClone(tree), markdown)).toEqual(tree);
+});
+
+it("groups streaming bodies and several insights without losing code or headings", () => {
+  const markdown = [
+    "## Setup",
+    "",
+    insightFence("```text\n" + insightRule + "\n```"),
+    "",
+    "## Setup",
+    "",
+    "★ Insight " + insightRule,
+    "Still **streaming**",
+  ].join("\n");
+  const processor = unified().use(remarkParse).use(remarkAssistantInsights);
+  const tree = processor.parse(markdown);
+  processor.runSync(tree, markdown);
+  expect(tree.children.map((node) => node.type)).toEqual([
+    "heading",
+    "blockquote",
+    "heading",
+    "blockquote",
+  ]);
+  expect(tree.children[1]).toMatchObject({ children: [{ type: "code", value: insightRule }] });
+  expect(tree.children[3]).toMatchObject({
+    children: [
+      { type: "paragraph", children: [{ type: "text", value: "Still " }, { type: "strong" }] },
+    ],
+  });
+});
+
+it("keeps reference definitions out of unfinished streaming code", () => {
+  const markdown = `[src]: https://example.com\n\n★ Insight ${insightRule}\n\`\`\`ts\nconst value = 1`;
+  const processor = unified().use(remarkParse).use(remarkAssistantInsights);
+  const tree = processor.parse(markdown);
+  processor.runSync(tree, markdown);
+  expect(tree.children.find((node) => node.type === "blockquote")).toMatchObject({
+    children: [{ type: "code", value: "const value = 1" }],
+  });
+});
+
+it("preserves footnotes and original code positions across a callout", () => {
+  const code = "```sh\necho hello\n```";
+  const markdown = ["Before[^n].", "", insightFence(code), "", "[^n]: Footnote."].join("\n");
+  const processor = unified()
+    .use(remarkParse)
+    .use(remarkAssistantInsights)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS);
+  const tree = processor.parse(markdown);
+  processor.runSync(tree, markdown);
+  expect(tree.children[0]).toMatchObject({
+    children: [
+      { type: "text", value: "Before" },
+      { type: "footnoteReference", identifier: "n" },
+      { type: "text", value: "." },
+    ],
+  });
+  expect(tree.children.at(-1)).toMatchObject({ type: "footnoteDefinition", identifier: "n" });
+  const note = tree.children.find((node) => node.type === "blockquote");
+  const block = note?.children[0];
+  expect(markdown.slice(block?.position?.start.offset, block?.position?.end.offset)).toBe(code);
+});
 
 it("preserves in-app thread links through the shared Markdown sanitizer", () => {
   const processor = unified()

@@ -17,6 +17,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
+  remarkAssistantInsights,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -36,6 +37,7 @@ import {
   OctagonAlertIcon,
   PresentationIcon,
   SparklesIcon,
+  StarIcon,
   TriangleAlertIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -222,6 +224,7 @@ import { reportMarkdownActionFailure } from "./chat/markdownActionFailure";
 const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
 interface ChatMarkdownProps {
+  renderInsights?: boolean;
   /** Compact markdown transforms remove blocks before rendering inside a label. */
   inline?: boolean;
   text: string;
@@ -346,6 +349,12 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
   string,
   { label: string; Icon: typeof InfoIcon; borderClassName: string; titleClassName: string }
 > = {
+  insight: {
+    label: "Insight",
+    Icon: StarIcon,
+    borderClassName: "border-info",
+    titleClassName: "text-info",
+  },
   note: {
     label: "Note",
     Icon: InfoIcon,
@@ -1700,6 +1709,7 @@ function ChatMarkdown({
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  renderInsights = false,
   ...props
 }: ChatMarkdownProps) {
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
@@ -1708,12 +1718,14 @@ function ChatMarkdown({
   const streamingBlocks =
     props.isStreaming === true &&
     !inline &&
+    !(renderInsights && text.includes("★ Insight")) &&
     extraRemarkPlugins.length === 0 &&
     !props.onTaskListChange
       ? splitMarkdownBlocks(text)
       : null;
   const incrementalParsing =
     props.isStreaming === true &&
+    !(renderInsights && text.includes("★ Insight")) &&
     streamingBlocks === null &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
@@ -1732,9 +1744,13 @@ function ChatMarkdown({
           : "plain"
     ];
   // Extra and incremental plugins are per instance, so their output is not shared.
-  const uncachedPlugins = extraRemarkPlugins.length > 0 || incrementalParsing;
+  const insightPlugins =
+    renderInsights && text.includes("★ Insight") ? [remarkAssistantInsights] : [];
+  const uncachedPlugins =
+    insightPlugins.length > 0 || extraRemarkPlugins.length > 0 || incrementalParsing;
   const remarkPlugins = uncachedPlugins
     ? [
+        ...insightPlugins,
         ...sharedRemarkPlugins,
         ...extraRemarkPlugins,
         ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),

@@ -310,6 +310,40 @@ describe("ChatMarkdown skill chips", () => {
 });
 
 describe("ChatMarkdown headings", () => {
+  it("keeps insight streaming, reference links, and heading anchors in one message", async () => {
+    setup();
+    const rule = "─".repeat(20);
+    const text = `## Setup\n\nBefore [source][src].\n\n★ Insight ${rule}\nA **streaming** note.`;
+    const message = (text: string, isStreaming: boolean) => (
+      <ChatMarkdown
+        cwd={undefined}
+        text={text}
+        renderInsights
+        lineBreaks
+        isStreaming={isStreaming}
+      />
+    );
+    await using screen = await render(message(text, true));
+    await expect.element(screen.getByRole("note")).toHaveTextContent("Insight A streaming note.");
+    await screen.rerender(
+      message(
+        `${text}\n${rule}\n\n## Setup\n\nAfter [source][src].\n\n[src]:\n  https://example.com`,
+        false,
+      ),
+    );
+    await expect.element(screen.getByRole("note")).toHaveTextContent("Insight A streaming note.");
+    expect([...screen.container.querySelectorAll("h2")].map((heading) => heading.id)).toEqual([
+      "user-content-setup",
+      "user-content-setup-1",
+    ]);
+    expect(
+      [...screen.container.querySelectorAll("a")].filter(
+        (link) => link.href === "https://example.com/",
+      ),
+    ).toHaveLength(2);
+    await expect.element(screen.getByRole("note")).not.toHaveTextContent("After");
+  });
+
   it("never gives two headings the same id, even when a suffix matches another heading", async () => {
     setup();
     await using screen = await renderText(
