@@ -643,12 +643,21 @@ export function ThreadRelationshipsPanel(props: {
                   threadId,
                 isSubagent,
               });
+              // Lineage follows delegated children now; timeline cards keep their launch settings.
+              const childSelection =
+                agent?.origin === "app_owned" ? node?.thread?.modelSelection : undefined;
               const provider = providers?.find(
                 (entry) =>
                   entry.instanceId ===
-                  (agent?.providerInstanceId ?? node?.thread?.providerInstanceId),
+                  (childSelection?.instanceId ??
+                    agent?.providerInstanceId ??
+                    node?.thread?.providerInstanceId),
               );
-              const providerDriver = agent?.driver ?? provider?.driver;
+              const providerDriver =
+                provider?.driver ??
+                (childSelection && childSelection.instanceId !== agent?.providerInstanceId
+                  ? undefined
+                  : agent?.driver);
               const canStopWorkflow =
                 canOperateWorkflow &&
                 workflowGroup?.workflow.status === "running" &&
@@ -665,10 +674,10 @@ export function ThreadRelationshipsPanel(props: {
               const relationshipTooltip = agent ? (
                 <SubagentTooltipContent
                   title={threadTitle}
-                  model={agent.model}
-                  providerInstanceId={agent.providerInstanceId}
+                  model={childSelection?.model ?? agent.model}
+                  providerInstanceId={childSelection?.instanceId ?? agent.providerInstanceId}
                   origin={agent.origin}
-                  modelSelection={agent.modelSelection}
+                  modelSelection={childSelection ?? agent.modelSelection}
                   provider={provider}
                   providers={providers}
                   driver={providerDriver}
