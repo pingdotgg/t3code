@@ -34,7 +34,7 @@ export function responsePayloads<E>(
     return Stream.unwrap(discardResponseBody(response).pipe(Effect.as(Stream.empty)));
   }
   const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("text/event-stream")) {
+  if (contentType.split(";", 1)[0]?.trim().toLowerCase() === "text/event-stream") {
     return Stream.fromAsyncIterable(sseDataLines(response), onError).pipe(
       Stream.mapEffect((data) => Effect.try({ try: () => JSON.parse(data), catch: onError })),
     );

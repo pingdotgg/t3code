@@ -38,6 +38,25 @@ function pendingFetch(started: Deferred.Deferred<AbortSignal | undefined>) {
 }
 
 describe("AcpMcpStdioBridge", () => {
+  it.effect("forwards SSE responses with a mixed-case media type", () =>
+    Effect.gen(function* () {
+      const { input, written, bridge } = makeHarness(
+        () =>
+          new Response('data: {"jsonrpc":"2.0","id":7,"result":{"ok":true}}\n\n', {
+            headers: { "content-type": "Text/Event-Stream; charset=UTF-8" },
+          }),
+      );
+      const fiber = yield* Effect.forkChild(bridge);
+
+      input.end('{"jsonrpc":"2.0","id":7,"method":"tools/list"}\n');
+      yield* Fiber.join(fiber);
+
+      expect(written.map((line) => JSON.parse(line))).toEqual([
+        { jsonrpc: "2.0", id: 7, result: { ok: true } },
+      ]);
+    }),
+  );
+
   it.effect("forwards requests and replays the session id and protocol version", () =>
     Effect.gen(function* () {
       const { input, written, requests, bridge } = makeHarness((request) => {
