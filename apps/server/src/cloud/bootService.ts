@@ -20,6 +20,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
 import {
   requestServiceLauncherStop,
+  SERVICE_TASK_NAME,
   serviceControlPipePath,
   serviceLauncherIsRunning,
 } from "../serviceLauncher.ts";
@@ -56,7 +57,7 @@ export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
-const BOOT_SERVICE_TASK_NAME = BOOT_SERVICE_NAME;
+const BOOT_SERVICE_TASK_NAME = SERVICE_TASK_NAME;
 /** Task Scheduler keeps its own copy; this one lets status and repair read the task back. */
 const BOOT_SERVICE_TASK_FILE = `${BOOT_SERVICE_NAME}-task.xml`;
 
