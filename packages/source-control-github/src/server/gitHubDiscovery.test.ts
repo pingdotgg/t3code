@@ -1,9 +1,11 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { ServerSettings, SourceControlProviderKind } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
@@ -77,5 +79,52 @@ it.effect("asks for no credential when the identity resolver left the base URL e
       null,
     );
     assert.deepStrictEqual(hosts, []);
+  }),
+);
+
+const referencedTokenSettings = Schema.decodeSync(ServerSettings)({
+  sourceControlHosts: {
+    github: { tokens: { "github.com": { provider: "vault", reference: "op://v/gh" } } },
+  },
+});
+
+it.effect("checks a GitHub token saved as a secret reference against the API", () =>
+  Effect.gen(function* () {
+    const paths: Array<string> = [];
+    const discovery = yield* GitHubSourceControlProvider.makeDiscovery.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(GitHubRest.GitHubRest)({
+            rest: (input) => {
+              paths.push(input.path);
+              return Effect.succeed({
+                status: 200,
+                headers: {},
+                body: JSON.stringify({ login: "octocat" }),
+                truncated: false,
+                invalidUtf8: false,
+              });
+            },
+          }),
+          Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
+          TestSourceControlHost.layer({
+            settings: referencedTokenSettings,
+            process: {
+              run: () =>
+                Effect.succeed(
+                  TestSourceControlHost.processOutput("", {
+                    exitCode: ChildProcessSpawner.ExitCode(1),
+                  }),
+                ),
+            },
+          }),
+        ),
+      ),
+      Effect.provideService(HostProcess.Environment, {}),
+    );
+    if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
+    const item = yield* discovery.probe("/repo");
+    assert.deepStrictEqual(paths, ["user"]);
+    assert.include(JSON.stringify(item.auth), "token saved in Settings");
   }),
 );
