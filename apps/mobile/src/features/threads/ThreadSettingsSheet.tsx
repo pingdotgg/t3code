@@ -49,7 +49,12 @@ import {
   type ReactNode,
 } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, TextInput, View } from "react-native";
-import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeOut,
+  LinearTransition,
+  useReducedMotion,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -941,8 +946,9 @@ function ThreadSettingsMainContent(props: {
   };
   const [listLoaded, setListLoaded] = useState(false);
   // Android can drop the first frame of a reduced-motion fade, leaving rows invisible.
-  const reducedMotion = useReduceMotionEnabled();
-  const animationsReady = listLoaded && !reducedMotion;
+  const reducedMotion = useReducedMotion();
+  const reduceMotionEnabled = useReduceMotionEnabled();
+  const animationsReady = listLoaded && !reducedMotion && !reduceMotionEnabled;
   const catalogItems = buildThreadSettingsCatalogItems(session);
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
