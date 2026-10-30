@@ -42,6 +42,7 @@ import {
   previousWww,
 } from "./autolinks";
 import { decodeEntity } from "./entities";
+import { type InlineMathMatch, scanDollarMath, scanTexMath } from "./math";
 
 /** Leaf content as one string, with each piece's offset in the source for positions. */
 export interface Content {
@@ -60,6 +61,8 @@ export interface Definitions {
 export interface InlineOptions {
   readonly math: boolean;
   readonly directives: boolean;
+  /** Table cells: math may not span lines. */
+  readonly mathSingleLine?: boolean;
 }
 
 export interface PointFactory {
@@ -324,7 +327,7 @@ export class InlineParser {
       case AMP:
         return this.parseEntity();
       case DOLLAR:
-        return this.parseMath(DOLLAR);
+        return this.parseMath();
       case COLON:
         return this.parseTextDirective();
       default:
@@ -398,8 +401,8 @@ export class InlineParser {
       this.appendNode({ type: "break" } as PhrasingContent, this.src(at), this.src(at + 1) + eol);
       return true;
     }
-    if (this.options.math && next === LPAREN) {
-      if (this.parseTexMath()) return true;
+    if (this.options.math && (next === LPAREN || next === LBRACKET) && this.parseTexMath()) {
+      return true;
     }
     if (isAsciiPunctuation(next)) {
       this.pos = at + 2;
@@ -451,72 +454,34 @@ export class InlineParser {
     }
   }
 
-  parseMath(char: number): boolean {
-    const { s } = this;
-    const start = this.pos;
-    let at = start;
-    while (s.charCodeAt(at) === char) at++;
-    const run = at - start;
-    // A single dollar does not open before a space? Follow code spans: any run opens.
-    let search = at;
-    while (true) {
-      const open = s.indexOf("$", search);
-      if (open < 0) return false;
-      if (s.charCodeAt(open - 1) === BACKSLASH && open - 1 >= at) {
-        search = open + 1;
-        continue;
-      }
-      let close = open;
-      while (s.charCodeAt(close) === char) close++;
-      if (close - open === run) {
-        let value = s.slice(at, open).replace(/\r\n|\r|\n/g, " ");
-        if (
-          value.length > 2 &&
-          value.charCodeAt(0) === SPACE &&
-          value.charCodeAt(value.length - 1) === SPACE &&
-          !/^ +$/.test(value)
-        ) {
-          value = value.slice(1, -1);
-        }
-        this.pos = close;
-        this.appendNode(
-          {
-            type: "inlineMath",
-            value,
-            data: {
-              hName: "code",
-              hProperties: { className: ["language-math", "math-inline"] },
-              hChildren: [{ type: "text", value }],
-            },
-          } as unknown as PhrasingContent,
-          this.src(start),
-          this.srcEnd(close),
-        );
-        return true;
-      }
-      search = close;
-    }
+  parseMath(): boolean {
+    const match = scanDollarMath(this.s, this.pos, this.options.mathSingleLine === true);
+    return match !== null && this.appendMath(match);
   }
 
   parseTexMath(): boolean {
-    const { s } = this;
+    const match = scanTexMath(this.s, this.pos, this.options.mathSingleLine === true);
+    return match !== null && this.appendMath(match);
+  }
+
+  appendMath(match: InlineMathMatch): boolean {
     const start = this.pos;
-    const close = s.indexOf("\\)", start + 2);
-    if (close < 0) return false;
-    const value = s.slice(start + 2, close);
-    this.pos = close + 2;
+    const value = stripPadding(this.s.slice(match.contentStart, match.contentEnd));
+    // patches/mdast-util-math@3.0.0.patch: `$$` and `\[` display even inline.
+    const display = this.s.startsWith("$$", start) || this.s.startsWith("\\[", start);
+    this.pos = match.end;
     this.appendNode(
       {
         type: "inlineMath",
         value,
         data: {
           hName: "code",
-          hProperties: { className: ["language-math", "math-inline"] },
+          hProperties: { className: ["language-math", display ? "math-display" : "math-inline"] },
           hChildren: [{ type: "text", value }],
         },
       } as unknown as PhrasingContent,
       this.src(start),
-      this.srcEnd(close + 2),
+      this.srcEnd(match.end),
     );
     return true;
   }

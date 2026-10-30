@@ -5,7 +5,7 @@ import { parseMarkdown } from "./parseMarkdown";
 
 const DOLLAR = 36;
 
-// The llm-math tokenizers are not ported yet; their syntax still needs micromark.
+// remark-math registers micromark-extension-llm-math, which owns `$` in text.
 function usesMath(extensions: ReadonlyArray<unknown>): boolean {
   return extensions.some((extension) => {
     if (Array.isArray(extension)) return usesMath(extension);
@@ -16,15 +16,11 @@ function usesMath(extensions: ReadonlyArray<unknown>): boolean {
 
 /**
  * Parses with parseMarkdown, which builds the tree remark-parse builds with the chat's syntax
- * extensions. Use after remark-parse and the syntax plugins, so it can see what they need.
+ * extensions. Use after remark-parse and the syntax plugins, so it can see whether math is on.
  */
 function attachFastParse(this: Processor) {
-  const fallback = this.parser;
-  this.parser = (document) => {
-    if (usesMath(this.data().micromarkExtensions ?? []))
-      return fallback!(document, undefined as never);
-    return parseMarkdown(document) as Root;
-  };
+  this.parser = (document) =>
+    parseMarkdown(document, { math: usesMath(this.data().micromarkExtensions ?? []) }) as Root;
 }
 
 export const remarkFastParse = attachFastParse;

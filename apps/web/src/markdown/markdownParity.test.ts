@@ -11,6 +11,8 @@ import { VFile } from "vfile";
 import { describe, expect, it } from "vite-plus/test";
 
 import { rehypeHeadingIds } from "../components/chat/markdownFragments";
+import remarkMath from "remark-math";
+
 import { remarkParseWithoutUnusedSyntax } from "../components/chat/markdownSyntaxGates";
 import { rehypeTextDirection } from "../components/chat/markdownTextDirection";
 import { chatRenderHast } from "./chatHast";
@@ -69,7 +71,29 @@ const RAW_HTML_CASES = [
   '<h3 id="x">Raw heading</h3>\n\n## Markdown heading',
 ];
 
+// The patched llm-math rules: money stays text, `$$` blocks must close, TeX delimiters.
+const MATH_CASES = [
+  "Costs $34.58, then $15.00 later, and $x^2$ is math, $ y $ is not, $$a$$ is.",
+  "Inline $a$b$ and \\$5 and $a \\$ b$ and $http://x.io$ and $`code`$",
+  "$$\nx = 1\n$$\n\n$$ y $$\n\n$$ z $$ trailing\n\n$$\nunclosed",
+  "\\[\nE = mc^2\n\\]\n\nand \\(a\\) or \\[b\\] or \\[1, 2\\] inline",
+  "> $$\n> q\n> $$\n\n- $$\n  r\n  $$",
+  "$$\nmulti\nline $$\n\npara $$\nnot block\n$$",
+  "| a | b |\n| - | - |\n| $x|y$ | \\(p|q\\) |",
+  "Para\n$$\nm\n$$\nafter",
+];
+
+const remarkWithMath = unified()
+  .use(remarkParse)
+  .use(remarkParseWithoutUnusedSyntax)
+  .use([[remarkMath, { singleDollarTextMath: true }], ...CHAT_MARKDOWN_REMARK_PLUGINS])
+  .freeze();
+
 describe("parseMarkdown", () => {
+  it.each(MATH_CASES)("builds remark-math's tree for %j", (markdown) => {
+    expect(parseMarkdown(markdown, { math: true })).toEqual(remarkWithMath.parse(markdown));
+  });
+
   it("builds remark-parse's tree for every CommonMark example", () => {
     const differing = spec.tests.filter(
       (test) =>

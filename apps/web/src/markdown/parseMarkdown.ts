@@ -18,9 +18,11 @@ import type {
 type Position = NonNullable<Root["position"]>;
 
 import { transformAutolinkLiterals } from "./autolinks";
+import { scanDollarMath, scanTexMath } from "./math";
 import {
   BACKSLASH,
   BlockParser,
+  DOLLAR,
   CARET,
   COLON,
   CR,
@@ -358,7 +360,7 @@ class DocumentParser {
     const align = parseDelimiterRow(s, rowStart, b.lineEnd);
     if (!align) return false;
     const header = container.lines.at(-1)!;
-    const headerCells = splitRow(s, header.start, header.end);
+    const headerCells = splitRow(s, header.start, header.end, this.math);
     if (headerCells.length !== align.length) return false;
     // Lines before the header stay a paragraph.
     const before = container.lines.slice(0, -1);
@@ -512,11 +514,10 @@ class DocumentParser {
         return;
       }
       case "math": {
-        const info = s.slice(block.infoStart, block.infoEnd).trim();
         const value = this.joinLines(block.lines);
         out.push({
           type: "math",
-          meta: info || null,
+          meta: null,
           position: this.position(block.start, this.openBlockEnd(block)),
           value,
           data: {
@@ -692,7 +693,7 @@ class DocumentParser {
     const rows: TableRow[] = [];
     block.lines.forEach((line, index) => {
       if (index === 1) return;
-      const cells: TableCell[] = splitRow(s, line.start, line.end).map(
+      const cells: TableCell[] = splitRow(s, line.start, line.end, this.math).map(
         ([start, end, cellStart, cellEnd]) => ({
           type: "tableCell",
           children: this.inlines(start < end ? [{ start, end, pad: 0 }] : []),
@@ -798,6 +799,7 @@ function splitRow(
   s: string,
   start: number,
   lineEnd: number,
+  math = false,
 ): Array<[number, number, number, number]> {
   const end = trimEnd(s, start, lineEnd);
   const cells: Array<[number, number, number, number]> = [];
@@ -807,6 +809,19 @@ function splitRow(
   let contentStart = i;
   while (i <= end) {
     const c = i < end ? s.charCodeAt(i) : -1;
+    if (
+      math &&
+      (c === DOLLAR ||
+        (c === BACKSLASH && (s.charCodeAt(i + 1) === 40 || s.charCodeAt(i + 1) === LBRACKET)))
+    ) {
+      // patches/micromark-extension-gfm-table: math that closes on the row keeps its pipes.
+      const row = s.slice(0, end);
+      const match = c === DOLLAR ? scanDollarMath(row, i, true) : scanTexMath(row, i, true);
+      if (match) {
+        i = match.end;
+        continue;
+      }
+    }
     if (c === BACKSLASH && i + 1 < end) {
       i += 2;
       continue;

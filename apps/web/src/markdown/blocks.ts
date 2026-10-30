@@ -93,6 +93,9 @@ export interface Block {
   closed: boolean;
   /** The fence opened on this line, which holds no content. */
   openingLine: boolean;
+  /** Math: the line where the block closes, and where content ends on it (-1 for none). */
+  closeLineStart: number;
+  closeContentEnd: number;
   htmlType: number;
   // Headings.
   depth: number;
@@ -129,6 +132,8 @@ export function newBlock(type: BlockType, start: number): Block {
     infoEnd: 0,
     closed: false,
     openingLine: false,
+    closeLineStart: -1,
+    closeContentEnd: -1,
     htmlType: 0,
     depth: 0,
     setext: false,
@@ -144,6 +149,7 @@ const isDigit = (code: number) => code >= 48 && code <= 57;
 const isAsciiAlpha = (code: number) => (code | 32) >= 97 && (code | 32) <= 122;
 
 const CODE_INDENT = 4;
+const FAIL = -2;
 
 // HTML block start conditions 1 and 6 by tag name.
 const HTML_RAW_TAGS = ["pre", "script", "style", "textarea"];
@@ -381,21 +387,18 @@ export class BlockParser {
         return 1;
       }
       case "math": {
-        const match =
-          this.indent <= 3 && this.code(this.nextNonspace) === DOLLAR
-            ? this.closingFenceLength(block)
-            : 0;
-        if (match > 0) {
+        // The opener already found where the block closes.
+        if (this.lineStart === block.closeLineStart) {
+          if (block.closeContentEnd >= 0) {
+            this.stripMathIndent(block);
+            block.lines.push({ start: this.offset, end: block.closeContentEnd, pad: 0 });
+          }
           block.closed = true;
           block.end = this.lineEnd;
           this.finalize(block, this.lineEnd);
           return 2;
         }
-        let i = block.fenceOffset;
-        while (i > 0 && isSpaceOrTab(this.code(this.offset))) {
-          this.advanceOffset(1, true);
-          i--;
-        }
+        this.stripMathIndent(block);
         return 0;
       }
       case "html":
@@ -468,6 +471,8 @@ export class BlockParser {
       const started = this.tryStart(container);
       if (started === 0) {
         this.advanceNextNonspace();
+        // A failed math fence may have closed the paragraph it interrupted.
+        if (!container.open) container = this.tip;
         break;
       }
       container = this.tip;
@@ -528,8 +533,10 @@ export class BlockParser {
       case "code":
       case "math":
       case "html":
-        if (container.openingLine) container.openingLine = false;
-        else this.addLine();
+        if (container.openingLine) {
+          container.openingLine = false;
+          if (t === "math" && container.closed) this.finalize(container, end);
+        } else this.addLine();
         if (t === "html" && this.htmlBlockEnds(container.htmlType)) {
           container.end = end;
           container.closed = true;
@@ -652,6 +659,8 @@ export class BlockParser {
         return this.tryFence(c) ? 2 : 0;
       case DOLLAR:
         return this.options.math && this.tryMathFence() ? 2 : 0;
+      case BACKSLASH:
+        return this.options.math && this.tryTexMathFence() ? 2 : 0;
       case LT:
         return this.tryHtmlBlock(container) ? 2 : 0;
       case COLON:
@@ -741,25 +750,188 @@ export class BlockParser {
     return true;
   }
 
+  /** `$$` math, which exists only if it closes in the same containers. */
   tryMathFence(): boolean {
     let at = this.nextNonspace;
     while (this.code(at) === DOLLAR) at++;
-    const length = at - this.nextNonspace;
-    if (length < 2) return false;
-    for (let i = at; i < this.lineEnd; i++) {
-      if (this.source.charCodeAt(i) === DOLLAR) return false;
+    const sizeOpen = at - this.nextNonspace;
+    if (sizeOpen < 2) return false;
+    let contentStart = at;
+    while (isSpaceOrTab(this.code(contentStart))) contentStart++;
+    return this.openMath(sizeOpen, contentStart);
+  }
+
+  /** `\[` alone on its line, closed by `\]`. */
+  tryTexMathFence(): boolean {
+    const at = this.nextNonspace;
+    if (this.code(at + 1) !== LBRACKET) return false;
+    let rest = at + 2;
+    while (isSpaceOrTab(this.code(rest))) rest++;
+    if (rest !== this.lineEnd) return false;
+    return this.openMath(0, this.lineEnd);
+  }
+
+  /** `sizeOpen` 0 is TeX math. */
+  openMath(sizeOpen: number, contentStart: number): boolean {
+    const plan = this.scanMathBlock(sizeOpen, contentStart);
+    if (!plan) {
+      // The fence still interrupts a paragraph; the line then starts a new one.
+      if (this.tip.type === "paragraph") {
+        this.closeUnmatchedBlocks();
+        if (this.tip.type === "paragraph") this.finalize(this.tip, this.lineStart - 1);
+      }
+      return false;
     }
     this.closeUnmatchedBlocks();
     const math = this.addChild("math", this.nextNonspace);
     math.fenced = true;
-    math.fenceChar = DOLLAR;
-    math.fenceLength = length;
+    math.fenceLength = sizeOpen;
     math.fenceOffset = this.indent;
-    math.infoStart = at;
-    math.infoEnd = this.lineEnd;
+    math.closeLineStart = plan.closeLineStart;
+    math.closeContentEnd = plan.closeContentEnd;
     math.openingLine = true;
+    if (plan.closeLineStart === this.lineStart) {
+      // `$$ x $$` closes on its own line.
+      math.lines.push({ start: contentStart, end: plan.closeContentEnd, pad: 0 });
+      math.closed = true;
+      math.end = this.lineEnd;
+      this.advanceOffset(this.lineEnd - this.offset, false);
+      return true;
+    }
+    if (contentStart < this.lineEnd)
+      math.lines.push({ start: contentStart, end: this.lineEnd, pad: 0 });
     this.advanceOffset(this.lineEnd - this.offset, false);
     return true;
+  }
+
+  stripMathIndent(block: Block) {
+    let i = block.fenceOffset;
+    while (i > 0 && isSpaceOrTab(this.code(this.offset))) {
+      this.advanceOffset(1, true);
+      i--;
+    }
+  }
+
+  /**
+   * Where a math block opened on this line closes: the closing line, and where its content
+   * ends when the fence closes at the end of a content line (-1 for a fence line of its own).
+   * Null when it never closes in these containers, as micromark-extension-llm-math requires.
+   */
+  scanMathBlock(
+    sizeOpen: number,
+    contentStart: number,
+  ): { closeLineStart: number; closeContentEnd: number } | null {
+    const tex = sizeOpen === 0;
+    if (!tex && contentStart < this.lineEnd) {
+      const end = this.dollarCloseIn(contentStart, this.lineEnd, sizeOpen);
+      if (end === FAIL) return null;
+      if (end >= 0) return { closeLineStart: this.lineStart, closeContentEnd: end };
+    }
+    // Containers the block would live in, outermost first.
+    let container: Block | null = this.allClosed ? this.tip : this.lastMatchedContainer;
+    while (container && !this.canContain(container.type, "math")) container = container.parent;
+    const chain: Block[] = [];
+    for (let block = container; block && block.type !== "root"; block = block.parent)
+      chain.unshift(block);
+    const saved = {
+      lineStart: this.lineStart,
+      lineEnd: this.lineEnd,
+      offset: this.offset,
+      column: this.column,
+      partiallyConsumedTab: this.partiallyConsumedTab,
+      blank: this.blank,
+      nextNonspace: this.nextNonspace,
+      nextNonspaceColumn: this.nextNonspaceColumn,
+      indent: this.indent,
+      indented: this.indented,
+    };
+    const { source } = this;
+    try {
+      let start = this.lineEnd;
+      if (start >= source.length) return null;
+      start += source.charCodeAt(start) === CR && source.charCodeAt(start + 1) === LF ? 2 : 1;
+      while (start <= source.length) {
+        let end = start;
+        while (end < source.length && !isLineEnding(source.charCodeAt(end))) end++;
+        this.lineStart = start;
+        this.lineEnd = end;
+        this.offset = start;
+        this.column = 0;
+        this.partiallyConsumedTab = false;
+        for (const block of chain) {
+          this.findNextNonspace();
+          if (this.continues(block) !== 0) return null;
+        }
+        this.findNextNonspace();
+        // A fence line of its own, indented less than code.
+        if (this.indent <= 3) {
+          let at = this.nextNonspace;
+          if (
+            tex
+              ? this.code(at) === BACKSLASH && this.code(at + 1) === RBRACKET
+              : this.code(at) === DOLLAR
+          ) {
+            if (tex) at += 2;
+            else {
+              const runStart = at;
+              while (this.code(at) === DOLLAR) at++;
+              if (at - runStart < sizeOpen) at = -1;
+            }
+            if (at >= 0) {
+              while (isSpaceOrTab(this.code(at))) at++;
+              if (at === end) return { closeLineStart: start, closeContentEnd: -1 };
+            }
+          }
+        }
+        const close = tex
+          ? this.texCloseIn(this.offset, end)
+          : this.dollarCloseIn(this.offset, end, sizeOpen);
+        if (close === FAIL) return null;
+        if (close >= 0) return { closeLineStart: start, closeContentEnd: close };
+        if (end >= source.length) return null;
+        start = end + (source.charCodeAt(end) === CR && source.charCodeAt(end + 1) === LF ? 2 : 1);
+      }
+      return null;
+    } finally {
+      Object.assign(this, saved);
+    }
+  }
+
+  /** In a content line: where a closing `$` run ends the content, -1 for none, FAIL for text after it. */
+  dollarCloseIn(from: number, end: number, sizeOpen: number): number {
+    let slashes = 0;
+    for (let i = from; i < end; i++) {
+      const c = this.source.charCodeAt(i);
+      const escaped = slashes % 2 === 1;
+      slashes = c === BACKSLASH ? slashes + 1 : 0;
+      if (c !== DOLLAR || escaped) continue;
+      let j = i;
+      while (j < end && this.source.charCodeAt(j) === DOLLAR) j++;
+      if (j - i < sizeOpen) {
+        i = j - 1;
+        continue;
+      }
+      let k = j;
+      while (k < end && isSpaceOrTab(this.source.charCodeAt(k))) k++;
+      return k === end ? i : FAIL;
+    }
+    return -1;
+  }
+
+  /** In a TeX content line: where a `\]` that ends the line starts, or -1. */
+  texCloseIn(from: number, end: number): number {
+    for (let i = from; i < end; i++) {
+      if (this.source.charCodeAt(i) !== BACKSLASH) continue;
+      if (this.source.charCodeAt(i + 1) !== RBRACKET) {
+        i++;
+        continue;
+      }
+      let k = i + 2;
+      while (k < end && isSpaceOrTab(this.source.charCodeAt(k))) k++;
+      if (k === end) return i;
+      i++;
+    }
+    return -1;
   }
 
   tryThematicBreak(c: number): boolean {
