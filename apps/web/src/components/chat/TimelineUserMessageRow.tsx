@@ -502,7 +502,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     userMessage.attribution !== "guest" &&
     otherUserFiles.length > 0 &&
     regularImages.length + userVideos.length + userAudio.length + unknownAttachments.length === 0 &&
-    replaceComposerContextReferences(resolvedContext.text, (reference) =>
+    replaceComposerContextReferences(bodyText, (reference) =>
       attachmentReferences.some(
         (attached) =>
           attached.contextId === reference.contextId &&
@@ -517,7 +517,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     userAudio.length > 0 &&
     regularImages.length + userVideos.length + otherUserFiles.length + unknownAttachments.length ===
       0 &&
-    replaceComposerContextReferences(resolvedContext.text, (reference) =>
+    replaceComposerContextReferences(bodyText, (reference) =>
       attachmentReferences.some(
         (attached) =>
           attached.contextId === reference.contextId &&

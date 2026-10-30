@@ -769,7 +769,10 @@ describe("MessagesTimeline attachment-only messages", () => {
     expect(matches[0]!.range.getBoundingClientRect().height).toBeGreaterThan(0);
   });
 
-  it("labels a message without any image as attachment only", async () => {
+  it.each([
+    { name: "clip.mp4", mimeType: "video/mp4" },
+    { name: "report.pdf", mimeType: "application/pdf" },
+  ])("labels $name as attachment only and preserves its layout", async ({ name, mimeType }) => {
     setup();
     await using screen = await renderTimeline([
       message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, {
@@ -777,13 +780,16 @@ describe("MessagesTimeline attachment-only messages", () => {
           {
             type: "file" as const,
             id: ChatAttachmentId.make("attachment-video"),
-            name: "clip.mp4",
-            mimeType: "video/mp4",
+            name,
+            mimeType,
             sizeBytes: 1024,
           },
         ],
       }),
     ]);
+    if (mimeType === "application/pdf") {
+      await vi.waitFor(() => expect(screen.text()).toContain("PDF · "));
+    }
     expect(screen.buttons("Attachment only")).toHaveLength(1);
     expect(screen.buttons("Image only")).toHaveLength(0);
   });

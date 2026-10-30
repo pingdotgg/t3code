@@ -1893,11 +1893,22 @@ function renderFeedEntry(
         : pendingAttachments;
       const fileCards = standaloneMedia
         ? resolveUserMessageFileCards({
-            text: presentation.text,
+            text: attachmentOnly ? "" : presentation.text,
             attachments: attachments.length > 0 ? attachments : pendingAttachments,
             context: message.context,
           })
         : null;
+      const attachmentCaption = attachmentOnly ? (
+        <AttachmentOnlyCaption
+          label={
+            attachments.every(isImageAttachment) &&
+            pendingAttachments.every((attachment) => attachment.type === "image")
+              ? "Image only"
+              : "Attachment only"
+          }
+          instruction={presentation.text}
+        />
+      ) : null;
       const hasBubble =
         fileCards === null &&
         (foldRowId !== null ||
@@ -1958,6 +1969,14 @@ function renderFeedEntry(
                   />
                 );
               })}
+              {attachmentCaption ? (
+                <View
+                  className="mt-2 rounded-[20px] px-3.5 py-2.5"
+                  style={{ backgroundColor: userBubbleColor }}
+                >
+                  {attachmentCaption}
+                </View>
+              ) : null}
             </View>
           ) : null}
           {hasBubble ? (
@@ -2064,17 +2083,7 @@ function renderFeedEntry(
                       })}
                     </View>
                   ) : null}
-                  {attachmentOnly ? (
-                    <AttachmentOnlyCaption
-                      label={
-                        attachments.every(isImageAttachment) &&
-                        pendingAttachments.every((attachment) => attachment.type === "image")
-                          ? "Image only"
-                          : "Attachment only"
-                      }
-                      instruction={presentation.text}
-                    />
-                  ) : null}
+                  {attachmentCaption}
                   {presentation.text.trim().length > 0 && !attachmentOnly ? (
                     <MarkdownImageAvailableWidthContext
                       value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
