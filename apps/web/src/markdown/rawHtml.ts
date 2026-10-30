@@ -403,25 +403,35 @@ export interface RawHtmlHooks {
   readonly sanitize: (tree: Root) => Root;
 }
 
+function sanitizeShallow(element: Element, hooks: RawHtmlHooks) {
+  const result = hooks.sanitize({ type: "root", children: [{ ...element, children: [] }] });
+  const first = result.children[0];
+  return first?.type === "element" ? first : null;
+}
+
 /** Sanitizes elements the raw HTML made; Markdown elements were sanitized as they were built. */
-function sanitizeRaw(parent: Element | Root, hooks: RawHtmlHooks) {
+function sanitizeRaw(parent: Element | Root, hooks: RawHtmlHooks, seen: RawHtmlSeen) {
   const out: ElementContent[] = [];
   for (const child of parent.children as ElementContent[]) {
     if (child.type !== "element") {
       out.push(child);
       continue;
     }
-    sanitizeRaw(child, hooks);
+    sanitizeRaw(child, hooks, seen);
     if (!fromRaw.has(child)) {
       out.push(child);
       continue;
     }
-    const shallow: Element = { ...child, children: [] };
-    const result = hooks.sanitize({ type: "root", children: [shallow] });
-    const safe = result.children[0];
-    if (safe?.type === "element") {
-      safe.children = child.children;
-      out.push(safe);
+    const safe = sanitizeShallow(child, hooks);
+    if (safe) {
+      if (HEADINGS.has(safe.tagName)) seen.heading = true;
+      if (safe.tagName === "code") seen.code = true;
+      out.push({
+        ...child,
+        tagName: safe.tagName,
+        properties: safe.properties,
+        children: child.children,
+      });
     } else {
       // Unknown elements give way to their children.
       out.push(...child.children);
@@ -430,11 +440,19 @@ function sanitizeRaw(parent: Element | Root, hooks: RawHtmlHooks) {
   parent.children = out as typeof parent.children;
 }
 
+interface RawHtmlSeen {
+  heading: boolean;
+  code: boolean;
+}
+
 /**
  * Nests raw HTML nodes in `tree` as rehype-raw would, then sanitizes what they made. Returns
  * null when the HTML needs parse5.
  */
-export function assembleRawHtml(tree: Root, hooks: RawHtmlHooks): Root | null {
+export function assembleRawHtml(
+  tree: Root,
+  hooks: RawHtmlHooks,
+): { tree: Root; seen: RawHtmlSeen } | null {
   const root: Root = { ...tree, children: [] };
   try {
     const scope: Scope = {
@@ -454,8 +472,9 @@ export function assembleRawHtml(tree: Root, hooks: RawHtmlHooks): Root | null {
   dropComments(root);
   root.data = { quirksMode: false };
   hooks.beforeSanitize(root);
-  sanitizeRaw(root, hooks);
-  return root;
+  const seen: RawHtmlSeen = { heading: false, code: false };
+  sanitizeRaw(root, hooks, seen);
+  return { tree: root, seen };
 }
 
 export type { Properties };

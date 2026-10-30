@@ -67,9 +67,12 @@ export function chatRenderHast(tree: Root): HastRoot | null {
     blockTextDirections(result.hast);
     return result.hast;
   }
-  const hast = assembleRawHtml(result.hast, RAW_HOOKS);
-  if (!hast) return null;
-  addHeadingIds(hast);
-  addTextDirection(hast);
+  const assembled = assembleRawHtml(result.hast, RAW_HOOKS);
+  if (!assembled) return null;
+  const { tree: hast, seen } = assembled;
+  if (result.hasHeading || seen.heading) addHeadingIds(hast);
+  // Markdown code is isolated as it is built; only code from raw HTML still needs it.
+  if (seen.code) addTextDirection(hast);
+  else blockTextDirections(hast);
   return hast;
 }

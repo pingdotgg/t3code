@@ -474,14 +474,20 @@ function blockFileLinkSources(
   return { hrefs, spans };
 }
 
-// Streamed replies rescan only their open last block; links and code spans never cross blocks.
+// Links and code spans never cross blocks.
 const blockFileLinkSourcesCache = new LRUCache<BlockFileLinkSources>(2_000, 4 * 1024 * 1024);
 
 function fileLinkSourcesKey(
   text: string,
   cwd: string | undefined,
   imageBaseDir: string | undefined,
+  streaming: boolean,
 ): string {
+  // A finished message scans once; a streamed one rescans only its open last block.
+  if (!streaming) {
+    const { hrefs, spans } = blockFileLinkSources(text, cwd, imageBaseDir);
+    return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+  }
   const hrefs = new Set<string>();
   const spans = new Set<string>();
   for (const block of splitMarkdownBlocks(text) ?? [text]) {
@@ -714,7 +720,7 @@ function useChatMarkdownState({
   // Keyed by the file links found, not the text, so streamed text that adds none keeps the
   // renderer context, and every block reading it, unchanged.
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
-  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir)}`;
+  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir, isStreaming)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
     resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir);
   const resolveThreadPullRequest = (
