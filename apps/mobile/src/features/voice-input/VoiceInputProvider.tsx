@@ -84,12 +84,16 @@ const voiceInputAtom = Atom.make((get) => {
     selectInput: (inputs) => {
       const preferences = registry.get(mobilePreferencesAtom);
       if (!AsyncResult.isSuccess(preferences)) return null;
-      const known = microphoneOrder(preferences.value.microphones);
+      const platform = Platform.OS === "android" ? "android" : "ios";
+      const known = microphoneOrder(preferences.value.microphones, platform);
       const order = rememberMicrophones(known, inputs);
       if (order !== known) {
         registry.set(updateMobilePreferencesAtom, {
           transform: (current) => ({
-            microphones: rememberMicrophones(microphoneOrder(current.microphones), inputs),
+            microphones: rememberMicrophones(
+              microphoneOrder(current.microphones, platform),
+              inputs,
+            ),
           }),
         });
       }

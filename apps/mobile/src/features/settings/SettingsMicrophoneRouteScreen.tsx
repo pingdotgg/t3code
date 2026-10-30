@@ -3,7 +3,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
 import { useState } from "react";
-import { Linking, useWindowDimensions, View } from "react-native";
+import { Linking, Platform, useWindowDimensions, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -89,12 +89,14 @@ const KINDS: Record<
 };
 
 export function SettingsMicrophoneRouteScreen() {
+  const platform = Platform.OS === "android" ? "android" : "ios";
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const entries = microphoneOrder(
     AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value.microphones : undefined,
+    platform,
   );
   const { permission, request: requestPermission } = useMicrophonePermission();
   const [drag, setDrag] = useState<{ readonly key: string; readonly translation: number } | null>(
@@ -108,7 +110,7 @@ export function SettingsMicrophoneRouteScreen() {
   const move = (key: string, steps: number) =>
     savePreferences({
       transform: (current) => {
-        const next = [...microphoneOrder(current.microphones)];
+        const next = [...microphoneOrder(current.microphones, platform)];
         const from = next.findIndex((entry) => microphoneEntryKey(entry) === key);
         const to = Math.min(next.length - 1, Math.max(0, from + steps));
         if (from === -1 || from === to) return {};
@@ -120,7 +122,7 @@ export function SettingsMicrophoneRouteScreen() {
   const forget = (key: string) =>
     savePreferences({
       transform: (current) => ({
-        microphones: microphoneOrder(current.microphones).filter(
+        microphones: microphoneOrder(current.microphones, platform).filter(
           (entry) => microphoneEntryKey(entry) !== key,
         ),
       }),
@@ -197,9 +199,12 @@ export function SettingsMicrophoneRouteScreen() {
           })}
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
-          Voice input records from the first connected microphone in this list. Wired and Bluetooth
+          Voice input prefers the first connected microphone in this list. Wired and Bluetooth
           devices are added by name after you use voice input with them connected; until then, the
           Other row ranks them. Swipe a device left to forget it.
+          {platform === "android"
+            ? " Android may use another input when the preferred microphone cannot be routed."
+            : null}
         </Text>
       </ScrollView>
     </View>

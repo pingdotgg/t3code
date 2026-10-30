@@ -4,7 +4,7 @@ index 198fe6d..5b39611 100644
 +++ b/ios/AudioRecorder.swift
 @@ -285,16 +285,16 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
    }
- 
+
    func didFinish(_ recorder: AVAudioRecorder, successfully flag: Bool) {
 -    // Update internal state when recording finishes automatically (e.g., from recordForDuration)
 -    currentState = .stopped
@@ -12,7 +12,7 @@ index 198fe6d..5b39611 100644
 +    currentState = flag ? .stopped : .error
      resetDurationTracking()
      durationLimitSeconds = nil
- 
+
      emit(event: recordingStatus, payload: [
        "id": id,
        "isFinished": true,
@@ -127,3 +127,307 @@ diff --git a/android/src/main/java/expo/modules/audio/AudioModule.kt b/android/s
 +      Function("pause") { player: AudioPlayer, /* deactivateSession - iOS only */ _: Boolean? ->
          runOnMain {
            player.isPaused = false
+
+diff --git a/android/src/main/java/expo/modules/audio/AudioRecorder.kt b/android/src/main/java/expo/modules/audio/AudioRecorder.kt
+index 2ff4a474fdea3efa652436a8a3960c3669ad298b..ab006b4321ad3854a80a52b3d41075bbd370bcd7 100644
+--- a/android/src/main/java/expo/modules/audio/AudioRecorder.kt
++++ b/android/src/main/java/expo/modules/audio/AudioRecorder.kt
+@@ -42,6 +42,11 @@ class AudioRecorder(
+   var isPrepared = false
+
+   private var recorder: MediaRecorder? = null
++  private val inputRoute = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
++    RecordingInputRoute(context.getSystemService(Context.AUDIO_SERVICE) as AudioManager)
++  } else {
++    null
++  }
+   val id = UUID.randomUUID().toString()
+   var startTime = 0L
+   var isRecording = false
+@@ -248,7 +253,11 @@ class AudioRecorder(
+     recordingTimerJob?.cancel()
+     recordingTimerJob = null
+
+-    recorder?.release()
++    try {
++      recorder?.release()
++    } finally {
++      inputRoute?.close()
++    }
+     recorder = null
+     isRecording = false
+     isPaused = false
+@@ -475,48 +484,37 @@ class AudioRecorder(
+     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+   fun getAvailableInputs(audioManager: AudioManager) =
+-    audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).mapNotNull { deviceInfo ->
+-      val type = deviceInfo.type
+-      if (type == AudioDeviceInfo.TYPE_BUILTIN_MIC || type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || type == AudioDeviceInfo.TYPE_WIRED_HEADSET) {
+-        getMapFromDeviceInfo(deviceInfo)
+-      } else {
+-        null
+-      }
+-    }
++    recordingInputs(audioManager).map(::getMapFromDeviceInfo)
+
+   @Suppress("DEPRECATION")
+   fun setInput(uid: String, audioManager: AudioManager) {
+-    val deviceInfo: AudioDeviceInfo? = getDeviceInfoFromUid(uid, audioManager)
++    val deviceInfo = getDeviceInfoFromUid(uid, audioManager) ?: throw PreferredInputNotFoundException()
+
+     if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+       throw SetAudioInputNotSupportedException()
+     }
+
+-    if (deviceInfo != null && deviceInfo.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+-        audioManager.setCommunicationDevice(deviceInfo)
+-      } else {
++    try {
++      if (inputRoute != null) {
++        inputRoute.select(deviceInfo)
++      } else if (deviceInfo.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+         audioManager.startBluetoothSco()
+-      }
+-    } else {
+-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+-        audioManager.clearCommunicationDevice()
+       } else {
+         audioManager.stopBluetoothSco()
+       }
+-    }
+-
+-    val success = recorder?.setPreferredDevice(deviceInfo)
+-    if (success == false) {
+-      throw PreferredInputNotFoundException()
++      if (recorder?.setPreferredDevice(deviceInfo.takeIf { it.isSource }) != true) {
++        throw PreferredInputNotFoundException()
++      }
++    } catch (error: Exception) {
++      inputRoute?.close()
++      throw error
+     }
+   }
+
+   private fun getDeviceInfoFromUid(uid: String, audioManager: AudioManager): AudioDeviceInfo? {
+-    val id = uid.toInt()
+-    val audioDevices: Array<AudioDeviceInfo> = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
++    val audioDevices = recordingInputs(audioManager)
+     for (device in audioDevices) {
+-      if (device.id == id) {
++      if (recordingInputUid(device) == uid || device.id.toString() == uid) {
+         return device
+       }
+     }
+diff --git a/android/src/main/java/expo/modules/audio/AudioUtils.kt b/android/src/main/java/expo/modules/audio/AudioUtils.kt
+index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..ec3e0274d0a84fd8c7960cc0ea1b30058123be54 100644
+--- a/android/src/main/java/expo/modules/audio/AudioUtils.kt
++++ b/android/src/main/java/expo/modules/audio/AudioUtils.kt
+@@ -2,6 +2,8 @@ package expo.modules.audio
+
+ import android.content.Context
+ import android.media.AudioDeviceInfo
++import android.media.AudioManager
++import android.os.Build
+ import android.os.Bundle
+ import androidx.annotation.OptIn
+ import androidx.media3.common.Player
+@@ -19,20 +21,46 @@ fun ensureDirExists(dir: File): File {
+
+ fun getMapFromDeviceInfo(deviceInfo: AudioDeviceInfo): Bundle {
+   val map = Bundle()
+-  val type = when (deviceInfo.type) {
+-    AudioDeviceInfo.TYPE_BUILTIN_MIC -> "MicrophoneBuiltIn"
+-    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "BluetoothSCO"
+-    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "BluetoothA2DP"
+-    AudioDeviceInfo.TYPE_TELEPHONY -> "Telephony"
+-    AudioDeviceInfo.TYPE_WIRED_HEADSET -> "MicrophoneWired"
+-    else -> "Unknown device type"
+-  }
++  val type = recordingInputType(deviceInfo.type) ?: "Unknown device type"
+   map.putString("name", deviceInfo.productName.toString())
+   map.putString("type", type)
+-  map.putString("uid", deviceInfo.id.toString())
++  map.putString("uid", recordingInputUid(deviceInfo))
+   return map
+ }
+
++internal fun recordingInputs(manager: AudioManager): List<AudioDeviceInfo> {
++  val inputs = manager.getDevices(AudioManager.GET_DEVICES_INPUTS).filter {
++    recordingInputType(it.type) != null
++  }
++  val bluetooth = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
++    manager.availableCommunicationDevices.filter { isBluetoothInput(it.type) }
++  } else {
++    emptyList()
++  }
++  // Some Bluetooth microphone ports appear only after the communication route is activated.
++  return (inputs + bluetooth).distinctBy(::recordingInputUid)
++}
++
++internal fun isBluetoothInput(type: Int) = type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
++  type == AudioDeviceInfo.TYPE_BLE_HEADSET || type == AudioDeviceInfo.TYPE_HEARING_AID
++
++internal fun recordingInputType(type: Int): String? = when (type) {
++  AudioDeviceInfo.TYPE_BUILTIN_MIC -> "MicrophoneBuiltIn"
++  AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "BluetoothSCO"
++  AudioDeviceInfo.TYPE_BLE_HEADSET -> "BluetoothLE"
++  AudioDeviceInfo.TYPE_HEARING_AID -> "HearingAid"
++  AudioDeviceInfo.TYPE_WIRED_HEADSET -> "MicrophoneWired"
++  AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> "USBAudio"
++  AudioDeviceInfo.TYPE_LINE_ANALOG, AudioDeviceInfo.TYPE_LINE_DIGITAL -> "LineIn"
++  else -> null
++}
++
++internal fun recordingInputUid(device: AudioDeviceInfo): String {
++  val address = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) device.address else ""
++  // Android's numeric port ID changes on reconnect; addressless ports share a preference by name.
++  return "android:${device.type}:${address.ifBlank { device.productName.toString() }}"
++}
++
+ @OptIn(UnstableApi::class)
+ fun buildBasicMediaSession(context: Context, player: Player, onPlay: () -> Unit): MediaSession {
+   return MediaSession.Builder(context, PlayRequestingPlayer(player, onPlay))
+diff --git a/android/src/main/java/expo/modules/audio/RecordingInputRoute.kt b/android/src/main/java/expo/modules/audio/RecordingInputRoute.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..2d584666da29c3f87ee5ee819e880b003ccceb32
+--- /dev/null
++++ b/android/src/main/java/expo/modules/audio/RecordingInputRoute.kt
+@@ -0,0 +1,41 @@
++package expo.modules.audio
++
++import android.media.AudioDeviceInfo
++import android.media.AudioManager
++import androidx.annotation.RequiresApi
++import java.io.Closeable
++
++@RequiresApi(31)
++internal class RecordingInputRoute(private val manager: AudioManager) : Closeable {
++  private var previousMode: Int? = null
++
++  fun select(input: AudioDeviceInfo) {
++    if (!isBluetoothInput(input.type)) {
++      close()
++      return
++    }
++    // Communication routing takes the headset's output; Android pairs its microphone.
++    val output = manager.availableCommunicationDevices.firstOrNull {
++      it.isSink && it.type == input.type &&
++        if (input.address.isNotBlank()) it.address == input.address else it.productName == input.productName
++    } ?: throw PreferredInputNotFoundException()
++    if (previousMode == null) previousMode = manager.mode
++    try {
++      manager.mode = AudioManager.MODE_IN_COMMUNICATION
++      if (!manager.setCommunicationDevice(output)) throw PreferredInputNotFoundException()
++    } catch (error: Exception) {
++      close()
++      throw error
++    }
++  }
++
++  override fun close() {
++    val mode = previousMode ?: return
++    previousMode = null
++    try {
++      manager.clearCommunicationDevice()
++    } finally {
++      if (manager.mode == AudioManager.MODE_IN_COMMUNICATION) manager.mode = mode
++    }
++  }
++}
+diff --git a/android/src/test/java/expo/modules/audio/RecordingInputTest.kt b/android/src/test/java/expo/modules/audio/RecordingInputTest.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..90d3feec81b2e76b611c6aa14a96333c004512b5
+--- /dev/null
++++ b/android/src/test/java/expo/modules/audio/RecordingInputTest.kt
+@@ -0,0 +1,89 @@
++package expo.modules.audio
++
++import android.media.AudioDeviceInfo
++import android.media.AudioManager
++import io.mockk.every
++import io.mockk.mockk
++import org.junit.Assert.*
++import org.junit.Test
++
++class RecordingInputTest {
++  private fun device(type: Int, id: Int, address: String, name: String = "Headset", sink: Boolean = false) =
++    mockk<AudioDeviceInfo> {
++      every { this@mockk.type } returns type
++      every { this@mockk.id } returns id
++      every { this@mockk.address } returns address
++      every { productName } returns name
++      every { isSink } returns sink
++      every { isSource } returns !sink
++    }
++
++  @Test
++  fun microphoneTypesExcludePlaybackDevices() {
++    val types = mapOf(
++      AudioDeviceInfo.TYPE_BUILTIN_MIC to "MicrophoneBuiltIn",
++      AudioDeviceInfo.TYPE_WIRED_HEADSET to "MicrophoneWired",
++      AudioDeviceInfo.TYPE_USB_DEVICE to "USBAudio",
++      AudioDeviceInfo.TYPE_USB_HEADSET to "USBAudio",
++      AudioDeviceInfo.TYPE_BLUETOOTH_SCO to "BluetoothSCO",
++      AudioDeviceInfo.TYPE_BLE_HEADSET to "BluetoothLE",
++      AudioDeviceInfo.TYPE_HEARING_AID to "HearingAid"
++    )
++    for ((type, label) in types) assertEquals(label, recordingInputType(type))
++    assertNull(recordingInputType(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
++    assertNull(recordingInputType(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER))
++  }
++
++  @Test
++  fun preferenceSurvivesPortIdChanges() {
++    val first = device(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 10, "", "Buds")
++    val reconnected = device(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 99, "", "Buds")
++    val other = device(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 10, "", "Other buds")
++    assertEquals(recordingInputUid(first), recordingInputUid(reconnected))
++    assertNotEquals(recordingInputUid(first), recordingInputUid(other))
++  }
++
++  @Test
++  fun communicationRouteUsesMatchingOutputAndRestoresMode() {
++    for (type in listOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET)) {
++      val input = device(type, 10, "target")
++      val wrong = device(type, 20, "other", sink = true)
++      val output = device(type, 30, "target", sink = true)
++      val manager = mockk<AudioManager>()
++      var mode = AudioManager.MODE_NORMAL
++      var routed: AudioDeviceInfo? = null
++      every { manager.availableCommunicationDevices } returns listOf(input, wrong, output)
++      every { manager.mode } answers { mode }
++      every { manager.mode = any() } answers { mode = firstArg() }
++      every { manager.setCommunicationDevice(any()) } answers { routed = firstArg(); true }
++      every { manager.clearCommunicationDevice() } answers { routed = null }
++      val route = RecordingInputRoute(manager)
++      route.select(input)
++      assertSame(output, routed)
++      assertEquals(AudioManager.MODE_IN_COMMUNICATION, mode)
++      route.close()
++      route.close()
++      assertNull(routed)
++      assertEquals(AudioManager.MODE_NORMAL, mode)
++      route.select(output)
++      route.select(device(AudioDeviceInfo.TYPE_BUILTIN_MIC, 1, ""))
++      assertNull(routed)
++      assertEquals(AudioManager.MODE_NORMAL, mode)
++    }
++  }
++
++  @Test
++  fun rejectedRouteDoesNotLeaveCommunicationModeActive() {
++    val input = device(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 1, "target")
++    val output = device(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 2, "target", sink = true)
++    val manager = mockk<AudioManager>()
++    var mode = AudioManager.MODE_NORMAL
++    every { manager.availableCommunicationDevices } returns listOf(output)
++    every { manager.mode } answers { mode }
++    every { manager.mode = any() } answers { mode = firstArg() }
++    every { manager.setCommunicationDevice(any()) } returns false
++    every { manager.clearCommunicationDevice() } returns Unit
++    assertThrows(PreferredInputNotFoundException::class.java) { RecordingInputRoute(manager).select(input) }
++    assertEquals(AudioManager.MODE_NORMAL, mode)
++  }
++}
