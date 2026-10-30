@@ -14,6 +14,7 @@ import {
   hasCompleteProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
+  resolveProvidersForCwd,
 } from "./providerSkills.ts";
 
 const provider = {
@@ -129,6 +130,30 @@ describe("workspace provider snapshots", () => {
     expect(hasCompleteProviderWorkspaceSnapshot(provider, "/workspace/project-b")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(undefined, "/workspace/project-a")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(provider, null)).toBe(false);
+  });
+
+  it("lists a project's own models only for that project", () => {
+    const projectModel = {
+      slug: "uni/medium-gpt",
+      name: "Medium GPT",
+      isCustom: false,
+      capabilities: null,
+    } satisfies ServerProvider["models"][number];
+    const withProjectModels = {
+      ...provider,
+      workspaceSnapshots: provider.workspaceSnapshots.map((snapshot) => ({
+        ...snapshot,
+        models: [projectModel],
+      })),
+    } satisfies ServerProvider;
+    const providers = [provider, withProjectModels];
+
+    expect(resolveProvidersForCwd(providers, "/workspace/project-a").map((p) => p.models)).toEqual([
+      [],
+      [projectModel],
+    ]);
+    expect(resolveProvidersForCwd(providers, "/workspace/project-a")[0]).toBe(provider);
+    expect(resolveProvidersForCwd(providers, "/workspace/project-b")).toBe(providers);
   });
 });
 
@@ -281,6 +306,22 @@ describe("provider workspace snapshot refresh atom", () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(run).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rescans a current snapshot whose commands are complete but models are pending", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const [current] = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { run, unmount } = setup([
+      {
+        ...current!,
+        workspaceSnapshots: current!.workspaceSnapshots!.map((snapshot) => ({
+          ...snapshot,
+          modelsPending: true,
+        })),
+      },
+    ]);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
   });
 
   it("stops retrying after three failed scans until the TTL lapses", async () => {

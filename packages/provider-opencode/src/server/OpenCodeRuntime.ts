@@ -222,6 +222,36 @@ export const loadOpenCodeCommands = (client: OpencodeClient) =>
     ),
   );
 
+const loadOpenCodeProviders = (client: OpencodeClient) =>
+  runOpenCodeSdk("provider.list", (signal) => client.provider.list(undefined, { signal })).pipe(
+    Effect.filterMapOrFail(
+      (list) =>
+        list.data
+          ? Result.succeed(list.data)
+          : Result.fail(
+              new OpenCodeRuntimeError({
+                operation: "provider.list",
+                detail: "OpenCode provider list was empty.",
+              }),
+            ),
+      (result) => result,
+    ),
+  );
+
+const loadOpenCodeAgents = (client: OpencodeClient) =>
+  runOpenCodeSdk("app.agents", (signal) => client.app.agents(undefined, { signal })).pipe(
+    Effect.map((result): ReadonlyArray<Agent> => result.data ?? []),
+  );
+
+/** The providers and agents OpenCode resolves for the client's directory. Fails if either read does. */
+export const loadOpenCodeProviderCatalog = Effect.fn("OpenCodeRuntime.loadOpenCodeProviderCatalog")(
+  (client: OpencodeClient) =>
+    Effect.all(
+      { providerList: loadOpenCodeProviders(client), agents: loadOpenCodeAgents(client) },
+      { concurrency: "unbounded" },
+    ),
+);
+
 export interface ParsedOpenCodeModelSlug {
   readonly providerID: string;
   readonly modelID: string;
@@ -767,28 +797,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     );
   };
 
-  const loadProviders = (client: OpencodeClient) =>
-    runOpenCodeSdk("provider.list", (signal) => client.provider.list(undefined, { signal })).pipe(
-      Effect.filterMapOrFail(
-        (list) =>
-          list.data
-            ? Result.succeed(list.data)
-            : Result.fail(
-                new OpenCodeRuntimeError({
-                  operation: "provider.list",
-                  detail: "OpenCode provider list was empty.",
-                }),
-              ),
-        (result) => result,
-      ),
-    );
-
-  const loadAgents = (client: OpencodeClient) =>
-    runOpenCodeSdk("app.agents", (signal) => client.app.agents(undefined, { signal })).pipe(
-      Effect.map((result) => result.data ?? []),
-      Effect.orElseSucceed((): ReadonlyArray<Agent> => []),
-    );
-
   const loadOpenCodeSkills: OpenCodeRuntime["Service"]["loadOpenCodeSkills"] = (client) =>
     runOpenCodeSdk("app.skills", (signal) => client.app.skills(undefined, { signal })).pipe(
       Effect.map((result) =>
@@ -805,8 +813,8 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const loadOpenCodeInventory: OpenCodeRuntime["Service"]["loadOpenCodeInventory"] = (client) =>
     Effect.all(
       [
-        loadProviders(client),
-        loadAgents(client),
+        loadOpenCodeProviders(client),
+        loadOpenCodeAgents(client).pipe(Effect.orElseSucceed((): ReadonlyArray<Agent> => [])),
         loadSkills(client),
         loadOpenCodeCommands(client).pipe(Effect.orElseSucceed(() => [])),
       ],

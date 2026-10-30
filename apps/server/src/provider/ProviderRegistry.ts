@@ -1,6 +1,7 @@
 import {
   defaultInstanceIdForDriver,
   isProviderWorkspaceSnapshotCurrent,
+  isProviderWorkspaceSnapshotPending,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
@@ -137,6 +138,9 @@ export function upsertProviderWorkspaceSnapshot(
 ): ServerProvider {
   const previousSnapshot = provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
   const optionDescriptors = scopedSnapshot.optionDescriptors ?? previousSnapshot?.optionDescriptors;
+  const models = scopedSnapshot.workspaceModelsPending
+    ? previousSnapshot?.models
+    : scopedSnapshot.workspaceModels;
   const workspaceSnapshot = {
     cwd,
     checkedAt: scopedSnapshot.checkedAt,
@@ -146,6 +150,8 @@ export function upsertProviderWorkspaceSnapshot(
     ...(scopedSnapshot.slashCommandsPending ? { slashCommandsPending: true } : {}),
     skills: scopedSnapshot.skills,
     ...(optionDescriptors === undefined ? {} : { optionDescriptors }),
+    ...(models === undefined ? {} : { models }),
+    ...(scopedSnapshot.workspaceModelsPending ? { modelsPending: true } : {}),
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
   return {
     ...provider,
@@ -273,14 +279,22 @@ export const mergeProviderSnapshot = (
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
+  const models = mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models);
+  // Folder catalogs were compared with the old machine catalog, so every folder rescans.
+  const previousWorkspaceSnapshots = Equal.equals(models, previousProvider.models)
+    ? previousProvider.workspaceSnapshots
+    : previousProvider.workspaceSnapshots?.map((snapshot) => ({
+        ...snapshot,
+        modelsPending: true,
+      }));
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
-    models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
+    models,
     ...(nextProvider.workspaceSnapshots !== undefined
       ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
-      : previousProvider.workspaceSnapshots !== undefined
-        ? { workspaceSnapshots: previousProvider.workspaceSnapshots }
+      : previousWorkspaceSnapshots !== undefined
+        ? { workspaceSnapshots: previousWorkspaceSnapshots }
         : {}),
     ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
       ? {
@@ -940,7 +954,7 @@ export const layer = Layer.effect(
         !provider.enabled ||
         (!input.fresh &&
           scannedFrom &&
-          !scannedFrom.slashCommandsPending &&
+          !isProviderWorkspaceSnapshotPending(scannedFrom) &&
           isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
       ) {
         return providers;
@@ -948,17 +962,27 @@ export const layer = Layer.effect(
       // Use scan start for TTL, not checkedAt inherited from the machine health check.
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
-      if (!instance?.snapshotForCwd) return providers;
+      const snapshotForCwd = instance?.snapshotForCwd;
+      if (!instance || !snapshotForCwd) return providers;
       const token = yield* Deferred.make<void>();
+      // A machine refresh can change this cwd's snapshot, so the scan publishes against the result.
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
             Effect.andThen(refreshInstance(input.instanceId)),
+            Effect.andThen(Ref.get(providersRef)),
+            Effect.map((current) =>
+              workspaceSnapshotOf(
+                current.find((candidate) => candidate.instanceId === input.instanceId),
+              ),
+            ),
           )
-        : Effect.void;
+        : Effect.succeed(scannedFrom);
       const runScan = refreshMachineSnapshot.pipe(
-        Effect.andThen(instance.snapshotForCwd(input.cwd)),
+        Effect.flatMap((scanBase) =>
+          Effect.map(snapshotForCwd(input.cwd), (scopedSnapshot) => ({ scanBase, scopedSnapshot })),
+        ),
         // Scans fail on error; returned inventory remains valid even when provider health reports an error.
-        Effect.flatMap((scopedSnapshot) =>
+        Effect.flatMap(({ scanBase, scopedSnapshot }) =>
           instanceRegistry.getInstance(input.instanceId).pipe(
             Effect.flatMap((currentInstance) => {
               if (currentInstance !== instance) return Ref.get(providersRef);
@@ -969,7 +993,7 @@ export const layer = Layer.effect(
                 }
                 return currentProviders.map((candidate) =>
                   candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
+                  Equal.equals(workspaceSnapshotOf(candidate), scanBase)
                     ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
                         ...scopedSnapshot,
                         checkedAt: scannedAt,

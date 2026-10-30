@@ -33,6 +33,7 @@ import {
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
+  serverConfigForCwd,
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useAtomValue } from "@effect/atom-react";
@@ -142,6 +143,8 @@ type NewTaskFlowContextValue = {
   readonly canChooseWorkspace: boolean;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
+  /** Where the draft's agent will run: the selected worktree, else the project root. */
+  readonly workspaceCwd: string | null;
   readonly resolveWorkspaceSelection: (
     selection: ComposerDraftWorkspaceSelection | undefined,
   ) => ComposerDraftWorkspaceSelection;
@@ -330,7 +333,6 @@ export function NewTaskFlowProvider(
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const modelSelectionNow = useNowMinuteMs();
   const projectDefaults = useNewTaskProjectDefaults(selectedProject);
-  const selectedEnvironmentServerConfig = projectDefaults.serverConfig;
   const isScratchDraft = projectDefaults.isScratch;
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
@@ -410,6 +412,15 @@ export function NewTaskFlowProvider(
   const workspaceMode = workspaceSelection.mode;
   const selectedBranchName = workspaceSelection.branch;
   const selectedWorktreePath = workspaceSelection.worktreePath;
+  // A new worktree does not exist yet, so the project root stands in for it.
+  const workspaceCwd =
+    (workspaceMode === "worktree"
+      ? selectedProject?.workspaceRoot
+      : (selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
+  const selectedEnvironmentServerConfig = serverConfigForCwd(
+    projectDefaults.serverConfig,
+    workspaceCwd,
+  );
   // Keep the user's explicit choice separate from the resolved display value:
   // only the explicit flag is ever written back to the draft, so the resolved
   // value keeps tracking the server setting when the config loads late.
@@ -854,6 +865,7 @@ export function NewTaskFlowProvider(
     canChooseWorkspace,
     selectedBranchName,
     selectedWorktreePath,
+    workspaceCwd,
     resolveWorkspaceSelection,
     startFromOrigin,
     draftKey: selectedProjectDraftKey,

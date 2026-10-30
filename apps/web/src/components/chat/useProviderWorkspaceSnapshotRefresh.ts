@@ -15,17 +15,17 @@ const idleRefreshAtom: Atom.Atom<unknown> = Atom.make<void>(undefined).pipe(
 );
 
 /**
- * Keeps the selected provider's workspace snapshot fresh for the composer's
- * cwd while mounted. Returns a check to run when the user types.
+ * Keeps a provider's workspace snapshot fresh for the composer's cwd while
+ * mounted. Returns a check to run when the user types.
  */
 export function useProviderWorkspaceSnapshotRefresh(input: {
-  readonly environmentId: EnvironmentId;
+  readonly environmentId: EnvironmentId | null;
   readonly gitCwd: string | null;
   readonly instanceId: ProviderInstanceId | undefined;
 }): () => void {
   const { environmentId, gitCwd, instanceId } = input;
   const atom =
-    gitCwd && instanceId
+    environmentId && gitCwd && instanceId
       ? providerWorkspaceSnapshotRefresh({ environmentId, instanceId, cwd: gitCwd })
       : idleRefreshAtom;
   return useAtomRefresh(atom);

@@ -17,6 +17,7 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { resolveProvidersForCwd } from "@t3tools/client-runtime/providerSkills";
 
 export type ModelOption = {
   readonly key: string;
@@ -133,6 +134,16 @@ function normalizeSelectionOptions(
         instanceId: selection.instanceId,
         model: selection.model,
       };
+}
+
+/** The config as a project at `cwd` sees it, with that project's own provider models. */
+export function serverConfigForCwd<C extends T3ServerConfig | null | undefined>(
+  config: C,
+  cwd: string | null,
+): C {
+  if (!config) return config;
+  const providers = resolveProvidersForCwd(config.providers, cwd);
+  return providers === config.providers ? config : { ...config, providers };
 }
 
 /** Require explicit projectId or null so omissions cannot bypass project provider disablement. */

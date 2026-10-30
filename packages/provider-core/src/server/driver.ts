@@ -30,7 +30,12 @@ export interface ProviderDriverMetadata {
 }
 
 export type ProviderWorkspaceSnapshot = ServerProvider &
-  Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "optionDescriptors">;
+  Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "optionDescriptors"> & {
+    /** Set only when the directory's catalog differs from the machine snapshot's. */
+    readonly workspaceModels?: ServerProviderWorkspaceSnapshot["models"];
+    /** The directory's catalog could not be read, so keep the models found before. */
+    readonly workspaceModelsPending?: boolean;
+  };
 
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;

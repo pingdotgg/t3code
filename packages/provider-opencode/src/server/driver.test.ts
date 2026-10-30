@@ -13,11 +13,13 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as UrlParams from "effect/http/UrlParams";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -26,7 +28,11 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
-import { OPENCODE_2_RESPONSES, replayOpenCodeServer } from "./probeResponses.fixture.ts";
+import {
+  OPENCODE_2_RESPONSES,
+  OPENCODE_2_WORKSPACE_RESPONSES,
+  replayOpenCodeServer,
+} from "./probeResponses.fixture.ts";
 import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
@@ -70,6 +76,83 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) 
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
+
+const openCode2Project = "/work/project-with-config";
+const openCode2Model = (providerID: string, id: string, name: string) => ({
+  id,
+  modelID: id,
+  providerID,
+  name,
+  package: "@opencode/ai/providers/openai-compatible",
+  settings: {},
+  compatibility: {},
+  capabilities: { tools: true, input: ["text"], output: ["text"] },
+  variants: [],
+  time: { released: 1789516800000 },
+  cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+  status: "active",
+  enabled: true,
+  limit: { context: 1000000, output: 65536 },
+});
+// Serves one machine catalog everywhere plus extra models for the project directory.
+const makeOpenCode2ProjectInstance = (
+  projectCatalog: "listed" | "models-unavailable" | "providers-unavailable",
+) =>
+  Effect.gen(function* () {
+    const machineModels = [openCode2Model("opencode", "big-pickle", "Big Pickle")];
+    const projectModels = [
+      ...machineModels,
+      openCode2Model("uni", "medium-gpt", "Medium GPT"),
+      openCode2Model("uni", "large-gpt", "Large GPT"),
+    ];
+    const replay = replayOpenCodeServer(
+      { ...OPENCODE_2_RESPONSES, ...OPENCODE_2_WORKSPACE_RESPONSES },
+      "secret",
+    );
+    const server = HttpClient.make((request) => {
+      const pathname = new URL(request.url).pathname;
+      if (pathname !== "/api/model" && pathname !== "/api/provider") {
+        return replay.execute(request);
+      }
+      const directory = Option.getOrUndefined(
+        UrlParams.getFirst(request.urlParams, "location[directory]"),
+      );
+      const isProject = directory === openCode2Project;
+      const data = pathname === "/api/provider" ? [] : isProject ? projectModels : machineModels;
+      const unavailable =
+        isProject &&
+        ((pathname === "/api/model" && projectCatalog === "models-unavailable") ||
+          (pathname === "/api/provider" && projectCatalog === "providers-unavailable"));
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ location: { directory }, data }), {
+            status: unavailable ? 503 : 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      );
+    });
+    const instance = yield* create(
+      { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+      server,
+    );
+    const ready = yield* instance.snapshot.streamChanges.pipe(
+      Stream.filter((snapshot) => snapshot.status === "ready"),
+      Stream.take(1),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust("5 seconds");
+    yield* Fiber.join(ready);
+    // Catalog reads repeat until two agree, so let them settle on the test clock.
+    return (cwd: string) =>
+      Effect.gen(function* () {
+        const read = yield* Effect.forkChild(instance.snapshotForCwd!(cwd));
+        yield* TestClock.adjust("5 seconds");
+        return yield* Fiber.join(read);
+      });
+  });
 
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
@@ -233,6 +316,42 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("lists a project's own opencode.jsonc models in that project's snapshot", () =>
+    Effect.gen(function* () {
+      const snapshotFor = yield* makeOpenCode2ProjectInstance("listed");
+
+      const projectSnapshot = yield* snapshotFor(openCode2Project);
+      assert.deepStrictEqual(projectSnapshot.models.map((entry) => entry.slug).toSorted(), [
+        "opencode/big-pickle",
+        "uni/large-gpt",
+        "uni/medium-gpt",
+      ]);
+      const otherSnapshot = yield* snapshotFor("/work/other-project");
+      assert.deepStrictEqual(
+        otherSnapshot.models.map((entry) => entry.slug),
+        ["opencode/big-pickle"],
+      );
+      assert.strictEqual(otherSnapshot.workspaceModels, undefined);
+      assert.strictEqual(otherSnapshot.workspaceModelsPending, undefined);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each(["models-unavailable", "providers-unavailable"] as const)(
+    "reports a project's catalog unknown when its read fails (%s)",
+    (projectCatalog) =>
+      Effect.gen(function* () {
+        const snapshotFor = yield* makeOpenCode2ProjectInstance(projectCatalog);
+
+        const projectSnapshot = yield* snapshotFor(openCode2Project);
+        assert.deepStrictEqual(
+          projectSnapshot.models.map((entry) => entry.slug),
+          ["opencode/big-pickle"],
+        );
+        assert.strictEqual(projectSnapshot.workspaceModels, undefined);
+        assert.strictEqual(projectSnapshot.workspaceModelsPending, true);
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not retry a rejected server password in the background", () =>
     Effect.gen(function* () {
       const releaseResponse = yield* Deferred.make<void>();
@@ -354,6 +473,79 @@ const layerUpdate = Layer.mergeAll(
   ),
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, changingRuntime),
 ).pipe(Layer.provideMerge(NodeServices.layer));
+
+const openCode1Provider = (id: string, models: ReadonlyArray<string>) => ({
+  id,
+  name: id,
+  models: Object.fromEntries(
+    models.map((model) => [model, { id: model, name: model, release_date: "2026-01-01" }]),
+  ),
+});
+const openCode1Project = "/work/project-with-config";
+const openCode1UnreadableProject = "/work/unreadable-project";
+const openCode1Providers = (directory: string) => {
+  const all = [
+    openCode1Provider("opencode", ["big-pickle"]),
+    ...(directory === openCode1Project ? [openCode1Provider("uni", ["medium-gpt"])] : []),
+  ];
+  return { all, connected: all.map((provider) => provider.id), default: {} };
+};
+const openCode1Runtime = {
+  runOpenCodeCommand: () => Effect.succeed({ stdout: "1.18.18\n", stderr: "", code: 0 }),
+  startOpenCodeServerProcess: () =>
+    Effect.succeed({
+      url: "http://127.0.0.1:4096",
+      version: "1.18.18",
+      isRunning: Effect.succeed(true),
+      exitCode: Effect.never,
+    }),
+  createOpenCodeSdkClient: ({ directory }: { readonly directory: string }) => ({
+    provider: {
+      list: () =>
+        directory === openCode1UnreadableProject
+          ? Promise.reject(new Error("provider list failed"))
+          : Promise.resolve({ data: openCode1Providers(directory) }),
+    },
+    app: { agents: () => Promise.resolve({ data: [] }) },
+    command: { list: () => Promise.resolve({ data: [] }) },
+  }),
+  loadOpenCodeInventory: () =>
+    Effect.succeed({ providerList: openCode1Providers("/machine"), agents: [], skills: [] }),
+  loadOpenCodeSkills: () => Effect.succeed([]),
+} as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"];
+
+it.layer(Layer.mergeAll(layer, Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, openCode1Runtime)))(
+  "OpenCodeDriver on OpenCode 1",
+  (it) => {
+    it.effect("lists a project's own opencode.jsonc models in that project's snapshot", () =>
+      Effect.gen(function* () {
+        const instance = yield* create({}, noHttp);
+        const ready = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.status === "ready"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Fiber.join(ready);
+        const slugsOf = (snapshot: { readonly models: ReadonlyArray<{ readonly slug: string }> }) =>
+          snapshot.models.map((model) => model.slug).toSorted();
+
+        assert.deepStrictEqual(slugsOf(yield* instance.snapshotForCwd!(openCode1Project)), [
+          "opencode/big-pickle",
+          "uni/medium-gpt",
+        ]);
+        const otherSnapshot = yield* instance.snapshotForCwd!("/work/other-project");
+        assert.deepStrictEqual(slugsOf(otherSnapshot), ["opencode/big-pickle"]);
+        assert.strictEqual(otherSnapshot.workspaceModels, undefined);
+        assert.strictEqual(otherSnapshot.workspaceModelsPending, undefined);
+        const unreadable = yield* instance.snapshotForCwd!(openCode1UnreadableProject);
+        assert.deepStrictEqual(slugsOf(unreadable), ["opencode/big-pickle"]);
+        assert.strictEqual(unreadable.workspaceModels, undefined);
+        assert.strictEqual(unreadable.workspaceModelsPending, true);
+      }).pipe(Effect.scoped),
+    );
+  },
+);
 
 it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
