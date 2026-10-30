@@ -3650,6 +3650,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(projection.runs[0]?.delegatedCompletion, run.delegatedCompletion);
       assert.deepEqual(projection.subagents[0]?.completionDelivery, task.completionDelivery);
+      assert.deepEqual(
+        (yield* projectionStore.getThreadRecords(threadId, ["subagents"], {
+          omitSettledSubagents: true,
+        })).subagents,
+        [],
+      );
     }),
   );
 

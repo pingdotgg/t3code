@@ -2119,6 +2119,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 started_at,
                 completed_at,
                 updated_at,
+                completion_delivery_state,
                 payload_json
               )
               VALUES (
@@ -2136,6 +2137,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${nullableStringField(payload, "startedAt")},
                 ${nullableStringField(payload, "completedAt")},
                 ${stringField(payload, "updatedAt")},
+                ${event.payload.completionDelivery?.state ?? null},
                 ${payloadJson}
               )
               ON CONFLICT(subagent_id)
@@ -2153,6 +2155,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 started_at = excluded.started_at,
                 completed_at = excluded.completed_at,
                 updated_at = excluded.updated_at,
+                completion_delivery_state = COALESCE(
+                  excluded.completion_delivery_state,
+                  orchestration_v2_projection_subagents.completion_delivery_state
+                ),
                 payload_json = CASE
                   WHEN json_type(excluded.payload_json, '$.completionDelivery') IS NULL
                     AND json_type(orchestration_v2_projection_subagents.payload_json, '$.completionDelivery') IS NOT NULL
@@ -3289,7 +3295,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         : sql`subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.omitSettledSubagents.except)}))`
                     } OR NOT (
                       subagent.status IN ('completed', 'failed', 'cancelled', 'interrupted')
-                      AND COALESCE(json_extract(subagent.payload_json, '$.completionDelivery.state'), '')
+                      AND COALESCE(subagent.completion_delivery_state, '')
                         IN ('acknowledged', 'delivered', 'disposed')
                       AND NOT EXISTS (
                         SELECT 1 FROM orchestration_v2_projection_runs AS run
