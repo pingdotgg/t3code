@@ -52,11 +52,12 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
   }),
-  // Media a change request body points at on its host. A private repository serves these only
-  // to a request that carries a credential, which the client has none of, so the server fetches
-  // them with the credential the host's driver holds for the repository at `cwd`.
+  // Media a change request points at on its host. A private repository serves these only to a
+  // request that carries a credential, which the client has none of, so the server fetches them
+  // with the credential the host's driver holds. The server ignores `cwd`; servers before it
+  // became optional require it, so clients still send it when they know the repository.
   Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
-    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH))),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),
 ]);

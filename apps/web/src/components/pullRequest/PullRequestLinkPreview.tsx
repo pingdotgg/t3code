@@ -135,7 +135,11 @@ export function PullRequestLinkPreview({
                   {preview.title}
                 </p>
                 <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                  <PullRequestActorAvatar actor={preview.author} className="size-4" />
+                  <PullRequestActorAvatar
+                    actor={preview.author}
+                    environmentId={target.environmentId}
+                    className="size-4"
+                  />
                   <span className="min-w-0 truncate">{authorLabel}</span>
                   <span aria-hidden>·</span>
                   <span className="shrink-0">

@@ -1,5 +1,8 @@
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Base64 from "effect/encoding/Base64";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
@@ -13,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import type { AzureDevOpsAvatarIdentity } from "../shared/azureDevOpsAvatar.ts";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -204,6 +208,11 @@ export const AzureDevOpsCliError = Schema.Union([
 ]);
 export type AzureDevOpsCliError = typeof AzureDevOpsCliError.Type;
 
+export interface AzureDevOpsIdentityAvatar {
+  readonly bytes: Uint8Array;
+  readonly mimeType: "image/png" | "image/jpeg" | "image/gif";
+}
+
 export interface AzureDevOpsRepositoryCloneUrls {
   readonly nameWithOwner: string;
   readonly url: string;
@@ -263,6 +272,15 @@ export class AzureDevOpsCli extends Context.Service<
       readonly reference: string;
       readonly remoteName?: string;
     }) => Effect.Effect<void, AzureDevOpsCliError>;
+
+    /**
+     * Cached per identity. `null` means Azure answered but had no image `az` could decode; the
+     * error channel keeps an unauthenticated or missing `az` distinguishable for logging.
+     */
+    readonly getIdentityAvatar: (input: {
+      readonly cwd: string;
+      readonly identity: AzureDevOpsAvatarIdentity;
+    }) => Effect.Effect<AzureDevOpsIdentityAvatar | null, AzureDevOpsCliError>;
   }
 >()("@t3tools/source-control-azure-devops/server/AzureDevOpsCli") {}
 
@@ -362,6 +380,25 @@ const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => 
     : null;
 };
 
+const AVATAR_CACHE_CAPACITY = 500;
+// People rarely change their picture, and a lookup costs two `az` processes.
+const AVATAR_TTL = "6 hours";
+// Short enough that signing in to `az` shows pictures without a server restart.
+const AVATAR_FAILURE_TTL = "1 minute";
+const GRAPH_API_VERSION = "7.1-preview";
+
+const GraphValueJson = Schema.fromJsonString(Schema.Struct({ value: Schema.String }));
+const decodeGraphValue = Schema.decodeUnknownOption(GraphValueJson);
+
+function sniffAvatarMimeType(bytes: Uint8Array): AzureDevOpsIdentityAvatar["mimeType"] | null {
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return "image/png";
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return "image/gif";
+  return null;
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
@@ -397,6 +434,79 @@ export const make = Effect.gen(function* () {
       ...input,
       args: [...input.args, "--only-show-errors", "--output", "json"],
     });
+
+  // `az devops invoke` resolves the credential the same way every `az devops` command does:
+  // `AZURE_DEVOPS_EXT_PAT`, then a PAT saved by `az devops login`, then the `az login` session.
+  // The identity image URL itself only accepts a browser session, and the Graph avatar endpoint
+  // wants a subject descriptor, which pull request reviewers do not carry.
+  const invokeGraph = (input: {
+    readonly cwd: string;
+    readonly organizationUrl: string;
+    readonly resource: "descriptors" | "avatars";
+    readonly routeParameter: string;
+    readonly queryParameters?: ReadonlyArray<string>;
+  }) =>
+    executeJson({
+      cwd: input.cwd,
+      args: [
+        "devops",
+        "invoke",
+        "--org",
+        input.organizationUrl,
+        "--area",
+        "graph",
+        "--resource",
+        input.resource,
+        "--route-parameters",
+        input.routeParameter,
+        ...(input.queryParameters === undefined
+          ? []
+          : ["--query-parameters", ...input.queryParameters]),
+        "--api-version",
+        GRAPH_API_VERSION,
+      ],
+    }).pipe(
+      Effect.map((result) => {
+        const decoded = decodeGraphValue(result.stdout);
+        return decoded._tag === "Some" ? decoded.value.value : null;
+      }),
+    );
+
+  const avatarCache = yield* Cache.makeWith(
+    ({ cwd, identity }: Parameters<AzureDevOpsCli["Service"]["getIdentityAvatar"]>[0]) =>
+      invokeGraph({
+        cwd,
+        organizationUrl: identity.organizationUrl,
+        resource: "descriptors",
+        routeParameter: `storageKey=${identity.identityId}`,
+      }).pipe(
+        Effect.flatMap((descriptor) =>
+          descriptor === null
+            ? Effect.succeed(null)
+            : invokeGraph({
+                cwd,
+                organizationUrl: identity.organizationUrl,
+                resource: "avatars",
+                routeParameter: `subjectDescriptor=${descriptor}`,
+                // 44 px. `large` is 220 px and about twenty times the bytes, for avatars drawn at
+                // 14 to 32 px.
+                queryParameters: ["size=medium"],
+              }),
+        ),
+        Effect.map((encoded): AzureDevOpsIdentityAvatar | null => {
+          if (encoded === null) return null;
+          const bytes = Base64.decode(encoded);
+          if (!Result.isSuccess(bytes)) return null;
+          const mimeType = sniffAvatarMimeType(bytes.success);
+          return mimeType === null ? null : { bytes: bytes.success, mimeType };
+        }),
+      ),
+    {
+      capacity: AVATAR_CACHE_CAPACITY,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value !== null ? AVATAR_TTL : AVATAR_FAILURE_TTL,
+    },
+  );
 
   return AzureDevOpsCli.of({
     execute,
@@ -564,6 +674,15 @@ export const make = Effect.gen(function* () {
           input.remoteName ?? "origin",
         ],
       }).pipe(Effect.asVoid);
+    }),
+    getIdentityAvatar: Effect.fn("AzureDevOpsCli.getIdentityAvatar")(function (input) {
+      return Cache.get(avatarCache, {
+        cwd: input.cwd,
+        identity: {
+          organizationUrl: input.identity.organizationUrl,
+          identityId: input.identity.identityId,
+        },
+      });
     }),
   });
 });

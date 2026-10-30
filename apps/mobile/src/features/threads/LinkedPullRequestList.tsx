@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId } from "@t3tools/contracts";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -58,6 +59,7 @@ export function linkedPullRequestKey(line: PullRequestListLine) {
 
 export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   readonly line: PullRequestListLine;
+  readonly environmentId: EnvironmentId | null;
   readonly separator: boolean;
   readonly surfaceClassName: string;
   readonly openPullRequest: (url: string) => Promise<boolean>;
@@ -114,7 +116,13 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
         )}
       >
         <View className="flex-row items-center gap-1.5">
-          {snapshot?.author ? <PullRequestAvatar actor={snapshot.author} size={16} /> : null}
+          {snapshot?.author ? (
+            <PullRequestAvatar
+              actor={snapshot.author}
+              environmentId={props.environmentId}
+              size={16}
+            />
+          ) : null}
           <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
             {link.repository}
           </Text>

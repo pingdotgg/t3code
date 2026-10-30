@@ -121,6 +121,8 @@ const layerTest = Layer.mergeAll(
   ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
+const decodeCreateUrlInput = Schema.decodeEffect(AssetCreateUrlInput);
+
 describe("AssetAccess", () => {
   describe("readMcpAppHtml", () => {
     it.effect("accepts snapshots at the stored HTML byte limit", () =>
@@ -1456,7 +1458,6 @@ describe("AssetAccess", () => {
       expect(asset).toEqual({
         kind: "source-control-media",
         url: media.fetchUrl,
-        cwd: "/repo",
         expiresAt: issued.expiresAt,
       });
       if (asset?.kind !== "source-control-media") return;
@@ -1472,6 +1473,56 @@ describe("AssetAccess", () => {
       expect(response.headers["content-length"]).toBe("5");
     }).pipe(Effect.provide(Layer.merge(layerTest, layerDrivers)), Effect.scoped);
   });
+
+  it.effect("lets the browser retry host media the host refused", () => {
+    const url =
+      "https://dev.azure.com/acme/_api/_common/identityImage?id=15f0488e-b980-68ca-9d71-8a387c166d09";
+    const media = sourceControlDefinitions.mediaUrl(url)!;
+    const layerDrivers = Layer.succeed(BuiltInDrivers.SourceControlDrivers, [
+      {
+        driver: { kind: media.definition.kind, definition: media.definition },
+        instance: fakeSourceControlDriverInstance(media.definition.kind, {
+          pullRequests: null,
+          fetchMedia: (request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                HttpClientRequest.get(request.url),
+                new Response(null, { status: 404 }),
+              ),
+            ),
+        }),
+      },
+    ]);
+    return Effect.gen(function* () {
+      // A host that refused before sign-in serves the media right after it.
+      const response = yield* sourceControlMediaResponse(
+        { url: media.fetchUrl, expiresAt: Date.UTC(2100, 0, 1) },
+        {},
+      );
+      expect(response.status).toBe(404);
+      expect(response.headers["cache-control"]).toBe("private, no-store");
+    }).pipe(Effect.provide(Layer.merge(layerTest, layerDrivers)), Effect.scoped);
+  });
+
+  it.effect("signs host media a client asks for without a repository", () =>
+    Effect.gen(function* () {
+      // A pull request list draws avatars with no repository at hand.
+      const { resource } = yield* decodeCreateUrlInput({
+        resource: {
+          _tag: "github-media",
+          url: "https://dev.azure.com/acme/_api/_common/identityImage?id=15F0488E-B980-68CA-9D71-8A387C166D09",
+        },
+      });
+      const issued = yield* issueAssetUrl({ resource });
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      expect(yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1))).toEqual({
+        kind: "source-control-media",
+        url: "https://dev.azure.com/acme/_api/_common/identityImage?id=15f0488e-b980-68ca-9d71-8a387c166d09",
+        expiresAt: issued.expiresAt,
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
 
   it.effect("refuses media no host keeps behind a credential, without echoing the URL", () =>
     Effect.gen(function* () {

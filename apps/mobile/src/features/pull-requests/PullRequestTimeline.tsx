@@ -2,7 +2,11 @@ import { PullRequestEntryRow } from "./PullRequestEntryRow";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
-import type { PullRequestActivity, PullRequestComment } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type PullRequestActivity,
+  type PullRequestComment,
+} from "@t3tools/contracts";
 import { StackActions, type NavigationProp } from "@react-navigation/native";
 import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
@@ -88,7 +92,11 @@ function TimelineComment({
       tone={approved ? "success" : changes ? "danger" : undefined}
     >
       <View className="flex-row items-center gap-2">
-        <PullRequestAvatar actor={comment.author} size={22} />
+        <PullRequestAvatar
+          actor={comment.author}
+          environmentId={EnvironmentId.make(params.environmentId)}
+          size={22}
+        />
         <View className="min-w-0 flex-1">
           <Text className="text-sm">
             <Text className="font-t3-medium">{comment.author?.login ?? "Unknown author"}</Text>
@@ -199,6 +207,7 @@ export function pullRequestTimelineRows(
   navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate" | "dispatch">,
   actions: CommentActions,
 ) {
+  const environmentId = EnvironmentId.make(params.environmentId);
   const discussionIds = new Set(
     activity.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
   );
@@ -216,7 +225,11 @@ export function pullRequestTimelineRows(
       content: (
         <TimelineEvent icon="text.bubble" tone={thread.isResolved ? "success" : undefined}>
           <View className="flex-row items-center gap-2">
-            <PullRequestAvatar actor={thread.comments[0]?.author ?? null} size={22} />
+            <PullRequestAvatar
+              actor={thread.comments[0]?.author ?? null}
+              environmentId={environmentId}
+              size={22}
+            />
             <Text className="flex-1 text-sm">
               <Text className="font-t3-medium">
                 {thread.comments[0]?.author?.login ?? "Unknown author"}
@@ -269,7 +282,11 @@ export function pullRequestTimelineRows(
             }
             className="flex-row items-center gap-2 active:opacity-70"
           >
-            <PullRequestAvatar actor={commit.authors?.[0] ?? null} size={22} />
+            <PullRequestAvatar
+              actor={commit.authors?.[0] ?? null}
+              environmentId={environmentId}
+              size={22}
+            />
             <Text className="min-w-0 flex-1 text-sm" numberOfLines={1}>
               {commit.messageHeadline}
             </Text>

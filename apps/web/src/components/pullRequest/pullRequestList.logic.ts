@@ -44,6 +44,11 @@ export interface PullRequestGroup<Entry extends PullRequestListEntry = PullReque
 
 export interface PullRequestAuthorFacet {
   readonly actor: PullRequestActor;
+  /**
+   * The environment a loaded row read `actor` from, which can fetch its avatar. An author found
+   * only by a host search has none.
+   */
+  readonly environmentId?: EnvironmentId;
   readonly count: number;
   readonly mergedCount: number;
 }
@@ -76,7 +81,7 @@ export function pullRequestLabelColor(color: string | null): string | null {
 }
 
 export function collectPullRequestListFacets(
-  entries: ReadonlyArray<PullRequestListEntry>,
+  entries: ReadonlyArray<EnvironmentPullRequestEntry>,
   state: PullRequestListState,
 ) {
   const authors = new Map<string, PullRequestAuthorFacet>();
@@ -90,6 +95,7 @@ export function collectPullRequestListFacets(
         const held = authors.get(key);
         authors.set(key, {
           actor: held?.actor ?? entry.author,
+          environmentId: held?.environmentId ?? entry.environmentId,
           count: (held?.count ?? 0) + Number(inState),
           mergedCount: (held?.mergedCount ?? 0) + Number(entry.state === "merged"),
         });
