@@ -4,8 +4,8 @@ import {
   type UserProfileCustomPage,
   UserProfileView,
 } from "@clerk/expo/native-components";
-import { StackActions, useNavigation } from "@react-navigation/native";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useNavigation } from "@react-navigation/native";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
@@ -20,30 +20,26 @@ const USER_PROFILE_CUSTOM_PAGES = [
   },
 ] satisfies UserProfileCustomPage[];
 
+// Without cloud config the app has no entry point here and appLinking drops the deep link.
 export function SettingsAuthRouteScreen() {
-  const navigation = useNavigation();
-
-  useLayoutEffect(() => {
-    if (!hasCloudPublicConfig()) {
-      navigation.dispatch(StackActions.replace("SettingsContent"));
-    }
-  }, [navigation]);
-
   return hasCloudPublicConfig() ? <ConfiguredSettingsAuthRouteScreen /> : null;
 }
 
 function ConfiguredSettingsAuthRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const navigation = useNavigation();
-  const handleHostBack = () => navigation.dispatch(StackActions.popTo("SettingsContent"));
+  const handleHostBack = () => navigation.goBack();
   // Once signed in, stay on the profile view so signing out pops back instead of
   // flashing the sign-in form.
   const [hasBeenSignedIn, setHasBeenSignedIn] = useState(isSignedIn === true);
   if (isSignedIn && !hasBeenSignedIn) setHasBeenSignedIn(true);
 
+  // Clerk reports sign-out only through its auth store (the native profile view
+  // and the T3 Connect page can both sign out), so this follows that store.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops the navigator when Clerk's auth store reports a sign-out from the profile view or Connect page
   useEffect(() => {
     if (hasBeenSignedIn && isLoaded && isSignedIn === false) {
-      navigation.dispatch(StackActions.popTo("SettingsContent"));
+      navigation.goBack();
     }
   }, [hasBeenSignedIn, isLoaded, isSignedIn, navigation]);
 

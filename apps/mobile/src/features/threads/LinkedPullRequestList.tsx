@@ -38,7 +38,7 @@ export function useLinkedPullRequestLines(
   thread: EnvironmentThreadShell | null,
   runtime: EnvironmentRuntimeState | null,
 ) {
-  const supported = runtime?.serverConfig?.environment.capabilities.threadPullRequests === true;
+  const supported = (runtime?.serverConfig ?? null) !== null;
   const pullRequests = thread?.pullRequests;
   return useMemo(() => {
     const chains = resolveThreadPullRequestChains(supported ? (pullRequests ?? []) : []);
@@ -95,7 +95,6 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
             Dialog.alert(`Unable to open ${shortLabel}`, `The ${singular} could not be opened.`);
         });
       }}
-      // Steps in per layer like the web list, capped so deep stacks keep their width.
       style={{ paddingLeft: 16 + Math.min(depth, 3) * 16 }}
       className="flex-row gap-3 rounded-xl pr-4 active:bg-row-hover"
     >

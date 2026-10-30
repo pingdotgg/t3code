@@ -26,6 +26,7 @@ import {
   resolvePendingThreadCreation,
   pendingThreadCreationOutcomesAtom,
   pendingThreadCreationShell,
+  selectThreadCreationDetail,
   type PendingThreadCreation,
 } from "./pending-thread-creation";
 import {
@@ -115,8 +116,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
   const routeParams = params ?? {};
   const routeEnvironmentId = firstRouteParam(routeParams.environmentId);
   const routeThreadId = firstRouteParam(routeParams.threadId);
-  // A route that drops its params (a closing sheet, for example) keeps showing
-  // the last thread, so the last complete pair is kept as state.
+  // Retain the last complete thread ref while closing routes drop params.
   const [lastRouteThreadRef, setLastRouteThreadRef] = useState<ScopedThreadRef | null>(null);
   if (
     routeEnvironmentId !== null &&
@@ -146,24 +146,12 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
       : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const creationOutcome = useAtomValue(pendingThreadCreationOutcomesAtom);
-  const pendingCreation = ((): PendingThreadCreation | null => {
-    if (selectedThreadKey === null) {
-      return null;
-    }
-    const queued = queuedMessagesByThreadKey[selectedThreadKey]?.find(
-      (message) => message.creation !== undefined,
-    );
-    const outcome = creationOutcome[selectedThreadKey] ?? null;
-    const message = queued ?? outcome?.message ?? null;
-    return message === null ? null : { message, outcome };
-  })();
-  // The shell can arrive before creation is acknowledged. Wait for delivery
-  // before subscribing: an early not-found is cached as a deleted thread.
-  // Every detail reader must use this ref, not the route id.
-  const selectedThreadDetailRef =
-    pendingCreation === null || pendingCreation.outcome?.kind === "delivered"
-      ? selectedThreadRef
-      : null;
+  const { pendingCreation, detailRef: selectedThreadDetailRef } = selectThreadCreationDetail({
+    threadRef: selectedThreadRef,
+    threadKey: selectedThreadKey,
+    queuedMessagesByThreadKey,
+    outcomes: creationOutcome,
+  });
   const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);
   const needsDetail =
     selectedThreadShell === null || pendingCreation !== null || previousCreation !== null;
@@ -185,8 +173,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     previous: previousCreation,
     detail: selectedThreadDetail,
   });
-  // `pendingCreation` is rebuilt each render, so compare contents: an identity
-  // check would set state on every render.
+  // Compare pendingCreation contents; new render-time objects would otherwise continually set state.
   const creationUnchanged =
     resolvedCreation === previousCreation ||
     (resolvedCreation !== null &&

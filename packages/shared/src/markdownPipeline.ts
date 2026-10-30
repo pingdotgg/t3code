@@ -1,7 +1,8 @@
 import type { Paragraph, PhrasingContent, Root, RootContent } from "mdast";
-import type { Processor } from "unified";
-import { isWindowsAbsolutePath } from "./path.ts";
-import type { PluggableList } from "unified";
+import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
+import { type PluggableList, unified } from "unified";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
@@ -12,7 +13,7 @@ import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
-import { isWindowsDrivePathHref } from "./markdownLinks.ts";
+import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
@@ -67,8 +68,7 @@ function rehypePreserveBareAnchorPlaceholders() {
     let rawTextTag: string | undefined;
     const visit = (node: MarkdownImageHastNode) => {
       if (node.type === "raw" && typeof node.value === "string") {
-        // Raw blocks can contain several tags. Consume whole tags, quoted attributes,
-        // and comments so text resembling a closing anchor cannot pair a placeholder.
+        // Scan whole tags, attributes, and comments so embedded closing-anchor text cannot match a placeholder.
         const tags = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
         let offset = 0;
         while (rawTextTag !== "plaintext") {
@@ -303,56 +303,41 @@ function remarkNormalizeLinksAndTagInlineCode() {
   };
 }
 
-interface DestinationCompileContext {
-  readonly stack: ReadonlyArray<{ readonly type: string; url?: string }>;
-  resume(): string;
-  sliceSerialize(token: unknown): string;
+export function shouldPreserveAssistantLineBreaks(text: string): boolean {
+  return /^★ Insight(?:\s|─)/mu.test(text);
 }
 
-function keepWindowsPathDestination(this: DestinationCompileContext, token: unknown) {
-  const decoded = this.resume();
-  const authored = this.sliceSerialize(token);
-  const node = this.stack.at(-1);
-  // Character references still need decoding, so those destinations keep the parsed URL.
-  if (node)
-    node.url = isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : decoded;
-}
+const imageSourceProcessor = unified()
+  .use(remarkParse)
+  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
 
-// A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.
-const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/;
-
-interface EscapeCompileContext {
-  readonly stack: ReadonlyArray<{
-    readonly type: string;
-    children?: Array<{ type: string; value?: string }>;
-  }>;
-}
-
-function keepWindowsPathEscape(this: EscapeCompileContext) {
-  const text = this.stack.at(-1)?.children?.at(-1);
-  if (text?.type !== "text" || text.value === undefined) return;
-  const before = text.value.slice(0, -1);
-  if (UNFINISHED_DRIVE_PATH.test(before)) text.value = `${before}\\${text.value.slice(-1)}`;
+interface ImageSourceNode {
+  readonly type: string;
+  readonly tagName?: string;
+  readonly properties?: { readonly src?: unknown; readonly dataLocalSrc?: unknown };
+  readonly children?: ReadonlyArray<ImageSourceNode>;
 }
 
 /**
- * CommonMark reads the `\.` in `C:\me\.t3\shot.png` as an escape. Every backslash in a
- * Windows path is a separator, so link, image, and definition destinations that are
- * Windows paths keep the text as written, and so do escapes inside drive paths in prose.
- * Prose paths end at whitespace: past that, nothing tells a path from a sentence, and
- * `C:\x and \*this\*` must still read `*this*`.
+ * The sources of the images chat markdown shows, read as ChatMarkdown's `img` renderer reads
+ * them. Code, comments, and plain links show no image, so they add none.
  */
-function remarkKeepWindowsPaths(this: Processor) {
-  const data = this.data();
-  (data.fromMarkdownExtensions ??= []).push({
-    exit: {
-      resourceDestinationString: keepWindowsPathDestination,
-      definitionDestinationString: keepWindowsPathDestination,
-      characterEscape: keepWindowsPathEscape,
-    },
-  });
-}
-
-export function shouldPreserveAssistantLineBreaks(text: string): boolean {
-  return /^★ Insight(?:\s|─)/mu.test(text);
+export function chatMarkdownImageSources(markdown: string): Array<string> {
+  const sources: Array<string> = [];
+  const visit = (node: ImageSourceNode) => {
+    if (node.type === "element" && node.tagName === "img") {
+      const { src, dataLocalSrc } = node.properties ?? {};
+      // The sanitizer drops a Windows drive path from `src`; the renderer reads it from here.
+      if (typeof dataLocalSrc === "string") {
+        sources.push(normalizeMarkdownLinkDestination(dataLocalSrc).replaceAll("\\", "/"));
+      } else if (typeof src === "string") {
+        sources.push(normalizeMarkdownLinkDestination(src));
+      }
+    }
+    node.children?.forEach(visit);
+  };
+  visit(imageSourceProcessor.runSync(imageSourceProcessor.parse(markdown)) as ImageSourceNode);
+  return sources;
 }

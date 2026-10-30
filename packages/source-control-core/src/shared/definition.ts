@@ -30,6 +30,17 @@ export interface ParsedChangeRequestUrl extends ChangeRequestLink {
   readonly repositoryUrl: string;
 }
 
+export interface CommitLink {
+  readonly host: string;
+  readonly repository: string;
+  readonly sha: string;
+  readonly authority?: string;
+}
+
+export interface CommitUrlInput extends Omit<ChangeRequestUrlInput, "number"> {
+  readonly sha: string;
+}
+
 export interface ChangeRequestTerminology {
   readonly shortLabel: string;
   /** Spelled out because the article follows how the label is said: "an MR". */
@@ -166,6 +177,23 @@ export interface SourceControlHostCredentials {
   /** What a token must be granted, completing "Give it …". */
   readonly tokenAccess: string;
   readonly newTokenUrl: (host: string) => string;
+  /** Signing in through the forge's own app instead of a token or CLI login. */
+  readonly appSignIn?: SourceControlAppSignIn;
+}
+
+/**
+ * A forge app the server signs in to with a device code, on the hosts it is registered on. The
+ * session it keeps is the `signIns` setting, which takes precedence over everything but a saved
+ * token.
+ */
+export interface SourceControlAppSignIn {
+  /** The app's name on the forge, as the consent screen shows it. */
+  readonly appName: string;
+  readonly hosts: ReadonlyArray<string>;
+  /** Where an account or organization installs the app so it can reach its repositories. */
+  readonly installUrl: string;
+  /** Where the user revokes the app's access entirely. */
+  readonly revokeUrl: string;
 }
 
 export const SourceControlHostName = TrimmedNonEmptyString.pipe(
@@ -185,6 +213,12 @@ export const hostCredentialSettingsFields = {
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
   ),
   tokens: Schema.Record(SourceControlHostName, TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+    secretSetting,
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  /** The serialized session of an `appSignIn`, owned by the server's driver. */
+  signIns: Schema.Record(SourceControlHostName, TrimmedString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
     secretSetting,
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -215,6 +249,9 @@ export interface SourceControlDefinition {
   readonly newRepositoryOwner: (account: string | null) => { readonly owner: string | null } | null;
   readonly defaultCloneTransport: "https" | "ssh";
   readonly changeRequestUrl: (input: ChangeRequestUrlInput) => string | null;
+  readonly commitUrl?: (input: CommitUrlInput) => string | null;
+  /** `known` is set when the caller already knows this host serves the URL's repository. */
+  readonly parseCommitUrl?: (url: URL, known: boolean) => CommitLink | null;
   /** Null when the URL is not one of this host's change requests. */
   readonly parseChangeRequestUrl: (url: URL) => ParsedChangeRequestUrl | null;
   /**
@@ -234,6 +271,11 @@ export interface SourceControlDefinition {
    * sends T3 no notification of its own. Absent for a host with no such CLI.
    */
   readonly changeRequestCloseCommand?: RegExp;
+  /**
+   * Matches a shell command that opens a change request with this host's CLI and prints its URL
+   * on a line of its own. Absent for a host with no such CLI.
+   */
+  readonly changeRequestCreateCommand?: RegExp;
   readonly authorProfileUrl: (login: string, repositoryUrl: string) => string | null;
   /**
    * The references this host's own renderer links in plain text, such as `#12` or a commit SHA,
@@ -262,7 +304,7 @@ export interface SourceControlDefinition {
   readonly isChangeRequestReference: (url: string) => boolean;
   readonly isChangeRequestInRepository: (
     identity: ChangeRequestProjectIdentity,
-    link: ChangeRequestLink,
+    link: ChangeRequestLink | CommitLink,
   ) => boolean;
   readonly canReadChangeRequestOnHost: (
     identity: ChangeRequestProjectIdentity,
@@ -306,6 +348,42 @@ export interface SourceControlDefinition {
 export type SourceControlHostSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
 } & Schema.Decoder<object>;
+
+const FULL_COMMIT_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
+
+export function parseCommitPath(url: URL, route: RegExp): CommitLink | null {
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const match = route.exec(url.pathname);
+  const repository = match?.[1];
+  const sha = match?.[2];
+  return repository && sha && FULL_COMMIT_SHA.test(sha)
+    ? {
+        host: url.hostname.toLowerCase(),
+        repository: repository.toLowerCase(),
+        sha: sha.toLowerCase(),
+        ...(url.port ? { authority: url.host.toLowerCase() } : {}),
+      }
+    : null;
+}
+
+export function buildCommitUrl(
+  { host, repository, sha, remoteUrl, webUrl }: CommitUrlInput,
+  route: string,
+): string | null {
+  if (!repository || !FULL_COMMIT_SHA.test(sha)) return null;
+  try {
+    const url = new URL(webUrl || `${remoteWebOrigin(host, remoteUrl)}/${repository}`);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.pathname = changeRequestUrlBelow(url.pathname, `${route}/${sha.toLowerCase()}`);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Reads a change request from `url` with `route`, whose first group is the repository path and
@@ -355,7 +433,7 @@ export function defineSourceControl<const Definition extends SourceControlDefini
 
 export function isChangeRequestAuthorityOfProject(
   identity: ChangeRequestProjectIdentity,
-  link: ChangeRequestLink,
+  link: ChangeRequestLink | CommitLink,
 ): boolean {
   if (link.authority === undefined) return true;
   try {
@@ -382,7 +460,7 @@ export function projectChangeRequestHost<const Kind extends string | undefined>(
 export function isChangeRequestOnProjectHost(
   projectHost: string,
   identity: ChangeRequestProjectIdentity,
-  link: ChangeRequestLink,
+  link: ChangeRequestLink | CommitLink,
 ): boolean {
   if (!isChangeRequestAuthorityOfProject(identity, link)) return false;
   return projectHost === link.host.toLowerCase() || projectHost === link.authority;
@@ -398,7 +476,7 @@ function projectRepositoryPath(identity: ChangeRequestProjectIdentity): string |
 export function isChangeRequestInProjectRepository(
   projectHost: string,
   identity: ChangeRequestProjectIdentity,
-  link: ChangeRequestLink,
+  link: ChangeRequestLink | CommitLink,
 ): boolean {
   const repository = projectRepositoryPath(identity);
   return (
@@ -505,6 +583,11 @@ export interface ParsedChangeRequest {
   readonly link: ParsedChangeRequestUrl;
 }
 
+export interface ParsedCommit {
+  readonly definition: SourceControlDefinition;
+  readonly link: CommitLink;
+}
+
 export interface SourceControlMedia extends SourceControlMediaUrl {
   readonly definition: SourceControlDefinition;
 }
@@ -521,6 +604,7 @@ export interface SourceControlDefinitionRegistry {
   readonly findByPublicDomain: (hostname: string) => SourceControlDefinition | undefined;
   /** The first host, in registry order, that reads `url` as one of its change requests. */
   readonly parseChangeRequestUrl: (url: string) => ParsedChangeRequest | null;
+  readonly parseCommitUrl: (url: string, kind?: SourceControlProviderKind) => ParsedCommit | null;
   readonly findByChangeRequestUrl: (url: string) => SourceControlDefinition | undefined;
   readonly hostLabelForChangeRequestUrl: (url: string) => string;
   readonly isSameChangeRequest: (left: string, right: string) => boolean;
@@ -566,12 +650,9 @@ function inOrder(
 }
 
 /**
- * `definitions` is display order, and its first entry is what `get` returns for a repository
- * that has not reported its host yet. A change request URL goes to the first definition that
- * reads it, trying `claimChangeRequestUrlsFirst` before the rest, so a host that claims a route
- * only on its own hostnames can precede one that claims the route everywhere. A remote likewise
- * goes to the first that recognises it, in `recognizeRemotesIn` order and then the rest, because
- * one hostname can carry several hosts' labels.
+ * `definitions` sets display order and the fallback for repositories with an unknown host.
+ * Claim host-specific URL routes before hosts that accept them on any hostname.
+ * Remote recognition needs a separate order because one hostname can carry several hosts' labels.
  */
 export function makeSourceControlDefinitionRegistry(
   definitions: ReadonlyArray<SourceControlDefinition>,
@@ -623,6 +704,16 @@ export function makeSourceControlDefinitionRegistry(
       );
     },
     parseChangeRequestUrl,
+    parseCommitUrl: (value, kind) => {
+      const url = httpUrl(value);
+      if (url === null) return null;
+      const preferred = kind === undefined ? undefined : byKind.get(kind);
+      for (const definition of kind === undefined ? claimOrder : preferred ? [preferred] : []) {
+        const link = definition.parseCommitUrl?.(url, preferred !== undefined);
+        if (link != null) return { definition, link };
+      }
+      return null;
+    },
     findByChangeRequestUrl: (url) => parseChangeRequestUrl(url)?.definition,
     hostLabelForChangeRequestUrl: (url) =>
       parseChangeRequestUrl(url)?.definition.label ?? "the host",

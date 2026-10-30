@@ -2,12 +2,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
-/**
- *    Dynamic `import("...")` calls are excluded from this rule on purpose:
- *    they are the deliberate async escape hatch (e.g. composer-draft cleanup
- *    reaching `lib/attachmentUpload`), and Metro resolves them after both
- *    modules have initialized, so they cannot create an initialization cycle.
- */
+/** Dynamic imports cannot create Metro initialization cycles: they resolve after both modules initialize. */
 
 const SOURCE_ROOT = __dirname;
 

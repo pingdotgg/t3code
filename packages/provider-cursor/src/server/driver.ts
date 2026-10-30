@@ -167,7 +167,6 @@ export const CursorDriver: ProviderDriver<
     let catalogModels: ReadonlyArray<ServerProviderModel> = [];
     const orchestrationAdapter = yield* makeCursorAdapterV2({
       instanceId,
-      settings: effectiveConfig,
       environment: processEnv,
       getModels: () => catalogModels,
     }).pipe(
@@ -225,21 +224,24 @@ export const CursorDriver: ProviderDriver<
           },
           auth.usesApiKey ? "api-key" : "browser",
         ).pipe(
-          Effect.flatMap((snapshot) =>
-            effectiveConfig.enabled &&
-            snapshot.installed &&
-            snapshot.auth.status === "authenticated"
-              ? host.settings.get.pipe(
-                  Effect.flatMap((settings) =>
-                    readCursorUsageLimits(
-                      effectiveConfig,
-                      { ...processEnv, CURSOR_API_KEY: auth.usesApiKey ? apiKey : undefined },
-                      settings.cursorKeychainUsageEnabled,
-                    ),
+          Effect.filterOrElse(
+            (snapshot) =>
+              !(
+                effectiveConfig.enabled &&
+                snapshot.installed &&
+                snapshot.auth.status === "authenticated"
+              ),
+            (snapshot) =>
+              host.settings.get.pipe(
+                Effect.flatMap((settings) =>
+                  readCursorUsageLimits(
+                    effectiveConfig,
+                    { ...processEnv, CURSOR_API_KEY: auth.usesApiKey ? apiKey : undefined },
+                    settings.cursorKeychainUsageEnabled,
                   ),
-                  Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
-                )
-              : Effect.succeed(snapshot),
+                ),
+                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+              ),
           ),
         ),
       ),

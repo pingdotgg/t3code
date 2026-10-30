@@ -1,8 +1,9 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { PlayIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 
+import { observeIntersection } from "../../lib/observeIntersection";
 import { cn } from "../../lib/utils";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 import { Button } from "../ui/button";
@@ -44,13 +45,11 @@ export function MediaVideoPlayer({
   onRetry,
   actionsSource,
 }: MediaVideoPlayerProps) {
-  // State, not a ref: the element remounts on retry and failure, and effects must rebind to it.
-  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [playbackSource, setPlaybackSource] = useState<{
     src: string;
     revision: string | null;
   } | null>(null);
-  const [playingVideo, setPlayingVideo] = useState<HTMLVideoElement | null>(null);
+  const [playing, setPlaying] = useState(false);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -65,33 +64,15 @@ export function MediaVideoPlayer({
     playbackSource !== null &&
     playbackSource.revision !== revision &&
     (latestSrc !== null || sourceFailed) &&
-    (video === null || playingVideo !== video)
+    !playing
   ) {
     setPlaybackSource(
       revision !== null && latestSrc !== null ? { src: latestSrc, revision } : null,
     );
   }
 
-  useEffect(() => {
-    if (!video || preload === "metadata" || preloaded) return;
-    let active = true;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!active || !entries.some((entry) => entry.isIntersecting)) return;
-        setPreloadedSrc(src);
-        observer.disconnect();
-      },
-      { rootMargin: "200px" },
-    );
-    observer.observe(video);
-    return () => {
-      active = false;
-      observer.disconnect();
-    };
-  }, [video, src, preload, preloaded]);
-
-  useEffect(() => {
-    if (!video) return;
+  // Retry and failure remount the element, so its listeners live and die with it.
+  const attachVideo = (video: HTMLVideoElement) => {
     const pauseWhenHidden = () => {
       // Native fullscreen can hide the inline page while this video is still visible.
       const fullscreen =
@@ -107,8 +88,22 @@ export function MediaVideoPlayer({
       document.removeEventListener("fullscreenchange", pauseWhenHidden);
       video.removeEventListener("webkitendfullscreen", pauseWhenHidden);
       video.pause();
+      // A detached element's pause event never reaches onPause.
+      setPlaying(false);
     };
-  }, [video]);
+  };
+
+  // On the wrapper, not the video: re-running the video's ref callback would pause playback.
+  const observePreload = (player: HTMLSpanElement) => {
+    if (src === null || failed || preload === "metadata" || preloaded) return;
+    return observeIntersection(
+      player,
+      (entry) => {
+        if (entry.isIntersecting) setPreloadedSrc(src);
+      },
+      { rootMargin: "200px" },
+    );
+  };
 
   const retry = async () => {
     if (retrying) return;
@@ -128,6 +123,7 @@ export function MediaVideoPlayer({
 
   const player = (
     <span
+      ref={observePreload}
       className={cn("relative inline-block align-middle", className)}
       style={style}
       data-markdown-copy={copyMarkdown}
@@ -162,7 +158,7 @@ export function MediaVideoPlayer({
       ) : src !== null && !failed ? (
         <video
           key={loadAttempt}
-          ref={setVideo}
+          ref={attachVideo}
           src={src}
           aria-label={label || "Video preview"}
           aria-hidden={onOpen ? true : undefined}
@@ -181,14 +177,14 @@ export function MediaVideoPlayer({
             prepareVideoFirstFrame(event.currentTarget);
             if (sourceRevision !== null) setPlaybackSource({ src, revision: sourceRevision });
           }}
-          onPlay={(event) => {
-            setPlayingVideo(event.currentTarget);
+          onPlay={() => {
+            setPlaying(true);
             setPlaybackSource({ src, revision: sourceRevision });
           }}
-          onPause={() => setPlayingVideo(null)}
-          onEnded={() => setPlayingVideo(null)}
+          onPause={() => setPlaying(false)}
+          onEnded={() => setPlaying(false)}
           onError={() => {
-            setPlayingVideo(null);
+            setPlaying(false);
             setPlaybackSource(null);
             if (latestSrc === null || src === latestSrc) setFailedSrc(src);
           }}

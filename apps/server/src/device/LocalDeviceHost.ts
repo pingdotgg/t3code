@@ -1,10 +1,6 @@
 import { pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
 import { deviceToolInstallMessage } from "@t3tools/contracts";
-/**
- * The hub runs in its standalone mode (origin root). The T3 proxy strips its
- * own prefix, and the Device panel derives stream and socket URLs from the
- * prefix itself rather than from anything the hub prints.
- */
+// The hub runs at origin root; T3 strips its prefix and the Device panel derives stream URLs from it.
 import {
   type DeviceHostSummary,
   type DevicePlatform,
@@ -59,11 +55,7 @@ const DAEMON_POLL_MS = 100;
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
 const HUB_RESTART_MAX_DELAY_MS = 30_000;
 
-/**
- * Written beside the agent-device state so a server that dies without running
- * its finalizers (SIGKILL, dev-runner restarts) does not leave a hub bound to a
- * loopback port forever.
- */
+// Persist hub state so restarts without finalizers can clean up orphaned loopback listeners.
 const HubStateFile = Schema.Struct({
   pid: Schema.Int,
   port: Schema.Int,
@@ -348,11 +340,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       }
     });
 
-  /**
-   * A hub left behind by a previous server is identified by pid plus the
-   * command line's entry path, so a recycled pid belonging to something else
-   * is never touched.
-   */
+  // Check PID and entry path before reaping; the PID may have been recycled.
   const reapStaleHub = Effect.gen(function* () {
     const previous = yield* fs
       .readFileString(hubStatePath())
@@ -420,8 +408,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     );
     const origin = `http://127.0.0.1:${port}`;
     const scope = yield* Scope.make("sequential");
-    // On failure or interrupt, from the spawn on: the hub is not recorded yet,
-    // so nothing else stops it.
+    // The hub is not recorded yet; stop it on failure or interruption from spawn onward.
     return yield* Effect.gen(function* () {
       const child = yield* spawner
         .spawn(
@@ -549,8 +536,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ...hostEnvironment,
       AGENT_DEVICE_STATE_DIR: stateDir,
       AGENT_DEVICE_DAEMON_SERVER_MODE: "http",
-      // The daemon idles out after five minutes by default; the server owns
-      // its lifetime here and stops it explicitly.
+      // Disable the five-minute idle timeout; the server owns shutdown.
       AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS: "0",
       AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
       FORCE_COLOR: "0",
@@ -577,8 +563,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       if (alive) return toEndpoint(existing.value);
       yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
     }
-    // There is no `daemon start`; the first command in a state dir spawns the
-    // daemon and blocks until it answers. `devices` is the cheapest one.
+    // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
     const runResult = yield* runner
       .run({
         command: nodePath,
@@ -588,8 +573,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.result);
-    // Discovery can fail after the daemon starts. A published endpoint still
-    // lets agents connect; absent one, preserve the CLI failure instead of polling.
+    // Discovery may fail after startup; accept a published endpoint or preserve the CLI failure.
     const started = yield* readDaemonFile().pipe(Effect.option);
     if (started._tag === "Some") return toEndpoint(started.value);
     if (runResult._tag === "Failure") {

@@ -262,7 +262,6 @@ it.effect("checkpoint capture keeps the shared index a split index still uses", 
     yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
     assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
-    // The real index points at a sharedindex.* file. Reading it fails if the capture expired it.
     assert.strictEqual((yield* git(["ls-files", "--cached"])).stdout, "file.txt\n");
     assert.strictEqual((yield* git(["diff", "--cached", "--name-only"])).stdout, "file.txt\n");
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
@@ -683,9 +682,13 @@ it.effect.each(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each(["normal", "flags", "sparse"] as const)(
-  "checkpoint index inspection handles entries beyond the output cap (index=%s)",
-  (indexMode) =>
+it.effect.each(
+  (["normal", "flags", "sparse"] as const).flatMap((indexMode) =>
+    [1, 3, 4096].map((chunkSize) => ({ indexMode, chunkSize })),
+  ),
+)(
+  "checkpoint index inspection handles entries beyond the output cap (index=$indexMode, chunk=$chunkSize)",
+  ({ indexMode, chunkSize }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -721,8 +724,8 @@ it.effect.each(["normal", "flags", "sparse"] as const)(
                     ...input,
                     maxOutputBytes: 8,
                     onStdoutChunk: (chunk) => {
-                      for (let i = 0; i < chunk.length; i++)
-                        input.onStdoutChunk?.(chunk.subarray(i, i + 1));
+                      for (let i = 0; i < chunk.length; i += chunkSize)
+                        input.onStdoutChunk?.(chunk.subarray(i, i + chunkSize));
                     },
                   }
                 : input,
@@ -1001,6 +1004,24 @@ it.effect("GitVcsDriver treats a missing git executable as outside any repositor
     assert.strictEqual(yield* driver.isInsideWorkTree(cwd), false);
     assert.strictEqual(yield* driver.detectRepository(cwd), null);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "GitVcsDriver detects a repository whose path contains a newline",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-newline-repo-" });
+      const cwd = path.join(parent, "multi\nline");
+      yield* fileSystem.makeDirectory(cwd);
+      yield* runGit(cwd, ["init"]);
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+      const repository = yield* driver.detectRepository(cwd);
+      assert.strictEqual(repository?.rootPath, yield* fileSystem.realPath(cwd));
+      assert.strictEqual(repository?.metadataPath, ".git");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(

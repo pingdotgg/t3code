@@ -1,3 +1,13 @@
+import {
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  ProviderDriverKind,
+  type ModelSelection,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -351,9 +361,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       },
       (textGeneration) =>
         Effect.gen(function* () {
-          // Background fibers (e.g. the worktree branch rename fork) can run
-          // after their launching request's scope has closed; temp files must
-          // not be tied to that ambient scope or they are reaped on creation.
+          // Background fibers can outlive request scopes; temp files scoped there would be reaped on creation.
           const closedScope = yield* Scope.make();
           yield* Scope.close(closedScope, Exit.void);
 
@@ -435,3 +443,96 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 });
+
+it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhausted) =>
+  Effect.gen(function* () {
+    const primary = ProviderInstanceId.make("codex");
+    const fallback = ProviderInstanceId.make("claude_work");
+    const selection = {
+      instanceId: primary,
+      model: "chat-model",
+      options: [{ id: "effort", value: "high" }],
+    };
+    const calls: ModelSelection[] = [];
+    const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
+      const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
+      const snapshot: ServerProvider = {
+        instanceId,
+        driver,
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        version: null,
+        checkedAt: "1970-01-01T00:00:00Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+        ...(exhausted && instanceId === primary
+          ? {
+              usageLimits: {
+                checkedAt: "1970-01-01T00:00:00Z",
+                windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
+              },
+            }
+          : {}),
+      };
+      return {
+        instanceId,
+        driverKind: driver,
+        continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+        displayName: undefined,
+        enabled: true,
+        snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
+        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+        textGeneration: TextGeneration.TextGeneration.of({
+          generateCommitMessage: () => Effect.die("unused"),
+          generatePrContent: () => Effect.die("unused"),
+          generateBranchName: () => Effect.die("unused"),
+          generateReviewGuide: () => Effect.die("unused"),
+          generateThreadTitle: (input) =>
+            Effect.sync(() => {
+              calls.push(input.modelSelection);
+              return { title: "Generated title" };
+            }),
+        }),
+      };
+    });
+    const service = yield* TextGeneration.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            listInstances: Effect.succeed(instances),
+            getInstance: (id) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === id)),
+          }),
+          ServerSettings.layerTest({
+            providerInstances: {
+              [fallback]: { driver: ProviderDriverKind.make("claudeAgent"), config: {} },
+            },
+          }),
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("unused"),
+          }),
+        ),
+      ),
+    );
+    expect(
+      yield* service.generateThreadTitle({
+        cwd: "/tmp",
+        message: "hello",
+        linkedContext: "",
+        modelSelection: selection,
+      }),
+    ).toEqual({ title: "Generated title" });
+    expect(calls).toEqual([
+      exhausted
+        ? {
+            instanceId: fallback,
+            model:
+              DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
+          }
+        : selection,
+    ]);
+  }),
+);

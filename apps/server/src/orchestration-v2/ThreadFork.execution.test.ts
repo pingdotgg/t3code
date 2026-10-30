@@ -145,7 +145,6 @@ it.effect("a persisted fork leaves PR watching with its parent until explicitly 
     assert.deepEqual(fork.pendingBackgroundTasks, []);
     assert.deepEqual(yield* orchestrator.getThreadShell(sourceThreadId), parentBefore);
 
-    // A delayed watcher update cannot reinstate the parent's subscription on the fork.
     const stale = yield* orchestrator
       .dispatch({
         type: "thread.pull-request-watch.sync",
@@ -168,7 +167,6 @@ it.effect("a persisted fork leaves PR watching with its parent until explicitly 
     assert.equal(stale._tag, "OrchestratorDispatchError");
     assert.deepEqual((yield* orchestrator.getThreadProjection(targetThreadId)).runs, []);
 
-    // Advance virtual time only to distinguish the independent watch's start time.
     yield* TestClock.adjust("1 second");
     yield* orchestrator.dispatch({
       type: "thread.pull-request.watch",
@@ -194,7 +192,6 @@ it.effect("a persisted fork leaves PR watching with its parent until explicitly 
     const stoppedFork = yield* orchestrator.getThreadShell(targetThreadId);
     const [forkLink] = fork.pullRequests ?? [];
     assert.isDefined(forkLink);
-    // The fork remembers its own watch, never the parent's, so watching again resumes from it.
     assert.deepEqual(stoppedFork?.pullRequests, [
       { ...forkLink, endedWatch: watchingFork.pullRequests[0].watch },
     ]);

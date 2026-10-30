@@ -10,7 +10,7 @@ import { describe, expect } from "vite-plus/test";
 import {
   bufferLatestLiveStream,
   makeLiveStreamBudget,
-  replayAndBufferLiveEvents,
+  replayAndBufferProjectedLiveEvents,
   type RetainedLiveItem,
 } from "./LiveStreamBudget.ts";
 
@@ -86,7 +86,7 @@ describe("bufferLatestLiveStream", () => {
   );
 });
 
-describe("replayAndBufferLiveEvents", () => {
+describe("replayAndBufferProjectedLiveEvents", () => {
   it.effect.each(["high-water", "replay"] as const)(
     "unsubscribes and cancels a blocked %s read on live overflow",
     (phase) =>
@@ -101,8 +101,9 @@ describe("replayAndBufferLiveEvents", () => {
             Effect.ensuring(Deferred.succeed(readClosed, undefined)),
           );
           const pull = yield* Stream.toPull(
-            replayAndBufferLiveEvents(
+            replayAndBufferProjectedLiveEvents(
               {
+                project: (event: Event) => event,
                 subscribe: PubSub.subscribe(pubsub).pipe(
                   Effect.tap((subscription) => Deferred.succeed(subscribed, subscription)),
                 ),
@@ -140,8 +141,9 @@ describe("replayAndBufferLiveEvents", () => {
           sequence: index + 1,
           text: "historical event",
         }));
-        const replayed = yield* replayAndBufferLiveEvents(
+        const replayed = yield* replayAndBufferProjectedLiveEvents(
           {
+            project: (event: Event) => event,
             subscribe: PubSub.subscribe(pubsub),
             latestSequence: Effect.succeed(20),
             replay: () => Stream.fromIterable(events),
@@ -166,8 +168,9 @@ describe("replayAndBufferLiveEvents", () => {
           const unrelatedReplay = { sequence: 0, text: "unrelated replay", threadId: "other" };
           const overlap = { sequence: 2, text: "overlap", threadId: "selected" };
           const last = { sequence: 10, text: "last", threadId: "selected" };
-          const reader = yield* replayAndBufferLiveEvents(
+          const reader = yield* replayAndBufferProjectedLiveEvents(
             {
+              project: (event: Event) => event,
               subscribe: PubSub.subscribe(pubsub),
               latestSequence: Deferred.succeed(highWaterStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(highWater)),

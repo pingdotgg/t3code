@@ -513,7 +513,7 @@ it.effect("never puts a saved token that is unsafe for an HTTP header on the wir
 });
 
 it.effect("reports saved credentials as configured when Bitbucket cannot confirm them", () => {
-  const { layer } = makeLayer({
+  const { execute, layer } = makeLayer({
     response: () => new Response(null, { status: 401 }),
     env: { T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0" },
   });
@@ -523,6 +523,7 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
     const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
 
     assert.strictEqual((yield* bitbucket.probeAuth).status, "unauthenticated");
+    assert.strictEqual(execute.mock.calls.length, 0);
 
     yield* settings.update({
       sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },
@@ -664,7 +665,6 @@ it.effect("does not follow a redirect off the configured Bitbucket", () =>
       bitbucket.request({ method: "GET", url: "/repositories/acme/web/pullrequests/1/diff" }),
     );
 
-    // The client would carry every header to the new host, so the hop is checked here instead.
     assert.strictEqual(error._tag, "BitbucketUntrustedUrlError");
   }).pipe(
     Effect.provide(
@@ -688,7 +688,6 @@ it.effect("follows a redirect that stays on the configured Bitbucket", () =>
       url: "/repositories/acme/web/pullrequests/1/diff",
     });
 
-    // Bitbucket serves a diff as a redirect to a commit range, so the hop has to be followed.
     assert.strictEqual(result.body, "diff --git a/a.ts b/a.ts");
     assert.isFalse(result.truncated);
   }).pipe(

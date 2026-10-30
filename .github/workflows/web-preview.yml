@@ -82,7 +82,8 @@ jobs:
               --archive=tgz \
               --yes \
               --token "$VERCEL_TOKEN" \
-              --scope "$vercel_scope"
+              --scope "$vercel_scope" \
+              --build-env "VITE_RELEASE_CHANNEL=preview"
           )"
           printf '%s\n' "$deployment_output"
           # Vercel can print lockfile warnings to stdout before the deployment URL.

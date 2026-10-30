@@ -1,6 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
   GitCommandError,
   ProjectId,
@@ -48,7 +47,6 @@ import {
   checkoutFailureDescription,
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
-  resolvePullRequestDetailChecks,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
   allowsSinglePullRequestMerge,
@@ -562,6 +560,28 @@ describe("review thread conversations", () => {
     );
   });
 
+  it("keeps bot review verdicts when bot comments are hidden", () => {
+    const review = (id: string, reviewState: string) => ({
+      ...comment(id, 9),
+      author: bot,
+      kind: "review" as const,
+      reviewState,
+    });
+    const items = pullRequestConversationItems(
+      [
+        review("approved", "APPROVED"),
+        review("changes", "CHANGES_REQUESTED"),
+        review("commented", "COMMENTED"),
+      ],
+      [],
+    );
+    expect(
+      filterPullRequestConversationItems(items, { bots: false, resolved: false }).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["approved", "changes"]);
+  });
+
   it("distinguishes unloaded replies from complete threads, even when the host only supplies a cursor", () => {
     const timeline = (reviewThread: PullRequestReviewThread) =>
       buildPullRequestTimeline({
@@ -837,14 +857,6 @@ describe("asking about a change rather than working on it", () => {
     });
     expect(submission).toEqual({ text: draftText, interactionMode: "plan" });
     expect(context?.records[0]).toMatchObject({ pullRequest: base });
-    const legacyText = serializeLegacyContextMessage({
-      text: submission.text,
-      records: context!.records,
-    });
-    expect(legacyText).toContain(base.url);
-    expect(legacyText).toContain(prose);
-    expect(legacyText).not.toContain("PLEASE IMPLEMENT THIS PLAN");
-    expect(legacyText).not.toContain("t3-context://");
   });
 
   it("puts the reader's request in the composer and the selected lines in chips", () => {
@@ -1294,59 +1306,6 @@ describe("cached pull request detail", () => {
       ...overrides,
     }) as PullRequestDetail;
 
-  it("uses fresh checks for detail counts without replacing other PR fields", () => {
-    const pending = (name: string): PullRequestCheck => ({
-      name,
-      status: "pending",
-      url: null,
-      description: null,
-    });
-    const original = detail({ checks: [pending("build"), pending("test")] });
-    const checks = [pending("build"), { ...pending("test"), status: "success" as const }];
-    expect(resolvePullRequestDetailChecks(original, { state: "closed", checks }, true)).toEqual({
-      ...original,
-      state: "closed",
-      checks,
-    });
-    expect(resolvePullRequestDetailChecks(original, { state: "closed", checks }, false)).toBe(
-      original,
-    );
-    expect(resolvePullRequestDetailChecks(original, null, true)).toBe(original);
-    expect(resolvePullRequestDetailChecks(null, { state: "closed", checks }, true)).toBeNull();
-  });
-
-  it("keeps newer checks when an older cached detail arrives later", () => {
-    const pending: PullRequestCheck = {
-      name: "build",
-      status: "pending",
-      url: null,
-      description: null,
-    };
-    const cached = detail({ observedAt: 1_000, checks: [pending] });
-    const checks = {
-      state: "open" as const,
-      checks: [{ ...pending, status: "success" as const }],
-      observedAt: 2_000,
-    };
-    const resolved = resolvePullRequestDetailChecks(cached, checks, false);
-    expect(resolved?.checks).toEqual(checks.checks);
-    expect(resolved?.observedAt).toBe(1_000);
-    expect(
-      resolvePullRequestDetailChecks(cached, { state: checks.state, checks: checks.checks }, true)
-        ?.checks,
-    ).toEqual(checks.checks);
-    const refreshed = detail({ observedAt: 3_000, checks: [pending] });
-    expect(resolvePullRequestDetailChecks(refreshed, checks, true)).toBe(refreshed);
-  });
-
-  it("keeps merged details settled while applying newer checks", () => {
-    const merged = detail({ state: "merged", observedAt: 1_000 });
-    const checks = [{ name: "build", status: "success" as const, url: null, description: null }];
-    expect(
-      resolvePullRequestDetailChecks(merged, { state: "open", observedAt: 2_000, checks }, true),
-    ).toEqual({ ...merged, checks });
-  });
-
   const makeStorage = () => {
     const held = new Map<string, string>();
     return {
@@ -1366,7 +1325,6 @@ describe("cached pull request detail", () => {
     expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(1))).toBeNull();
     expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(2))?.number).toBe(2);
     expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(21))?.number).toBe(21);
-    // Twenty snapshots plus the list of their keys.
     expect(storage.size()).toBe(21);
   });
 

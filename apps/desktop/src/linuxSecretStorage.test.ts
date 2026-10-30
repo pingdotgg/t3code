@@ -26,14 +26,12 @@ describe("linuxSecretStorage", () => {
 
   it("forces gnome-libsecret for desktops Electron recognizes but leaves on basic text", () => {
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "LXQt" })).toBe("gnome-libsecret");
-    // Chromium stops at the first recognized value, so a later name cannot rescue the session.
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "LXQt:GNOME" })).toBe("gnome-libsecret");
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "LXQt:KDE" })).toBe("gnome-libsecret");
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "LXQt:plasma" })).toBe("gnome-libsecret");
   });
 
   it("does not treat lowercase desktop names as ones Electron recognizes", () => {
-    // Chromium matches these case-sensitively, so lowercase spellings reach basic text.
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "gnome" })).toBe("gnome-libsecret");
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "xfce" })).toBe("gnome-libsecret");
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "kde", KDE_SESSION_VERSION: "6" })).toBe(

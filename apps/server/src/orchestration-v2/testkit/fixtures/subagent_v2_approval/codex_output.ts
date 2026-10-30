@@ -11,12 +11,8 @@ import {
 } from "../shared.ts";
 import { SUBAGENT_APPROVAL_PENDING_SHELL_KEY } from "./input.ts";
 
-/**
- * A multi-agent v2 child inherits the root's approval policy, and Codex asks
- * for its command approval on the child's own native thread and turn. The
- * request is asked on the parent thread and run instead, under the subagent,
- * because native subagent threads are hidden from the sidebar.
- */
+/** Codex v2 children inherit approvals and request on their own native turns; surface requests under
+ * the subagent on the parent because native child threads are hidden. */
 export function assertSubagentV2ApprovalOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

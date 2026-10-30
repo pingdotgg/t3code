@@ -300,7 +300,6 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
       assert.equal(delivery.body, new TextDecoder().decode(pullRequestBody));
       assert.equal(delivery.renderedPrompt, launched.initialMessage?.text);
 
-      // Each delivery gets its own frame, so a request can't predict the tag that closes it.
       yield* service.triggerWebhook(requestFor(task));
       const next = framed.exec((yield* Queue.take(launches)).initialMessage?.text ?? "")?.[1];
       assert.isDefined(next);
@@ -504,6 +503,20 @@ it.effect.each(queuedDeliveryCases)(
   ({ reason, apply }) =>
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
+      const deliveryReleased = yield* Deferred.make<void>();
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (...args) => {
+            end(...args);
+            if (span.name === "ScheduledTaskService.releaseFailedDelivery") {
+              Deferred.doneUnsafe(deliveryReleased, Effect.void);
+            }
+          };
+          return span;
+        },
+      });
       yield* withService(
         ({ service, launches }) =>
           Effect.gen(function* () {
@@ -514,23 +527,17 @@ it.effect.each(queuedDeliveryCases)(
             yield* apply(service, task.id);
             yield* Deferred.succeed(gate, undefined);
             const deliveryId = queued._tag === "accepted" ? queued.deliveryId : undefined;
-            let delivery = (yield* service.getWebhookDelivery({
+            yield* Deferred.await(deliveryReleased);
+            const delivery = (yield* service.getWebhookDelivery({
               id: task.id,
               deliveryId: deliveryId!,
             })).delivery;
-            while (delivery.outcome === "accepted") {
-              yield* Effect.yieldNow;
-              delivery = (yield* service.getWebhookDelivery({
-                id: task.id,
-                deliveryId: deliveryId!,
-              })).delivery;
-            }
             assert.equal(delivery.outcome, "dispatch_failed");
             assert.equal(delivery.error, reason);
             assert.equal(yield* Queue.size(launches), 0);
           }),
         { gate },
-      );
+      ).pipe(Effect.withTracer(tracer));
     }),
 );
 

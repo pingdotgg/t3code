@@ -49,7 +49,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve", "request-changes"],
   },
   reviewers: { request: true, listCandidates: true },
-  edit: { changeRequest: true, comment: true },
+  edit: { changeRequest: true, comment: true, maintainerEdits: true },
   stacks: true,
   stackActions: true,
   labels: true,
@@ -90,15 +90,11 @@ export function gitHubViewerPermissions(
           ] as const)
         : []),
       ...(access.canUpdate ? (["ready", "draft", "close", "reopen"] as const) : []),
-      // Whether this viewer may update the branch is GitHub's own answer, read with the
-      // comparison; without it the action is offered to nobody rather than to everybody.
       ...(access.canUpdateBranch === true ? (["update-branch"] as const) : []),
     ],
     comment: true,
     resolve: access.canWrite || access.didAuthor,
-    // Anyone may review a pull request they can see, except their own: GitHub refuses an author's
-    // approval and their request for changes ("Can not approve your own pull request"), and
-    // leaves them commenting, which is what an author has to say about their own change anyway.
+    // Authors may comment on their own PRs, but GitHub rejects their approvals and change requests.
     verdicts: access.didAuthor ? (["comment"] as const) : CAPABILITIES.review.verdicts,
     requestReviewers: access.canWrite,
     ...(access.canUpdateBranch === true ? { updateMethods: CAPABILITIES.updateMethods } : {}),
@@ -130,10 +126,6 @@ function gitHubProviderFailure(
   }
 }
 
-/**
- * `gh pr view --json` reports no avatar for anyone, so the ones the GraphQL read collected are
- * applied here by login.
- */
 function withAvatar(
   actor: PullRequestActor | null,
   avatarsByLogin: ReadonlyMap<string, string>,
@@ -182,10 +174,7 @@ function withWorkflowApprovals(
   ];
 }
 
-/**
- * Null for anything that is not a plain user login: an app posts as `dependabot[bot]`, which
- * names no page, and a guessed URL that 404s is worse than the initials it would replace.
- */
+/** App logins have no profile page; guessed avatar URLs 404. */
 export function loginAvatarUrl(login: string, host: string): string | null {
   return /^[a-z0-9][a-z0-9-]{0,38}$/iu.test(login) ? `https://${host}/${login}.png?size=80` : null;
 }
@@ -376,25 +365,13 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          Effect.flatMap((page) =>
-            cli
-              .listActorAvatars({
-                cwd: input.cwd,
-                repository: input.repository,
-                host: input.host,
-                ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
-              })
-              .pipe(
-                Effect.orElseSucceed(() => new Map<string, string>()),
-                Effect.map((avatarsByLogin) => ({
-                  ...page,
-                  items: page.items.map((item) => ({
-                    ...item,
-                    author: withAvatar(item.author, avatarsByLogin, input.host),
-                  })),
-                })),
-              ),
-          ),
+          Effect.map((page) => ({
+            ...page,
+            items: page.items.map((item) => ({
+              ...item,
+              author: withAvatar(item.author, new Map<string, string>(), input.host),
+            })),
+          })),
         ),
 
     listChangeRequestsAcross: (input) =>
@@ -476,10 +453,13 @@ export const make = Effect.gen(function* () {
             ...pullRequest.reviewRequestTeams,
           ],
           mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
-          viewerPermissions: gitHubViewerPermissions({
-            ...pullRequest.viewerAccess,
-            canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
-          }),
+          viewerPermissions: {
+            ...gitHubViewerPermissions({
+              ...pullRequest.viewerAccess,
+              canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+            }),
+            maintainerEdits: pullRequest.canEditMaintainerEdits,
+          },
           baseComparison:
             pullRequest.comparison === null || pullRequest.comparison.behindBy === null
               ? "unknown"
@@ -497,7 +477,6 @@ export const make = Effect.gen(function* () {
       Effect.all(
         [
           cli.getPullRequestActivity(input),
-          // Line comments live on review threads, which `gh pr view --json` cannot reach.
           cli.listReviewThreadComments(input).pipe(
             Effect.orElseSucceed(() => ({
               comments: [],
@@ -512,10 +491,6 @@ export const make = Effect.gen(function* () {
               reviewers: [],
               avatarsByLogin: new Map<string, string>(),
               botLogins: new Set<string>(),
-              commitStats: new Map<
-                string,
-                { readonly additions: number; readonly deletions: number }
-              >(),
               commits: [],
               viewer: { canUpdate: true, didAuthor: false },
             })),
@@ -524,74 +499,75 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
-          author: withAvatar(
-            pullRequest.author,
-            reviewThreads.avatarsByLogin,
-            input.host,
-            reviewThreads.botLogins,
-          ),
-          reviewers: reviewThreads.reviewers,
-          reactions: reviewThreads.reactions,
-          commits: (reviewThreads.commits.length > 0
-            ? reviewThreads.commits
-            : pullRequest.commits
-          ).map((commit) => ({
-            ...commit,
-            ...reviewThreads.commitStats.get(commit.oid),
-            authors: commit.authors?.map(
-              (author) =>
-                withAvatar(
-                  author,
+        Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => {
+          const commitStats = new Map(
+            pullRequest.commits.map(({ oid, additions, deletions }) => [
+              oid,
+              additions === undefined ? {} : { additions, deletions },
+            ]),
+          );
+          return {
+            author: withAvatar(
+              pullRequest.author,
+              reviewThreads.avatarsByLogin,
+              input.host,
+              reviewThreads.botLogins,
+            ),
+            reviewers: reviewThreads.reviewers,
+            reactions: reviewThreads.reactions,
+            commits: (reviewThreads.commits.length > 0
+              ? reviewThreads.commits
+              : pullRequest.commits
+            ).map((commit) => ({
+              ...commit,
+              ...commitStats.get(commit.oid),
+              authors: commit.authors?.map(
+                (author) =>
+                  withAvatar(
+                    author,
+                    reviewThreads.avatarsByLogin,
+                    input.host,
+                    reviewThreads.botLogins,
+                  ) ?? author,
+              ),
+            })),
+            comments: [...pullRequest.comments, ...reviewThreads.comments]
+              .map((comment) => ({
+                ...comment,
+                // Dismissal reasons live on timeline events; HTML-only bot reviews need that fallback too.
+                body:
+                  comment.kind === "review" &&
+                  comment.reviewState?.toUpperCase() === "DISMISSED" &&
+                  rendersEmpty(comment.body)
+                    ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
+                    : comment.body,
+                author: withAvatar(
+                  comment.author,
                   reviewThreads.avatarsByLogin,
                   input.host,
                   reviewThreads.botLogins,
-                ) ?? author,
-            ),
-          })),
-          comments: [...pullRequest.comments, ...reviewThreads.comments]
-            .map((comment) => ({
-              ...comment,
-              // GitHub keeps the dismissal reason on the timeline event, not on the review,
-              // so a dismissed review with nothing visible of its own reads its words from
-              // there. "Visible" and not "empty": bot reviews often carry only an HTML
-              // marker comment, which markdown renders as nothing.
-              body:
-                comment.kind === "review" &&
-                comment.reviewState?.toUpperCase() === "DISMISSED" &&
-                rendersEmpty(comment.body)
-                  ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
-                  : comment.body,
-              author: withAvatar(
-                comment.author,
-                reviewThreads.avatarsByLogin,
-                input.host,
-                reviewThreads.botLogins,
-              ),
-              // A comment out of `gh pr view --json` carries none of its own: that read
-              // reports no reaction at all, so they arrive from the GraphQL page by node id.
-              reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
-              editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
-            }))
-            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-          // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
-          // are always whole and only the thread walk can stop short of the host.
-          commentCount: pullRequest.comments.length + reviewThreads.commentCount,
-          commentsTruncated: reviewThreads.truncated,
-          reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
-          reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
-              ...comment,
-              author: withAvatar(
-                comment.author,
-                reviewThreads.avatarsByLogin,
-                input.host,
-                reviewThreads.botLogins,
-              ),
+                ),
+                reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
+                editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
+              }))
+              .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+            commentCount: pullRequest.comments.length + reviewThreads.commentCount,
+            commentsTruncated: reviewThreads.truncated,
+            reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
+            reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
+              ...thread,
+              comments: thread.comments.map((comment) => ({
+                ...comment,
+                author: withAvatar(
+                  comment.author,
+                  reviewThreads.avatarsByLogin,
+                  input.host,
+                  reviewThreads.botLogins,
+                ),
+              })),
             })),
-          })),
-        })),
+          };
+        }),
       ),
 
     getReviewThreadComments: (input) =>
@@ -693,6 +669,9 @@ export const make = Effect.gen(function* () {
     updateChangeRequest: (input) =>
       cli
         .updatePullRequest({
+          ...(input.maintainerCanModify === undefined
+            ? {}
+            : { maintainerCanModify: input.maintainerCanModify }),
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,

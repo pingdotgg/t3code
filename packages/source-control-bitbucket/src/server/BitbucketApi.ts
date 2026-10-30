@@ -236,15 +236,11 @@ export class BitbucketCheckoutError extends Schema.TaggedError<BitbucketCheckout
   }
 }
 
-/**
- * Refused rather than followed, because the request carries the account's credentials and a url
- * that came back in a response — a pagination cursor, or the target of a redirect — is not this
- * server's to trust.
- */
+/** Reject response-supplied URLs that could leak credentials. */
 export class BitbucketUntrustedUrlError extends Schema.TaggedError<BitbucketUntrustedUrlError>()(
   "BitbucketUntrustedUrlError",
   {
-    /** The host only. A rejected hop is often a signed url, whose query carries a credential. */
+    /** Host only; signed URL queries can contain credentials. */
     host: Schema.String,
   },
 ) {
@@ -539,10 +535,7 @@ type BitbucketCredential =
   | { readonly kind: "access-token"; readonly accessToken: string }
   | { readonly kind: "api-token"; readonly email: string; readonly apiToken: string };
 
-/**
- * A value the HTTP stack rejects makes it throw an error quoting the whole header, and that
- * error travels to clients as a cause, so an unusable token is treated as unset.
- */
+/** Invalid header values can throw errors containing credentials; treat them as unset. */
 const HEADER_SAFE = /^[\x21-\x7e]+$/u;
 
 function credentialFrom(input: {
@@ -638,7 +631,7 @@ const responseError = Effect.fn("BitbucketApi.responseError")(function* (
   });
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* BitbucketApiEnvConfig;
   const host = yield* SourceControlHost.SourceControlHost;
@@ -903,11 +896,7 @@ export const make = Effect.gen(function* () {
     return origin !== null && origin === apiOrigin ? value : null;
   };
 
-  /**
-   * Redirects are followed here rather than by the client, which forwards every header to
-   * whatever host it is sent to. A pull request diff, diffstat and conflicts are all served as
-   * redirects, so they have to be followed — but only back to the same Bitbucket.
-   */
+  /** Redirects forward auth headers; restrict them to the configured Bitbucket. */
   const send = (input: {
     readonly method: "GET" | "POST" | "PUT" | "DELETE";
     readonly url: string;
@@ -928,7 +917,7 @@ export const make = Effect.gen(function* () {
           : input.method === "DELETE"
             ? HttpClientRequest.make("DELETE")(url)
             : HttpClientRequest.put(url);
-    // No `Accept: application/json`: the diff endpoints answer with a patch, not JSON.
+    // Diff endpoints return patches, not JSON.
     const withBody =
       input.body === undefined
         ? base
@@ -997,21 +986,28 @@ export const make = Effect.gen(function* () {
 
   return BitbucketApi.of({
     request,
-    probeAuth: executeJson(
-      "probeAuth",
-      HttpClientRequest.get(apiUrl("/user")),
-      BitbucketUserSchema,
-    ).pipe(
-      Effect.map((user) => ({
-        status: "authenticated" as const,
-        account: nonEmpty(user.username ?? user.display_name ?? user.account_id),
-        host: Option.some("bitbucket.org"),
-        detail: Option.none<string>(),
-      })),
-      Effect.catch(() => currentCredential.pipe(Effect.map(authFromCredential))),
+    // Bitbucket answers anonymous /user with 401, so without a credential there is nothing to ask.
+    probeAuth: currentCredential.pipe(
+      Effect.flatMap((credential) =>
+        credential === null
+          ? Effect.succeed(authFromCredential(null))
+          : executeJson(
+              "probeAuth",
+              HttpClientRequest.get(apiUrl("/user")),
+              BitbucketUserSchema,
+            ).pipe(
+              Effect.map((user) => ({
+                status: "authenticated" as const,
+                account: nonEmpty(user.username ?? user.display_name ?? user.account_id),
+                host: Option.some("bitbucket.org"),
+                detail: Option.none<string>(),
+              })),
+              Effect.catch(() => currentCredential.pipe(Effect.map(authFromCredential))),
+            ),
+      ),
     ),
-    listPullRequests: (input) =>
-      resolveRepository(input).pipe(
+    listPullRequests: Effect.fn("BitbucketApi.listPullRequests")(function (input) {
+      return resolveRepository(input).pipe(
         Effect.flatMap((repository) => {
           const states = toBitbucketStates(input.state);
           const query: Record<string, string | ReadonlyArray<string>> = {
@@ -1036,13 +1032,16 @@ export const make = Effect.gen(function* () {
           );
         }),
         Effect.map((list) => list.values.map(normalizeBitbucketPullRequestRecord)),
-      ),
-    getPullRequest: (input) =>
-      getRawPullRequest(input).pipe(Effect.map(normalizeBitbucketPullRequestRecord)),
-    getRepositoryCloneUrls: (input) =>
-      getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls)),
-    createRepository: (input) =>
-      requireRepositoryLocator(input.repository).pipe(
+      );
+    }),
+    getPullRequest: Effect.fn("BitbucketApi.getPullRequest")(function (input) {
+      return getRawPullRequest(input).pipe(Effect.map(normalizeBitbucketPullRequestRecord));
+    }),
+    getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function (input) {
+      return getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls));
+    }),
+    createRepository: Effect.fn("BitbucketApi.createRepository")(function (input) {
+      return requireRepositoryLocator(input.repository).pipe(
         Effect.flatMap((repository) =>
           executeJson(
             "createRepository",
@@ -1060,7 +1059,8 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
-      ),
+      );
+    }),
     createPullRequest: Effect.fn("BitbucketApi.createPullRequest")(function* (input) {
       const repository = yield* resolveRepository(input);
       const description = yield* fileSystem.readFileString(input.bodyFile).pipe(
@@ -1106,8 +1106,8 @@ export const make = Effect.gen(function* () {
         BitbucketPullRequestSchema,
       );
     }),
-    getDefaultBranch: (input) =>
-      resolveRepository(input).pipe(
+    getDefaultBranch: Effect.fn("BitbucketApi.getDefaultBranch")(function (input) {
+      return resolveRepository(input).pipe(
         Effect.flatMap((locator) =>
           Effect.all(
             {
@@ -1122,7 +1122,8 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(defaultChangeRequestTargetBranch),
-      ),
+      );
+    }),
     checkoutPullRequest: Effect.fn("BitbucketApi.checkoutPullRequest")(
       function* (input) {
         const destinationRepository = yield* resolveRepository(input);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   EnvironmentId,
+  ProjectId,
   SourceControlProviderKind,
   type PullRequestListEntry,
   type PullRequestListResult,
@@ -8,18 +9,25 @@ import {
 import {
   appendPullRequestListPage,
   DEFAULT_PR_LIST_CONTROLS,
+  EMPTY_PULL_REQUEST_STATS_CACHE,
   filterPullRequestList,
   mergePullRequestListEntries,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
   PR_LIST_PAGE_SIZE,
+  patchPullRequestListEntry,
   pullRequestFilterChoices,
   pullRequestLabelColors,
   pullRequestListHead,
   pullRequestListInput,
   scopedPullRequestListKey,
+  shownPullRequestListPages,
   pullRequestListRowsAreEqual,
+  withAnsweredPullRequestStats,
+  withListedPullRequests,
+  withShownPullRequestStats,
   withoutScratchProjectScope,
+  pullRequestProjectChoices,
 } from "./pullRequestList";
 
 function entry(number: number, patch: Partial<PullRequestListEntry> = {}): PullRequestListEntry {
@@ -114,6 +122,14 @@ describe("mobile PR list pagination", () => {
     expect(
       mergePullRequestListEntries([entry(1)], [entry(2, { host: "enterprise.test" }), entry(2)]),
     ).toHaveLength(3);
+  });
+  it("patches a row that only the list head supplies, and keeps it while that head is current", () => {
+    const head = page([entry(2), entry(1)], { repo: "first" });
+    const patched = patchPullRequestListEntry(null, head, entry(1), { state: "merged" }, 5);
+    expect(shownPullRequestListPages(patched, head)?.entries.map((row) => row.state)).toEqual([
+      "open",
+      "merged",
+    ]);
   });
   it("refreshes the head without dropping older loaded pages or rewinding their cursor", () => {
     const first = pullRequestListHead(null, page([entry(3)], { repo: "first" }));
@@ -385,5 +401,123 @@ describe("pullRequestFilterChoices", () => {
     });
     expect(rows).toHaveLength(100);
     expect(rows[50]).toBe("label-from-host");
+  });
+});
+
+describe("pullRequestProjectChoices", () => {
+  const laptop = EnvironmentId.make("env-laptop");
+  const desktop = EnvironmentId.make("env-desktop");
+  const project = (id: string, environmentId: EnvironmentId) => ({
+    id: ProjectId.make(id),
+    environmentId,
+    title: "t3code",
+    workspaceRoot: `/work/${id}`,
+    repositoryIdentity: { canonicalKey: "github.com/pingdotgg/t3code" },
+  });
+  const projects = [project("main", laptop), project("worktree", laptop), project("main", desktop)];
+  const choices = (
+    servesPullRequests: (environmentId: EnvironmentId) => boolean,
+    scope: { projectId?: string; projectEnvironmentId?: string } = {},
+  ) =>
+    pullRequestProjectChoices(projects, {
+      environmentId: null,
+      controls: { ...DEFAULT_PR_LIST_CONTROLS, ...scope },
+      environmentLabels: new Map([
+        [laptop, "laptop"],
+        [desktop, "desktop"],
+      ]),
+      servesPullRequests,
+    }).map(({ id, environmentId, title }) => ({ id, environmentId, title }));
+
+  it("lists each repository once per environment that serves pull requests", () => {
+    expect(choices(() => true)).toEqual([
+      { id: "main", environmentId: desktop, title: "t3code · desktop" },
+      { id: "main", environmentId: laptop, title: "t3code · laptop" },
+    ]);
+    expect(choices((environmentId) => environmentId === desktop)).toEqual([
+      { id: "main", environmentId: desktop, title: "t3code" },
+    ]);
+  });
+
+  it("keeps the saved scope when its environment stops serving or has not loaded", () => {
+    const scope = { projectId: "worktree", projectEnvironmentId: laptop };
+    expect(choices((environmentId) => environmentId === desktop, scope)).toEqual([
+      { id: "main", environmentId: desktop, title: "t3code · desktop" },
+      { id: "worktree", environmentId: laptop, title: "t3code · laptop" },
+    ]);
+    expect(choices(() => false, scope)).toEqual([
+      { id: "worktree", environmentId: laptop, title: "t3code" },
+    ]);
+  });
+});
+
+describe("shown PR diff stats", () => {
+  const cups = EnvironmentId.make("cups");
+  const stat = (number: number, additions: number, deletions: number) => ({
+    projectId: "project" as PullRequestListEntry["projectId"],
+    repository: "org/repo",
+    number,
+    additions,
+    deletions,
+  });
+  const rows = [
+    { ...entry(1), environmentId: cups },
+    { ...entry(2, { additions: 4, deletions: 1 }), environmentId: cups },
+  ];
+
+  it("keeps the same list when the answers change no row", () => {
+    expect(withShownPullRequestStats(rows, [])).toBe(rows);
+    expect(withShownPullRequestStats(rows, [{ environmentId: cups, stats: [stat(1, 0, 0)] }])).toBe(
+      rows,
+    );
+    expect(withShownPullRequestStats(rows, [{ environmentId: cups, stats: [stat(2, 9, 9)] }])).toBe(
+      rows,
+    );
+  });
+
+  it("fills only rows without stats, in their own environment", () => {
+    const filled = withShownPullRequestStats(rows, [
+      { environmentId: EnvironmentId.make("mbp"), stats: [stat(1, 7, 7)] },
+      { environmentId: cups, stats: [stat(1, 3, 2), stat(2, 9, 9)] },
+    ]);
+    expect(filled.map(({ additions, deletions }) => [additions, deletions])).toEqual([
+      [3, 2],
+      [4, 1],
+    ]);
+    expect(filled[1]).toBe(rows[1]);
+  });
+});
+
+describe("cached PR diff stats", () => {
+  const stat = (number: number, additions: number) => ({
+    projectId: "project" as PullRequestListEntry["projectId"],
+    repository: "org/repo",
+    number,
+    additions,
+    deletions: 0,
+  });
+
+  it("drops a row's stat and refreshes its stats query when its updatedAt moves", () => {
+    const query = {
+      refs: [1, 2].map((number) => ({
+        projectId: stat(number, 0).projectId,
+        repository: "org/repo",
+        number,
+      })),
+    };
+    const listed = withListedPullRequests(EMPTY_PULL_REQUEST_STATS_CACHE, [entry(1), entry(2)]);
+    expect(listed.refresh).toEqual([]);
+    const answered = withAnsweredPullRequestStats(listed.cache, query, [stat(1, 5), stat(2, 7)]);
+    expect(withListedPullRequests(answered, [entry(1), entry(2)])).toEqual({
+      cache: answered,
+      refresh: [],
+    });
+
+    const pushed = withListedPullRequests(answered, [
+      entry(1, { updatedAt: "2026-10-20T00:00:00Z" }),
+      entry(2),
+    ]);
+    expect([...pushed.cache.stats.values()]).toEqual([stat(2, 7)]);
+    expect(pushed.refresh).toEqual([query]);
   });
 });

@@ -25,9 +25,7 @@ function tokens(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
-/**
- * Grok resolves through xAI's first-party entry, which has no bare alias.
- */
+// Grok's xAI first-party rate entry has no bare alias.
 export function cursorRateModel(model: string): string {
   const base = model
     .replace(/^cursor-/, "")
@@ -357,13 +355,14 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       duration: Duration.seconds(60),
       orElse: () => invalid("Account usage read timed out"),
     }),
-    Effect.catch(() =>
-      Effect.succeed({
-        accountKey,
-        records: [],
-        missing: false,
-        error: "Cursor account usage could not be read.",
-      } satisfies CursorAccountUsageReadResult),
+    Effect.orElseSucceed(
+      () =>
+        ({
+          accountKey,
+          records: [],
+          missing: false,
+          error: "Cursor account usage could not be read.",
+        }) satisfies CursorAccountUsageReadResult,
     ),
   );
 });

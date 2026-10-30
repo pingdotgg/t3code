@@ -14,7 +14,6 @@ export interface ResolvedBackgroundActivitySettings {
   readonly providerHealthRefreshInterval: Duration.Duration;
   readonly hostPowerMonitorActiveInterval: Duration.Duration;
   readonly hostPowerMonitorIdleInterval: Duration.Duration;
-  readonly idleClientTtl: Duration.Duration;
   readonly pauseWhenHostLocked: boolean;
   readonly pauseWhenHostLowPower: boolean;
   readonly pauseWhenClientLowPower: boolean;
@@ -28,7 +27,6 @@ const PRESET_SETTINGS: Record<BackgroundActivityProfile, ResolvedBackgroundActiv
     providerHealthRefreshInterval: Duration.minutes(1),
     hostPowerMonitorActiveInterval: Duration.seconds(30),
     hostPowerMonitorIdleInterval: Duration.minutes(2),
-    idleClientTtl: Duration.seconds(45),
     pauseWhenHostLocked: true,
     pauseWhenHostLowPower: false,
     pauseWhenClientLowPower: false,
@@ -40,7 +38,6 @@ const PRESET_SETTINGS: Record<BackgroundActivityProfile, ResolvedBackgroundActiv
     providerHealthRefreshInterval: DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
     hostPowerMonitorActiveInterval: Duration.seconds(30),
     hostPowerMonitorIdleInterval: Duration.minutes(5),
-    idleClientTtl: Duration.seconds(45),
     pauseWhenHostLocked: true,
     pauseWhenHostLowPower: true,
     pauseWhenClientLowPower: true,
@@ -52,7 +49,6 @@ const PRESET_SETTINGS: Record<BackgroundActivityProfile, ResolvedBackgroundActiv
     providerHealthRefreshInterval: Duration.minutes(15),
     hostPowerMonitorActiveInterval: Duration.minutes(1),
     hostPowerMonitorIdleInterval: Duration.minutes(10),
-    idleClientTtl: Duration.seconds(45),
     pauseWhenHostLocked: true,
     pauseWhenHostLowPower: true,
     pauseWhenClientLowPower: true,
@@ -91,7 +87,6 @@ export function resolveBackgroundActivitySettings(
       overrides.hostPowerMonitorActiveInterval ?? preset.hostPowerMonitorActiveInterval,
     hostPowerMonitorIdleInterval:
       overrides.hostPowerMonitorIdleInterval ?? preset.hostPowerMonitorIdleInterval,
-    idleClientTtl: overrides.idleClientTtl ?? preset.idleClientTtl,
     pauseWhenHostLocked: overrides.pauseWhenHostLocked ?? preset.pauseWhenHostLocked,
     pauseWhenHostLowPower: overrides.pauseWhenHostLowPower ?? preset.pauseWhenHostLowPower,
     pauseWhenClientLowPower: overrides.pauseWhenClientLowPower ?? preset.pauseWhenClientLowPower,
@@ -112,7 +107,6 @@ function resolvedSettingsEqual(
     durationsEqual(a.providerHealthRefreshInterval, b.providerHealthRefreshInterval) &&
     durationsEqual(a.hostPowerMonitorActiveInterval, b.hostPowerMonitorActiveInterval) &&
     durationsEqual(a.hostPowerMonitorIdleInterval, b.hostPowerMonitorIdleInterval) &&
-    durationsEqual(a.idleClientTtl, b.idleClientTtl) &&
     a.pauseWhenHostLocked === b.pauseWhenHostLocked &&
     a.pauseWhenHostLowPower === b.pauseWhenHostLowPower &&
     a.pauseWhenClientLowPower === b.pauseWhenClientLowPower &&
@@ -168,9 +162,6 @@ export function normalizeBackgroundActivitySettings(
       : {}),
     ...(!durationsEqual(resolved.hostPowerMonitorIdleInterval, preset.hostPowerMonitorIdleInterval)
       ? { hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval }
-      : {}),
-    ...(!durationsEqual(resolved.idleClientTtl, preset.idleClientTtl)
-      ? { idleClientTtl: resolved.idleClientTtl }
       : {}),
     ...(resolved.pauseWhenHostLocked !== preset.pauseWhenHostLocked
       ? { pauseWhenHostLocked: resolved.pauseWhenHostLocked }
@@ -260,7 +251,6 @@ export function normalizeServerBackgroundActivitySettings(
       providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
       hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
       hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
-      idleClientTtl: resolved.idleClientTtl,
       pauseWhenHostLocked: resolved.pauseWhenHostLocked,
       pauseWhenHostLowPower: resolved.pauseWhenHostLowPower,
       pauseWhenClientLowPower: resolved.pauseWhenClientLowPower,

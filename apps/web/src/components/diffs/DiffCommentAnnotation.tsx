@@ -47,6 +47,7 @@ export function DiffCommentAnnotation({
   const trimmedText = displayedText.trim();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the draft textarea on the next animation frame after mount
   useLayoutEffect(() => {
     if (kind !== "draft" || !focusOnMount) return;
     const frame = window.requestAnimationFrame(() => {
@@ -81,8 +82,7 @@ export function DiffCommentAnnotation({
     );
   }
 
-  // Editable file annotations inherit Pierre's transparent native caret and selection.
-  // Comments use a native textarea, so they need their own visible text feedback.
+  // Pierre hides native carets and selection; textarea comments need their own visible feedback.
   return (
     <div
       data-diff-comment-annotation

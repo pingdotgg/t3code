@@ -87,8 +87,7 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
       } else if (canOpen && (char !== "~" || end - index >= 2)) {
         const length = char === "~" || end - index >= 2 ? 2 : 1;
         const mark = char === "~" ? "strike" : length === 2 ? "bold" : "italic";
-        // A mark cannot nest inside itself, including alternate delimiters.
-        // This bounds the stack to the supported styles for arbitrary input.
+        // Prevent self-nesting, including alternate delimiters, to bound the stack by supported styles.
         if (stack.some((frame) => frame.mark === mark)) {
           pushSpan(current(), text.slice(index, end), []);
           index = end;

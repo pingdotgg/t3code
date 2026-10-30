@@ -122,27 +122,15 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
         Effect.forkChild,
       );
       yield* Deferred.await(firstAttempt);
-      // Another process saves once the lock clears, before the waiting write retries.
       yield* writeFileStringAtomically({ filePath, contents: "newer" });
 
-      assert.isTrue(Exit.isFailure(yield* advanceUntilDone(stale)));
+      yield* TestClock.adjust("100 millis");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(stale)));
       assert.strictEqual(yield* fs.readFileString(filePath), "newer");
       assert.deepStrictEqual(yield* fs.readDirectory(root), ["settings.json"]);
     }),
   );
 });
-
-// Retries stat the real target between waits, and that I/O finishes outside the
-// test clock, so the clock moves one wait at a time until the write settles.
-const advanceUntilDone = <A, E>(fiber: Fiber.Fiber<A, E>) =>
-  Effect.gen(function* () {
-    while (fiber.pollUnsafe() === undefined) {
-      yield* TestClock.adjust("100 millis");
-      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a macrotask boundary so the real stat I/O can finish; time moves only via TestClock
-      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
-    }
-    return yield* Fiber.join(fiber);
-  });
 
 const renameError = (code: string, path: string) =>
   PlatformError.systemError({

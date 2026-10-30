@@ -1,5 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
+  buildCommitUrl,
   changeRequestUrlBelow,
   type ChangeRequestHostIdentity,
   type ChangeRequestProjectIdentity,
@@ -8,6 +9,7 @@ import {
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  parseCommitPath,
   projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
@@ -19,6 +21,7 @@ const CHANGE_REQUEST_REFERENCE =
 
 // Forgejo and Gitea run on any hostname, possibly mounted below a path.
 const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u;
+const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/commit\/([0-9a-f]+)\/?$/iu;
 
 const KIND = SourceControlProviderKind.make("forgejo");
 
@@ -82,8 +85,10 @@ export const definition = defineSourceControl({
     return link === null ? null : { ...link, authority: url.host.toLowerCase() };
   },
   changeRequestUrlFromReferenceAutolink: () => null,
+  commitUrl: (input) => buildCommitUrl(input, "commit"),
+  parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
   changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
-  // Neither `fj` nor `tea` checks out by number, so fetch the pull ref from the repository itself.
+  // Neither `fj` nor `tea` checks out by number.
   checkoutCommand: ({ number, repositoryUrl }) =>
     repositoryUrl
       ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' ${changeRequestHeadRef(number)} && git checkout -B pulls/${number} FETCH_HEAD`

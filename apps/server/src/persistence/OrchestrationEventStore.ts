@@ -51,11 +51,7 @@ export class OrchestrationEventStore extends Context.Service<
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, OrchestrationEventStoreError>;
 
-    /**
-     * A row whose `event_type` this build does not know fails the read unless
-     * `skipUnknownEventTypes` is set, which logs and drops it instead. Only
-     * client thread replay opts in; anything that builds server state stays strict.
-     */
+    /** Unknown event types fail unless skipUnknownEventTypes logs and drops them; only client replay may opt in. */
     readonly readAgentEvents: (input?: {
       readonly afterSequence?: number;
       readonly throughSequence?: number;
@@ -97,11 +93,7 @@ export class OrchestrationEventStore extends Context.Service<
 
     readonly latestApplicationSequence: Effect.Effect<number, OrchestrationEventStoreError>;
 
-    /**
-     * A row whose `event_type` this build does not know fails the read unless
-     * `skipUnknownEventTypes` is set, which logs and drops it instead. Only
-     * client shell replay opts in; anything that builds server state stays strict.
-     */
+    /** Unknown event types fail unless skipUnknownEventTypes logs and drops them; only client replay may opt in. */
     readonly readApplicationEvents: (input: {
       readonly afterSequence: number;
       readonly throughSequence: number;
@@ -417,8 +409,7 @@ const makeEventStore = Effect.gen(function* () {
         correlation_id
       FROM orchestration_events
       ${
-        // The sequence range otherwise wins and a command lookup scans every
-        // V2 event, which blocks the server for seconds on large histories.
+        // Otherwise the sequence index wins and command lookups scan every V2 event.
         input.commandId !== undefined
           ? sql`INDEXED BY idx_orch_events_command_id`
           : input.onlyAgentEvents === true
@@ -459,9 +450,7 @@ const makeEventStore = Effect.gen(function* () {
           const promptKey = subagent === undefined ? undefined : `${event.type}:${subagent.id}`;
           const hint = promptKey === undefined ? undefined : promptHints.get(promptKey);
           const payloadJson = yield* encodeJson(encoded.payload);
-          // Progress ticks repeat an unchanged prompt, so store it once and point
-          // later rows at it. ProjectionMaintenance never deletes these anchor
-          // rows.
+          // Deduplicate repeated progress prompts via anchor rows that ProjectionMaintenance never deletes.
           const storedPayload =
             hint !== undefined && subagent !== undefined
               ? sql`CASE WHEN EXISTS (

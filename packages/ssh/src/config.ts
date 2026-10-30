@@ -177,6 +177,7 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
     return;
   }
   if (!(yield* fs.exists(resolvedPath))) return;
+  if ((yield* fs.stat(resolvedPath)).type === "Directory") return;
   visited.add(resolvedPath);
 
   const directory = path.dirname(resolvedPath);

@@ -477,17 +477,6 @@ export class CloudLink extends Context.Service<
       | CloudLinkInternalError
       | EnvironmentAuth.ServerAuthInternalError
     >;
-    readonly reconcileDesiredLink: (
-      localOrigin: string,
-    ) => Effect.Effect<
-      CliDesiredLinkMode,
-      | CloudLinkBackgroundError
-      | CloudLinkAccountMismatchError
-      | CloudLinkAuthorizationMissingError
-      | CloudLinkRelayConfigInvalidError
-      | EnvironmentAuth.ServerAuthInternalError
-      | CliTokenManager.CloudCliTokenManagerError
-    >;
     readonly reconcileDesiredLinkIfStillDesired: (
       localOrigin: string,
     ) => Effect.Effect<
@@ -732,10 +721,7 @@ const make = Effect.gen(function* () {
         if (Option.isNone(runtimeBytes)) return false;
         const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeBytes.value)));
         if (config === null || config.providerKind !== "cloudflare_tunnel") return false;
-        // With the marker required, only a config the relay already confirmed on
-        // this port may start. Without it, startup is falling back after the
-        // relay stayed unreachable: an unconfirmed origin may send traffic to a
-        // stale port, but that beats no remote access at all.
+        // Require the relay-confirmed port unless falling back after the relay stayed unreachable.
         if (requireConfirmedOrigin) {
           if (Option.isNone(markerBytes)) return false;
           const marker = Option.getOrNull(decodeConfirmedOrigin(bytesToString(markerBytes.value)));
@@ -771,8 +757,7 @@ const make = Effect.gen(function* () {
       yield* validateRelayConfigPayload(payload);
       yield* validateLinkedCloudUser(payload.cloudUserId);
       yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
-      // Reject unsupported runtimes before touching the connector so a bad
-      // payload cannot stop a healthy tunnel on its way to a 503.
+      // Reject unsupported runtimes before they can stop a healthy tunnel.
       if (
         payload.endpointRuntime !== null &&
         payload.endpointRuntime.providerKind !== "cloudflare_tunnel"
@@ -790,10 +775,7 @@ const make = Effect.gen(function* () {
         : null;
       yield* endpointRuntime.applyConfig(null);
       yield* secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
-      // The stored runtime config is what reports the link as managed and what
-      // startup respawns, so drop it first and store it last. A write that
-      // fails part-way then leaves a link that reads as not managed, and the
-      // next relink repairs it instead of trusting a stale tunnel config.
+      // Store runtime config last so partial writes cannot appear managed or respawn a stale tunnel.
       yield* secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
 
       yield* secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
@@ -925,12 +907,6 @@ const make = Effect.gen(function* () {
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("persist-desired-link")),
   );
 
-  const reconcileDesiredLink = Effect.fn("environment.cloud.reconcileDesiredLink")(function* (
-    localOrigin: string,
-  ) {
-    return yield* endpointRuntime.withLinkStateLock(reconcileDesiredCloudLinkWith(localOrigin));
-  });
-
   const reconcileDesiredLinkIfStillDesired = Effect.fn(
     "environment.cloud.reconcileDesiredLinkIfStillDesired",
   )(function* (localOrigin: string) {
@@ -984,12 +960,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * Nothing stored is removed: the relay also answers 401 for a skewed clock,
-   * and the next accepted registration clears the mark. Returns false, without
-   * marking, when a relink replaced the credential while the rejected request
-   * was in flight.
-   */
+  /** Keep credentials: clock skew can cause 401s. A relink during the request returns false without marking; accepted registration clears the mark. */
   const markLinkRevoked = (credential: string, cause: RelayRequestError) =>
     endpointRuntime.withLinkStateLock(
       Effect.gen(function* () {
@@ -1232,8 +1203,7 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  // Cloudflare bills per provisioned tunnel, so an environment that goes offline
-  // must not leave its tunnel behind.
+  // Cloudflare bills provisioned tunnels even while environments are offline.
   const releaseManagedTunnelOnShutdown = Effect.fn(
     "environment.cloud.releaseManagedTunnelOnShutdown",
   )(function* () {
@@ -1241,22 +1211,14 @@ const make = Effect.gen(function* () {
     if (Option.isNone(runtimeConfig)) {
       return false;
     }
-    // Only CLI-desired managed links release eagerly because this request uses
-    // CLI authorization. Web/mobile links register startup recovery with their
-    // environment credential, and the relay reaper removes them after they are
-    // down for the configured grace period. Unlink still deletes either kind.
+    // CLI authorization releases only CLI-desired managed links; web/mobile links recover by credential and expire through the relay reaper.
     if (
       !(yield* readCliDesiredCloudLink.pipe(withSecrets)) ||
       (yield* readCliDesiredLinkMode.pipe(withSecrets)) !== "managed"
     ) {
       return false;
     }
-    // A shutdown that hands off to a pending update is not the environment going
-    // offline: the service launcher or the desktop app immediately brings a
-    // server back (the new version, or the old one after a rollback). Deleting
-    // the tunnel here forces that server to provision a replacement UUID, and the
-    // public hostname's route to the new tunnel takes 1-2 minutes to propagate —
-    // the dominant cost of an update restart.
+    // Update handoffs reuse the tunnel: replacing it adds 1-2 minutes of hostname propagation.
     if (
       (yield* withRuntimeFiles(desktopUpdateRestartPending)) ||
       (yield* withRuntimeFiles(pendingUpdateHandoffExists))
@@ -1268,8 +1230,7 @@ const make = Effect.gen(function* () {
     if (Option.isNone(token)) {
       return false;
     }
-    // The link belongs to the relay it was installed against, so target the
-    // persisted URL: T3CODE_RELAY_URL may have changed since the link was made.
+    // Use the persisted relay URL; T3CODE_RELAY_URL may have changed since linking.
     const relayUrl = yield* secrets.get(RELAY_URL_SECRET);
     if (Option.isNone(relayUrl)) {
       return false;
@@ -1285,17 +1246,11 @@ const make = Effect.gen(function* () {
       Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
       withRelayClientTracing,
     );
-    // ok:false means the relay skipped deletion because a concurrent provision
-    // owns the recorded tunnel now — leave the stored config alone.
+    // ok:false means concurrent provisioning owns the tunnel; preserve its config.
     if (!response.ok) {
       return false;
     }
-    // The connector token died with the tunnel. Drop the stored config so the
-    // next start waits for the link reconcile instead of respawning the relay
-    // client with a dead token. Only dropped while it is still the config this
-    // shutdown released — a fast restart may already have reconciled and stored
-    // a fresh config for its replacement tunnel, and that one must survive this
-    // finalizer.
+    // Released tokens are dead; remove only this shutdown's config to preserve a fast restart's replacement.
     const storedConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
     if (
       Option.isSome(storedConfig) &&
@@ -1407,8 +1362,7 @@ const make = Effect.gen(function* () {
 
   const savePreferences = Effect.fn("CloudPreferences.update")(
     function* (input: EnvironmentCloudPreferencesRequest) {
-      // Both current values are read up front; a failed read stops here, before
-      // anything changes, because a guessed value would be the rollback target.
+      // Read rollback targets before changing anything; failed reads must abort.
       const readCurrent = (name: string) =>
         secrets.get(name).pipe(Effect.catch(internalError("read-preferences")));
       const previousActivity = yield* readCurrent(PUBLISH_AGENT_ACTIVITY_SECRET);
@@ -1440,8 +1394,7 @@ const make = Effect.gen(function* () {
       }
       yield* awarenessRelay.requestCatchUp();
     },
-    // A client that disconnects mid-update must not stop it between a save and
-    // its rollback, so an update always finishes or undoes itself.
+    // Finish or roll back even if the client disconnects mid-update.
     Effect.uninterruptible,
     preferencesLock.withPermits(1),
   );
@@ -1673,7 +1626,6 @@ const make = Effect.gen(function* () {
     updatePreferences,
     answerHealthRequest,
     mintCredential,
-    reconcileDesiredLink,
     reconcileDesiredLinkIfStillDesired,
     registerManagedTunnelRecovery,
     recoverManagedTunnel,

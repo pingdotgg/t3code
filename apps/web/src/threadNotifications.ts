@@ -41,7 +41,7 @@ let badgeFavicon: HTMLLinkElement | undefined;
 export function setNotificationBadge(count: number) {
   const bridge = window.desktopBridge;
   let image: string | null = null;
-  if (count > 0 && (!bridge || bridge.getClientPlatform?.() === "win32")) {
+  if (count > 0 && (!bridge || bridge.getClientPlatform() === "win32")) {
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 64;
     const context = canvas.getContext("2d");
@@ -77,7 +77,7 @@ export function setNotificationBadge(count: number) {
       originalFavicon = undefined;
     }
   }
-  void bridge?.setNotificationBadge?.({ count, image }).catch(() => undefined);
+  void bridge?.setNotificationBadge({ count, image }).catch(() => undefined);
 }
 
 let audioContext: AudioContext | undefined;
@@ -108,10 +108,7 @@ export async function playNotificationSound(
     }
     const decoded = await buffer;
     if (!shouldPlay() || context.state !== "running") return;
-    // Threads that finish together each ask for this sound, and full-volume copies sum into
-    // clipping. One playback stands for the burst. Checked after the decode, since every caller
-    // in a burst is waiting on it. The other kind keeps its own slot, so an input alert is still
-    // heard over a completion.
+    // Coalesce same-sound bursts after decode to avoid clipping; input and completion alerts keep separate slots.
     if (context.currentTime < (playingUntil.get(url) ?? 0)) return;
     const source = context.createBufferSource();
     source.buffer = decoded;

@@ -13,7 +13,6 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
@@ -68,8 +67,7 @@ const resolveProjectForPullRequestDiscovery = Effect.fn(
   repositoryIdentities: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
   options?: { readonly refresh?: boolean },
 ) {
-  // Identities stay cached for 15 minutes. A finished turn may have added the
-  // remote its pull request lives on, so post-turn discovery refreshes.
+  // Post-turn discovery refreshes 15-minute identity caches because agents may add remotes.
   const repositoryIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
     refresh: options?.refresh ?? false,
   });
@@ -128,8 +126,7 @@ export const make = Effect.gen(function* () {
           })
           .pipe(NodeSqliteClient.readOnly)
       : Effect.gen(function* () {
-          // Read the sequence first. The thread is then at least this new, so a
-          // sync guarded by the sequence is rejected rather than missing a change.
+          // Read sequence first so guarded sync rejects intervening changes.
           const snapshotSequence = yield* orchestrator.getThreadEventSequence(threadId);
           const thread = yield* orchestrator.getThreadShell(threadId);
           return { snapshotSequence, threads: thread === null ? [] : [thread] };
@@ -142,9 +139,16 @@ export const make = Effect.gen(function* () {
       readThreadSnapshot(request),
       projectStore.listShells(),
     ]);
+    // Subagent children refresh after their own runs; sweeping them costs a lookup each per minute.
+    const snapshotThreads =
+      request.threadId === null
+        ? threadSnapshot.threads.filter(
+            (thread) => thread.lineage.relationshipToParent !== "subagent",
+          )
+        : threadSnapshot.threads;
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     if (request.backfill) {
-      for (const thread of threadSnapshot.threads) {
+      for (const thread of snapshotThreads) {
         if (
           (thread.settledOverride === "settled" || thread.settledAt !== null) &&
           thread.branchPullRequest == null
@@ -154,13 +158,13 @@ export const make = Effect.gen(function* () {
       }
     }
     const visibleThreadIds = new Set(
-      threadSnapshot.threads.filter((thread) => thread.branch !== null).map((thread) => thread.id),
+      snapshotThreads.filter((thread) => thread.branch !== null).map((thread) => thread.id),
     );
     const checkedIds = request.threadId === null ? [...pendingBackfill.keys()] : [request.threadId];
     for (const threadId of checkedIds) {
       if (!visibleThreadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
-    const threads = threadSnapshot.threads.filter(
+    const threads = snapshotThreads.filter(
       (thread) =>
         thread.archivedAt === null &&
         ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
@@ -297,9 +301,7 @@ export const make = Effect.gen(function* () {
             updates,
             ({ thread, branchPullRequest, replacement }) =>
               Effect.gen(function* () {
-                // Discovery can perform network I/O. Re-read the project at
-                // the transaction boundary so a deleted project or changed
-                // workspace root cannot apply a result from the old checkout.
+                // Discovery yields to network I/O; recheck the project at commit to reject deleted projects or changed checkouts.
                 const currentProject = yield* projectStore.getShell(project.id);
                 if (!projectWorkspaceMatchesSnapshot(currentProject, project.workspaceRoot)) {
                   return failBackfill([thread]);
@@ -323,13 +325,13 @@ export const make = Effect.gen(function* () {
                 });
                 pendingBackfill.delete(thread.id);
               }).pipe(
-                Effect.catchCause((cause) =>
-                  Cause.hasInterruptsOnly(cause)
-                    ? Effect.failCause(cause)
-                    : Effect.logWarning("thread pull request update failed", {
-                        threadId: thread.id,
-                        cause: Cause.pretty(cause),
-                      }).pipe(Effect.tap(() => Effect.sync(() => failBackfill([thread])))),
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  (cause) =>
+                    Effect.logWarning("thread pull request update failed", {
+                      threadId: thread.id,
+                      cause: Cause.pretty(cause),
+                    }).pipe(Effect.tap(() => Effect.sync(() => failBackfill([thread])))),
                 ),
               ),
             { discard: true },
@@ -344,8 +346,7 @@ export const make = Effect.gen(function* () {
               }).pipe(Effect.tap(() => Effect.sync(() => failBackfill(group)))),
           ),
         ),
-      // Wide enough that a sweep's GitHub branch lookups reach the GitHub provider together and share one
-      // GraphQL document, instead of one `gh pr list` per branch.
+      // Batch concurrent branch lookups into one GitHub GraphQL document.
       { concurrency: 32, discard: true },
     );
   });
@@ -406,5 +407,3 @@ export const make = Effect.gen(function* () {
 
   return { start, drain: worker.drain } satisfies ThreadPullRequestServiceV2["Service"];
 });
-
-const layer = Layer.effect(ThreadPullRequestServiceV2, make);

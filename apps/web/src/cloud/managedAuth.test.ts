@@ -9,7 +9,7 @@ import {
 } from "./managedAuth";
 
 vi.mock("@clerk/react", () => ({
-  useAuth: vi.fn(),
+  useClerk: vi.fn(),
 }));
 
 vi.mock("../lib/runtime", () => ({

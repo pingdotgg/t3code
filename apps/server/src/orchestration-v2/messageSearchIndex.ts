@@ -2,12 +2,9 @@ import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 /**
- * The messages search indexes: finished, and either written by the user or
- * answered by an agent. User-role notices that agents or the system wrote
- * stay out. Subagent threads stay out too: search never shows them, and ACP
- * subagents rewrite their whole finished answer on every streamed chunk.
- * Migration 69's triggers, its backfill, the rebuild, and the scan all use
- * it; `row` names the message row (a table alias, or `new` in a trigger).
+ * Exclude generated notices and subagent threads: search hides them, and ACP subagents rewrite
+ * their finished answer on every streamed chunk.
+ * Migration triggers, backfill, rebuild and scans share this predicate; `row` may be `new`.
  */
 export const indexedMessageCondition = (sql: SqlClient.SqlClient, row = "messages") =>
   sql.literal(`

@@ -22,7 +22,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
-import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
+import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -33,7 +33,7 @@ export function usePullRequestListActions(
 ) {
   const registry = use(RegistryContext);
   const navigation = useNavigation();
-  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
+  const selectDetail = useSelectWorkspaceDetail();
   const permissionKey = JSON.stringify(environmentIds);
   const permissionAtom = (() => {
     const ids: readonly EnvironmentId[] = JSON.parse(permissionKey);
@@ -80,7 +80,10 @@ export function usePullRequestListActions(
         )
           throw new Error(`Review requests aren't available for this ${terminology.singular}.`);
         if (Platform.OS === "android") {
-          selectAndroidWorkspace({ name: "PullRequest", params: params(entry) }, params(entry));
+          selectDetail(
+            { name: "PullRequest", params: params(entry) },
+            { name: "PullRequestReviewers", params: params(entry) },
+          );
         } else navigation.navigate("PullRequestReviewers", params(entry));
         return;
       }
@@ -112,9 +115,7 @@ export function usePullRequestListActions(
   };
   const select = (entry: EnvironmentPullRequestListEntry, action: string) => {
     if (action === "open") {
-      if (Platform.OS === "android")
-        selectAndroidWorkspace({ name: "PullRequest", params: params(entry) });
-      else navigation.navigate("PullRequest", params(entry));
+      selectDetail({ name: "PullRequest", params: params(entry) });
       return;
     }
     if (action === "request-review") {

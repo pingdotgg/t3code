@@ -1,15 +1,18 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
+  buildCommitUrl,
   changeRequestUrlBelow,
   defineSourceControl,
   isChangeRequestAuthorityOfProject,
   parseChangeRequestPath,
+  parseCommitPath,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
 // Azure DevOps Server runs on any hostname; its `_git` route identifies it.
 const CHANGE_REQUEST_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u;
+const COMMIT_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/commit\/([0-9a-f]+)\/?$/iu;
 const CHECKOUT_COMMAND = /^az\s+repos\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
@@ -88,6 +91,12 @@ export const definition = defineSourceControl({
     const [canonicalHost = host, ...path] = (canonicalRepositoryKey(key) ?? key).split("/");
     return `${remoteWebOrigin(canonicalHost, remoteUrl)}/${path.join("/")}/pullrequest/${number}`;
   },
+  commitUrl: (input) => {
+    const key = `${input.host}/${input.repository}`.toLowerCase();
+    const [host = input.host, ...path] = (canonicalRepositoryKey(key) ?? key).split("/");
+    return buildCommitUrl({ ...input, host, repository: path.join("/") }, "commit");
+  },
+  parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
   // Servers on different ports are different servers, so a port stays in the link.
   parseChangeRequestUrl: (url) => {
     const link = parseChangeRequestPath(url, CHANGE_REQUEST_PATH);
@@ -125,11 +134,8 @@ export const definition = defineSourceControl({
       ? { kind: KIND, name: "Azure DevOps", baseUrl: `https://${host}` }
       : null,
   /**
-   * `az repos pr list --repository` takes a repository name, and takes the organisation and
-   * project from the checkout it detects, so the recorded `org/project/_git/repo` path is refused
-   * outright and the whole repository reads as unavailable. The segment comes from the remote URL,
-   * where a name with a space reads `my%20repo`; `az` looks that up literally and answers 404, so
-   * it goes out decoded.
+   * `az repos pr list --repository` takes a name; organisation and project come from checkout.
+   * Decode the remote URL's name segment: `az` treats escapes literally and returns 404.
    */
   repositorySelector: (identity) => {
     const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");

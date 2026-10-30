@@ -1,7 +1,7 @@
 import { Toolbar } from "../../components/ui/Toolbar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAtomRefresh } from "@effect/atom-react";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   type AtomCommandResult,
   squashAtomCommandFailure,
@@ -24,6 +24,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import { PullRequestMarkdown, PullRequestMarkdownRepository } from "./PullRequestMarkdown";
 import { PullRequestAvatar } from "./PullRequestPresentation";
+import { PullRequestCommentFooter } from "./PullRequestReactions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
@@ -63,6 +64,15 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(64);
+  // Replies from "Load more" live only here, outside the activity an edit refreshes. After one
+  // is edited, drop the loaded pages so the next load reads the new body instead of the old one.
+  const extraEdited = useRef(false);
+  useFocusEffect(() => {
+    if (!extraEdited.current) return;
+    extraEdited.current = false;
+    setExtra([]);
+    setCursor(undefined);
+  });
   const operation = async (run: () => Promise<AtomCommandResult<unknown, unknown> | undefined>) => {
     if (pending.current) return;
     pending.current = true;
@@ -200,6 +210,16 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                   </Text>
                 </View>
                 <PullRequestMarkdown markdown={comment.body} />
+                <PullRequestCommentFooter
+                  params={params}
+                  comment={{ ...comment, kind: "review-comment" }}
+                  permissions={permissions}
+                  onChanged={refresh}
+                  onEdit={() => {
+                    if (extra.some((loaded) => loaded.id === comment.id))
+                      extraEdited.current = true;
+                  }}
+                />
               </View>
             ))}
             {nextCursor ? (

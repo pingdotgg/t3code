@@ -4,10 +4,7 @@ import type { ProviderReplayTranscript } from "@t3tools/contracts";
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import { assertThreadRollbackOutput } from "../thread_rollback/codex_output.ts";
 
-/**
- * Codex only reverts threads loaded in its current app-server process, so the
- * released session's successor must resume the thread before `thread/revert`.
- */
+/** Codex thread/revert requires a loaded thread; successor sessions must resume it first. */
 export function assertThreadRollbackAfterRestartOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

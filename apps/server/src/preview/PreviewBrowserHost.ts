@@ -16,10 +16,7 @@ export const sandboxDisabled = (env: Readonly<Record<string, string | undefined>
 const USERNS_RESTRICTION = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
 export const APPARMOR_PROFILE_PATH = "/etc/apparmor.d/t3-chrome-headless-shell";
 
-/**
- * Modelled on the profile Ubuntu ships for Google Chrome; `unconfined` adds
- * nothing beyond `userns`.
- */
+/** Match Ubuntu's Chrome profile; unconfined adds nothing beyond userns. */
 export const APPARMOR_PROFILE = `# Written by \`t3 browser setup\`: lets T3 Code's headless browser use Chrome's sandbox.
 abi <abi/4.0>,
 include <tunables/global>
@@ -31,10 +28,7 @@ profile t3-chrome-headless-shell /**/tools/chrome-headless-shell/*/*/chrome-head
 }
 `;
 
-/**
- * Ubuntu 24.04 and Debian 13 renamed some with a `t64` suffix; setup installs
- * whichever name the host's apt offers.
- */
+/** Ubuntu 24.04 and Debian 13 use some t64 library names; choose names available through apt. */
 export const DEBIAN_PACKAGES: ReadonlyArray<ReadonlyArray<string>> = [
   ["libnss3"],
   ["libglib2.0-0t64", "libglib2.0-0"],
@@ -112,11 +106,7 @@ export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunc
   },
 );
 
-/**
- * The browser's own `--version` decides whether any are missing; `ldd` only
- * lists them after the real loader fails, because it can report libraries a
- * host provides another way (NixOS's nix-ld).
- */
+/** Detect missing libraries with --version; ldd can report misses that NixOS nix-ld provides. */
 export const missingLibraries = Effect.fn("PreviewBrowserHost.missingLibraries")(function* (
   executable: string,
 ) {

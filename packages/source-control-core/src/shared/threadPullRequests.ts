@@ -151,22 +151,33 @@ export function makeThreadPullRequests(
     if (open.length > 1) {
       const openChains = chains
         .map((chain) => layersFromTop(chain).filter(isOpen))
-        .filter((layers) => layers.length > 0)
-        .sort(
-          (left, right) =>
-            Math.max(...right.map((link) => Date.parse(link.linkedAt))) -
-            Math.max(...left.map((link) => Date.parse(link.linkedAt))),
-        );
-      const ordered = openChains.flat();
+        .filter((layers) => layers.length > 0);
+      const ordered =
+        openChains.length === 1
+          ? openChains[0]!
+          : openChains
+              .map((layers) => ({
+                layers,
+                newestLinkedAt: Math.max(...layers.map((link) => Date.parse(link.linkedAt))),
+              }))
+              .sort((left, right) => right.newestLinkedAt - left.newestLinkedAt)
+              .flatMap((chain) => chain.layers);
       return { kind: "stack", open: ordered, top: ordered[0]! };
     }
     if (chains.length === 1) {
       return { kind: "single", link: layersFromTop(chains[0]!)[0]! };
     }
-    const terminal = [...visible].sort(
-      (left, right) => latestUpdatedAt(right) - latestUpdatedAt(left),
-    );
-    return { kind: "single", link: terminal[0]! };
+    let latest = visible[0]!;
+    let latestTimestamp = latestUpdatedAt(latest);
+    for (let index = 1; index < visible.length; index++) {
+      const link = visible[index]!;
+      const timestamp = latestUpdatedAt(link);
+      if (timestamp > latestTimestamp) {
+        latest = link;
+        latestTimestamp = timestamp;
+      }
+    }
+    return { kind: "single", link: latest };
   }
 
   function resolveThreadCurrentPullRequestLink(

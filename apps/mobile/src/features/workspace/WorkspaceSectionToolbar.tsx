@@ -1,4 +1,3 @@
-import { useNavigation } from "@react-navigation/native";
 import { selectedNavigationTab, visibleNavigationTabs } from "./navigation-tab-order";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { useControlTheme } from "../../components/ui/useControlTheme";
@@ -20,7 +19,6 @@ export function WorkspaceTabToolbarButtons() {
   const hidden = useHiddenNavigationTabs();
   const workspace = useWorkspaceTabs()!;
   const selectTab = useSelectWorkspaceTab();
-  const navigation = useNavigation();
   const selected = selectedNavigationTab(
     order,
     workspace.state.selectedTab,
@@ -49,12 +47,7 @@ export function WorkspaceTabToolbarButtons() {
         accessibilityLabel="Settings"
         icon="gearshape"
         tintColor={selected === "settings" ? selectedTint : undefined}
-        onPress={() =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "Settings" },
-          })
-        }
+        onPress={() => selectTab("settings")}
       />
     </>
   );
