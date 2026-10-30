@@ -143,11 +143,12 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect.each([
+  const targetGrantMethods = [
     WS_METHODS.scheduledTasksDelete,
     WS_METHODS.agentSessionsImportTranscript,
     ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
-  ])(
+  ];
+  it.effect.each(targetGrantMethods)(
     "uses the target grant for both availability and execution of %s",
     (method) =>
       Effect.scoped(
