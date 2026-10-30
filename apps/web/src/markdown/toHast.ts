@@ -250,6 +250,7 @@ class Converter {
   }
 
   hasHeading = false;
+  hasRaw = false;
 
   one(node: RootContent, parent: Parent): ElementContent | ElementContent[] | undefined {
     const position = node.position;
@@ -329,7 +330,8 @@ class Converter {
       case "footnoteReference":
         return this.footnoteReference(node.identifier, position);
       case "html":
-        throw new Bail();
+        this.hasRaw = true;
+        return { type: "raw", value: node.value, position: copyPosition(position) } as unknown as ElementContent;
       case "definition":
       case "footnoteDefinition":
       case "yaml" as never:
@@ -533,7 +535,7 @@ function soleImage(node: Element | HastRoot): Element | undefined {
   return only.tagName === "a" || only.tagName === "strong" || only.tagName === "em" ? soleImage(only) : undefined;
 }
 
-function markStandaloneImages(node: Element | HastRoot) {
+export function markStandaloneImages(node: Element | HastRoot) {
   if (node.type === "root" || STANDALONE_IMAGE_BLOCKS.has(node.tagName)) {
     const image = soleImage(node);
     if (image) image.properties = { ...image.properties, dataStandalone: true };
@@ -545,7 +547,7 @@ function markStandaloneImages(node: Element | HastRoot) {
 export function toChatHast(
   tree: Root,
   options: ToHastOptions,
-): { hast: HastRoot; hasHeading: boolean } | null {
+): { hast: HastRoot; hasHeading: boolean; hasRaw: boolean } | null {
   const converter = new Converter(tree, options);
   let children: ElementContent[];
   try {
@@ -559,8 +561,7 @@ export function toChatHast(
   const root: HastRoot = { type: "root", children };
   const position = copyPosition(tree.position);
   if (position) root.position = position;
-  markStandaloneImages(root);
-  return { hast: root, hasHeading: converter.hasHeading };
+  return { hast: root, hasHeading: converter.hasHeading, hasRaw: converter.hasRaw };
 }
 
 export type { PhrasingContent };

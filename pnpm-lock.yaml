@@ -1151,6 +1151,9 @@ importers:
       hast-util-to-jsx-runtime:
         specifier: ^2.3.6
         version: 2.3.6(supports-color@8.1.1)
+      hastscript:
+        specifier: ^9.0.1
+        version: 9.0.1
       heic-to:
         specifier: ^1.5.2
         version: 1.5.2
