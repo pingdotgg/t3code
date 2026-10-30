@@ -2411,10 +2411,13 @@ const make = Effect.gen(function* () {
       });
     });
     broadcastViewport(tab);
-    yield* Effect.promise(() => startScreencast(1));
-    // An idle page does not repaint for a new screencast, so the viewer
-    // starts from a still unless a live frame beat it.
-    if (!screencastStarted) yield* Effect.promise(pushStill);
+    // Forked so a renderer that never answers cannot hold up the viewer's socket.
+    yield* Effect.gen(function* () {
+      yield* Effect.promise(() => startScreencast(1));
+      // An idle page does not repaint for a new screencast, so the viewer
+      // starts from a still unless a live frame beat it.
+      if (!screencastStarted) yield* Effect.promise(pushStill);
+    }).pipe(Effect.forkScoped);
     return {
       output,
       input: (raw: unknown) =>
