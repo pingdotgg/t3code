@@ -158,10 +158,13 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       // A queued guest message shows the guest's words; the agent still gets the attributed text.
       text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
       attachments: message?.attachments ?? [],
-      steerRejectionReason: orchestrationV2SteerRejectionReason({
-        text: message?.text ?? "",
-        attachments: message?.attachments ?? [],
-      }),
+      steerRejectionReason:
+        message === undefined
+          ? "Queued message is still loading."
+          : orchestrationV2SteerRejectionReason({
+              text: message.text,
+              attachments: message.attachments ?? [],
+            }),
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
       ...(message ? { message } : {}),
