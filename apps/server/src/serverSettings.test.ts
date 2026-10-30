@@ -1555,6 +1555,36 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect("keeps a per-host token reference as written and drops the literal it replaces", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const reference = {
+        provider: SecretProviderId.make("personal"),
+        reference: "op://Private/GitHub/token",
+      };
+      const stored = (serverHost: string) =>
+        secrets.get(sourceControlHostSecretName({ kind: "github", field: "tokens", serverHost }));
+
+      yield* serverSettings.updateSettings({
+        sourceControlHosts: { github: { tokens: { "github.com": "ghp_dotcom" } } },
+      });
+      assert.isTrue(Option.isSome(yield* stored("github.com")));
+
+      const saved = yield* serverSettings.updateSettings({
+        sourceControlHosts: {
+          github: { tokens: { "github.com": reference, "ghe.acme.test": "ghp_ghe" } },
+        },
+      });
+      assert.isTrue(Option.isNone(yield* stored("github.com")));
+      assert.isTrue(Option.isSome(yield* stored("ghe.acme.test")));
+      const tokens = ServerSettingsModule.redactServerSettingsForClient(saved).sourceControlHosts
+        .github?.tokens as Record<string, unknown>;
+      assert.deepEqual(tokens["github.com"], reference);
+      assert.notEqual(tokens["ghe.acme.test"], "ghp_ghe");
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect("keeps the retired keys for another load when a token cannot be copied", () => {
     const cause = new ServerSecretStore.SecretStoreReadError({
       resource: "bitbucket-access-token",

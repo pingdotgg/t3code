@@ -18,7 +18,10 @@ const source = (reference: string) => ({
   reference,
 });
 
-const secretsByReference = new Map([["bitbucket#token", "bb_from_provider"]]);
+const secretsByReference = new Map([
+  ["github#token", "ghp_from_provider"],
+  ["bitbucket#token", "bb_from_provider"],
+]);
 
 const layerResolver = Layer.succeed(SecretResolver.SecretResolver, {
   read: (references) =>
@@ -31,6 +34,10 @@ const fakeResolver = SecretResolver.SecretResolver.use((resolver) => Effect.succ
 const hosts = {
   bitbucket: { email: "me@example.test", accessToken: source("bitbucket#token") },
   gitcafe: { token: source("missing#token") },
+  github: { tokens: { "github.com": source("github#token"), "ghe.acme.test": "ghp_literal" } },
+};
+const literalHosts = {
+  gitcafe: { token: "literal" },
   github: { tokens: { "github.com": "ghp_literal" } },
 };
 
@@ -67,17 +74,30 @@ it.effect("treats a reference the provider cannot read as an unset credential", 
   }).pipe(Effect.provide(layerResolver)),
 );
 
-it.effect("leaves the resolver unused for a kind that holds no reference", () =>
+it.effect("replaces a reference held in the per-host token record and keeps literal tokens", () =>
   Effect.gen(function* () {
     const { reads, resolve } = yield* countingResolver;
     const resolved = yield* resolveSourceControlHostSecrets(hosts, "github", resolve);
-    assert.strictEqual(resolved, hosts);
+    assert.deepEqual(resolved, {
+      ...hosts,
+      github: { tokens: { "github.com": "ghp_from_provider", "ghe.acme.test": "ghp_literal" } },
+    });
+    assert.deepEqual(reads, ["github#token"]);
+  }).pipe(Effect.provide(layerResolver)),
+);
+
+it.effect("leaves the resolver unused for a kind that holds no reference", () =>
+  Effect.gen(function* () {
+    const { reads, resolve } = yield* countingResolver;
+    const resolved = yield* resolveSourceControlHostSecrets(literalHosts, "github", resolve);
+    assert.strictEqual(resolved, literalHosts);
     assert.deepEqual(reads, []);
   }).pipe(Effect.provide(layerResolver)),
 );
 
 it("collects the references held in credential fields and skips literal values", () => {
   assert.deepEqual(collectSourceControlHostSecretReferences(hosts), [
+    source("github#token"),
     source("missing#token"),
     source("bitbucket#token"),
   ]);
