@@ -1,5 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- A real socket server verifies the HTTP wire format.
+import * as NodeHttp from "node:http";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The socket fixture owns its temporary directory.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Keep the native socket path within the temporary directory.
+import * as NodePath from "node:path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -7,7 +16,8 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessTimeoutError } from "@t3tools/contracts";
-import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
+import { HttpClient, HttpClientResponse, HttpClientRequest } from "effect/http";
+import { GraphQLClient } from "effect/graphql";
 
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -17,6 +27,9 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
+import * as GitHubHttpClient from "./GitHubHttpClient.ts";
+import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
+import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
 
 const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
   enabled: false,
@@ -98,6 +111,177 @@ describe("environmentToken", () => {
 });
 
 describe("GitHubRest", () => {
+  it.live("routes REST and GraphQL through gh's plain HTTP Unix socket", () =>
+    Effect.gen(function* () {
+      const directory = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "gh-"))),
+        (directory) =>
+          Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
+      );
+      const socketPath = NodePath.join(directory, "api.sock");
+      const requests: Array<{
+        method: string | undefined;
+        path: string | undefined;
+        headers: NodeHttp.IncomingHttpHeaders;
+        body: string;
+      }> = [];
+      const server = NodeHttp.createServer(async (request, response) => {
+        const chunks: Array<Buffer> = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        requests.push({
+          method: request.method,
+          path: request.url,
+          headers: request.headers,
+          body: Buffer.concat(chunks).toString(),
+        });
+        response.setHeader("content-type", "application/json");
+        response.end(
+          JSON.stringify(
+            request.url?.endsWith("graphql")
+              ? { data: { repository: { pullRequest: { additions: 3, deletions: 1 } } } }
+              : { login: "proxy-user" },
+          ),
+        );
+      });
+      yield* Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              server.once("error", reject);
+              server.listen(socketPath, resolve);
+            }),
+        ),
+        () =>
+          Effect.promise(
+            () =>
+              new Promise<void>((resolve, reject) =>
+                server.close((error) => (error ? reject(error) : resolve())),
+              ),
+          ),
+      );
+      const directRequests: Array<string> = [];
+      const fallback = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          directRequests.push(request.url);
+          return Effect.succeed(HttpClientResponse.fromWeb(request, json({}, { status: 401 })));
+        }),
+      );
+      const host = TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            expect(input.command).toBe("gh");
+            if (input.args[0] === "config") {
+              expect(input.args).toEqual(["config", "get", "http_unix_socket"]);
+              return Effect.succeed(TestSourceControlHost.processOutput(`${socketPath}\n`));
+            }
+            expect(input.args.slice(0, 2)).toEqual(["auth", "token"]);
+            return Effect.succeed(TestSourceControlHost.processOutput("placeholder\n"));
+          },
+        },
+      });
+      const layer = GitHubRest.layerWithDependencies.pipe(
+        Layer.provideMerge(GitHubHttpClient.layer),
+        Layer.provide(
+          Layer.mergeAll(host, fallback, NodeServices.layer, SourceControlRateLimit.layer),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const rest = yield* GitHubRest.GitHubRest;
+        const client = yield* GraphQLClient.make(
+          PullRequestBatchesGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
+        ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+        for (const [host, apiHost, root] of [
+          ["github.com", "api.github.com", ""],
+          ["git.acme.test:8443", "git.acme.test:8443", "/api/v3"],
+        ] as const) {
+          const answer = yield* rest.rest({
+            host,
+            operation: "user",
+            path: "user?per_page=1",
+          });
+          expect(JSON.parse(answer.body)).toEqual({ login: "proxy-user" });
+          const stats = yield* client
+            .PullRequestStats({ owner: "acme", name: "web", number: 7 })
+            .pipe(GitHubGraphQlClient.call({ host, operation: "stats" }));
+          expect(stats).toEqual({ repository: { pullRequest: { additions: 3, deletions: 1 } } });
+          const [restRequest, graphqlRequest] = requests.slice(-2);
+          expect(restRequest).toMatchObject({ method: "GET", path: `${root}/user?per_page=1` });
+          expect(graphqlRequest).toMatchObject({
+            method: "POST",
+            path: root === "" ? "/graphql" : "/api/graphql",
+          });
+          for (const request of [restRequest!, graphqlRequest!]) {
+            expect(request.headers).toMatchObject({
+              host: apiHost,
+              authorization: "Bearer placeholder",
+              "user-agent": "t3code",
+              "x-github-api-version": "2022-11-28",
+            });
+          }
+          expect(JSON.parse(graphqlRequest!.body).variables).toEqual({
+            owner: "acme",
+            name: "web",
+            number: 7,
+          });
+        }
+        yield* Effect.promise(() => NodeFSP.unlink(socketPath));
+        const error = yield* Effect.flip(
+          rest.rest({ host: "github.com", operation: "user", path: "user" }),
+        );
+        expect(error._tag).toBe("GitHubApiRequestError");
+        expect(directRequests).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["", "unavailable"])(
+    "keeps the existing HTTP client when gh's socket is %s",
+    (config) => {
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      const fallback = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests.push(request);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, json({ login: "direct-user" })),
+          );
+        }),
+      );
+      const host = TestSourceControlHost.layer({
+        process: {
+          run: () =>
+            config === ""
+              ? Effect.succeed(TestSourceControlHost.processOutput("\n"))
+              : Effect.fail(
+                  new VcsProcessTimeoutError({
+                    operation: "GitHubHttpClient.config",
+                    command: "gh",
+                    cwd: "/",
+                    timeoutMs: 10_000,
+                  }),
+                ),
+        },
+      });
+      return Effect.gen(function* () {
+        const api = yield* HttpClient.HttpClient;
+        const answer = yield* api.execute(
+          HttpClientRequest.get("https://api.github.com/user").pipe(
+            HttpClientRequest.bearerToken("first"),
+          ),
+        );
+        expect(yield* answer.json).toEqual({ login: "direct-user" });
+        expect(requests).toHaveLength(1);
+        expect(requests[0]).toMatchObject({
+          url: "https://api.github.com/user",
+          headers: { authorization: "Bearer first" },
+        });
+      }).pipe(
+        Effect.provide(GitHubHttpClient.layer.pipe(Layer.provide(Layer.merge(host, fallback)))),
+      );
+    },
+  );
+
   it.effect("traces the operation, path and quota, never the query string or the token", () => {
     const spans: Array<Tracer.NativeSpan> = [];
     const tracer = Tracer.make({

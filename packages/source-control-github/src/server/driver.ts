@@ -15,6 +15,7 @@ import * as GitHubMediaFetch from "./gitHubMediaFetch.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubHttpClient from "./GitHubHttpClient.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
 // `GitHubRest.layerWithDependencies` carries the quota reserve every GitHub reader shares, so it
@@ -22,6 +23,7 @@ import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(GitHubAppAccess.layer),
   Layer.provideMerge(GitHubRest.layerWithDependencies),
+  Layer.provide(GitHubHttpClient.layer),
 );
 
 const makeSignIn = Effect.gen(function* () {
