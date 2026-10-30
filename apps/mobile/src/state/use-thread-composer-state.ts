@@ -34,7 +34,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
-import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
 
@@ -462,7 +462,7 @@ export function useThreadComposerState() {
       input: {
         threadId: thread.id,
         runId: edit.runId,
-        text: text.length === 0 ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : text,
+        text: restoreAttachmentOnlyBootstrapPrompt(text),
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,

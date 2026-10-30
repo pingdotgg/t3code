@@ -19,8 +19,8 @@ import {
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
-  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-  isAttachmentOnlyBootstrapPrompt,
+  restoreAttachmentOnlyBootstrapPrompt,
+  stripAttachmentOnlyBootstrapPrompt,
 } from "@t3tools/shared/composerContextReferences";
 import { Atom } from "effect/reactivity";
 import type { RefObject } from "react";
@@ -149,7 +149,7 @@ async function submitQueuedRunEdit(input: {
       input: {
         threadId: editing.threadId,
         runId: editing.runId,
-        text: editText.length === 0 ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : editText,
+        text: restoreAttachmentOnlyBootstrapPrompt(editText),
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
@@ -230,7 +230,7 @@ export function useQueuedRunEdit(input: {
     if (activeThreadId === null) return;
     if (editing !== null && editing.runId !== request.runId) clearEditDraft(editing.runId);
     const target = queuedEditDraftTarget(routeThreadRef, request.runId);
-    const text = isAttachmentOnlyBootstrapPrompt(request.text) ? "" : request.text;
+    const text = stripAttachmentOnlyBootstrapPrompt(request.text);
     const store = useComposerDraftStore.getState();
     store.clearComposerContent(target);
     store.setPrompt(target, text);

@@ -145,7 +145,7 @@ const promptOf = (ref: ScopedThreadRef) =>
 
 describe("useQueuedRunEdit", () => {
   it.each(["", "Ultrathink:\n"])(
-    "opens attachment-only edits empty and saves their attachments (%j)",
+    "opens attachment-only edits without the placeholder and preserves effort on save (%j)",
     async (prefix) => {
       const { hook } = setup();
       mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
@@ -170,7 +170,7 @@ describe("useQueuedRunEdit", () => {
       expect(
         useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt ??
           "",
-      ).toBe("");
+      ).toBe(prefix.trimEnd());
       expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment)).toEqual(
         attachments,
       );
@@ -184,11 +184,11 @@ describe("useQueuedRunEdit", () => {
       expect(requireHook(hook).isEditing).toBe(false);
       await act(() => setRuns(THREAD_A, "queued"));
       await act(() => requireHook(hook).beginEdit(request));
-      await act(() => requireHook(hook).saveEdit(savedContent(""), () => {}));
+      await act(() => requireHook(hook).saveEdit(savedContent(prefix.trimEnd()), () => {}));
       expect(mocks.editQueuedRun).toHaveBeenCalledWith(
         expect.objectContaining({
           input: expect.objectContaining({
-            text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+            text: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
             edit: expect.objectContaining({ attachments }),
           }),
         }),
