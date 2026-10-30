@@ -89,17 +89,14 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
                     ? { _tag: "RateLimited" as const, status, headers: responseHeaders }
                     : {
                         _tag: "Ok" as const,
-                        value:
-                          source === undefined
-                            ? answer
-                            : {
-                                ...answer,
-                                headers: Headers.set(
-                                  responseHeaders,
-                                  CREDENTIAL_SOURCE_HEADER,
-                                  source,
-                                ),
-                              },
+                        // The source is local; never trust one GitHub's answer carries.
+                        value: {
+                          ...answer,
+                          headers:
+                            source === undefined
+                              ? Headers.remove(responseHeaders, CREDENTIAL_SOURCE_HEADER)
+                              : Headers.set(responseHeaders, CREDENTIAL_SOURCE_HEADER, source),
+                        },
                         withheld,
                         status,
                         headers: responseHeaders,
