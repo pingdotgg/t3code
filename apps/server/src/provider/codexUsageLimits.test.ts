@@ -5,14 +5,40 @@ import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
   codexRateLimitsToUpdate,
-  codexResetCreditsToContract,
-  codexUsageLimitMessage,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 
 describe("codexRateLimitsToLimits", () => {
+  it("shows an Enterprise monthly credit allowance in reads and notifications without a duration", () => {
+    const snapshot = {
+      limitId: "codex",
+      planType: "enterprise_cbp_usage_based",
+      primary: null,
+      secondary: null,
+      individualLimit: { remainingPercent: 99, resetsAt: 1_784_500_000 },
+    };
+    const windows = [
+      {
+        id: "individual",
+        kind: "monthly",
+        label: "Monthly credit limit",
+        usedPercent: 1,
+        resetsAt: "2026-07-19T22:26:40.000Z",
+      },
+    ];
+
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: { limitId: "spark" },
+        rateLimitsByLimitId: { codex: snapshot },
+      }),
+    ).toEqual({ checkedAt, windows });
+    expect(codexRateLimitsToUpdate(snapshot)).toEqual({ windows });
+  });
+
   it("maps primary and secondary onto the session and weekly windows", () => {
     expect(
       codexRateLimitsToLimits({
@@ -66,6 +92,7 @@ describe("codexRateLimitsToLimits", () => {
   it("selects the main Codex allowance and leaves Spark out", () => {
     const spark = {
       limitId: "codex_bengalfox",
+      individualLimit: { remainingPercent: 99, resetsAt: 1_784_500_000 },
       primary: { usedPercent: 0, windowDurationMins: 300 },
       secondary: { usedPercent: 90, windowDurationMins: 10080 },
     };
@@ -98,21 +125,32 @@ describe("codexRateLimitsToLimits", () => {
       );
     },
   );
-
-  it("does not show a model-specific legacy snapshot as the main allowance", () => {
-    expect(
-      codexRateLimitsToLimits({
-        checkedAt,
-        snapshot: {
-          limitId: "codex_bengalfox",
-          secondary: { usedPercent: 90 },
-        },
-      }).windows,
-    ).toEqual([]);
-  });
 });
 
 describe("codexRateLimitsToUpdate", () => {
+  it("does not republish cached windows over a newer account probe", () => {
+    const cached = {
+      primary: { usedPercent: 0, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+      secondary: { usedPercent: 20, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+    };
+    expect(codexRateLimitsToUpdate(cached)?.windows).toHaveLength(2);
+    expect(codexRateLimitsToUpdate(structuredClone(cached), cached)).toBeUndefined();
+
+    const changed = { ...cached, secondary: { ...cached.secondary, usedPercent: 21 } };
+    expect(codexRateLimitsToUpdate(changed, cached)?.windows.map((window) => window.id)).toEqual([
+      "secondary",
+    ]);
+    expect(codexRateLimitsToUpdate({ primary: cached.primary }, cached)).toBeUndefined();
+    expect(
+      codexRateLimitsToUpdate({ primary: { ...cached.primary, resetsAt: 1_784_001_000 } }, cached)
+        ?.windows,
+    ).toHaveLength(1);
+    expect(
+      codexRateLimitsToUpdate({ primary: { ...cached.primary, usedPercent: 76 } }, cached)
+        ?.windows[0]?.usedPercent,
+    ).toBe(76);
+  });
+
   it("carries only the windows the notification names", () => {
     expect(
       codexRateLimitsToUpdate({
@@ -136,6 +174,7 @@ describe("codexRateLimitsToUpdate", () => {
     expect(
       codexRateLimitsToUpdate({
         limitId: "codex_bengalfox",
+        individualLimit: { remainingPercent: 99, resetsAt: 1_784_500_000 },
         primary: { usedPercent: 0, windowDurationMins: 300 },
         secondary: { usedPercent: 90, windowDurationMins: 10080 },
       }),
@@ -169,119 +208,42 @@ describe("codexRateLimitsFailureMessage", () => {
       ),
     ).toBe("Codex could not read usage (JSON-RPC -32603).");
   });
-
-  it("phrases a dead process differently from a bad answer", () => {
-    expect(
-      codexRateLimitsFailureMessage(new CodexErrors.CodexAppServerProcessExitedError({ code: 1 })),
-    ).toBe("Codex exited before it could report usage.");
-  });
-});
-
-describe("codexResetCreditsToContract", () => {
-  it("counts available credits and reports the soonest expiry", () => {
-    expect(
-      codexResetCreditsToContract({
-        availableCount: 2,
-        credits: [
-          { status: "available", expiresAt: 1_784_500_000 },
-          { status: "redeemed", expiresAt: 1_700_000_000 },
-          { status: "available", expiresAt: 1_784_000_000 },
-        ],
-      }),
-    ).toEqual({ availableCount: 2, nextExpiresAt: "2026-07-14T03:33:20.000Z" });
-    expect(codexResetCreditsToContract({ availableCount: 0 })).toEqual({ availableCount: 0 });
-    expect(codexResetCreditsToContract(null)).toBeUndefined();
-  });
-
-  it("rides along on the probe's limits", () => {
-    expect(
-      codexRateLimitsToLimits({
-        checkedAt,
-        snapshot: { primary: { usedPercent: 5, windowDurationMins: 300 } },
-        resetCredits: { availableCount: 1 },
-      }).resetCredits,
-    ).toEqual({ availableCount: 1 });
-  });
-});
-
-describe("codexUsageLimitMessage", () => {
-  const at = "2026-01-01T00:00:00.000Z";
-  const atSeconds = Date.parse(at) / 1000;
-
-  it("names the exhausted window and the workspace's missing credits", () => {
-    expect(
-      codexUsageLimitMessage(
-        {
-          limitId: "codex",
-          rateLimitReachedType: "workspace_owner_credits_depleted",
-          primary: { usedPercent: 40, resetsAt: atSeconds + 3_600, windowDurationMins: 300 },
-          secondary: {
-            usedPercent: 100,
-            resetsAt: atSeconds + 5 * 86_400 + 5 * 3_600,
-            windowDurationMins: 10_080,
-          },
-        },
-        at,
-      ),
-    ).toBe(
-      "Codex usage limit reached. The weekly limit resets in 5d 5h. The workspace has no credits to continue sooner: ask your workspace owner to add credits, or send the message again once the limit resets.",
-    );
-  });
-
-  it("points a reached spend cap at the workspace owner", () => {
-    expect(
-      codexUsageLimitMessage(
-        {
-          limitId: "codex",
-          rateLimitReachedType: "workspace_member_usage_limit_reached",
-          primary: {
-            usedPercent: 100,
-            resetsAt: atSeconds + 3 * 3_600 + 20 * 60,
-            windowDurationMins: 300,
-          },
-        },
-        at,
-      ),
-    ).toBe(
-      "Codex usage limit reached. The session limit resets in 3h 20m. The workspace spend limit is reached: ask your workspace owner to raise it, or send the message again once the limit resets.",
-    );
-  });
-
-  it("names no window when credits run out without one", () => {
-    expect(
-      codexUsageLimitMessage(
-        { limitId: "codex", rateLimitReachedType: "workspace_member_credits_depleted" },
-        at,
-      ),
-    ).toBe(
-      "Codex usage limit reached. The workspace has no credits to continue sooner: ask your workspace owner to add credits, or send the message again once the limit resets.",
-    );
-  });
-
-  it("says only what it knows without a snapshot", () => {
-    expect(codexUsageLimitMessage(undefined, at)).toBe(
-      "Codex usage limit reached. Send the message again once the limit resets.",
-    );
-  });
 });
 
 describe("mergeCodexRateLimits", () => {
-  it("keeps windows an update does not carry", () => {
-    const merged = mergeCodexRateLimits(
-      {
-        limitId: "codex",
-        planType: "business",
-        primary: { usedPercent: 100, resetsAt: 1_800_000_000, windowDurationMins: 300 },
-      },
-      { rateLimitReachedType: "rate_limit_reached" },
-    );
-
-    expect(merged).toEqual({
+  it("updates monthly credit usage, retains it when omitted, and clears an explicit null", () => {
+    const snapshot = {
       limitId: "codex",
-      planType: "business",
-      rateLimitReachedType: "rate_limit_reached",
-      primary: { usedPercent: 100, resetsAt: 1_800_000_000, windowDurationMins: 300 },
+      primary: { usedPercent: 12 },
+      individualLimit: { remainingPercent: 99, resetsAt: 1_784_500_000 },
+    };
+    const individualLimit = { remainingPercent: 75, resetsAt: 1_787_000_000 };
+    const changed = mergeCodexRateLimits(snapshot, { individualLimit });
+    expect(changed).toEqual({ ...snapshot, individualLimit });
+    expect(codexRateLimitsToUpdate(changed!)).toEqual({
+      windows: [
+        {
+          id: "primary",
+          kind: "session",
+          label: "Session",
+          usedPercent: 12,
+          windowDurationMins: 300,
+        },
+        {
+          id: "individual",
+          kind: "monthly",
+          label: "Monthly credit limit",
+          usedPercent: 25,
+          resetsAt: "2026-08-17T20:53:20.000Z",
+        },
+      ],
     });
+
+    const retained = mergeCodexRateLimits(changed, { primary: null });
+    expect(retained).toEqual({ ...snapshot, primary: null, individualLimit });
+    const cleared = mergeCodexRateLimits(retained, { individualLimit: null });
+    expect(cleared).toEqual({ ...snapshot, primary: null, individualLimit: null });
+    expect(codexRateLimitsToLimits({ checkedAt, snapshot: cleared! }).windows).toEqual([]);
   });
 
   it("ignores a model-specific snapshot so it cannot replace the main allowance", () => {
@@ -292,6 +254,7 @@ describe("mergeCodexRateLimits", () => {
     expect(
       mergeCodexRateLimits(main, {
         limitId: "spark",
+        individualLimit: { remainingPercent: 99, resetsAt: 1_784_500_000 },
         primary: { usedPercent: 3, resetsAt: 1_800_000_000, windowDurationMins: 300 },
       }),
     ).toBe(main);

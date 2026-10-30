@@ -24,10 +24,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { isWindowsRenameLock } from "./atomicWrite.ts";
 import * as HostProcess from "./HostProcess.ts";
 
-export const CLOUDFLARED_VERSION = "2026.10.0";
-// The oldest release that accepts every flag the connector is started with
-// (`--output` arrived in 2025.6.1). Override, PATH, and older managed binaries
-// below it are skipped, since they exit immediately on the unknown flag.
+export const CLOUDFLARED_VERSION = "2026.10.4";
+// Minimum for --output support; older connectors exit on that flag.
 export const CLOUDFLARED_MIN_VERSION = "2025.6.1";
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
@@ -83,34 +81,34 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
   Partial<Record<`${NodeJS.Platform}-${string}`, CloudflaredReleaseAsset>>
 > = {
   "darwin-arm64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-darwin-arm64.tgz",
-    sha256: "a2f79ff7b9420aa537d74af239f376da170bbabeb529aec416002adac6a72e70",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-darwin-arm64.tgz",
+    sha256: "68b6bc4080ac1330234db2a9002d07f98b000537a1bd531a687b660d4160fa7f",
     archive: "tgz",
   },
   "darwin-x64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-darwin-amd64.tgz",
-    sha256: "903845b81828c8cb3c5d13d816a2de71c06a3da5785469df8eb0e1b736d92f9f",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-darwin-amd64.tgz",
+    sha256: "f11fbef4207d715892331917dafd437f032cf4b7137ed64dea3008338c1c613d",
     archive: "tgz",
   },
   "linux-arm64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-linux-arm64",
-    sha256: "e6422b9d4f72d3194bc5a38676f13667c06666523217b842a877d72a80b5ac08",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-linux-arm64",
+    sha256: "2b7203b4fb0ba28a0c1e12f8855ce2c25f76d266a8d5edafac5540b6812acff6",
     archive: "binary",
   },
   "linux-x64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-linux-amd64",
-    sha256: "d33ff2d14475178d2012c2c56beba87389ac5ded27649519f198a7d3134a99db",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-linux-amd64",
+    sha256: "ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42",
     archive: "binary",
   },
   "win32-x64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-windows-amd64.exe",
-    sha256: "86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-windows-amd64.exe",
+    sha256: "411b16d40c8d872243efeb52c550053d00af0a8a97fbb32e730fb8aba429eaa8",
     archive: "binary",
   },
   // Cloudflare publishes no Windows ARM64 build; Windows 11 on ARM runs x64 under emulation.
   "win32-arm64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-windows-amd64.exe",
-    sha256: "86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-windows-amd64.exe",
+    sha256: "411b16d40c8d872243efeb52c550053d00af0a8a97fbb32e730fb8aba429eaa8",
     archive: "binary",
   },
 };
@@ -253,9 +251,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return platform === "win32" || (info.value.mode & 0o111) !== 0;
   });
 
-  // `cloudflared version` costs a process spawn, so answers are cached per file
-  // revision. A failed or timed-out probe is not cached, so a slow spawn under
-  // an AV scan does not hide a good binary until it changes on disk.
+  // Cache successful version probes per file revision; do not let transient failures hide valid binaries.
   const versionCache = yield* Cache.makeWith(
     (key: VersionProbeKey) =>
       spawner
@@ -308,8 +304,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return { status: "available", executablePath, source, version } satisfies AvailableRelayClient;
   });
 
-  // Managed releases older than the pin, newest first. Newer folders belong to
-  // a newer server sharing this base dir and are never used or pruned here.
+  // Newer managed folders may belong to another server; never use or prune them.
   const olderManagedVersions = Effect.gen(function* () {
     const entries = yield* fileSystem
       .readDirectory(managedRoot)
@@ -324,9 +319,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   const resolvePathExecutable = Effect.gen(function* () {
-    // The default ConfigProvider is cached the first time any Config is read.
-    // Server startup reads its config before fixPath hydrates the environment,
-    // so reading PATH through Config here can retain the service's stale PATH.
+    // Read hydrated PATH directly; ConfigProvider may have cached it before fixPath.
     const pathValue = (yield* HostProcess.Environment).PATH?.trim();
     if (!pathValue) return null;
     const delimiter = platform === "win32" ? ";" : ":";
@@ -375,11 +368,9 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   }).pipe(Effect.withSpan("cloudflared.resolve"));
 
   const pruneManagedVersions: RelayClientShape["pruneManagedVersions"] = Effect.gen(function* () {
-    // The newest older release stays: an older server sharing this base dir, or a
-    // rollback after a failed update, may still need it and cannot redownload it.
+    // Retain the newest older release for rollback or older servers that cannot redownload it.
     for (const version of (yield* olderManagedVersions).slice(1)) {
-      // A connector from another server sharing this base dir may still run an
-      // older release; Windows refuses to delete it, so the next prune retries.
+      // Windows cannot delete another server's running connector; retry next prune.
       yield* fileSystem.remove(path.join(managedRoot, version), { recursive: true }).pipe(
         Effect.tap(() => Effect.logInfo("Removed an older managed relay client", { version })),
         Effect.catch((cause) =>
@@ -565,8 +556,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           .pipe(wrapInstallFailure("write_failed", "Could not make the relay client executable."));
       }
       yield* report("validating");
-      // Requiring the pinned version here keeps a mislabelled asset from being
-      // activated, ignored by resolve, and downloaded again on every reconcile.
+      // Verify the pin so mislabeled assets cannot cause repeated redownloads.
       const installedVersion = yield* probeVersion(executablePath);
       if (installedVersion !== CLOUDFLARED_VERSION) {
         return yield* new RelayClientInstallError({

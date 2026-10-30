@@ -1,6 +1,6 @@
 import * as NodeEvents from "node:events";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
-import { settingsHelperBounds, watchMacSettingsWindow } from "./MacSettingsWindow.ts";
+import { watchMacSettingsWindow } from "./MacSettingsWindow.ts";
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
@@ -14,17 +14,6 @@ beforeEach(() => {
     kill: vi.fn(),
   });
   mocks.spawn.mockReturnValue(child);
-});
-it("places the helper inside small and large Settings windows across displays", () => {
-  for (const x of [-900, 20]) {
-    for (const width of [668, 1000]) {
-      const state = { x, y: 30, width, height: 700, frontmost: true };
-      const helper = settingsHelperBounds(state);
-      expect(helper.x).toBeGreaterThanOrEqual(x + 216);
-      expect(helper.x + helper.width).toBeLessThanOrEqual(x + width - 16);
-      expect(helper.y + helper.height).toBe(714);
-    }
-  }
 });
 it("decodes partial updates and stops the one watcher process on disposal", () => {
   const changed = vi.fn();

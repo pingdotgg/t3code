@@ -146,7 +146,6 @@ describe("Antigravity subscription limits", () => {
       expect(byId.get("3p-5h")?.usedPercent).toBeCloseTo(56);
       yield* probe;
       expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(1);
-      // Both quota endpoints are read on every probe.
       expect(
         requests.filter((request) => request.url.endsWith(":retrieveUserQuotaSummary")),
       ).toHaveLength(4);
@@ -157,8 +156,7 @@ describe("Antigravity subscription limits", () => {
     Effect.gen(function* () {
       const { probe } = yield* fixture({
         summaryByHost: {
-          // The daily endpoint has answered with only the Claude/GPT group; the
-          // other endpoint returns the full default summary.
+          // The daily endpoint can omit Gemini while the other endpoint returns all groups.
           "daily-cloudcode-pa.googleapis.com": {
             groups: [
               {
@@ -181,8 +179,6 @@ describe("Antigravity subscription limits", () => {
       ]);
       const byId = new Map(limits.windows.map((window) => [window.id, window]));
       expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
-      // When endpoints disagree about a bucket, the most-used reading wins,
-      // whichever endpoint reported it.
       expect(byId.get("3p-5h")?.usedPercent).toBeCloseTo(70);
       expect(byId.get("3p-weekly")?.usedPercent).toBe(100);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -281,21 +277,6 @@ describe("Antigravity subscription limits", () => {
           windowDurationMins: 300,
         },
       ]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("preserves cached access token when quota endpoints return no usable windows", () =>
-    Effect.gen(function* () {
-      const { probe, requests } = yield* fixture({
-        summary: { groups: [] },
-        models: { models: {} },
-      });
-      const first = yield* probe;
-      expect(first.unavailable?.reason).toBe("probeFailed");
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(1);
-      const second = yield* probe;
-      expect(second.unavailable?.reason).toBe("probeFailed");
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(1);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

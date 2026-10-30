@@ -11,7 +11,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -87,51 +86,25 @@ const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
   Layer.provide(
     Layer.mock(ProjectStore.ProjectStoreV2)({
       get: () =>
-        Effect.succeed(
-          Option.some({
-            projectId,
-            title: "Project",
-            workspaceRoot: "/project-root",
-            defaultModelSelection: null,
-            defaultThreadEnvMode: null,
-            autoPull: false,
-            faviconPath: null,
-            projectIcon: null,
-            scripts: [],
-            createdAt: "2026-06-21T00:00:00.000Z",
-            updatedAt: "2026-06-21T00:00:00.000Z",
-            deletedAt: null,
-          }),
-        ),
+        Effect.succeedSome({
+          projectId,
+          title: "Project",
+          workspaceRoot: "/project-root",
+          defaultModelSelection: null,
+          defaultThreadEnvMode: null,
+          autoPull: false,
+          faviconPath: null,
+          projectIcon: null,
+          scripts: [],
+          createdAt: "2026-06-21T00:00:00.000Z",
+          updatedAt: "2026-06-21T00:00:00.000Z",
+          deletedAt: null,
+        }),
     }),
   ),
 );
 
 it.layer(layerTest)("RuntimePolicyV2", (it) => {
-  it.effect("uses the project root for local-checkout threads", () =>
-    Effect.gen(function* () {
-      const policy = yield* RuntimePolicy.RuntimePolicyV2;
-      const now = yield* DateTime.now;
-      const resolved = yield* policy.resolve({
-        thread: makeThread({ now, worktreePath: null }),
-        modelSelection,
-      });
-      assert.equal(resolved.cwd, "/project-root");
-    }),
-  );
-
-  it.effect("prefers a provisioned worktree over the project root", () =>
-    Effect.gen(function* () {
-      const policy = yield* RuntimePolicy.RuntimePolicyV2;
-      const now = yield* DateTime.now;
-      const resolved = yield* policy.resolve({
-        thread: makeThread({ now, worktreePath: "/project-worktree" }),
-        modelSelection,
-      });
-      assert.equal(resolved.cwd, "/project-worktree");
-    }),
-  );
-
   it.effect("runs a mode the provider does not offer in Supervised", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;

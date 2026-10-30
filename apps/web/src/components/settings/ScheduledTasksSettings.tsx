@@ -1,6 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
-import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import {
   Clock3Icon,
@@ -12,7 +11,7 @@ import {
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -22,13 +21,20 @@ import type {
   ScheduledTaskId,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertInput,
-  ScheduledTaskWebhookDeliveryOutcome,
   ScheduledTaskWebhookDeliverySummary,
   ThreadId,
 } from "@t3tools/contracts";
-import { DEFAULT_WEBHOOK_PROMPT } from "@t3tools/client-runtime/scheduled-task-webhook";
+import {
+  DEFAULT_WEBHOOK_PROMPT,
+  emptyWebhookFilterDraft,
+  parseWebhookFilterDrafts,
+  removeWebhookFilterDraft,
+  WEBHOOK_FILTER_OPS,
+  type WebhookFilterDraft,
+} from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
+  MAX_WEBHOOK_FILTERS,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
@@ -41,15 +47,11 @@ import {
 import { formatRelativeTime } from "../../timestampFormat";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
@@ -73,6 +75,8 @@ import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
+  webhookDraftErrors,
+  webhookDeliveryLabel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
@@ -144,7 +148,105 @@ const EMPTY_DRAFT: DraftState = {
   ...WEBHOOK_SIGNATURE_DEFAULTS,
   signatureSecret: "",
   maxDeliveryAgeMinutes: "",
+  replayKey: "",
+  coalesceKey: "",
+  coalesceWindowSeconds: "",
+  filters: [],
+  savedFilters: [],
 };
+
+function WebhookFiltersField({
+  filters,
+  onChange,
+}: {
+  filters: ReadonlyArray<WebhookFilterDraft>;
+  onChange: (filters: ReadonlyArray<WebhookFilterDraft>) => void;
+}) {
+  const update = (index: number, patch: Partial<WebhookFilterDraft>) =>
+    onChange(filters.map((filter, at) => (at === index ? { ...filter, ...patch } : filter)));
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 space-y-1">
+          <Label>Filters</Label>
+          <p className="text-sm text-muted-foreground">
+            Run only when every filter matches. Other requests are logged as filtered. Separate “is
+            one of” values with commas; a value can't contain a comma.
+          </p>
+        </div>
+        <Button
+          className="shrink-0"
+          variant="outline"
+          size="sm"
+          disabled={filters.length >= MAX_WEBHOOK_FILTERS}
+          onClick={() => onChange([...filters, emptyWebhookFilterDraft()])}
+        >
+          <PlusIcon />
+          Add filter
+        </Button>
+      </div>
+      {filters.map((filter, index) => (
+        // Always stacked: the dialog stays narrow on wide windows, so a single line
+        // would cut off typical paths and values. The grid wrappers size each control
+        // without restyling it; a grid item stretches to its minmax(0, 1fr) track.
+        <div key={filter.id} className="space-y-2 pt-1">
+          <div className="flex items-center gap-2">
+            <div className="grid min-w-0 flex-1 grid-cols-1">
+              <Input
+                aria-label={`Filter ${index + 1} path`}
+                placeholder="body.action"
+                value={filter.path}
+                onChange={(event) => update(index, { path: event.target.value })}
+              />
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Remove filter ${index + 1}`}
+              onClick={() => onChange(removeWebhookFilterDraft(filters, filter.id))}
+            >
+              <Trash2Icon />
+            </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            <Select
+              value={filter.op}
+              onValueChange={(op) => {
+                const known = WEBHOOK_FILTER_OPS.find((option) => option.op === op);
+                if (known) update(index, { op: known.op });
+              }}
+            >
+              <div className="grid w-44 shrink-0 grid-cols-1">
+                <SelectTrigger size="sm" aria-label={`Filter ${index + 1} test`}>
+                  <SelectValue>
+                    {WEBHOOK_FILTER_OPS.find((option) => option.op === filter.op)?.label}
+                  </SelectValue>
+                </SelectTrigger>
+              </div>
+              <SelectPopup>
+                {WEBHOOK_FILTER_OPS.map((option) => (
+                  <SelectItem key={option.op} value={option.op}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            {filter.op === "exists" ? null : (
+              <div className="grid min-w-0 flex-1 grid-cols-1">
+                <Input
+                  aria-label={`Filter ${index + 1} value`}
+                  placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
+                  value={filter.value}
+                  onChange={(event) => update(index, { value: event.target.value })}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function Field({
   label,
@@ -197,11 +299,7 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   return `${days} at ${schedule.timeOfDay}`;
 }
 
-/**
- * `formatRelativeTime` only handles the past, and `nextRunAt` is a future
- * instant — render "in 5m" style labels for upcoming runs instead of a
- * misleading "just now".
- */
+/** formatRelativeTime handles only the past; upcoming runs need future labels. */
 function relativeLabel(value: string | null, nowMs: number): string {
   if (!value) return "Not scheduled";
   const diffMs = new Date(value).getTime() - nowMs;
@@ -218,28 +316,25 @@ function relativeLabel(value: string | null, nowMs: number): string {
   return `in ${Math.round(hours / 24)}d`;
 }
 
-// The clock is the label's own minute tick: the React Compiler caches a
-// `Date.now()` read in render on the timestamp alone.
+// Use the label's minute tick because the compiler caches render-time Date.now() on the timestamp.
 export function ScheduledRelativeLabel(props: { value: string | null }) {
   const nowMinute = useNowMinute();
   return relativeLabel(props.value, Date.parse(`${nowMinute}:00.000Z`));
 }
 
-const DELIVERY_OUTCOME_LABELS: Record<ScheduledTaskWebhookDeliveryOutcome, string> = {
-  accepted: "Ran",
-  dispatch_failed: "Run failed",
-  rejected_signature: "Bad signature",
-  disabled: "Task paused",
-  rate_limited: "Rate limited",
-  expired: "Too old",
-};
-
-function deliveryOutcomeVariant(outcome: ScheduledTaskWebhookDeliveryOutcome) {
+function deliveryOutcomeVariant(outcome: string) {
   if (outcome === "accepted") return "success";
-  if (outcome === "disabled" || outcome === "rate_limited" || outcome === "expired") {
+  if (
+    outcome === "duplicate" ||
+    outcome === "coalesced" ||
+    outcome === "disabled" ||
+    outcome === "rate_limited" ||
+    outcome === "expired"
+  ) {
     return "warning";
   }
-  return "error";
+  if (outcome === "dispatch_failed" || outcome === "rejected_signature") return "error";
+  return "outline";
 }
 
 function statusVariant(status: ScheduledTask["lastRunStatus"]) {
@@ -262,9 +357,57 @@ export function ScheduledTasksSettings(target: {
     setEditor({ environmentId, task });
   };
   const defaultEnvironment = environment ?? connectedEnvironments[0];
-  const canCreate = useAtomValue(
-    serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
+  const linkedEnvironmentId = target.environmentId ?? defaultEnvironment?.environmentId;
+  const linkedEnvironmentConnected = environments.some(
+    (entry) =>
+      entry.environmentId === linkedEnvironmentId &&
+      entry.connection.phase === "connected" &&
+      entry.serverConfig !== null,
   );
+  const linkedTasksQuery = useEnvironmentQuery(
+    target.taskId !== undefined && linkedEnvironmentId !== undefined && linkedEnvironmentConnected
+      ? serverEnvironment.scheduledTasksLive({ environmentId: linkedEnvironmentId, input: {} })
+      : null,
+  );
+  const linkedTask = linkedTasksQuery.data?.tasks.find(
+    (task) =>
+      task.id === target.taskId &&
+      linkedEnvironmentId !== undefined &&
+      matchesScheduledTaskScope(scope, linkedEnvironmentId, task.projectId),
+  );
+  // A `taskId` link opens its editor once, the first time the task loads. The editor then owns
+  // the session until close, so a disconnect that disables the query cannot drop unsaved edits.
+  // An editor the user already opened wins: a late-loading link must not replace its draft.
+  const [openedLinkTaskId, setOpenedLinkTaskId] = useState<ScheduledTaskId | undefined>();
+  if (target.taskId === undefined && openedLinkTaskId !== undefined) {
+    setOpenedLinkTaskId(undefined);
+  }
+  if (linkedTask && linkedEnvironmentId !== undefined && openedLinkTaskId !== target.taskId) {
+    setOpenedLinkTaskId(target.taskId);
+    if (editor === null) setEditor({ environmentId: linkedEnvironmentId, task: linkedTask });
+  }
+  const navigate = useNavigate({ from: "/settings/scheduled-tasks" });
+  const closeEditor = () => {
+    setEditor(null);
+    if (target.taskId === undefined) return;
+    void navigate({
+      to: "/settings/scheduled-tasks",
+      search: ({ taskId: _closed, ...rest }) => rest,
+      replace: true,
+    });
+  };
+  const createPermissions = useAtomValue(
+    scheduledTaskCreatePermissionsAtom(
+      environmentIdsKey(connectedEnvironments.map((entry) => entry.environmentId)),
+    ),
+  );
+  const permittedEnvironments = connectedEnvironments.filter(
+    (_entry, index) => createPermissions[index],
+  );
+  const creationEnvironment =
+    permittedEnvironments.find(
+      (entry) => entry.environmentId === defaultEnvironment?.environmentId,
+    ) ?? permittedEnvironments[0];
   return (
     <SettingsPageContainer>
       <SettingsSection
@@ -274,10 +417,10 @@ export function ScheduledTasksSettings(target: {
           <Button
             size="xs"
             variant="ghost-muted"
-            disabled={!defaultEnvironment || !canCreate}
+            disabled={!creationEnvironment}
             onClick={() =>
-              defaultEnvironment &&
-              setEditor({ environmentId: defaultEnvironment.environmentId, task: null })
+              creationEnvironment &&
+              setEditor({ environmentId: creationEnvironment.environmentId, task: null })
             }
           >
             <PlusIcon className="size-3" />
@@ -301,8 +444,7 @@ export function ScheduledTasksSettings(target: {
           </Empty>
         ) : environments.length > 1 ? (
           <ScheduledTaskEnvironmentList
-            key={`${target.environmentId ?? defaultEnvironment?.environmentId}:${target.taskId ?? ""}`}
-            environmentId={target.environmentId ?? defaultEnvironment?.environmentId}
+            environmentId={linkedEnvironmentId}
             taskId={target.taskId}
             onEdit={openForEdit}
           />
@@ -310,15 +452,9 @@ export function ScheduledTasksSettings(target: {
           <div className="space-y-8">
             {environments.map((entry) => (
               <ScheduledTaskEnvironmentSection
-                key={`${entry.environmentId}:${target.taskId ?? ""}`}
+                key={entry.environmentId}
                 environment={entry}
-                showEnvironmentHeading={environments.length > 1}
-                taskId={
-                  (target.environmentId ?? defaultEnvironment?.environmentId) ===
-                  entry.environmentId
-                    ? target.taskId
-                    : undefined
-                }
+                taskId={linkedEnvironmentId === entry.environmentId ? target.taskId : undefined}
                 onEdit={openForEdit}
               />
             ))}
@@ -330,12 +466,17 @@ export function ScheduledTasksSettings(target: {
           key={`${editor.environmentId}:${editor.task?.id ?? "new"}`}
           initialEnvironmentId={editor.environmentId}
           task={editor.task}
-          onClose={() => setEditor(null)}
+          onClose={closeEditor}
         />
       ) : null}
     </SettingsPageContainer>
   );
 }
+
+const scheduledTaskCreatePermissionsAtom = environmentAtomList(
+  "web-scheduled-task-create-permissions",
+  serverEnvironment.upsertScheduledTask.permissionAtom,
+);
 
 const scheduledTasksListAtom = environmentAtomList("web-scheduled-tasks-list", (environmentId) =>
   serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
@@ -360,7 +501,7 @@ function ScheduledTaskEnvironmentList({
   const states = environments.map((environment) => {
     const index = connectedIds.indexOf(environment.environmentId);
     const query = index < 0 ? null : queries[index]!;
-    const data = query === null ? null : Option.getOrNull(AsyncResult.value(query));
+    const data = query === null ? null : AsyncResult.getOrElse(query, () => null);
     return {
       environment,
       connected: index >= 0,
@@ -372,13 +513,6 @@ function ScheduledTaskEnvironmentList({
   });
   const linkedState = states.find((state) => state.environment.environmentId === environmentId);
   const linkedTask = linkedState?.tasks?.find((task) => task.id === taskId);
-  const openedLink = useRef(false);
-  useEffect(() => {
-    if (!openedLink.current && environmentId && linkedTask) {
-      openedLink.current = true;
-      onEdit(environmentId, linkedTask);
-    }
-  }, [environmentId, linkedTask, onEdit]);
 
   const loaded = states.filter((state) => state.connected && state.error === null && state.tasks);
   const populated = loaded.filter((state) => state.tasks && state.tasks.length > 0);
@@ -479,12 +613,10 @@ function ScheduledTaskEnvironmentList({
 
 function ScheduledTaskEnvironmentSection({
   environment,
-  showEnvironmentHeading,
   taskId,
   onEdit,
 }: {
   readonly environment: EnvironmentPresentation;
-  readonly showEnvironmentHeading: boolean;
   readonly taskId?: ScheduledTaskId | undefined;
   readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
 }) {
@@ -503,17 +635,10 @@ function ScheduledTaskEnvironmentSection({
     matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
   );
   const linkedTask = tasks?.find((task) => task.id === taskId);
-  const openedLink = useRef(false);
-  useEffect(() => {
-    if (!openedLink.current && linkedTask) {
-      openedLink.current = true;
-      onEdit(environment.environmentId, linkedTask);
-    }
-  }, [environment.environmentId, linkedTask, onEdit]);
   return (
     <SettingsSection
       title={environment.label}
-      hideTitle={!showEnvironmentHeading}
+      hideTitle
       icon={
         <EnvironmentMachineIcon
           kind={resolveEnvironmentMachineKind(environment.serverConfig)}
@@ -697,7 +822,10 @@ function WebhookDeliveriesDialog({
   readonly onClose: () => void;
 }) {
   const deliveriesQuery = useEnvironmentQuery(
-    serverEnvironment.scheduledTaskWebhookDeliveries({ environmentId, input: { id: task.id } }),
+    serverEnvironment.scheduledTaskWebhookDeliveries({
+      environmentId,
+      input: { id: task.id, acceptAnyOutcome: true },
+    }),
   );
   const [selectedId, setSelectedId] = useState<ScheduledTaskWebhookDeliverySummary["id"] | null>(
     null,
@@ -707,7 +835,7 @@ function WebhookDeliveriesDialog({
       ? null
       : serverEnvironment.scheduledTaskWebhookDelivery({
           environmentId,
-          input: { id: task.id, deliveryId: selectedId },
+          input: { id: task.id, deliveryId: selectedId, acceptAnyOutcome: true },
         }),
   );
   const deliveries = deliveriesQuery.data?.deliveries ?? null;
@@ -735,8 +863,12 @@ function WebhookDeliveriesDialog({
           ) : selected ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2 text-sm">
-                <Badge variant={deliveryOutcomeVariant(selected.outcome)}>
-                  {DELIVERY_OUTCOME_LABELS[selected.outcome]}
+                <Badge
+                  variant={deliveryOutcomeVariant(
+                    selected.pendingWindow ? "coalesced" : selected.outcome,
+                  )}
+                >
+                  {webhookDeliveryLabel(selected)}
                 </Badge>
                 <span>
                   {selected.method} · <ScheduledRelativeLabel value={selected.receivedAt} />
@@ -745,9 +877,24 @@ function WebhookDeliveriesDialog({
                   <span className="text-muted-foreground">Signature verified</span>
                 ) : null}
               </div>
-              {selected.error ? <p className="text-sm text-destructive">{selected.error}</p> : null}
-              <DeliveryBlock title="Prompt sent to the agent">
-                {selected.renderedPrompt ?? "No run was started for this request."}
+              {selected.error ? (
+                <p
+                  className={
+                    selected.outcome === "filtered"
+                      ? "text-sm text-muted-foreground"
+                      : "text-sm text-destructive"
+                  }
+                >
+                  {selected.error}
+                </p>
+              ) : null}
+              <DeliveryBlock
+                title={selected.pendingWindow ? "Scheduled run" : "Prompt sent to the agent"}
+              >
+                {selected.renderedPrompt ??
+                  (selected.pendingWindow
+                    ? "Run scheduled when the window closes; no run started yet."
+                    : "No run was started for this request.")}
               </DeliveryBlock>
               {selected.missingFields.length > 0 ? (
                 <p className="text-sm text-muted-foreground">
@@ -781,13 +928,20 @@ function WebhookDeliveriesDialog({
                     className="flex w-full flex-wrap items-center gap-2 py-2 text-left text-sm hover:bg-accent/40"
                     onClick={() => setSelectedId(delivery.id)}
                   >
-                    <Badge variant={deliveryOutcomeVariant(delivery.outcome)}>
-                      {DELIVERY_OUTCOME_LABELS[delivery.outcome]}
+                    <Badge
+                      variant={deliveryOutcomeVariant(
+                        delivery.pendingWindow ? "coalesced" : delivery.outcome,
+                      )}
+                    >
+                      {webhookDeliveryLabel(delivery)}
                     </Badge>
                     <span>{delivery.method}</span>
                     <span className="text-muted-foreground">
                       <ScheduledRelativeLabel value={delivery.receivedAt} />
                     </span>
+                    {delivery.outcome === "filtered" && delivery.error ? (
+                      <span className="text-muted-foreground">{delivery.error}</span>
+                    ) : null}
                     {delivery.missingFields.length > 0 ? (
                       <span className="text-muted-foreground">
                         {delivery.missingFields.length} empty placeholder
@@ -916,8 +1070,8 @@ function WebhookDeliveryMode({ environmentId }: { readonly environmentId: Enviro
       {cloudLink.data.holdWebhooksWhileOffline
         ? "Held for up to 24 hours while this environment is offline. "
         : "Forwarded live. Requests fail while this environment is offline. "}
-      <Link to="/settings/connections" className="underline underline-offset-2">
-        Change in Connections
+      <Link to="/settings/access" className="underline underline-offset-2">
+        Change in Sharing & access
       </Link>
     </p>
   );
@@ -1003,12 +1157,10 @@ function ScheduledTaskEditorForm({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
-  const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(providers),
-      settings,
-      selectedProject?.id ?? null,
-    ),
+  const instanceEntries = providerInstanceEntriesFor(
+    providers,
+    settings,
+    selectedProject?.id ?? null,
   );
 
   const firstInstance = instanceEntries[0];
@@ -1058,12 +1210,14 @@ function ScheduledTaskEditorForm({
       reportFailure("Scheduled task is incomplete", "Add a title, prompt, project, and model.");
       return;
     }
+    const parsedFilters = parseWebhookFilterDrafts(draft.filters);
+    if (draft.scheduleMode === "webhook" && "error" in parsedFilters) {
+      reportFailure("Invalid filter", parsedFilters.error);
+      return;
+    }
     const schedule = scheduleFromDraft(draft);
     if (schedule === null) {
-      reportFailure(
-        "Invalid age limit",
-        `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
-      );
+      for (const error of webhookDraftErrors(draft)) reportFailure(error.title, error.description);
       return;
     }
     if (
@@ -1137,12 +1291,13 @@ function ScheduledTaskEditorForm({
       <DialogHeader>
         <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
         <DialogDescription>
-          Run a prompt automatically — on an interval, at a fixed time, or when a webhook is called.
+          Run a prompt automatically on an interval, at a fixed time, or when a webhook is called.
         </DialogDescription>
       </DialogHeader>
 
       <DialogPanel>
-        <fieldset disabled={saving} className="space-y-5">
+        {/* Fieldsets default to min-width: min-content, which lets one wide control widen the form past the dialog. */}
+        <fieldset disabled={saving} className="min-w-0 space-y-5">
           {!connected ? (
             <p className="text-sm text-destructive">Reconnect this environment before saving.</p>
           ) : null}
@@ -1351,7 +1506,8 @@ function ScheduledTaskEditorForm({
                 minute.
               </p>
             ) : null}
-            <div className="flex items-center justify-between gap-2">
+            {/* Wraps the toggle below the label when both don't fit, as on phones. */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <Label>Schedule</Label>
               <ToggleGroup
                 aria-label="Schedule type"
@@ -1404,6 +1560,64 @@ function ScheduledTaskEditorForm({
                     }
                   />
                 </Field>
+                <WebhookFiltersField
+                  filters={draft.filters}
+                  onChange={(filters) => setDraft((current) => ({ ...current, filters }))}
+                />
+                <Field
+                  label="Replay key"
+                  hint="template, optional"
+                  htmlFor="scheduled-task-replay-key"
+                >
+                  <Input
+                    id="scheduled-task-replay-key"
+                    placeholder="{{headers.delivery-id}}"
+                    value={draft.replayKey}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, replayKey: event.target.value }))
+                    }
+                  />
+                </Field>
+                <Field
+                  label="Coalesce key"
+                  hint="template, optional"
+                  htmlFor="scheduled-task-coalesce-key"
+                >
+                  <Input
+                    id="scheduled-task-coalesce-key"
+                    placeholder="{{body.id}}"
+                    value={draft.coalesceKey}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, coalesceKey: event.target.value }))
+                    }
+                  />
+                </Field>
+                <Field
+                  label="Coalesce window"
+                  hint="seconds, 10–3600"
+                  htmlFor="scheduled-task-coalesce-window"
+                >
+                  <Input
+                    id="scheduled-task-coalesce-window"
+                    type="number"
+                    nativeInput
+                    min={10}
+                    max={3600}
+                    placeholder="120"
+                    value={draft.coalesceWindowSeconds}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        coalesceWindowSeconds: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <p className="text-xs text-muted-foreground">
+                  Replay keys suppress repeat deliveries for 7 days. Coalescing runs the latest
+                  payload once when the window from the first delivery closes. Empty keys run
+                  normally.
+                </p>
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0 space-y-1">
                     <Label htmlFor="scheduled-task-signature">Require signature</Label>

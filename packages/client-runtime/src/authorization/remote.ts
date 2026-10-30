@@ -5,21 +5,23 @@ import {
   AuthTokenExchangeGrantType,
   type ClientConnectionMethod,
   type AuthEnvironmentScope,
+  type AuthWebSocketTicketResult,
+  type AuthWebSocketTicketUse,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
+import { hashTelemetryId } from "@t3tools/shared/telemetryId";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
+  RemoteEnvironmentAuthUndeclaredStatusError,
   type RemoteEnvironmentRequestError,
 } from "../rpc/http.ts";
 
-export {
-  RemoteEnvironmentAuthInvalidJsonError,
-  RemoteEnvironmentAuthTimeoutError,
-  RemoteEnvironmentAuthUndeclaredStatusError,
-} from "../rpc/http.ts";
+export { RemoteEnvironmentAuthUndeclaredStatusError } from "../rpc/http.ts";
 export type RemoteEnvironmentAuthError = RemoteEnvironmentRequestError;
 
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 10_000;
@@ -37,10 +39,31 @@ const clientMetadataTokenExchangeFields = (
   };
 };
 
+/** Hashes of who is connecting. Only hashes leave the client. */
+export interface ClientOwnerParams {
+  readonly connect?: string;
+  readonly device?: string;
+}
+
+/**
+ * Tells the environment, for analytics, which T3 Connect account and device
+ * are connecting, so it can count the environment as theirs.
+ */
+export const readClientOwnerParams = Effect.gen(function* () {
+  const session = yield* Effect.serviceOption(ClientCapabilities.CloudSession);
+  const account = Option.isSome(session) ? yield* session.value.identity : Option.none();
+  const device = yield* (yield* ClientCapabilities.AnalyticsDevice).id;
+  return {
+    ...(Option.isSome(account) ? { connect: hashTelemetryId(account.value.accountId) } : {}),
+    ...(Option.isSome(device) ? { device: hashTelemetryId(device.value) } : {}),
+  } satisfies ClientOwnerParams;
+});
+
 export const appendClientConnectionParams = (
   url: URL,
   clientMetadata: AuthClientPresentationMetadata | undefined,
   connectionMethod?: ClientConnectionMethod,
+  owners?: ClientOwnerParams,
 ): void => {
   if (clientMetadata?.surface) {
     url.searchParams.set("clientSurface", clientMetadata.surface);
@@ -78,6 +101,12 @@ export const appendClientConnectionParams = (
   }
   if (connectionMethod) {
     url.searchParams.set("connectionMethod", connectionMethod);
+  }
+  if (owners?.connect) {
+    url.searchParams.set("clientOwner", owners.connect);
+  }
+  if (owners?.device) {
+    url.searchParams.set("clientDevice", owners.device);
   }
 };
 
@@ -156,45 +185,92 @@ export const fetchRemoteSessionState = Effect.fn(
   );
 });
 
+const webSocketTicketPath = (use: AuthWebSocketTicketUse | undefined) =>
+  use === undefined ? "/api/auth/websocket-ticket" : `/api/auth/websocket-ticket/${use}`;
+
+/**
+ * A server that predates ticket audiences has no `/:use` route and answers 404.
+ * Its tickets are the unbound kind it always issued, so the bare path is the
+ * right request there, not an error.
+ */
+const issueWebSocketTicketWithFallback = <E, R>(
+  use: AuthWebSocketTicketUse | undefined,
+  issue: (
+    use: AuthWebSocketTicketUse | undefined,
+  ) => Effect.Effect<AuthWebSocketTicketResult, E, R>,
+  canFallBack = true,
+) =>
+  use === undefined || !canFallBack
+    ? issue(use)
+    : issue(use).pipe(
+        Effect.catchIf(
+          (error) =>
+            error instanceof RemoteEnvironmentAuthUndeclaredStatusError && error.status === 404,
+          () => issue(undefined),
+        ),
+      );
+
 export const issueRemoteWebSocketTicket = Effect.fn(
   "clientRuntime.authorization.issueRemoteWebSocketTicket",
 )(function* (input: {
   readonly httpBaseUrl: string;
   readonly bearerToken: string;
+  readonly use?: AuthWebSocketTicketUse;
   readonly timeoutMs?: number;
 }) {
   const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
-  return yield* executeEnvironmentHttpRequest(
-    environmentEndpointUrl(input.httpBaseUrl, "/api/auth/websocket-ticket"),
-    input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
-    client.webSocketTicket({
-      headers: {
-        authorization: `Bearer ${input.bearerToken}`,
-      },
-    }),
+  const headers = { authorization: `Bearer ${input.bearerToken}` };
+  return yield* issueWebSocketTicketWithFallback(input.use, (use) =>
+    executeEnvironmentHttpRequest(
+      environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(use)),
+      input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+      use === undefined
+        ? client.webSocketTicket({ headers })
+        : client.webSocketTicketFor({ headers, params: { use } }),
+    ),
   );
 });
 
 export const issueRemoteDpopWebSocketTicket = Effect.fn(
   "clientRuntime.authorization.issueRemoteDpopWebSocketTicket",
-)(function* (input: {
+)(function* <E = never>(input: {
   readonly httpBaseUrl: string;
   readonly accessToken: string;
   readonly dpopProof: string;
+  readonly use?: AuthWebSocketTicketUse;
+  /** Proof for the bare path, used only when the server lacks the `/:use` route. */
+  readonly fallbackProof?: Effect.Effect<string, E>;
   readonly timeoutMs?: number;
 }) {
   const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
-  return yield* executeEnvironmentHttpRequest(
-    environmentEndpointUrl(input.httpBaseUrl, "/api/auth/websocket-ticket"),
-    input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
-    client.webSocketTicket({
-      headers: {
-        authorization: `DPoP ${input.accessToken}`,
-        dpop: input.dpopProof,
-      },
-    }),
+  const fallbackProof = input.fallbackProof;
+  return yield* issueWebSocketTicketWithFallback(
+    input.use,
+    (use) =>
+      Effect.gen(function* () {
+        // The proof names the path it signs, so the fallback request needs its own.
+        const dpopProof =
+          use === input.use || fallbackProof === undefined ? input.dpopProof : yield* fallbackProof;
+        const headers = { authorization: `DPoP ${input.accessToken}`, dpop: dpopProof };
+        return yield* executeEnvironmentHttpRequest(
+          environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(use)),
+          input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+          use === undefined
+            ? client.webSocketTicket({ headers })
+            : client.webSocketTicketFor({ headers, params: { use } }),
+        );
+      }),
+    fallbackProof !== undefined,
   );
 });
+
+function rpcSocketUrl(wsBaseUrl: string): URL {
+  const url = new URL(wsBaseUrl);
+  if (url.pathname === "" || url.pathname === "/") {
+    url.pathname = "/ws";
+  }
+  return url;
+}
 
 export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   "clientRuntime.authorization.resolveRemoteWebSocketConnectionUrl",
@@ -209,40 +285,73 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   const issued = yield* issueRemoteWebSocketTicket({
     httpBaseUrl: input.httpBaseUrl,
     bearerToken: input.bearerToken,
+    use: "rpc",
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
   });
 
-  const url = new URL(input.wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
-  }
+  const url = rpcSocketUrl(input.wsBaseUrl);
   url.searchParams.set("wsTicket", issued.ticket);
-  appendClientConnectionParams(url, input.clientMetadata, input.connectionMethod);
+  appendClientConnectionParams(
+    url,
+    input.clientMetadata,
+    input.connectionMethod,
+    yield* readClientOwnerParams,
+  );
   return url.toString();
 });
 
+/**
+ * A DPoP client's RPC ticket is bound to its key, so the upgrade carries a
+ * proof too. A WebSocket cannot set headers, so it rides in the `dpop` query
+ * parameter and names the socket URL as the HTTP request the server sees.
+ */
 export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
   "clientRuntime.authorization.resolveRemoteDpopWebSocketConnectionUrl",
-)(function* (input: {
+)(function* <E>(input: {
   readonly wsBaseUrl: string;
   readonly httpBaseUrl: string;
   readonly accessToken: string;
-  readonly dpopProof: string;
+  readonly createProof: (input: {
+    readonly method: "GET" | "POST";
+    readonly url: string;
+    readonly accessToken: string;
+  }) => Effect.Effect<string, E>;
   readonly clientMetadata?: AuthClientPresentationMetadata;
   readonly connectionMethod?: ClientConnectionMethod;
   readonly timeoutMs?: number;
 }) {
+  const ticketProof = yield* input.createProof({
+    method: "POST",
+    url: environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath("rpc")),
+    accessToken: input.accessToken,
+  });
   const issued = yield* issueRemoteDpopWebSocketTicket({
     httpBaseUrl: input.httpBaseUrl,
     accessToken: input.accessToken,
-    dpopProof: input.dpopProof,
+    dpopProof: ticketProof,
+    use: "rpc",
+    fallbackProof: Effect.suspend(() =>
+      input.createProof({
+        method: "POST",
+        url: environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(undefined)),
+        accessToken: input.accessToken,
+      }),
+    ),
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
   });
-  const url = new URL(input.wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
-  }
+  const url = rpcSocketUrl(input.wsBaseUrl);
+  const upgradeProof = yield* input.createProof({
+    method: "GET",
+    url: `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}${url.pathname}`,
+    accessToken: issued.ticket,
+  });
   url.searchParams.set("wsTicket", issued.ticket);
-  appendClientConnectionParams(url, input.clientMetadata, input.connectionMethod);
+  url.searchParams.set("dpop", upgradeProof);
+  appendClientConnectionParams(
+    url,
+    input.clientMetadata,
+    input.connectionMethod,
+    yield* readClientOwnerParams,
+  );
   return url.toString();
 });

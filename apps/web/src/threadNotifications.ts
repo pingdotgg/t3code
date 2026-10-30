@@ -1,3 +1,4 @@
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import completionUrl from "./assets/notification-completion.mp3";
@@ -19,13 +20,28 @@ export function hasDesktopNotifications(mode: NotificationMode) {
   return mode === "notifications" || mode === "notifications-and-sound";
 }
 
+const TAG_HASH_OFFSET_BASIS = 0xcbf29ce484222325n;
+const TAG_HASH_PRIME = 0x100000001b3n;
+const TAG_HASH_MASK = 0xffffffffffffffffn;
+
+/** Windows drops toast notifications with the 73-character environment/thread tag. */
+export function threadNotificationTag(environmentId: EnvironmentId, threadId: ThreadId): string {
+  const key = `${environmentId}:${threadId}`;
+  let hash = TAG_HASH_OFFSET_BASIS;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= BigInt(key.charCodeAt(index));
+    hash = (hash * TAG_HASH_PRIME) & TAG_HASH_MASK;
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
 let originalFavicon: HTMLLinkElement | undefined;
 let badgeFavicon: HTMLLinkElement | undefined;
 
 export function setNotificationBadge(count: number) {
   const bridge = window.desktopBridge;
   let image: string | null = null;
-  if (count > 0 && (!bridge || bridge.getClientPlatform?.() === "win32")) {
+  if (count > 0 && (!bridge || bridge.getClientPlatform() === "win32")) {
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 64;
     const context = canvas.getContext("2d");
@@ -61,7 +77,7 @@ export function setNotificationBadge(count: number) {
       originalFavicon = undefined;
     }
   }
-  void bridge?.setNotificationBadge?.({ count, image }).catch(() => undefined);
+  void bridge?.setNotificationBadge({ count, image }).catch(() => undefined);
 }
 
 let audioContext: AudioContext | undefined;
@@ -92,10 +108,7 @@ export async function playNotificationSound(
     }
     const decoded = await buffer;
     if (!shouldPlay() || context.state !== "running") return;
-    // Threads that finish together each ask for this sound, and full-volume copies sum into
-    // clipping. One playback stands for the burst. Checked after the decode, since every caller
-    // in a burst is waiting on it. The other kind keeps its own slot, so an input alert is still
-    // heard over a completion.
+    // Coalesce same-sound bursts after decode to avoid clipping; input and completion alerts keep separate slots.
     if (context.currentTime < (playingUntil.get(url) ?? 0)) return;
     const source = context.createBufferSource();
     source.buffer = decoded;

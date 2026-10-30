@@ -36,12 +36,19 @@ function isAtLeastAsNew(candidate: string | null, kept: string | null): boolean 
   );
 }
 
+export function sortChecks(
+  checks: ReadonlyArray<PullRequestCheck>,
+): ReadonlyArray<PullRequestCheck> {
+  return checks.toSorted(
+    (a, b) =>
+      Number(b.status === "failure" || b.status === "cancelled") -
+      Number(a.status === "failure" || a.status === "cancelled"),
+  );
+}
+
 /**
- * A host's rollup is a list of runs, not a list of checks: while a workflow is being re-run — or
- * while a second run of it is already live — the same check arrives twice, and both copies reach
- * the reader as what looks like a duplicate. Nothing in a check carries an id, so the name is what
- * identifies it, qualified by the workflow it belongs to since two workflows are free to name a
- * job the same thing.
+ * Rollups repeat checks during reruns or overlapping runs, and checks carry no ids.
+ * Identify checks by workflow plus name because different workflows may share job names.
  */
 export function dedupeChecks(
   entries: ReadonlyArray<{
@@ -61,10 +68,12 @@ export function dedupeChecks(
   for (const entry of survivors) {
     countsByName.set(entry.check.name, (countsByName.get(entry.check.name) ?? 0) + 1);
   }
-  return survivors.map((entry) => {
-    const workflowName = entry.workflowName ?? "";
-    return workflowName.length > 0 && (countsByName.get(entry.check.name) ?? 0) > 1
-      ? { ...entry.check, name: `${workflowName} / ${entry.check.name}` }
-      : entry.check;
-  });
+  return sortChecks(
+    survivors.map((entry) => {
+      const workflowName = entry.workflowName ?? "";
+      return workflowName.length > 0 && (countsByName.get(entry.check.name) ?? 0) > 1
+        ? { ...entry.check, name: `${workflowName} / ${entry.check.name}` }
+        : entry.check;
+    }),
+  );
 }

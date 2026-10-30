@@ -1,23 +1,20 @@
-/**
- * Electron allows one debugger client per webContents, so the relay shares the
- * attach the preview manager already holds.
- */
+// Electron allows one debugger per webContents; share the manager's attachment.
 
 export interface CdpRelayTarget {
   readonly send: (
     method: string,
     params: Record<string, unknown>,
     sessionId: string | undefined,
+    /** The extra session that sent it, such as a viewer's; the main connection has none. */
+    owner?: string,
   ) => Promise<unknown>;
+  readonly sessionDetached?: (owner: string) => void;
   /** The page's own CDP target id; Playwright keys the main frame by it. */
   readonly targetId: () => Promise<string>;
   readonly url: () => string;
   readonly title: () => string;
   readonly userAgent: () => string;
-  /**
-   * The desktop app and the server it launched share a disk, so the server's
-   * Playwright reads the file where it asked for it.
-   */
+  /** The desktop and its server share a disk; download paths need no translation. */
   readonly setDownloadDirectory: (directory: string | null) => void;
 }
 
@@ -56,11 +53,7 @@ export function createCdpRelayConnection(
 ): CdpRelayConnection {
   const send = (message: Record<string, unknown>) => write(JSON.stringify(message));
   let attached = false;
-  /**
-   * Sessions this relay invented. Extra page sessions (Playwright's
-   * `newCDPSession`) all reach the one real debugger session, so each gets the
-   * page's events; other ids are the page's own child sessions, such as iframes.
-   */
+  /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
   let sessionSequence = 0;
   const newSession = (kind: "browser" | "page") => {
@@ -121,8 +114,10 @@ export function createCdpRelayConnection(
       }
       case "Target.detachFromTarget": {
         const sessionId = command.params?.["sessionId"];
-        if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID)
+        if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId);
+          target.sessionDetached?.(sessionId);
+        }
         return {};
       }
       case "Target.setAutoAttach": {
@@ -143,14 +138,15 @@ export function createCdpRelayConnection(
 
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
     const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
-    // The page itself is already running, but its child frames are not:
-    // Playwright auto-attaches with waitForDebuggerOnStart, so Chromium pauses
-    // every new cross-site iframe and worker until this reaches it. Swallowing
-    // it left sign-in checks and captchas, which run in such frames, frozen.
+    const owner =
+      child === undefined && command.sessionId !== PAGE_SESSION_ID ? command.sessionId : undefined;
+    // Child frames/workers pause on auto-attach until resumed; only the main page can skip this command.
     if (command.method === "Runtime.runIfWaitingForDebugger" && child === undefined) {
       return Promise.resolve({});
     }
-    return target.send(command.method, command.params ?? {}, child);
+    // Playwright asks for this on every page; the host emulates focus only while it is in use.
+    if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
+    return target.send(command.method, command.params ?? {}, child, owner);
   };
 
   return {
@@ -167,8 +163,7 @@ export function createCdpRelayConnection(
           ? browserCommand(command)
           : pageCommand(command);
       const route = command.sessionId === undefined ? {} : { sessionId: command.sessionId };
-      // Replies leave as commands finish, as Chromium's do, so a slow command
-      // such as a screenshot never holds up the ones behind it.
+      // Reply as commands finish so slow commands cannot block later replies.
       void result.then(
         (value) => {
           const announce =

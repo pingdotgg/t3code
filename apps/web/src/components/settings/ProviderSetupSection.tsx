@@ -185,7 +185,8 @@ function ProviderSetupActions({
 
   return (
     <div className="divide-y divide-border/50">
-      {/* Keep the live region first so the last visible row is not followed by a sibling that adds its divider. */}
+      {/* Keep the live region first so sibling divider rules do not add a divider after the last visible
+       * row. */}
       <p className="sr-only" role="status">
         {pendingLabel ? `${pendingLabel}.` : null}
       </p>
@@ -218,7 +219,11 @@ function ProviderSetupActions({
               installation.totalBytes > 0 ? (
                 <progress
                   aria-label="Antigravity download"
-                  className="block h-1 w-full accent-foreground"
+                  // Forced-colors mode repaints the track and fill as Canvas, and
+                  // appearance:auto cannot bring the native widget back: the
+                  // preflight border reset marks every <progress> as author-styled,
+                  // so Chromium keeps its fallback paint. Use system colors instead.
+                  className="block h-1 w-full appearance-none overflow-hidden rounded-full bg-muted forced-colors:border [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary forced-colors:[&::-moz-progress-bar]:bg-[Highlight] [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary forced-colors:[&::-webkit-progress-value]:bg-[Highlight]"
                   value={installation.downloadedBytes}
                   max={installation.totalBytes}
                 />

@@ -1,6 +1,7 @@
 import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
+  withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "./session";
@@ -17,8 +18,14 @@ import type {
 import {
   createThreadSearchResultsAtomFamily,
   makeThreadSearchKey,
+  visibleThreadSearch,
   type EnvironmentThreadSearchMatch,
+  type SettledThreadSearch,
+  type ThreadSearchResultsState,
+  type ThreadSearchScope,
 } from "@t3tools/client-runtime/state/thread-search";
+import { THREAD_SEARCH_QUERY_MAX_LENGTH } from "@t3tools/contracts";
+import { messageSearchTokens } from "@t3tools/shared/paletteSearch";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
@@ -28,6 +35,7 @@ import { useEffect, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
+import { olderSettledThreads, threadFamilies } from "./threads";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
 import { vcsEnvironment } from "./vcs";
@@ -40,22 +48,36 @@ import {
 
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 200;
 const COMPOSER_PATH_SEARCH_LIMIT = 20;
-const THREAD_SEARCH_DEBOUNCE_MS = 200;
+const THREAD_SEARCH_DEBOUNCE_MS = 120;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
 const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> = Object.freeze([]);
-const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
+const EMPTY_THREAD_SEARCH_ATOM = Atom.make<ThreadSearchResultsState>({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
   isLoading: false,
+  rows: [],
 }).pipe(Atom.withLabel("mobile:thread-search:empty"));
 
-const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
-  getSearchAtom: (environmentId, query) =>
-    orchestrationEnvironment.threadSearch({
-      environmentId,
-      input: { query },
-    }),
+const olderSettledBeforeAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => get(olderSettledThreads.olderSettledAtom(environmentId))?.before ?? null).pipe(
+    Atom.withLabel(`mobile:older-settled-before:${environmentId}`),
+  ),
+);
+// Whether any of these environments leaves older settled threads out, so short queries matter.
+const anyOlderSettledAtom = Atom.family((environmentIdsKey: string) =>
+  Atom.make((get) =>
+    (JSON.parse(environmentIdsKey) as ReadonlyArray<EnvironmentId>).some(
+      (environmentId) => get(olderSettledBeforeAtom(environmentId)) !== null,
+    ),
+  ).pipe(Atom.withLabel(`mobile:any-older-settled:${environmentIdsKey}`)),
+);
+const threadSearch = createThreadSearchResultsAtomFamily({
+  getSearchAtom: (environmentId, input) =>
+    input.olderSettledBefore === undefined
+      ? orchestrationEnvironment.threadSearch({ environmentId, input })
+      : olderSettledThreads.searchAtom(environmentId, input),
+  olderSettledBefore: olderSettledBeforeAtom,
   labelPrefix: "mobile:thread-search",
 });
 
@@ -68,6 +90,7 @@ export interface ComposerPathSearchTarget {
 export function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that publishes the value after the delay and clears on change
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebounced(value);
@@ -126,14 +149,22 @@ export function useComposerPullRequestSearch(input: {
       : null,
   );
   const entries = (() => {
-    if (!ready) return [];
-    if (numeric) {
+    if (input.query === null || input.projectId === null || input.repository === null) return [];
+    if (/^\d*$/.test(input.query)) {
       return filterComposerPullRequestMatches({
-        entries: [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])],
+        entries: ready ? [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])] : [],
         linked,
-        projectId: input.projectId!,
-        repository: input.repository!,
-        query: query ?? "",
+        projectId: input.projectId,
+        repository: input.repository,
+        query: input.query,
+        limit: 20,
+      });
+    }
+    if (!ready) {
+      return withLinkedComposerPullRequestsFirst({
+        matches: [],
+        linked,
+        query: input.query,
         limit: 20,
       });
     }
@@ -148,9 +179,14 @@ export function useComposerPullRequestSearch(input: {
     );
     const unique = new Map<number, (typeof found)[number]>();
     for (const entry of found) if (!unique.has(entry.number)) unique.set(entry.number, entry);
-    return [...unique.values()]
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(0, 20);
+    return withLinkedComposerPullRequestsFirst({
+      matches: [...unique.values()].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      ),
+      linked,
+      query: query ?? "",
+      limit: 20,
+    });
   })();
   return {
     entries,
@@ -159,26 +195,73 @@ export function useComposerPullRequestSearch(input: {
   };
 }
 
+/**
+ * Server matches for a thread search: message hits, and on environments that leave older settled
+ * threads out of the shell, the rows of the best older matches, mounted into the thread list while
+ * they show so the caller's own ranking finds them.
+ */
 export function useThreadSearch(
   environmentIds: ReadonlyArray<EnvironmentId>,
   query: string,
+  scope: ThreadSearchScope = {},
 ): {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
+  /** The query `matches` are for, which lags the typed one while a search runs. */
+  readonly query: string;
   readonly isPending: boolean;
 } {
-  const normalizedQuery = query.trim();
+  // A pasted wall of text searches by its start rather than failing the request.
+  const normalizedQuery = query.trim().slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH).trim();
   const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_SEARCH_DEBOUNCE_MS);
-  const canSearch = environmentIds.length > 0 && normalizedQuery.length >= 2;
+  const anyOlderSettled = useAtomValue(anyOlderSettledAtom(JSON.stringify(environmentIds)));
+  // Messages need a word of three or more letters; older settled titles match from two.
+  const canSearch =
+    environmentIds.length > 0 &&
+    ((scope.titlesOnly !== true && messageSearchTokens(normalizedQuery).long.length > 0) ||
+      (anyOlderSettled && normalizedQuery.length >= 2));
   const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
-  const searchKey =
-    settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery);
+  const searchKeyOf = (searchQuery: string) =>
+    makeThreadSearchKey(environmentIds, searchQuery, scope);
+  const searchKey = settledQuery === null ? null : searchKeyOf(settledQuery);
   const result = useAtomValue(
-    searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearchResultsAtom(searchKey),
+    searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearch.results(searchKey),
   );
-  const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
+  const isPending = canSearch && (normalizedQuery !== debouncedQuery || result.isLoading);
+  // What fast environments returned shows without waiting for a slow one;
+  // callers keep shown rows in place with `nextShownOrder`.
+  const ready =
+    settledQuery !== null &&
+    (!result.isLoading || result.matches.length > 0 || result.rows.length > 0)
+      ? { query: settledQuery, matches: result.matches }
+      : null;
+  // Kept from earlier renders: React's pattern for information from previous renders.
+  const [previous, setPrevious] = useState<SettledThreadSearch | null>(null);
+  if (ready !== null && previous?.matches !== ready.matches) setPrevious(ready);
+  const visible = canSearch
+    ? visibleThreadSearch(normalizedQuery, ready, previous)
+    : { query: "", matches: EMPTY_THREAD_SEARCH_MATCHES };
+  // The shown results' rows stay mounted until newer results replace them.
+  const shownKey = visible.query === "" ? null : searchKeyOf(visible.query);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the shown search results' rows into the shared thread registry until newer results replace them
+  useEffect(() => {
+    if (shownKey === null) return;
+    const environments = (JSON.parse(shownKey) as [ReadonlyArray<EnvironmentId>])[0];
+    const releases = environments.map((environmentId) =>
+      threadFamilies.mountRows(
+        appAtomRegistry,
+        environmentId,
+        `search:${shownKey}`,
+        threadSearch.rows(shownKey, environmentId),
+      ),
+    );
+    return () => {
+      for (const release of releases) release();
+    };
+  }, [shownKey]);
   return {
-    matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
-    isPending: canSearch && (isDebouncing || result.isLoading),
+    matches: visible.matches,
+    query: visible.query,
+    isPending,
   };
 }
 
@@ -235,7 +318,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
   );
   const results = useAtomValue(pagesAtom);
   const values = results.flatMap((result) => {
-    const value = Option.getOrNull(AsyncResult.value(result));
+    const value = AsyncResult.getOrElse(result, () => null);
     return value === null ? [] : [value];
   });
   const refs = new Map<string, VcsRef>();
@@ -303,11 +386,8 @@ export function usePaginatedBranches(target: VcsRefTarget) {
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
-  const normalizedTarget = {
-    environmentId: target.environmentId,
-    cwd: target.cwd,
-    query: normalizeComposerPathSearchQuery(target.query),
-  };
+  const query = normalizeComposerPathSearchQuery(target.query);
+  const normalizedTarget = { environmentId: target.environmentId, cwd: target.cwd, query };
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
   const fileAccessSession = useEnvironmentQuery(
     debouncedTarget.environmentId === null

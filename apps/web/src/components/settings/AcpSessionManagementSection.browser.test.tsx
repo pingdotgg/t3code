@@ -6,9 +6,9 @@ import {
   ThreadId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../../test/render";
 
 const commands = vi.hoisted(() => ({
   list: vi.fn(),
@@ -77,41 +77,30 @@ const provider = {
   skills: [],
 } satisfies ServerProvider;
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
+async function renderSection(readOnly = false) {
+  const screen = await render(
+    <AcpSessionManagementSection
+      environmentId={environmentId}
+      instanceId={instanceId}
+      provider={provider}
+      projects={[{ id: projectId, title: "Antigravity", workspaceRoot: session.cwd }]}
+      readOnly={readOnly}
+    />,
+  );
+  const button = (label: string) => {
+    const found = [...screen.container.querySelectorAll("button")].find(
+      (element) => element.textContent === label,
+    );
+    expect(found, `button ${label}`).toBeDefined();
+    return found!;
+  };
+  return Object.assign(screen, {
+    button,
+    click: (label: string) => act(async () => button(label).click()),
   });
-  return { promise, resolve };
 }
 
-let root: Root;
-let container: HTMLDivElement;
-
-function render(readOnly = false) {
-  return act(async () =>
-    root.render(
-      <AcpSessionManagementSection
-        environmentId={environmentId}
-        instanceId={instanceId}
-        provider={provider}
-        projects={[{ id: projectId, title: "Antigravity", workspaceRoot: session.cwd }]}
-        readOnly={readOnly}
-      />,
-    ),
-  );
-}
-function button(label: string) {
-  const found = [...container.querySelectorAll("button")].find(
-    (element) => element.textContent === label,
-  );
-  expect(found, `button ${label}`).toBeDefined();
-  return found!;
-}
-const click = (label: string) => act(async () => button(label).click());
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   grants.scopes = new Set(["orchestration:read", "orchestration:operate", "providers:manage"]);
   commands.list.mockReset().mockResolvedValue({
     _tag: "Success",
@@ -157,138 +146,26 @@ beforeEach(() => {
     value: { loggedOut: true },
   });
   dialogs.confirm.mockReset().mockResolvedValue(true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-describe("AcpSessionManagementSection", () => {
-  it("lists and imports native sessions through the owning environment", async () => {
-    await render();
-    await click("List sessions");
-
-    expect(commands.list).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, projectId },
-    });
-    expect(container.textContent).toContain(session.title);
-
-    await click("Import");
-
-    expect(commands.import).toHaveBeenCalledWith({
-      environmentId,
-      input: {
-        instanceId,
-        projectId,
-        sessionId: session.sessionId,
-        title: session.title,
-        updatedAt: session.updatedAt,
-      },
-    });
-    expect(button("Imported").disabled).toBe(true);
-  });
-
-  it("logs out the provider instance through the owning environment", async () => {
-    await render();
-    await click("Log out");
-
-    expect(commands.logout).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId },
-    });
-  });
-
-  it("deletes unimported native sessions after destructive confirmation", async () => {
-    await render();
-    await click("List sessions");
-    await click("Delete");
-
-    expect(dialogs.confirm).toHaveBeenCalledOnce();
-    expect(commands.delete).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, projectId, sessionId: session.sessionId },
-    });
-  });
-
-  it("locks the project picker while a project-scoped request is pending", async () => {
-    const pending = deferred<{
-      readonly _tag: "Success";
-      readonly value: { readonly providers: [] };
-    }>();
-    commands.listProviders.mockReturnValueOnce(pending.promise);
-    await render();
-    const picker = () =>
-      container.querySelector<HTMLElement>('[aria-label="Project for ACP sessions"]')!;
-    expect(picker().hasAttribute("data-disabled")).toBe(false);
-
-    await click("List providers");
-
-    expect(picker().hasAttribute("data-disabled")).toBe(true);
-    await act(async () => pending.resolve({ _tag: "Success", value: { providers: [] } }));
-    expect(picker().hasAttribute("data-disabled")).toBe(false);
-  });
-
-  it("lists, saves, and disables configurable ACP providers", async () => {
-    await render();
-    await click("List providers");
-
-    expect(commands.listProviders).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, projectId },
-    });
-    expect(
-      container.querySelector<HTMLInputElement>('input[aria-label="google base URL"]')?.value,
-    ).toBe("https://api.example.test/v1");
-    await click("Save");
-    expect(commands.setProvider).toHaveBeenCalledWith({
-      environmentId,
-      input: {
-        instanceId,
-        projectId,
-        providerId: "google",
-        apiType: "openai",
-        baseUrl: "https://api.example.test/v1",
-      },
-    });
-
-    await click("Disable");
-    expect(commands.disableProvider).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, projectId, providerId: "google" },
-    });
-  });
-});
-
-it("imports with task access even when provider configuration is read-only", async () => {
-  grants.scopes.delete("providers:manage");
-  await render(true);
-  await click("List sessions");
-  await click("Import");
-  expect(commands.import).toHaveBeenCalledOnce();
-});
+}
 
 it("does not import with provider management alone", async () => {
+  setup();
   grants.scopes.delete("orchestration:operate");
-  await render();
-  await click("List sessions");
-  expect(button("Import").disabled).toBe(true);
-  await click("Import");
+  await using screen = await renderSection();
+  await screen.click("List sessions");
+  expect(screen.button("Import").disabled).toBe(true);
+  await screen.click("Import");
   expect(commands.import).not.toHaveBeenCalled();
 });
 
 it("rechecks task access after confirming deletion", async () => {
-  await render();
-  await click("List sessions");
+  setup();
+  await using screen = await renderSection();
+  await screen.click("List sessions");
   dialogs.confirm.mockImplementationOnce(async () => {
     grants.scopes.delete("orchestration:operate");
     return true;
   });
-  await click("Delete");
+  await screen.click("Delete");
   expect(commands.delete).not.toHaveBeenCalled();
 });

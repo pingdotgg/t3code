@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Settings from "../serverSettings.ts";
 
-export const findOrphanedProjectIds = (
+const findOrphanedProjectIds = (
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
   liveProjectIds: ReadonlySet<ProjectId>,
 ): ReadonlyArray<ProjectId> =>

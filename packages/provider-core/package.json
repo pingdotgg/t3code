@@ -7,6 +7,10 @@
       "types": "./src/client.ts",
       "import": "./src/client.ts"
     },
+    "./modelShortName": {
+      "types": "./src/modelShortName.ts",
+      "import": "./src/modelShortName.ts"
+    },
     "./server/adapterDriver": {
       "types": "./src/server/adapterDriver.ts",
       "import": "./src/server/adapterDriver.ts"
@@ -185,7 +189,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc-rs --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {

@@ -15,7 +15,7 @@ export type MacSnapShotSource = {
   readonly name: string;
 };
 
-export function macSnapShotArguments(windowId: number, outputPath: string): string[] {
+function macSnapShotArguments(windowId: number, outputPath: string): string[] {
   return ["-l", String(windowId), "-o", "-x", "-t", "png", outputPath];
 }
 

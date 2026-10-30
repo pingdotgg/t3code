@@ -1,8 +1,6 @@
 const motionTiming = { duration: 150, easing: "ease-out" };
 const rowTravel = (height: number) => Math.min(height, 40);
-// Fades are the expensive part: every removed row gets a deep clone and every
-// clone and entering row gets its own animation, and the layout reads in
-// between force synchronous reflows.
+// Fades clone removed rows and animate clones and entries; intervening layout reads force reflows.
 const MAX_FADED_ROWS_PER_UPDATE = 40;
 
 type RowPosition = { top: number; left: number; width: number; height: number };
@@ -13,8 +11,7 @@ function progress(animation: Animation) {
     : (animation.effect?.getComputedTiming().progress ?? 0);
 }
 
-/** The list must be
- * positioned so every direct child's offsetTop has the same origin. */
+/** Position the list so all direct children's offsetTop share an origin. */
 export function createSidebarListMotion(parent: HTMLUListElement) {
   let positions: Map<HTMLElement, RowPosition> | null = null;
   let disposed = false;
@@ -215,8 +212,8 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
             continue;
           }
           const delta = movedDelta.get(node);
-          // Computed progress includes the effect's easing. Only our own
-          // translate is carried forward; dnd-kit's transforms are never read.
+          // Computed progress includes easing; carry forward only our translation, never dnd-kit's
+          // transforms.
           if (delta !== undefined) move(node, delta);
         }
       }

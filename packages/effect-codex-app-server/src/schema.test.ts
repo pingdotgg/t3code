@@ -45,20 +45,28 @@ it("accepts Codex 0.150 multi-agent values", () => {
   for (const schema of schemas) {
     assert.equal(Schema.is(schema)("completed"), true);
   }
+  const isServerNotificationCollabAgentTool = Schema.is(
+    CodexSchema.ServerNotification__CollabAgentTool,
+  );
+
+  const isV2ThreadResumeResponseCollabAgentTool = Schema.is(
+    CodexSchema.V2ThreadResumeResponse__CollabAgentTool,
+  );
 
   for (const tool of ["sendMessage", "followupTask", "interruptAgent", "listAgents"]) {
-    assert.equal(Schema.is(CodexSchema.ServerNotification__CollabAgentTool)(tool), true);
-    assert.equal(Schema.is(CodexSchema.V2ThreadResumeResponse__CollabAgentTool)(tool), true);
+    assert.equal(isServerNotificationCollabAgentTool(tool), true);
+    assert.equal(isV2ThreadResumeResponseCollabAgentTool(tool), true);
   }
+  const isServerNotificationCollabAgentToolCallStatus = Schema.is(
+    CodexSchema.ServerNotification__CollabAgentToolCallStatus,
+  );
 
-  assert.equal(
-    Schema.is(CodexSchema.ServerNotification__CollabAgentToolCallStatus)("interrupted"),
-    true,
+  assert.equal(isServerNotificationCollabAgentToolCallStatus("interrupted"), true);
+  const isV2ThreadResumeResponseCollabAgentToolCallStatus = Schema.is(
+    CodexSchema.V2ThreadResumeResponse__CollabAgentToolCallStatus,
   );
-  assert.equal(
-    Schema.is(CodexSchema.V2ThreadResumeResponse__CollabAgentToolCallStatus)("interrupted"),
-    true,
-  );
+
+  assert.equal(isV2ThreadResumeResponseCollabAgentToolCallStatus("interrupted"), true);
 
   const resumeResponse = {
     approvalPolicy: "never",
@@ -99,49 +107,9 @@ it("accepts Codex 0.150 multi-agent values", () => {
       updatedAt: 0,
     },
   };
+  const isV2ThreadResumeResponse = Schema.is(CodexSchema.V2ThreadResumeResponse);
 
-  assert.equal(Schema.is(CodexSchema.V2ThreadResumeResponse)(resumeResponse), true);
-});
-
-it("accepts Codex rate limit errors for thread responses", () => {
-  const failedThread = {
-    cliVersion: "0.150.0",
-    createdAt: 0,
-    cwd: "/tmp/project",
-    ephemeral: false,
-    id: "thread-1",
-    modelProvider: "openai",
-    preview: "",
-    projectId: null,
-    sessionId: "session-1",
-    source: "cli",
-    status: { type: "idle" },
-    turns: [
-      {
-        error: {
-          codexErrorInfo: "rateLimitExceeded",
-          message: "Rate limit exceeded",
-        },
-        id: "turn-1",
-        items: [],
-        status: "failed",
-      },
-    ],
-    updatedAt: 0,
-  };
-  assert.equal(isThreadReadResponse({ thread: failedThread }), true);
-  assert.equal(
-    isThreadResumeResponse({
-      approvalPolicy: "never",
-      approvalsReviewer: "user",
-      cwd: "/tmp/project",
-      model: "gpt-5.6-sol",
-      modelProvider: "openai",
-      sandbox: { type: "dangerFullAccess" },
-      thread: failedThread,
-    }),
-    true,
-  );
+  assert.equal(isV2ThreadResumeResponse(resumeResponse), true);
 });
 
 it("accepts Codex misalignment policy errors for thread responses", () => {

@@ -11,10 +11,9 @@ import {
 } from "@t3tools/contracts";
 
 export const DEFAULT_SANS_FONT_STACK =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+  '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif';
 
-// Concrete names first: some engines alias `ui-monospace` to the
-// proportional system UI font, which would break every code surface.
+// Some engines map `ui-monospace` to a proportional font, so prefer concrete names.
 export const DEFAULT_CODE_FONT_STACK =
   '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace';
 
@@ -46,7 +45,7 @@ function quoteFontFamilyName(name: string): string {
   return `"${bare.replaceAll('"', "")}"`;
 }
 
-export function cssFontFamilies(input: string): string | null {
+function cssFontFamilies(input: string): string | null {
   const families = input
     .split(",")
     .map(quoteFontFamilyName)
@@ -69,11 +68,7 @@ export interface AppearanceFontPreferences {
   readonly smoothing: boolean;
 }
 
-/**
- * Sizes are always written: the interface size drives the root font size (and
- * with it every rem-based dimension), while the prompt and code sizes stay in
- * absolute pixels so they do not scale twice.
- */
+/** Always writes sizes: interface size sets the root; prompt and code use pixels to avoid double scaling. */
 export function applyAppearanceFontVariables(
   root: HTMLElement,
   preferences: AppearanceFontPreferences,
@@ -110,7 +105,7 @@ function clampFontSize(value: number, minimum: number, maximum: number, fallback
   return Math.min(maximum, Math.max(minimum, Math.round(value)));
 }
 
-export function clampInterfaceFontSize(value: number): number {
+function clampInterfaceFontSize(value: number): number {
   return clampFontSize(
     value,
     MIN_INTERFACE_FONT_SIZE,
@@ -119,11 +114,11 @@ export function clampInterfaceFontSize(value: number): number {
   );
 }
 
-export function clampPromptFontSize(value: number): number {
+function clampPromptFontSize(value: number): number {
   return clampFontSize(value, MIN_PROMPT_FONT_SIZE, MAX_PROMPT_FONT_SIZE, DEFAULT_PROMPT_FONT_SIZE);
 }
 
-export function clampCodeFontSize(value: number): number {
+function clampCodeFontSize(value: number): number {
   return clampFontSize(value, MIN_CODE_FONT_SIZE, MAX_CODE_FONT_SIZE, DEFAULT_CODE_FONT_SIZE);
 }
 
@@ -139,11 +134,7 @@ function probeWidth(fontList: string): number | null {
   return fontProbeContext.measureText(FONT_PROBE_TEXT).width;
 }
 
-/**
- * Canvas metric probing instead of document.fonts.check(): check() reports true
- * for families that are not installed at all (nothing needs loading), so it
- * cannot filter the dropdown.
- */
+/** Probes canvas metrics because document.fonts.check() accepts uninstalled families. */
 export function isFontFamilyAvailable(family: string): boolean {
   const families = cssFontFamilies(family);
   if (families === null) return false;
@@ -165,7 +156,7 @@ const MONOSPACE_PROBE_VARIANTS = ["normal 400", "normal 700", "italic 400", "ita
 const MONOSPACE_PROBE_GLYPHS = ["i", "M", "W", "0", "@", "#", ".", " "] as const;
 const MONOSPACE_ADVANCE_TOLERANCE = 0.01;
 
-export function areFontAdvancesMonospace(advances: readonly number[]): boolean {
+function areFontAdvancesMonospace(advances: readonly number[]): boolean {
   const reference = advances[0];
   if (
     reference === undefined ||
@@ -223,11 +214,7 @@ const MONO_GENERIC_CANDIDATES = [
 
 const GENERIC_PROBE_TEXT = "RagIl10O@ fjord quiz";
 
-/**
- * Advance width of the probe text laid out by the DOM - not canvas, whose
- * generic-family mapping diverges from real rendering (this engine draws
- * `ui-monospace` as the proportional UI font on canvas but not in CSS).
- */
+// Canvas generic-family mappings can differ from CSS, so measure the DOM.
 function measureDomProbeWidth(fontFamily: string): number | null {
   try {
     const body = document.body;
@@ -263,9 +250,7 @@ function resolveGenericFamilyLabel(generic: string): string | null {
       return candidate;
     }
   }
-  // No nameable face matched; on Apple platforms that means one of the San
-  // Francisco faces, which CSS cannot name. Comparing against -apple-system
-  // tells the UI face apart from SF Mono.
+  // Unnameable Apple faces need -apple-system metrics to distinguish the UI face from SF Mono.
   if (/mac|iphone|ipad|ipod/i.test(navigator.platform)) {
     const systemWidth = measureDomProbeWidth("-apple-system");
     if (systemWidth !== null && widthsMatch(genericWidth, systemWidth)) return "SF Pro";
@@ -299,10 +284,7 @@ export interface InstalledFontFamiliesResult {
 
 let installedFamiliesCache: InstalledFontFamiliesResult | null = null;
 
-/**
- * Call from a user gesture: the first call raises the browser's local-fonts
- * permission prompt.
- */
+/** Call from a user gesture; the first call prompts for local-fonts permission. */
 export async function queryInstalledFontFamilies(): Promise<InstalledFontFamiliesResult> {
   if (installedFamiliesCache !== null) return installedFamiliesCache;
   const query = (
@@ -317,12 +299,10 @@ export async function queryInstalledFontFamilies(): Promise<InstalledFontFamilie
   try {
     const fonts = await query.call(window);
     const families = [...new Set(fonts.map((font) => font.family))]
-      // Dot-prefixed families are macOS-internal UI faces; selecting one is
-      // never intended and most refuse to render for web content anyway.
+      // Dot-prefixed macOS UI faces often refuse to render in web content.
       .filter((family) => !family.startsWith("."))
       .sort((left, right) => left.localeCompare(right));
-    // A denied permission check resolves with an empty list instead of
-    // throwing; no machine has zero fonts, so treat empty as denied.
+    // Denied access can return an empty list instead of throwing.
     if (families.length === 0) return { families: [], status: "denied" };
     installedFamiliesCache = { families, status: "granted" };
     return installedFamiliesCache;

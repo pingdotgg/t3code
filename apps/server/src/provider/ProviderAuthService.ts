@@ -10,8 +10,8 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
-import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
@@ -87,9 +87,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
     return instance.auth;
   });
 
-  // Native sessions may still belong to the previous provider after the
-  // selected model changes. Read session bindings, not the selected model,
-  // when invalidating credentials for sign-in or sign-out.
+  // Invalidate credentials using session bindings; model selection may already point to another provider.
   const stopSessions = Effect.fn("ProviderAuthService.stopSessions")(function* (
     instanceId: ProviderInstanceId,
     binding: ProviderAuthController["credentialBinding"],
@@ -207,8 +205,8 @@ export const makeProviderAuthService = Effect.gen(function* () {
         });
       return yield* auth.reconnectProfile(input.methodId);
     }),
-    importProfile: (input) =>
-      credentialChanges.withPermit(
+    importProfile: Effect.fn("ProviderAuthService.importProfile")(function (input) {
+      return credentialChanges.withPermit(
         Effect.gen(function* () {
           const auth = yield* getController(input.instanceId, "import");
           yield* checkSharedBinding(input.instanceId, "start", auth);
@@ -223,7 +221,8 @@ export const makeProviderAuthService = Effect.gen(function* () {
             stopSessions(input.instanceId, auth.credentialBinding),
           );
         }),
-      ),
+      );
+    }),
     start: Effect.fn("ProviderAuthService.start")(function* (input, ownerSessionId) {
       return yield* credentialChanges.withPermit(
         Effect.gen(function* () {
@@ -267,8 +266,8 @@ export const makeProviderAuthService = Effect.gen(function* () {
         }),
       );
     }),
-    subscribe: (input, ownerSessionId) =>
-      Effect.gen(function* () {
+    subscribe: Function.flow(
+      Effect.fn("ProviderAuthService.subscribe")(function* (input, ownerSessionId) {
         const changes = yield* registry.subscribeChanges;
         const initial = yield* getController(input.instanceId, "subscribe");
         return Stream.concat(
@@ -280,7 +279,9 @@ export const makeProviderAuthService = Effect.gen(function* () {
           Stream.changesWith((previous, next) => previous === next),
           Stream.switchMap((auth) => auth.subscribe(ownerSessionId)),
         );
-      }).pipe(Stream.unwrap),
+      }),
+      Stream.unwrap,
+    ),
     tryHandlePromptCommand: Effect.fn("ProviderAuthService.tryHandlePromptCommand")(
       function* (input) {
         const instance = yield* registry.getInstance(input.instanceId);

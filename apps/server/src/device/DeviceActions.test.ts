@@ -1,8 +1,11 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import type { DeviceActionInput } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { readDeviceDetail, runDeviceAction, supportsAction } from "./DeviceActions.ts";
+import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import type { DeviceHostReady } from "./DeviceHost.ts";
 
 type Call = { command: string; args: ReadonlyArray<string>; stdin?: string };
@@ -15,9 +18,17 @@ const makeReady = (
   },
 ) => {
   const calls: Call[] = [];
+  const unused = Effect.die("Device actions run host commands, never device operations");
   const ready: DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://127.0.0.1:1" },
+    devices: {
+      list: unused,
+      boot: () => unused,
+      attach: () => unused,
+      shutdown: () => unused,
+      screenshot: () => unused,
+    },
     helpers,
     run: (command, args, options) => {
       const call = { command, args, ...(options?.stdin ? { stdin: options.stdin } : {}) };
@@ -35,183 +46,111 @@ const makeReady = (
 
 const udid = "SIM-1";
 
-describe("supportsAction", () => {
-  it("advertises platform-specific toggles", () => {
-    const toggle = (setting: Extract<DeviceActionInput, { type: "setToggle" }>["setting"]) =>
-      ({ type: "setToggle", deviceId: udid, setting, value: true }) as const;
-    expect(supportsAction("ios", toggle("voiceOver"))).toBe(true);
-    expect(supportsAction("android", toggle("voiceOver"))).toBe(false);
-    expect(supportsAction("android", toggle("networkEnabled"))).toBe(true);
-    expect(supportsAction("ios", toggle("networkEnabled"))).toBe(false);
-    expect(supportsAction("ios", { type: "setLiquidGlass", deviceId: udid, value: "clear" })).toBe(
-      true,
-    );
-    expect(
-      supportsAction("android", { type: "setLiquidGlass", deviceId: udid, value: "clear" }),
-    ).toBe(false);
-    expect(
-      supportsAction("android", { type: "setOrientation", deviceId: udid, value: "portrait" }),
-    ).toBe(true);
-    expect(
-      supportsAction("ios", { type: "setOrientation", deviceId: udid, value: "portrait" }),
-    ).toBe(false);
-  });
-});
-
 describe("runDeviceAction", () => {
-  it.effect("maps shared text sizes onto simctl content-size categories", () =>
+  it.live.each([
+    "https://example.com/callback?code=1&state=2",
+    "https://example.com/it's?a=1&b=2",
+    "https://example.com/a b?key=value",
+    "https://example.com/plain",
+  ])("opens the complete Android URL %s", (url) =>
     Effect.gen(function* () {
-      const { ready, calls } = makeReady();
-      yield* runDeviceAction(ready, "ios", {
-        type: "setTextSize",
-        deviceId: udid,
-        value: "extra-large",
-      });
-      expect(calls).toEqual([
-        { command: "xcrun", args: ["simctl", "ui", udid, "content_size", "accessibility-large"] },
-      ]);
-    }),
-  );
-
-  it.effect("maps shared text sizes onto Android font_scale", () =>
-    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
       const { ready, calls } = makeReady();
       yield* runDeviceAction(ready, "android", {
-        type: "setTextSize",
+        type: "openUrl",
         deviceId: "emulator-5554",
-        value: "large",
+        url,
       });
-      expect(calls[0]?.args).toEqual([
-        "-s",
-        "emulator-5554",
-        "shell",
-        "settings",
-        "put",
-        "system",
-        "font_scale",
-        "1.15",
+      const args = calls[0]!.args;
+      expect(args.slice(0, 3)).toEqual(["-s", "emulator-5554", "shell"]);
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // adb joins arguments verbatim before the Android shell parses them.
+      const stdout = yield* spawner.string(
+        ChildProcess.make("/bin/sh", [
+          "-c",
+          `am() { printf '%s\\0' "$@"; }\n${args.slice(3).join(" ")}`,
+        ]),
+      );
+      expect(stdout.split("\0").slice(0, -1)).toEqual([
+        "start",
+        "-a",
+        "android.intent.action.VIEW",
+        "-d",
+        url,
       ]);
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect(
-    "rotates emulators through the accelerometer and physical devices through the lock",
-    () =>
+  it.effect.each([
+    ["emulator-5554", "Physical size: 2560x1600", "portrait", "-9.81:0:0"],
+    ["emulator-5554", "Physical size: 2560x1600", "landscape_left", "0:9.81:0"],
+    ["R5CT1234", "Physical size: 2560x1600", "portrait", "3"],
+    ["R5CT1234", "Physical size: 2560x1600", "landscape_left", "0"],
+    ["R5CT1234", "Physical size: 1080x1920\nOverride size: 1920x1080", "portrait", "3"],
+  ] as const)(
+    "rotates from the natural orientation reported by wm size: %s %j %s",
+    ([deviceId, wmSize, value, expected]) =>
       Effect.gen(function* () {
-        const emulator = makeReady();
-        yield* runDeviceAction(emulator.ready, "android", {
-          type: "setOrientation",
-          deviceId: "emulator-5554",
-          value: "landscape_left",
-        });
-        expect(emulator.calls.at(-1)?.args).toEqual([
-          "-s",
-          "emulator-5554",
-          "emu",
-          "sensor",
-          "set",
-          "acceleration",
-          "9.81:0:0",
-        ]);
-        const phone = makeReady();
-        yield* runDeviceAction(phone.ready, "android", {
-          type: "setOrientation",
-          deviceId: "R5CT1234",
-          value: "landscape_right",
-        });
-        expect(phone.calls).toEqual([
-          {
-            command: "adb",
-            args: ["-s", "R5CT1234", "shell", "cmd", "window", "user-rotation", "lock", "3"],
-          },
-        ]);
+        const { ready, calls } = makeReady((call) =>
+          call.args.join(" ").endsWith("shell wm size") ? { stdout: `${wmSize}\n` } : {},
+        );
+        yield* runDeviceAction(ready, "android", { type: "setOrientation", deviceId, value });
+        expect(calls.at(-1)?.args.at(-1)).toBe(expected);
       }),
   );
 
-  it.effect("runs accessibility toggles through the bundled helper via simctl spawn", () =>
-    Effect.gen(function* () {
-      const { ready, calls } = makeReady();
-      yield* runDeviceAction(ready, "ios", {
-        type: "setToggle",
-        deviceId: udid,
-        setting: "voiceOver",
-        value: true,
-      });
-      expect(calls).toEqual([
-        {
-          command: "xcrun",
-          args: [
-            "simctl",
-            "spawn",
-            udid,
-            "/hub/simax/serve-sim-ax-settings",
-            "set",
-            "voiceover",
-            "on",
-          ],
-        },
-      ]);
-    }),
+  it.effect.each([
+    ["camera", "grant", "android.permission.CAMERA"],
+    ["photos", "revoke", "android.permission.READ_MEDIA_IMAGES"],
+  ] as const)(
+    "reports an Android %s %s that no pm command applied",
+    ([permission, decision, firstPermission]) =>
+      Effect.gen(function* () {
+        const { ready } = makeReady((call) => ({
+          code: 1,
+          stderr: `Unknown package: ${call.args.at(-1)}`,
+        }));
+        const error = yield* Effect.flip(
+          runDeviceAction(ready, "android", {
+            type: "setPermission",
+            deviceId: "emulator-5554",
+            appId: "com.example.missing",
+            permission,
+            decision,
+          }),
+        );
+        expect(error._tag).toBe("DeviceOperationError");
+        expect(error.operation).toBe("permission");
+        expect(error._tag === "DeviceOperationError" && error.cause).toMatchObject({
+          stderr: `Unknown package: ${firstPermission}`,
+        });
+      }),
   );
 
-  it.effect("fails clearly when the helper is missing", () =>
-    Effect.gen(function* () {
-      const { ready } = makeReady(() => ({}), { serveSimAxSettings: null, serveSimCli: null });
-      const error = yield* Effect.flip(
-        runDeviceAction(ready, "ios", {
-          type: "setColorFilter",
-          deviceId: udid,
-          value: "grayscale",
-        }),
-      );
-      expect(error._tag).toBe("DeviceActionUnavailableError");
-      expect(error.message).toContain("requires a helper");
-    }),
-  );
-
-  it.effect("rejects actions the platform does not support without running anything", () =>
-    Effect.gen(function* () {
-      const { ready, calls } = makeReady();
-      const error = yield* Effect.flip(
-        runDeviceAction(ready, "android", {
-          type: "sendPush",
+  it.effect.each([
+    [
+      "photos",
+      ["android.permission.READ_MEDIA_IMAGES", "android.permission.READ_EXTERNAL_STORAGE"],
+      1,
+    ],
+    ["contacts", ["android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS"], 0],
+  ] as const)(
+    "keeps a partially applied %s permission change",
+    ([permission, permissions, success]) =>
+      Effect.gen(function* () {
+        const { ready, calls } = makeReady((call) => ({
+          code: call.args.at(-1) === permissions[success] ? 0 : 1,
+        }));
+        const result = yield* runDeviceAction(ready, "android", {
+          type: "setPermission",
           deviceId: "emulator-5554",
-          appId: "com.example",
-          payload: "hi",
-        }),
-      );
-      expect(error.message).toContain("not supported on android");
-      expect(calls).toEqual([]);
-    }),
-  );
-
-  it.effect("surfaces non-zero exit codes as operation errors", () =>
-    Effect.gen(function* () {
-      const { ready } = makeReady(() => ({ code: 1, stderr: "Invalid device: SIM-1" }));
-      const error = yield* Effect.flip(
-        runDeviceAction(ready, "ios", { type: "setAppearance", deviceId: udid, value: "dark" }),
-      );
-      expect(error.operation).toBe("appearance");
-      expect(error.message).toContain("exit code 1");
-      expect(error.message).not.toContain("Invalid device: SIM-1");
-      expect(error._tag === "DeviceOperationError" && error.cause).toMatchObject({
-        stderr: "Invalid device: SIM-1",
-      });
-    }),
-  );
-
-  it.effect("wraps a bare push string in an APNs alert and feeds it on stdin", () =>
-    Effect.gen(function* () {
-      const { ready, calls } = makeReady();
-      yield* runDeviceAction(ready, "ios", {
-        type: "sendPush",
-        deviceId: udid,
-        appId: "com.example.app",
-        payload: "Hello",
-      });
-      expect(calls[0]?.args).toEqual(["simctl", "push", udid, "com.example.app", "-"]);
-      expect(calls[0]?.stdin).toBe('{"aps":{"alert":"Hello"}}');
-    }),
+          appId: "com.example.app",
+          permission,
+          decision: "grant",
+        });
+        expect(result).toBeUndefined();
+        expect(calls.map((call) => call.args.at(-1))).toEqual(permissions);
+      }),
   );
 });
 

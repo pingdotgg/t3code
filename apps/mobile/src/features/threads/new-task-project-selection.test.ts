@@ -4,8 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
 import {
-  filterProjectScopes,
   getProjectScopeSelectionTarget,
+  newTaskDestination,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
 } from "./new-task-project-selection";
@@ -55,18 +55,22 @@ function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScop
 }
 
 describe("getProjectScopeSelectionTarget", () => {
-  it("keeps the current environment when it hosts the selected logical project", () => {
-    const projects = [makeProject("t3code-mac", "mac"), makeProject("t3code-server", "server")];
-    expect(getProjectScopeSelectionTarget(makeScope(projects), EnvironmentId.make("server"))).toBe(
-      projects[1],
-    );
-  });
-
-  it("falls back to the representative when the current environment does not host the project", () => {
-    const projects = [makeProject("t3code-mac", "mac"), makeProject("t3code-server", "server")];
-    expect(getProjectScopeSelectionTarget(makeScope(projects), EnvironmentId.make("other"))).toBe(
-      projects[0],
-    );
+  it("prefers a connected copy of a project that spans environments", () => {
+    const mac = makeProject("t3code", "mac");
+    const server = makeProject("t3code", "server");
+    const target = (connected: ReadonlyArray<string>, preferred: string | null = null) =>
+      getProjectScopeSelectionTarget(
+        makeScope([mac, server]),
+        preferred === null ? null : EnvironmentId.make(preferred),
+        new Set(connected.map((id) => EnvironmentId.make(id))),
+      );
+    expect(target(["server"])).toBe(server);
+    expect(target(["server"], "mac")).toBe(server);
+    expect(target(["mac", "server"], "server")).toBe(server);
+    expect(target(["mac", "server"])).toBe(mac);
+    // With nothing connected, the usual order still applies.
+    expect(target([], "server")).toBe(server);
+    expect(target([])).toBe(mac);
   });
 });
 
@@ -109,74 +113,140 @@ describe("resolveEnvironmentProjectMatch", () => {
     expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
     expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
   });
-
-  it("falls back to the first project on the target so the draft has a key to carry over to", () => {
-    const selected = makeProject("t3code", "mac", { repositoryKey: "github.com/t3tools/t3code" });
-    const target = [makeProject("unrelated", "server"), makeProject("also-unrelated", "server")];
-    expect(resolveEnvironmentProjectMatch(target, selected)).toBe(target[0]);
-    expect(resolveEnvironmentProjectMatch([], selected)).toBeNull();
-  });
 });
 
 describe("resolveDraftProjectSelection", () => {
-  it("preserves an explicit project selection", () => {
-    const project = makeProject("t3code");
+  const projects = [makeProject("t3code"), makeProject("t3code-2")];
+  const draft = { incomingShareId: undefined, pickerClosed: false };
+
+  it("opens the picker instead of auto-selecting the only project", () => {
+    expect(resolveDraftProjectSelection(null, projects, [makeScope(projects)], draft)).toEqual({
+      kind: "pick",
+    });
+  });
+
+  it("selects the only logical project for shared content", () => {
     expect(
-      resolveDraftProjectSelection("environment:t3code", [project], [makeScope([project])]),
+      resolveDraftProjectSelection(null, projects, [makeScope(projects)], {
+        ...draft,
+        incomingShareId: "share",
+      }),
+    ).toEqual({ kind: "select", project: projects[0] });
+  });
+
+  it("dismisses the draft when the first picker closes without a choice", () => {
+    expect(
+      resolveDraftProjectSelection(null, projects, [makeScope(projects)], {
+        ...draft,
+        pickerClosed: true,
+      }),
+    ).toEqual({ kind: "dismiss" });
+  });
+
+  it("keeps the draft when the picker closes after a choice", () => {
+    expect(
+      resolveDraftProjectSelection("environment:t3code-2", projects, [makeScope(projects)], {
+        ...draft,
+        pickerClosed: true,
+      }),
     ).toEqual({ kind: "preserve" });
   });
 
-  it("selects the only physical project when no project was explicitly selected", () => {
-    const project = makeProject("t3code");
-    expect(resolveDraftProjectSelection(null, [project], [makeScope([project])])).toEqual({
-      kind: "select",
-      project,
-    });
-  });
-
-  it("selects one logical project even when it has multiple physical workspaces", () => {
-    const projects = [makeProject("t3code"), makeProject("t3code-2"), makeProject("t3code-3")];
-    expect(resolveDraftProjectSelection(null, projects, [makeScope(projects)])).toEqual({
-      kind: "select",
-      project: projects[0],
-    });
-  });
-
-  it("does not preserve a project key that is missing from the catalog", () => {
-    const project = makeProject("t3code");
+  it("keeps a share draft asking for a project when its picker closes without a choice", () => {
+    const scopes = [makeScope([projects[0]!]), makeScope([projects[1]!])];
     expect(
-      resolveDraftProjectSelection("environment:removed", [project], [makeScope([project])]),
-    ).toEqual({
-      kind: "select",
-      project,
-    });
+      resolveDraftProjectSelection(null, projects, scopes, {
+        incomingShareId: "share",
+        pickerClosed: true,
+      }),
+    ).toEqual({ kind: "pick" });
   });
 });
 
-describe("filterProjectScopes", () => {
-  const mac = makeProject("code", "mac", { title: "Desktop checkout" });
-  const server = makeProject("remote-code", "server", { workspaceRoot: "/srv/remote-workspace" });
-  const code = makeScope([mac, server]);
-  const docs = { ...makeScope([makeProject("docs")]), key: "docs", title: "Documentation" };
-  const scopes = [code, docs];
+describe("newTaskDestination", () => {
+  const picker = { draft: { requestId: "request" } };
 
-  it("keeps all projects for an empty or whitespace-only query", () => {
-    expect(filterProjectScopes(scopes, "")).toBe(scopes);
-    expect(filterProjectScopes(scopes, "  ")).toBe(scopes);
+  function destination(options: {
+    readonly useLastProject: boolean | undefined;
+    readonly projects: ReadonlyArray<EnvironmentProject>;
+    readonly current?: EnvironmentProject;
+    readonly last?: { readonly environmentId: string; readonly projectId: string };
+  }) {
+    return newTaskDestination({
+      projects: options.projects,
+      requestId: "request",
+      useLastProject: options.useLastProject,
+      currentProject: options.current && {
+        environmentId: options.current.environmentId,
+        projectId: options.current.id,
+      },
+      lastProject: options.last,
+    });
+  }
+
+  it("starts in the current thread's project ahead of the remembered one", () => {
+    const projects = [makeProject("remembered"), makeProject("current", "other-environment")];
+    expect(
+      destination({
+        useLastProject: true,
+        projects,
+        current: projects[1],
+        last: { environmentId: "environment", projectId: "remembered" },
+      }),
+    ).toEqual({
+      draft: { requestId: "request", environmentId: "other-environment", projectId: "current" },
+    });
   });
 
-  it("matches logical names and workspace names or paths without case sensitivity", () => {
-    expect(filterProjectScopes(scopes, "  T3 CODE ")).toEqual([code]);
-    expect(filterProjectScopes(scopes, "DESKTOP")).toEqual([code]);
-    expect(filterProjectScopes(scopes, "REMOTE-WORKSPACE")).toEqual([code]);
-    expect(filterProjectScopes(scopes, "documentation")).toEqual([docs]);
-    expect(filterProjectScopes(scopes, "missing-project")).toEqual([]);
+  it("treats an unset preference as on", () => {
+    const projects = [makeProject("first"), makeProject("current")];
+    expect(destination({ useLastProject: undefined, projects, current: projects[1] })).toEqual({
+      draft: { requestId: "request", environmentId: "environment", projectId: "current" },
+    });
   });
 
-  it("preserves the whole logical project and preferred environment when a workspace matches", () => {
-    const matches = filterProjectScopes(scopes, "REMOTE-WORKSPACE");
-    expect(matches[0]).toBe(code);
-    expect(getProjectScopeSelectionTarget(matches[0]!, EnvironmentId.make("mac"))).toBe(mac);
-    expect(code.projects).toEqual([mac, server]);
+  it("starts in the remembered project of its own environment when there is no current one", () => {
+    const projects = [makeProject("chosen"), makeProject("chosen", "other-environment")];
+    expect(
+      destination({
+        useLastProject: true,
+        projects,
+        last: { environmentId: "other-environment", projectId: "chosen" },
+      }),
+    ).toEqual({
+      draft: { requestId: "request", environmentId: "other-environment", projectId: "chosen" },
+    });
+  });
+
+  it("ignores a remembered project id from another environment", () => {
+    expect(
+      destination({
+        useLastProject: true,
+        projects: [makeProject("chosen")],
+        last: { environmentId: "removed-environment", projectId: "chosen" },
+      }),
+    ).toEqual(picker);
+  });
+
+  it("opens the picker rather than the first project when nothing matches", () => {
+    expect(
+      destination({
+        useLastProject: true,
+        projects: [makeProject("first"), makeProject("second")],
+        current: makeProject("removed"),
+      }),
+    ).toEqual(picker);
+  });
+
+  it("always opens the picker when the preference is off", () => {
+    const only = makeProject("only");
+    expect(
+      destination({
+        useLastProject: false,
+        projects: [only],
+        current: only,
+        last: { environmentId: "environment", projectId: "only" },
+      }),
+    ).toEqual(picker);
   });
 });

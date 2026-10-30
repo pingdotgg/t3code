@@ -8,7 +8,6 @@ import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import type { ExcerptCommenting } from "./guide/GuideExcerpt";
-import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { GuideProseContext } from "./guide/GuideProse";
 import { GuideTour } from "./guide/GuideTour";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
@@ -26,6 +25,7 @@ export function PullRequestGuideTab({
   workspaceRoot,
   active,
   canComment,
+  rangeComments,
   onAskAboutLines,
   onAskAboutStop,
   onFinishReview,
@@ -38,6 +38,7 @@ export function PullRequestGuideTab({
   workspaceRoot: string;
   active: boolean;
   canComment: boolean;
+  rangeComments: boolean;
   onAskAboutLines: ((comment: ReviewCommentContext, request: string) => void) | null;
   onAskAboutStop:
     | ((stop: PullRequestReviewGuideStop, index: number, question: string) => void)
@@ -51,7 +52,6 @@ export function PullRequestGuideTab({
     reference,
     title,
   });
-  const runKey = guideRunKey(environmentId, reference);
   const reviewKey = pullRequestReviewKey(reference);
   const pending = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
@@ -61,30 +61,24 @@ export function PullRequestGuideTab({
       ? null
       : {
           canComment,
+          rangeComments,
           pending,
-          onComment: ({ path, oldPath, position, body }) =>
+          onComment: ({ path, oldPath, position, startPosition, body }) =>
             addComment(reviewKey, {
               id: nextPendingReviewCommentId(),
               path,
               ...(oldPath === null ? {} : { oldPath }),
+              ...(startPosition === undefined ? {} : { startPosition }),
               position,
               body,
             }),
           onRemove: (commentId) => removeComment(reviewKey, commentId),
           onAskAgent: onAskAboutLines,
         };
-  useEffect(() => {
-    if (!active) return;
-    useGuideRunStore.getState().setShown(runKey);
-    return () => {
-      if (useGuideRunStore.getState().shownKey === runKey)
-        useGuideRunStore.getState().setShown(null);
-    };
-  }, [active, runKey]);
-
   const guide = data?.guide ?? null;
   const tourShown = active && guide !== null;
   const reportTourShown = useEffectEvent(() => onTourShown?.());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the parent once the loaded guide tour is on screen, which data arrival can cause
   useEffect(() => {
     if (tourShown) reportTourShown();
   }, [tourShown]);

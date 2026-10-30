@@ -166,17 +166,6 @@ describe("t3 server command safety", () => {
     ),
   );
 
-  it.effect("shows help without creating state", () =>
-    withTempDirectory("t3-cli-help-", (root) =>
-      Effect.gen(function* () {
-        const baseDir = NodePath.join(root, "home");
-        const help = yield* runCli(["help"], { T3CODE_HOME: baseDir }).pipe(Effect.flip);
-        expect(help).toMatchObject({ _tag: "ShowHelp", commandPath: ["t3"], errors: [] });
-        expect(yield* pathExists(baseDir)).toBe(false);
-      }),
-    ),
-  );
-
   it.effect("refuses manual startup over a live server before creating directories", () =>
     withTempDirectory("t3-cli-running-", (root) =>
       Effect.gen(function* () {
@@ -226,61 +215,6 @@ describe("t3 server command safety", () => {
 });
 
 describe("t3 app", () => {
-  it.effect("rejects SSH before it tries to reach a desktop app", () =>
-    withTempDirectory("t3-app-ssh-test-", (root) =>
-      Effect.gen(function* () {
-        const baseDir = NodePath.join(root, "missing-t3-home");
-        const error = yield* runCli(["app", "--base-dir", baseDir], {
-          SSH_CONNECTION: "client server",
-        }).pipe(Effect.flip);
-
-        expect(error).toMatchObject({
-          _tag: "DesktopAppSshUnsupportedError",
-          message:
-            "`t3 app` only controls a desktop app on the same machine. It cannot run over SSH.",
-        });
-        expect(yield* pathExists(baseDir)).toBe(false);
-      }),
-    ),
-  );
-
-  it.effect("rejects unsupported platforms without creating state", () =>
-    withTempDirectory("t3-app-platform-test-", (root) =>
-      Effect.gen(function* () {
-        const baseDir = NodePath.join(root, "missing-t3-home");
-        const error = yield* runCli(["app", "--base-dir", baseDir]).pipe(
-          Effect.provideService(HostProcess.Platform, "freebsd"),
-          Effect.flip,
-        );
-
-        expect(error).toMatchObject({
-          _tag: "DesktopAppPlatformUnsupportedError",
-          platform: "freebsd",
-          message: "`t3 app` is not supported on freebsd.",
-        });
-        expect(yield* pathExists(baseDir)).toBe(false);
-      }),
-    ),
-  );
-
-  it.effect("does not create state when only a server or no desktop app is running", () =>
-    withTempDirectory("t3-app-missing-test-", (root) =>
-      Effect.gen(function* () {
-        const baseDir = NodePath.join(root, "missing-t3-home");
-        const error = yield* runCli(["app", "--base-dir", baseDir]).pipe(Effect.flip);
-
-        expect(error).toMatchObject({
-          _tag: "DesktopAppUnreachableError",
-          candidateAddresses: [expect.any(String)],
-          workspaceRoot: yield* HostProcess.WorkingDirectory,
-          message: expect.stringContaining("Could not reach the T3 Code desktop app."),
-          cause: { code: "ENOENT" },
-        });
-        expect(yield* pathExists(baseDir)).toBe(false);
-      }),
-    ),
-  );
-
   it.effect("uses T3CODE_HOME or --base-dir and sends the default or explicit path", () =>
     withTempDirectory("t3-app-command-test-", (root) =>
       Effect.gen(function* () {

@@ -48,10 +48,7 @@ export function composerDraftEnvironmentId(
 
 type UploadServerConfig = {
   readonly environment: {
-    readonly capabilities: Pick<
-      ServerConfig["environment"]["capabilities"],
-      "attachmentUploads" | "fileAttachments"
-    >;
+    readonly capabilities: Pick<ServerConfig["environment"]["capabilities"], "fileAttachments">;
   };
 };
 
@@ -61,7 +58,7 @@ export function canUploadComposerAttachment(
 ): boolean {
   const capabilities = config?.environment.capabilities;
   return (
-    capabilities?.attachmentUploads === true &&
+    capabilities !== undefined &&
     (attachment.type === "image" ||
       (capabilities.fileAttachments !== undefined &&
         attachment.sizeBytes <=

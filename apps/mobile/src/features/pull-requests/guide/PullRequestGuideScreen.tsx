@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { Toolbar } from "../../../components/ui/Toolbar";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs";
@@ -47,9 +48,15 @@ const attentionLabels = {
   accessibility: "An accessibility call",
 };
 
-export function PullRequestGuideContent({ params }: { readonly params: PullRequestParams }) {
+export function PullRequestGuideContent({
+  params,
+  visible = true,
+}: {
+  readonly params: PullRequestParams;
+  readonly visible?: boolean;
+}) {
   const navigation = useNavigation();
-  const state = useReviewGuide(params);
+  const state = useReviewGuide(params, visible);
   const { guide, stale } = reviewGuideState(state.data);
   return (
     <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
@@ -101,7 +108,10 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
   const { guide, stale } = reviewGuideState(state.data);
   const position = Math.max(0, Math.min(route.params.position, (guide?.stops.length ?? 1) - 1));
   const stop = guide?.stops[Math.max(0, position)];
-  const diff = usePullRequestDiff(route.params);
+  const diff = usePullRequestDiff(
+    route.params,
+    sourceControlClients.get((detail.data ?? route.params.initialSummary)?.provider).changeRequest,
+  );
   const excerptFiles = diffFilesByPath(diff.patch);
   const wanted = stop ? stopFilePaths(stop) : [];
   const loadedPaths = new Set(
@@ -109,6 +119,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
   );
   const missing = wanted.some((path) => !loadedPaths.has(path));
   const { error: diffError, loadMore } = diff;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests the next page of the paged diff query until the stop's files have loaded
   useEffect(() => {
     if (state.enabled && missing && !diffError) loadMore();
   }, [state.enabled, missing, diffError, loadMore]);
@@ -161,10 +172,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
           </Toolbar.MenuAction>
         </Toolbar.Menu>
       </Toolbar>
-      <PullRequestMarkdownRepository
-        params={route.params}
-        value={`https://${route.params.host ?? "github.com"}/${route.params.repository}`}
-      >
+      <PullRequestMarkdownRepository params={route.params} changeRequest={detail.data}>
         <ScreenScrollView
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, gap: 20 }}
@@ -206,7 +214,6 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                             ...route.params,
                             path: excerpt.path,
                             focus: { side: excerpt.side, start: excerpt.start, end: excerpt.end },
-                            fileSelectionId: `guide:${position}:${excerpt.path}:${excerpt.start}`,
                           }),
                         )
                       }

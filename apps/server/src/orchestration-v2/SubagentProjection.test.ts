@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import {
   makeSubagentChildThread,
@@ -26,7 +27,9 @@ import {
   endRunlessRootTurns,
 } from "@t3tools/provider-core/server/subagentProjection";
 
-import { emptyProjection } from "./ProjectionStore.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import { resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
 
 const parentThreadId = ThreadId.make("thread:subagent-snoozed-parent");
 const childThreadId = ThreadId.make("thread:subagent-awake-child");
@@ -117,32 +120,62 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
   });
 });
 
-it("attributes native subagent prompts to their parent thread", () => {
-  for (const role of ["user", "assistant"] as const) {
-    const artifacts = makeSubagentConversationArtifacts({
-      messageId: MessageId.make(`native-${role}`),
-      turnItemId: TurnItemId.make(`native-${role}`),
-      threadId: childThreadId,
-      senderThreadId: parentThreadId,
-      rootNodeId: NodeId.make("child-root"),
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      role,
-      text: role === "user" ? "Review the changes" : "Review complete",
-      ordinal: 100,
-      now: childCreatedAt,
-    });
-    assert.equal(artifacts.message.threadId, childThreadId);
-    assert.equal(artifacts.message.senderThreadId, role === "user" ? parentThreadId : undefined);
-    if (artifacts.turnItem.type === "user_message") {
-      assert.equal(artifacts.turnItem.senderThreadId, parentThreadId);
-    }
-  }
-});
+it.effect.each([
+  ["sql", ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))],
+] as const)(
+  "%s: a pinned parent's subagent child is born unpinned and settles once idle",
+  ([, testLayer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThread = { ...makeParentThread(), pinnedAt: parentCreatedAt, pinOrderKey: "a0" };
+      const childThread = makeSubagentChildThread({
+        parentThread,
+        childThreadId,
+        parentNodeId: NodeId.make("node:subagent-parent"),
+        activeProviderThreadId: null,
+        providerInstanceId: childProviderInstanceId,
+        modelSelection: childModelSelection,
+        title: "Child",
+        now: childCreatedAt,
+        createdBy: "agent",
+        creationSource: "provider",
+      });
+
+      assert.equal(parentThread.pinnedAt, parentCreatedAt);
+      assert.equal(parentThread.pinOrderKey, "a0");
+      assert.isNull(childThread.pinnedAt);
+      assert.isNull(childThread.pinOrderKey);
+
+      for (const thread of [parentThread, childThread]) {
+        yield* store.apply({
+          id: EventId.make(`event:${thread.id}`),
+          type: "thread.created",
+          threadId: thread.id,
+          occurredAt: thread.createdAt,
+          payload: thread,
+        });
+      }
+      const savedParent = yield* store.getThread(parentThreadId);
+      assert.deepEqual(savedParent.pinnedAt, parentCreatedAt);
+      assert.equal(savedParent.pinOrderKey, "a0");
+      const candidates = yield* store.getSettlementCandidates();
+      assert.deepEqual(
+        candidates.map((candidate) => candidate.id),
+        [childThreadId],
+      );
+      const settledAt = resolveAutoSettlementAt({
+        thread: candidates[0]!,
+        pullRequest: null,
+        nowMs: DateTime.toEpochMillis(DateTime.add(childCreatedAt, { days: 4 })),
+        autoSettleAfterDays: 3,
+        autoSettleOnMerge: false,
+      });
+      assert.equal(settledAt && DateTime.formatIso(settledAt), DateTime.formatIso(childCreatedAt));
+    }).pipe(Effect.provide(testLayer)),
+);
 
 function taskFixture() {
-  const projection = emptyProjection({
+  const projection = ProjectionStore.emptyProjection({
     type: "thread.created",
     id: EventId.make("task-fixture"),
     threadId: parentThreadId,
@@ -205,6 +238,13 @@ it("waits for nested work and retains the report across monitor acknowledgements
     "result_available",
   );
   for (const state of ["pending", "claimed"] as const) {
+    assert.equal(
+      delegatedTaskProgress({
+        ...projection,
+        subagents: [{ status: "idle", completionDelivery: { state, observedByRunId: null } }],
+      }).state,
+      "result_available",
+    );
     assert.equal(
       delegatedTaskProgress({
         ...projection,
@@ -316,43 +356,6 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.isNull(result.messageId);
 });
 
-it("reports the last assistant message when the provider finalizes them together", () => {
-  const { projection, run } = taskFixture();
-  // OpenCode stamps every assistant message of a turn with the turn's end time.
-  const finalizedAt = DateTime.makeUnsafe("2026-07-24T10:05:00.000Z");
-  const message = (id: string, text: string, ordinal: number, createdAt: string) => {
-    const artifacts = makeSubagentConversationArtifacts({
-      messageId: MessageId.make(id),
-      turnItemId: TurnItemId.make(id),
-      threadId: parentThreadId,
-      rootNodeId: NodeId.make("root"),
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      role: "assistant",
-      text,
-      ordinal,
-      now: DateTime.makeUnsafe(createdAt),
-    });
-    return {
-      message: { ...artifacts.message, runId: run.id, updatedAt: finalizedAt },
-      turnItem: { ...artifacts.turnItem, runId: run.id },
-    };
-  };
-  const progress = message("progress", "Starting step 0.", 1, "2026-07-24T10:00:00.000Z");
-  const report = message("report", "All steps passed.", 2, "2026-07-24T10:04:00.000Z");
-  const result = subagentResultForRun(
-    {
-      ...projection,
-      messages: [progress.message, report.message],
-      turnItems: [progress.turnItem, report.turnItem],
-    },
-    run,
-  );
-  assert.equal(result.text, "All steps passed.");
-  assert.equal(result.messageId, report.message.id);
-});
-
 it("orders a task's assistant messages by turn item, not by timestamps", () => {
   const { projection, run } = taskFixture();
   const at = DateTime.makeUnsafe("2026-07-24T10:05:00.000Z");
@@ -429,6 +432,7 @@ it.effect("ends a runless root turn's items when its node already ended", () =>
       providerInstanceId: parentProviderInstanceId,
       projection: {
         nodes: [root],
+        providerTurns: [],
         turnItems: [item("turn-item:command"), item("turn-item:reasoning")],
       } as never,
       status: "cancelled",

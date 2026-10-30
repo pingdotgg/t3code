@@ -1,22 +1,18 @@
 import { Editor } from "@tiptap/core";
-import type { EditorView } from "@tiptap/pm/view";
+import { EditorState, type Plugin, type Transaction } from "@tiptap/pm/state";
+import type { DecorationSet, EditorView } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { ComposerCodeBlockExtension } from "~/composer-rich-text-doc";
 import type { DiffThemeName } from "~/lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
-import {
-  composerCodeBlockHighlight,
-  MAX_HIGHLIGHTED_CODE_BLOCK_LENGTH,
-  shouldHighlightCodeBlock,
-  tokenizeBlock,
-} from "./composerCodeBlockHighlight";
+import { composerCodeBlockHighlight, tokenizeBlock } from "./composerCodeBlockHighlight";
 
 vi.mock("~/lib/syntaxHighlighting", () => ({ getSyntaxHighlighterPromise: vi.fn() }));
 
-const THEME = "github-dark" as DiffThemeName;
+const THEME = "pierre-dark" as DiffThemeName;
 
 function fakeHighlighter(colorFor: (content: string) => string | undefined) {
   return {
@@ -34,22 +30,6 @@ function fakeHighlighter(colorFor: (content: string) => string | undefined) {
 }
 
 describe("composer code block highlighting", () => {
-  it("maps token offsets to positions within the block text", () => {
-    const highlighter = fakeHighlighter((content) => (content === "const" ? "#ff0000" : undefined));
-
-    const decorations = tokenizeBlock(highlighter, "const answer = 42", "ts", THEME);
-
-    expect(decorations).toEqual([{ from: 0, to: 5, color: "#ff0000" }]);
-  });
-
-  it("accounts for the newline between lines", () => {
-    const highlighter = fakeHighlighter((content) => (content === "two" ? "#00ff00" : undefined));
-
-    const decorations = tokenizeBlock(highlighter, "one\ntwo", "ts", THEME);
-
-    expect(decorations).toEqual([{ from: 4, to: 7, color: "#00ff00" }]);
-  });
-
   it("accounts for both characters of a CRLF line break", () => {
     const highlighter = fakeHighlighter((content) => (content === "two" ? "#00ff00" : undefined));
 
@@ -57,62 +37,34 @@ describe("composer code block highlighting", () => {
 
     expect(decorations).toEqual([{ from: 5, to: 8, color: "#00ff00" }]);
   });
-
-  it("skips whitespace-only tokens so indentation is not decorated", () => {
-    const highlighter = fakeHighlighter(() => "#0000ff");
-
-    const decorations = tokenizeBlock(highlighter, "  indented", "ts", THEME);
-
-    expect(decorations).toEqual([{ from: 2, to: 10, color: "#0000ff" }]);
-  });
-
-  it("falls back to plain text when the grammar throws", () => {
-    const throwing = {
-      codeToTokens() {
-        throw new Error("unsupported language");
-      },
-    } as unknown as Parameters<typeof tokenizeBlock>[0];
-
-    expect(tokenizeBlock(throwing, "const answer = 42", "nope", THEME)).toEqual([]);
-  });
 });
 
-describe("the highlighting size cap", () => {
-  it("highlights a fence up to the cap", () => {
-    expect(shouldHighlightCodeBlock("x".repeat(MAX_HIGHLIGHTED_CODE_BLOCK_LENGTH))).toBe(true);
-  });
-
-  it("leaves a fence past the cap plain", () => {
-    expect(shouldHighlightCodeBlock("x".repeat(MAX_HIGHLIGHTED_CODE_BLOCK_LENGTH + 1))).toBe(false);
-  });
-});
-
-describe("a highlighter that fails to load", () => {
+describe("highlighting edited fences", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  it("still repaints the blocks whose highlighter loaded", async () => {
-    vi.mocked(getSyntaxHighlighterPromise).mockImplementation((language) =>
-      language === "ts"
-        ? Promise.resolve(fakeHighlighter(() => "#ff0000"))
-        : Promise.reject(new Error("Shiki failed to initialize")),
+  async function mountFence(text: string, resolveTheme = () => THEME) {
+    vi.useFakeTimers();
+    const highlighter = fakeHighlighter((content) =>
+      content.startsWith("x") ? "#ff0000" : undefined,
     );
+    const tokenize = vi.spyOn(highlighter, "codeToTokens");
+    vi.mocked(getSyntaxHighlighterPromise).mockResolvedValue(highlighter);
     const editor = new Editor({
       extensions: [
         StarterKit.configure({ codeBlock: false, trailingNode: false }),
         ComposerCodeBlockExtension,
-        composerCodeBlockHighlight({ resolveTheme: () => THEME }),
+        composerCodeBlockHighlight({ resolveTheme }),
       ],
       content: {
         type: "doc",
         content: [
-          { type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text: "a" }] },
-          { type: "codeBlock", attrs: { language: "py" }, content: [{ type: "text", text: "b" }] },
+          { type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text }] },
         ],
       },
     });
-    // The plugin watches <html> for theme changes; the unit suite has no DOM.
     vi.stubGlobal("document", { documentElement: {} });
     vi.stubGlobal(
       "MutationObserver",
@@ -121,20 +73,65 @@ describe("a highlighter that fails to load", () => {
         disconnect() {}
       },
     );
-    // ProseMirror names each plugin after its key, though it does not type it.
     const plugin = editor.extensionManager.plugins.find((candidate) =>
       (candidate as unknown as { key: string }).key.startsWith("composerCodeBlockHighlight"),
-    );
-    const repainted = new Promise<void>((resolve) => {
-      const view = {
-        get state() {
-          return editor.state;
-        },
-        dispatch: () => resolve(),
-      } as unknown as EditorView;
-      plugin?.spec.view?.(view);
+    ) as Plugin<DecorationSet>;
+    // A headless editor holds no plugins in its state, so give this one its own.
+    let state = EditorState.create({ doc: editor.state.doc, plugins: [plugin] });
+    // Like a real view, every dispatch updates the plugin's view.
+    let pluginView: ReturnType<NonNullable<typeof plugin.spec.view>> | undefined;
+    const view = {
+      get state() {
+        return state;
+      },
+      dispatch: (transaction: Transaction) => {
+        const previous = state;
+        state = state.apply(transaction);
+        pluginView?.update?.(view, previous);
+      },
+    } as unknown as EditorView;
+    pluginView = plugin.spec.view!(view);
+    onTestFinished(() => {
+      pluginView?.destroy?.();
+      editor.destroy();
     });
+    await vi.advanceTimersByTimeAsync(0);
+    return {
+      tokenize,
+      ranges: () =>
+        plugin
+          .getState(state)!
+          .find()
+          .map(({ from, to }) => [from, to]),
+      edit: async (change: (transaction: Transaction) => Transaction) => {
+        view.dispatch(change(state.tr));
+        await vi.advanceTimersByTimeAsync(0);
+      },
+      colored: () =>
+        plugin
+          .getState(state)!
+          .find()
+          .map((decoration) => state.doc.textBetween(decoration.from, decoration.to)),
+    };
+  }
 
-    await expect(repainted).resolves.toBeUndefined();
+  it("clips a split token to its fences without coloring the paragraph between them", async () => {
+    const fence = await mountFence("x".repeat(6_000));
+
+    await fence.edit((tr) =>
+      tr
+        .split(3_001)
+        .insert(
+          3_002,
+          tr.doc.type.schema.node("paragraph", null, [tr.doc.type.schema.text("plain")]),
+        ),
+    );
+
+    expect(fence.tokenize).toHaveBeenCalledTimes(1);
+    expect(fence.ranges()).toEqual([
+      [1, 3_001],
+      [3_010, 6_010],
+    ]);
+    expect(fence.colored()).toEqual(["x".repeat(3_000), "x".repeat(3_000)]);
   });
 });

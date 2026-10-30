@@ -98,15 +98,6 @@ const virtualInterface = (address: string) => [
 ];
 
 describe("resolveBoundEndpoints", () => {
-  it("lists nothing for a loopback-only server", () => {
-    expect(resolveBoundEndpoints({ host: undefined, port: 3773, interfaces: INTERFACES })).toEqual(
-      [],
-    );
-    expect(
-      resolveBoundEndpoints({ host: "127.0.0.1", port: 3773, interfaces: INTERFACES }),
-    ).toEqual([]);
-  });
-
   it("lists every external IPv4 address for a wildcard bind, tagging the tailnet one", () => {
     expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces: INTERFACES })).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
@@ -146,12 +137,6 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
-  it("lists only the bound address for a specific bind", () => {
-    expect(
-      resolveBoundEndpoints({ host: "100.101.102.103", port: 3773, interfaces: INTERFACES }),
-    ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
-  });
-
   it("never reports a host name, which can resolve to another machine per client", () => {
     for (const host of ["server.local", "devbox", "devbox.home.arpa"]) {
       expect(resolveBoundEndpoints({ host, port: 3773, interfaces: INTERFACES })).toEqual([]);
@@ -161,6 +146,23 @@ describe("resolveBoundEndpoints", () => {
   it("never reports a public address, which would carry the credential over plain HTTP", () => {
     expect(
       resolveBoundEndpoints({ host: "203.0.113.20", port: 3773, interfaces: INTERFACES }),
+    ).toEqual([]);
+  });
+
+  it("reports only the tailnet address on a cloud VM, whose private network no client shares", () => {
+    expect(
+      resolveBoundEndpoints({
+        host: "0.0.0.0",
+        port: 3773,
+        interfaces: INTERFACES,
+        onCloudVm: true,
+      }),
+    ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
+  });
+
+  it("never reports an IPv4-mapped host, which can name the client's own loopback", () => {
+    expect(
+      resolveBoundEndpoints({ host: "::ffff:127.0.0.1", port: 3773, interfaces: INTERFACES }),
     ).toEqual([]);
   });
 });

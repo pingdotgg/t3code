@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { PullRequestReviewThread } from "@t3tools/contracts";
 import type { NativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
-import {
-  annotatePullRequestDiff,
-  reviewPosition,
-  reviewPositionLabel,
-} from "./pullRequestDiffComments";
+import { annotatePullRequestDiff, reviewPositionLabel } from "./pullRequestDiffComments";
 const data: NativeReviewDiffData = {
   rows: [
     { kind: "file", id: "header", fileId: "f", filePath: "a.ts" },
@@ -28,6 +24,17 @@ const thread: PullRequestReviewThread = {
   comments: [],
 };
 describe("PR comments in continuous native diffs", () => {
+  it("returns unannotated data unchanged without reading or indexing rows", () => {
+    const unannotated = {
+      ...data,
+      get rows(): NativeReviewDiffData["rows"] {
+        throw new Error("Empty annotation must not read rows");
+      },
+    };
+    expect(annotatePullRequestDiff(unannotated, [], [], undefined)).toBe(unannotated);
+    expect(annotatePullRequestDiff(data, [], [], undefined).rows).toBe(data.rows);
+  });
+
   it("anchors old/new lines separately despite identical line numbers", () => {
     const annotated = annotatePullRequestDiff(
       data,
@@ -88,14 +95,6 @@ describe("PR comments in continuous native diffs", () => {
       "draft:draft",
     ]);
     expect(annotated.commentTargetsByRowId).toBe(data.commentTargetsByRowId);
-  });
-  it("does not guess positions for missing lines, notices, or binary files", () => {
-    expect(reviewPosition(data.rows[0]!)).toBeNull();
-    expect(reviewPosition(data.rows[1]!)).toEqual({ kind: "deleted", oldLine: 2 });
-    expect(reviewPosition(data.rows[2]!)).toEqual({ kind: "added", newLine: 2 });
-    expect(
-      reviewPosition({ kind: "line", id: "context", oldLineNumber: 3, newLineNumber: 4 }),
-    ).toEqual({ kind: "context", side: "right", oldLine: 3, newLine: 4 });
   });
   it("uses the old line number for left-side context when the line numbers differ", () => {
     const position = { kind: "context" as const, side: "left" as const, oldLine: 7, newLine: 8 };

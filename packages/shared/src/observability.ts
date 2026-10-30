@@ -26,6 +26,33 @@ export interface SignalExport {
   readonly exportIntervalMs: number;
 }
 
+/**
+ * `process.runtime.*` resource attributes for a Node process, matching the
+ * OpenTelemetry Node process detector. Electron embeds Node, so an Electron
+ * process reports Node and names Electron in the description.
+ */
+export const nodeProcessRuntimeAttributes = (): Record<string, string> => ({
+  "process.runtime.name": "nodejs",
+  "process.runtime.version": process.versions.node,
+  "process.runtime.description": process.versions.electron
+    ? `Electron ${process.versions.electron}`
+    : "Node.js",
+});
+let generatedServiceInstanceId: string | undefined;
+
+/**
+ * `service.instance.id` shared by every resource this process exports. Effect lets code
+ * attributes beat `OTEL_RESOURCE_ATTRIBUTES`, so callers pass the operator's in to keep it winning.
+ */
+export const processServiceInstanceId = (
+  operatorAttributes: Readonly<Record<string, string>> = {},
+): string => {
+  if (operatorAttributes["service.instance.id"]) return operatorAttributes["service.instance.id"];
+  // @effect-diagnostics-next-line cryptoRandomUUID:off -- Resources are built synchronously, outside any Effect.
+  generatedServiceInstanceId ??= crypto.randomUUID();
+  return generatedServiceInstanceId;
+};
+
 export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
   protocol: "http/json",
   headers: undefined,
@@ -299,10 +326,7 @@ function truncateNestedValue(value: unknown): unknown {
   return value;
 }
 
-/**
- * Returns a new record when anything was clamped; never mutates the input (the live span's
- * attributes are shared with other tracers).
- */
+/** Clones only when clamping; never mutates attributes shared with other tracers. */
 export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
   let truncated: Record<string, unknown> | undefined;
   for (const [key, value] of Object.entries(attributes)) {
@@ -402,9 +426,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       const startedAt = performance.now();
       const written = yield* sink.write(chunk).pipe(Effect.result);
       if (Result.isFailure(written)) {
-        // A failing disk (ENOSPC, EACCES, EIO) drops the rest of the batch.
-        // Retrying it would grow the backlog, and every later push would
-        // retry all of it.
+        // Drop the batch after disk failure to avoid an ever-growing retry backlog.
         writeFailing = true;
         droppedCount += records.length - persistedCount;
         return;
@@ -452,12 +474,10 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       }),
     )
     .pipe(
-      // A cancelled write still completes in the OS. Finish it before another
-      // flush rotates the file or the scope's finalizer drains the remaining records.
+      // Cancelled OS writes still finish; await completion before rotation or finalizer drain.
       Effect.uninterruptible,
       Effect.withTracerEnabled(false),
-      // The timed fiber inherits the makeTraceSink span. That span has ended but
-      // lives as long as the sink, so the tracer logger must not add logs to it.
+      // Drop the ended makeTraceSink parent span so timed-fiber logs cannot accumulate on it.
       Effect.updateContext(Context.omit(Tracer.ParentSpan)<never>),
     );
 

@@ -1,47 +1,19 @@
 import {
   type ChatAttachment,
   CommandId,
-  ModelSelection,
   type OrchestrationV2Command,
   OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2GoalCommand,
+  type OrchestrationV2ProviderGoalStatus,
   type OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   ProviderInstanceId,
-  ProviderTurnId,
-  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-
-export const MessageDispatchDecisionV2 = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("start_run"),
-    modelSelection: ModelSelection,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("steer_active"),
-    targetRunId: RunId,
-    providerTurnId: ProviderTurnId,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("restart_active"),
-    targetRunId: RunId,
-    interruptProviderTurnId: ProviderTurnId,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("queue_after_active"),
-    activeRunId: RunId,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("switch_provider"),
-    fromProviderInstanceId: ProviderInstanceId,
-    toModelSelection: ModelSelection,
-  }),
-]);
-export type MessageDispatchDecisionV2 = typeof MessageDispatchDecisionV2.Type;
 
 export const SteeringExecutionPolicyV2 = Schema.Literals(["active_steering", "interrupt_restart"]);
 export type SteeringExecutionPolicyV2 = typeof SteeringExecutionPolicyV2.Type;
@@ -63,33 +35,6 @@ export const CommandPolicyCapability = Schema.Literals([
 ]);
 export type CommandPolicyCapability = typeof CommandPolicyCapability.Type;
 
-export class CommandPolicyMessageDispatchError extends Schema.TaggedError<CommandPolicyMessageDispatchError>()(
-  "CommandPolicyMessageDispatchError",
-  {
-    commandId: CommandId,
-    threadId: ThreadId,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Failed to choose message dispatch policy for command ${this.commandId}.`;
-  }
-}
-
-export class CommandPolicyUnsupportedError extends Schema.TaggedError<CommandPolicyUnsupportedError>()(
-  "CommandPolicyUnsupportedError",
-  {
-    commandId: CommandId,
-    threadId: ThreadId,
-    requestedMode: Schema.String,
-    providerInstanceId: ProviderInstanceId,
-  },
-) {
-  override get message(): string {
-    return `${this.providerInstanceId} cannot satisfy message dispatch mode ${this.requestedMode} for command ${this.commandId}.`;
-  }
-}
-
 export class CommandPolicyCapabilityUnsupportedError extends Schema.TaggedError<CommandPolicyCapabilityUnsupportedError>()(
   "CommandPolicyCapabilityUnsupportedError",
   {
@@ -105,11 +50,7 @@ export class CommandPolicyCapabilityUnsupportedError extends Schema.TaggedError<
   }
 }
 
-export const CommandPolicyV2Error = Schema.Union([
-  CommandPolicyMessageDispatchError,
-  CommandPolicyUnsupportedError,
-  CommandPolicyCapabilityUnsupportedError,
-]);
+export const CommandPolicyV2Error = Schema.Union([CommandPolicyCapabilityUnsupportedError]);
 export type CommandPolicyV2Error = typeof CommandPolicyV2Error.Type;
 
 type MessageDispatchMode = Extract<
@@ -128,6 +69,26 @@ export function isNativeMaintenanceCommand(message: {
   );
 }
 
+/**
+ * A goal command sent into active work stops that work when it starts or
+ * replaces goal work, or ends a goal that is driving the run.
+ */
+export function goalCommandStopsActiveRun(
+  command: OrchestrationV2GoalCommand,
+  goalStatus: OrchestrationV2ProviderGoalStatus | null,
+): boolean {
+  switch (command.type) {
+    case "set":
+    case "resume":
+      return true;
+    case "clear":
+    case "pause":
+      return goalStatus === "active";
+    case "show":
+      return false;
+  }
+}
+
 export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
@@ -135,13 +96,48 @@ export function resolveMessageDispatchIntent(
 ): MessageDispatchMode {
   const mode = resolveDeliveryIntent(projection, requestedMode, deliveryIntent);
   if (mode.type !== "steer_active") return mode;
-  // Compaction and sign-out turns cannot take steering input. A message sent
-  // while one runs waits in the queue like any other follow-up.
+  // Compaction and sign-out cannot accept steers; queue follow-ups.
   const target = projection.runs.find((run) => run.id === mode.targetRunId);
   const targetMessage = projection.messages.find((message) => message.id === target?.userMessageId);
-  return targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)
+  if (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)) {
+    return { type: "queue_after_active" };
+  }
+  // A provider that can neither steer nor restart its turn takes the message after the turn.
+  const turns =
+    target === undefined || !isActiveRun(target)
+      ? undefined
+      : providerTurnCapabilities(projection, target);
+  return turns !== undefined &&
+    !turns.supportsActiveSteering &&
+    !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart) &&
+    turns.supportsQueuedMessages
     ? { type: "queue_after_active" }
     : mode;
+}
+
+function isActiveRun(run: OrchestrationV2Run): boolean {
+  return (
+    run.status === "preparing" ||
+    run.status === "starting" ||
+    run.status === "running" ||
+    run.status === "waiting"
+  );
+}
+
+function providerTurnCapabilities(
+  projection: OrchestrationV2ThreadProjection,
+  run: OrchestrationV2Run,
+) {
+  const providerThread = projection.providerThreads.find(
+    (candidate) => candidate.id === run.providerThreadId,
+  );
+  const providerSession =
+    providerThread?.providerSessionId == null
+      ? undefined
+      : projection.providerSessions.find(
+          (candidate) => candidate.id === providerThread.providerSessionId,
+        );
+  return providerSession?.capabilities.turns;
 }
 
 function resolveDeliveryIntent(
@@ -151,13 +147,7 @@ function resolveDeliveryIntent(
 ): MessageDispatchMode {
   if (deliveryIntent === undefined) return requestedMode;
 
-  const activeRun = projection.runs.findLast(
-    (run) =>
-      run.status === "preparing" ||
-      run.status === "starting" ||
-      run.status === "running" ||
-      run.status === "waiting",
-  );
+  const activeRun = projection.runs.findLast(isActiveRun);
   if (activeRun === undefined) return { type: "start_immediately" };
   if (deliveryIntent === "steer") {
     return { type: "steer_active", targetRunId: activeRun.id };
@@ -165,20 +155,19 @@ function resolveDeliveryIntent(
   if (deliveryIntent === "restart") {
     return { type: "restart_active", targetRunId: activeRun.id };
   }
-  if (activeRun.status === "preparing" || activeRun.status === "starting") {
+  // A run can be active before its provider turn starts or after it finishes.
+  // Queue automatic input in those gaps so steering cannot reject the message.
+  if (
+    activeRun.status === "preparing" ||
+    activeRun.status === "starting" ||
+    !projection.providerTurns.some(
+      (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
+    )
+  ) {
     return { type: "queue_after_active" };
   }
 
-  const providerThread = projection.providerThreads.find(
-    (candidate) => candidate.id === activeRun.providerThreadId,
-  );
-  const providerSession =
-    providerThread?.providerSessionId == null
-      ? undefined
-      : projection.providerSessions.find(
-          (candidate) => candidate.id === providerThread.providerSessionId,
-        );
-  const capabilities = providerSession?.capabilities.turns;
+  const capabilities = providerTurnCapabilities(projection, activeRun);
   if (capabilities?.supportsActiveSteering === true) {
     return { type: "steer_active", targetRunId: activeRun.id };
   }
@@ -199,17 +188,6 @@ interface CapabilityCheckInput {
 }
 
 export interface CommandPolicyV2Shape {
-  readonly decideMessageDispatch: (input: {
-    readonly commandId: CommandId;
-    readonly projection: OrchestrationV2ThreadProjection;
-    readonly requestedModelSelection?: ModelSelection;
-    readonly requestedMode:
-      | { readonly type: "steer_active"; readonly targetRunId: RunId }
-      | { readonly type: "restart_active"; readonly targetRunId: RunId }
-      | { readonly type: "queue_after_active" }
-      | { readonly type: "start_immediately" };
-    readonly capabilities: OrchestrationV2ProviderCapabilities;
-  }) => Effect.Effect<MessageDispatchDecisionV2, CommandPolicyV2Error>;
   readonly ensureQueuedMessages: (
     input: CapabilityCheckInput,
   ) => Effect.Effect<void, CommandPolicyV2Error>;
@@ -390,8 +368,7 @@ const ensureContextHandoff: CommandPolicyV2Shape["ensureContextHandoff"] = (inpu
 };
 
 const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input) => {
-  // Unsuccessful runs may have no native turn or assistant cursor. Forking
-  // those at native head can include later turns, so use the bounded transcript.
+  // Unsuccessful runs may lack native cursors; fork bounded transcripts to exclude later turns.
   const canForkNatively =
     (input.sourceRunStatus === "completed" || input.sourceRunStatus === "waiting") &&
     input.sameProvider &&
@@ -413,101 +390,7 @@ const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input)
   }).pipe(Effect.as("portable_context"));
 };
 
-const decideMessageDispatch: CommandPolicyV2Shape["decideMessageDispatch"] = (input) => {
-  const activeRun = input.projection.runs.find(
-    (run) =>
-      run.status === "preparing" ||
-      run.status === "starting" ||
-      run.status === "running" ||
-      run.status === "waiting",
-  );
-  const modelSelection = input.requestedModelSelection ?? input.projection.thread.modelSelection;
-
-  switch (input.requestedMode.type) {
-    case "steer_active": {
-      if (activeRun?.id !== input.requestedMode.targetRunId) {
-        return Effect.fail(
-          new CommandPolicyUnsupportedError({
-            commandId: input.commandId,
-            threadId: input.projection.thread.id,
-            requestedMode: input.requestedMode.type,
-            providerInstanceId: modelSelection.instanceId,
-          }),
-        );
-      }
-      const providerTurnId =
-        activeRun.activeAttemptId === null
-          ? undefined
-          : input.projection.providerTurns.find(
-              (turn) =>
-                turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
-            )?.id;
-      return providerTurnId === undefined
-        ? Effect.fail(
-            new CommandPolicyMessageDispatchError({
-              commandId: input.commandId,
-              threadId: input.projection.thread.id,
-              cause: `No running providerInstanceId turn found for active run ${activeRun.id}.`,
-            }),
-          )
-        : Effect.succeed({
-            type: "steer_active",
-            targetRunId: activeRun.id,
-            providerTurnId,
-          });
-    }
-    case "restart_active": {
-      if (activeRun?.id !== input.requestedMode.targetRunId || activeRun.activeAttemptId === null) {
-        return Effect.fail(
-          new CommandPolicyUnsupportedError({
-            commandId: input.commandId,
-            threadId: input.projection.thread.id,
-            requestedMode: input.requestedMode.type,
-            providerInstanceId: modelSelection.instanceId,
-          }),
-        );
-      }
-      const providerTurnId = input.projection.providerTurns.find(
-        (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
-      )?.id;
-      return providerTurnId === undefined
-        ? Effect.fail(
-            new CommandPolicyMessageDispatchError({
-              commandId: input.commandId,
-              threadId: input.projection.thread.id,
-              cause: `No running providerInstanceId turn found for active run ${activeRun.id}.`,
-            }),
-          )
-        : Effect.succeed({
-            type: "restart_active",
-            targetRunId: activeRun.id,
-            interruptProviderTurnId: providerTurnId,
-          });
-    }
-    case "queue_after_active":
-      return activeRun === undefined
-        ? Effect.succeed({ type: "start_run", modelSelection })
-        : ensureQueuedMessages({
-            commandId: input.commandId,
-            threadId: input.projection.thread.id,
-            providerInstanceId: modelSelection.instanceId,
-            capabilities: input.capabilities,
-          }).pipe(Effect.as({ type: "queue_after_active", activeRunId: activeRun.id }));
-    case "start_immediately":
-      if (activeRun === undefined) {
-        return Effect.succeed({ type: "start_run", modelSelection });
-      }
-      return ensureQueuedMessages({
-        commandId: input.commandId,
-        threadId: input.projection.thread.id,
-        providerInstanceId: modelSelection.instanceId,
-        capabilities: input.capabilities,
-      }).pipe(Effect.as({ type: "queue_after_active", activeRunId: activeRun.id }));
-  }
-};
-
 export const layer: Layer.Layer<CommandPolicyV2> = Layer.succeed(CommandPolicyV2, {
-  decideMessageDispatch,
   ensureQueuedMessages,
   decideSteeringExecution,
   ensureInterrupt,

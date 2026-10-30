@@ -1,10 +1,15 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
-import type { AssistantCitation, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import type {
+  AssistantCitation,
+  EnvironmentId,
+  ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
+import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
-import { isPathWord } from "@t3tools/shared/composerTrigger";
+import { isCurrencyAmountQuery, isPathWord } from "@t3tools/shared/composerTrigger";
 import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
@@ -21,6 +26,20 @@ export interface ComposerTrigger {
   query: string;
   rangeStart: number;
   rangeEnd: number;
+}
+
+export function isPathSuggestionCurrent(
+  searchTarget: ComposerPathSearchTarget,
+  trigger: ComposerTrigger | null,
+  environmentId: EnvironmentId | null,
+  cwd: string | null,
+) {
+  return (
+    trigger?.kind === "path" &&
+    searchTarget.environmentId === environmentId &&
+    searchTarget.cwd === cwd &&
+    searchTarget.query === trigger.query.trim()
+  );
 }
 
 export function formatAssistantCitationForComposer(citation: AssistantCitation, comment = "") {
@@ -41,14 +60,15 @@ export function composerSubmissionIntentForKey(input: {
   event: ShortcutEventLike & { isComposing?: boolean; keyCode?: number; repeat?: boolean };
   keybindings: ResolvedKeybindingsConfig;
   platform?: string;
-  isMobileViewport: boolean;
+  isSoftwareKeyboardOpen: boolean;
   isDraftThread: boolean;
   isRunning?: boolean;
   sendShortcut?: ClientSettings["sendShortcut"];
   prompt?: string;
 }): ComposerSubmissionIntent | null {
   const { event } = input;
-  if (input.isMobileViewport || event.isComposing || event.keyCode === 229 || event.repeat)
+  if (event.isComposing || event.keyCode === 229 || event.repeat) return null;
+  if (input.isSoftwareKeyboardOpen && event.key === "Enter" && !event.metaKey && !event.ctrlKey)
     return null;
   const command = resolveShortcutCommand(event, input.keybindings, {
     ...(input.platform === undefined ? {} : { platform: input.platform }),
@@ -71,8 +91,6 @@ export function composerSubmissionIntentForKey(input: {
     return null;
   return "foreground";
 }
-
-const isInlineTokenSegment = (segment: ComposerPromptSegment): boolean => segment.type !== "text";
 
 function clampCursor(text: string, cursor: number): number {
   if (!Number.isFinite(cursor)) return text.length;
@@ -230,34 +248,6 @@ export function collapseExpandedComposerCursor(
   return collapsedCursor;
 }
 
-export function isCollapsedCursorAdjacentToInlineToken(
-  text: string,
-  cursorInput: number,
-  direction: "left" | "right",
-): boolean {
-  const segments = splitPromptIntoComposerSegments(text);
-  if (!segments.some(isInlineTokenSegment)) {
-    return false;
-  }
-
-  const cursor = clampCollapsedComposerCursorForSegments(segments, cursorInput);
-  let collapsedOffset = 0;
-
-  for (const segment of segments) {
-    if (isInlineTokenSegment(segment)) {
-      if (direction === "left" && cursor === collapsedOffset + 1) {
-        return true;
-      }
-      if (direction === "right" && cursor === collapsedOffset) {
-        return true;
-      }
-    }
-    collapsedOffset += collapsedSegmentLength(segment);
-  }
-
-  return false;
-}
-
 export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const tokenStart = tokenStartForCursor(text, cursor);
@@ -282,6 +272,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   }
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {
+    if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;
     return {
       kind: "skill",
       query: token.slice(skillPrefix[0].length),
@@ -339,14 +330,19 @@ export function parseStandaloneComposerSlashCommand(
   return "default";
 }
 
-export function replaceTextRange(
+/**
+ * A replacement ending in a space swallows one space already after the range, so inserting
+ * `@file ` before existing text does not leave a double space.
+ */
+export function extendReplacementRangeForTrailingSpace(
   text: string,
-  rangeStart: number,
   rangeEnd: number,
   replacement: string,
-): { text: string; cursor: number } {
-  const safeStart = Math.max(0, Math.min(text.length, rangeStart));
-  const safeEnd = Math.max(safeStart, Math.min(text.length, rangeEnd));
-  const nextText = `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
-  return { text: nextText, cursor: safeStart + replacement.length };
+): number {
+  if (!replacement.endsWith(" ")) {
+    return rangeEnd;
+  }
+  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
 }
+
+export { replaceTextRange } from "@t3tools/shared/composerTrigger";

@@ -1,6 +1,7 @@
-import { siblingPullRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
+  type OrchestrationV2TurnItem,
   type PullRequestSummary,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -14,7 +15,8 @@ import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -37,7 +39,137 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
-const PULL_REQUEST_CLOSE_COMMAND = /\b(?:gh\s+pr|glab\s+mr)\s+(?:merge|close)\b/u;
+// Every server polls every open linked pull request, and most of them sit untouched for days.
+// One nobody has updated for QUIET_AFTER_MS is read on the quiet cadence instead of each sweep;
+// requested refreshes, watches and a host CLI's merge command still read it at once.
+const QUIET_AFTER_MS = 30 * 60 * 1_000;
+const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
+
+const isChangeRequestCloseCommand = (command: string) =>
+  sourceControlDefinitions.definitions.some(
+    (definition) => definition.changeRequestCloseCommand?.test(command) === true,
+  );
+
+// Where a shell starts a command, past `NAME=value` assignments and wrappers like `timeout 60`.
+// A create command anywhere else, as in `echo "gh pr create"`, is text, not a command that runs.
+const COMMAND_START =
+  "(?:^|[;&|({`\\n]|\\b(?:do|then|else)\\s)\\s*(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
+const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
+  ({ kind, changeRequestCreateCommand: command }) =>
+    command === undefined
+      ? []
+      : // The subcommand must end its shell word: `gh pr create#x` runs another one.
+        [
+          {
+            kind,
+            command,
+            run: new RegExp(`${COMMAND_START}${command.source}(?=$|[\\s;&|)])`, "gu"),
+          },
+        ],
+);
+const createCommandCount = (code: string) =>
+  CREATE_COMMANDS.reduce((count, { run }) => count + [...code.matchAll(run)].length, 0);
+
+// Codex runs each command as `/bin/zsh -lc <script>`, quoting the script in pieces such as
+// `"a "'`b`'" c"`.
+const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+(?=["'])([\s\S]*)$/u;
+const SHELL_WORD_PIECE = /"((?:\\[\s\S]|[^"\\])*)"|'([^']*)'|\\([\s\S])|(\S)/gu;
+// Heredoc bodies, quoted strings and comments are text a command carries, not commands it runs.
+const HEREDOC_BODY =
+  /<<-?[ \t]*(['"]?)(\w+)\1[^\n]*\n(?:(?:[\s\S]*?\n)?[ \t]*\2[ \t]*(?=\n|$)|[\s\S]*$)/gu;
+const QUOTED_OR_COMMENT = /'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<=^|[\s;&|(])#[^\n]*/gmu;
+const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
+// Commands that print other change requests' URLs, so output beside them proves nothing.
+const LISTS_CHANGE_REQUESTS =
+  /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|glab\s+(?:mr\s+list|api))\b/u;
+const URL_LINE = /^[ \t]*(https?:\/\/\S+)[ \t]*$/gmu;
+
+/** The script a shell input runs, unwrapped from Codex's `sh -lc`. */
+function shellScript(input: string): string {
+  const [, wrapped] = SHELL_WRAPPER.exec(input) ?? [];
+  return wrapped === undefined
+    ? input
+    : Array.from(
+        wrapped.matchAll(SHELL_WORD_PIECE),
+        ([, double, single, escaped, bare]) =>
+          double?.replace(/\\(["\\$`])/gu, "$1") ?? single ?? escaped ?? bare,
+      ).join("");
+}
+
+/** A script split at command separators that sit outside quotes. */
+function shellSegments(script: string): ReadonlyArray<string> {
+  const segments: Array<string> = [];
+  let current = "";
+  let quote: string | null = null;
+  for (let index = 0; index < script.length; index++) {
+    const char = script[index] ?? "";
+    if (quote !== null) {
+      current += char;
+      if (char === "\\" && quote === '"') current += script[++index] ?? "";
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') quote = char;
+    if (char === "\\") {
+      current += char + (script[++index] ?? "");
+      continue;
+    }
+    const pair = script.slice(index, index + 2);
+    if (pair === "&&" || pair === "||" || char === ";" || char === "|" || char === "\n") {
+      segments.push(current);
+      current = "";
+      if (pair === "&&" || pair === "||") index++;
+      continue;
+    }
+    current += char;
+  }
+  segments.push(current);
+  return segments;
+}
+
+/** The commands a script runs, without the text it carries. */
+const shellCode = (script: string) =>
+  script.replace(HEREDOC_BODY, "<<").replace(QUOTED_OR_COMMENT, "''");
+
+type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>;
+
+/**
+ * The change requests a shell command opened: URLs on lines of their own in the output of a
+ * command that runs a host's create command. One the command also names, as `gh pr view 12`
+ * does, existed before it ran. More URLs than create commands means something else printed
+ * some, such as `gh pr list`, so none are taken.
+ */
+export function changeRequestsCreatedBy(input: string, output: string) {
+  if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
+  const script = shellScript(input);
+  const code = shellCode(script);
+  const creates = createCommandCount(code);
+  if (creates === 0) return [];
+  const otherCommands = code
+    .split(COMMAND_SEPARATOR)
+    .filter((part) => createCommandCount(part) === 0)
+    .join("\n");
+  if (LISTS_CHANGE_REQUESTS.test(otherCommands)) return [];
+  const otherScript = shellSegments(script)
+    .filter((segment) => createCommandCount(shellCode(segment)) === 0)
+    .join("\n");
+  const creators = new Set(
+    CREATE_COMMANDS.filter(({ run }) => code.match(run) !== null).map(({ kind }) => kind),
+  );
+  const created = new Map<string, ThreadPullRequestKey & { readonly url: string }>();
+  for (const [, url = ""] of output.matchAll(URL_LINE)) {
+    const parsed = sourceControlDefinitions.parseChangeRequestUrl(url);
+    // Only the host whose create command ran can have printed a new change request.
+    if (parsed === null || !creators.has(parsed.definition.kind)) continue;
+    const { link } = parsed;
+    const named = new RegExp(`(?:^|(?<=[\\s#/=("']))${link.number}(?=$|[\\s);&|/"'])`, "u");
+    // Quoted text in the other commands counts, as in `printf '.../pull/12'`.
+    if (named.test(otherScript)) continue;
+    const key = normalizeThreadPullRequestKey(link);
+    created.set(threadPullRequestKeyOf(key), { ...key, url });
+  }
+  return created.size > creates ? [] : [...created.values()];
+}
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
 
@@ -46,6 +178,20 @@ type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 interface LinkEntry {
   readonly thread: ProjectionStore.ProjectionThreadPullRequests;
   readonly link: ThreadPullRequestLink;
+}
+
+/** Another layer of the stack `url` belongs to, in its host's canonical shape. */
+function siblingChangeRequestUrl(url: string, number: number): string | null {
+  if (!Number.isSafeInteger(number) || number < 1) return null;
+  const parsed = sourceControlDefinitions.parseChangeRequestUrl(url);
+  if (parsed === null) return null;
+  const { definition, link } = parsed;
+  return definition.changeRequestUrl({
+    host: link.host,
+    repository: link.repository,
+    number,
+    webUrl: link.repositoryUrl,
+  });
 }
 
 function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
@@ -68,6 +214,17 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
   };
 }
 
+// Rotating ghe.com avatar tokens should not make otherwise identical snapshots differ.
+function avatarIdentity(avatarUrl: string | null | undefined): string | null {
+  if (avatarUrl === null || avatarUrl === undefined) return null;
+  const url = URL.parse(avatarUrl);
+  if (url === null || (url.hostname !== "ghe.com" && !url.hostname.endsWith(".ghe.com"))) {
+    return avatarUrl;
+  }
+  url.searchParams.delete("token");
+  return url.href;
+}
+
 function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boolean {
   return (
     left.state === right.state &&
@@ -79,7 +236,7 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     (left.closedAt ?? null) === (right.closedAt ?? null) &&
     (left.mergedAt ?? null) === (right.mergedAt ?? null) &&
     (left.author?.login ?? null) === (right.author?.login ?? null) &&
-    (left.author?.avatarUrl ?? null) === (right.author?.avatarUrl ?? null) &&
+    avatarIdentity(left.author?.avatarUrl) === avatarIdentity(right.author?.avatarUrl) &&
     left.additions === right.additions &&
     left.deletions === right.deletions &&
     left.changedFiles === right.changedFiles &&
@@ -112,6 +269,19 @@ function stacksEqual(
   );
 }
 
+/** Stack ids are unique only within a repository, e.g. GitHub's fallback to the stack number. */
+function nativeStackKeyOf(link: ThreadPullRequestLink, stack: ThreadPullRequestStack): string {
+  const key = normalizeThreadPullRequestKey(link);
+  return `${key.host}/${key.repository}#stack:${stack.id}`;
+}
+
+function sameLayerNumbers(left: ThreadPullRequestStack, right: ThreadPullRequestStack): boolean {
+  return (
+    left.layers.length === right.layers.length &&
+    left.layers.every((layer, index) => layer.number === right.layers[index]!.number)
+  );
+}
+
 function skipReason(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   return error instanceof Error ? error.message : String(error);
@@ -135,15 +305,12 @@ export class PullRequestSyncReactor extends Context.Service<
   {
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     readonly drain: Effect.Effect<void>;
-    /**
-     * Force the next sweep to re-read this pull request, even when its snapshot is terminal.
-     * While its host is rate limited, the read waits for the first sweep after the pause.
-     */
+    /** Forces reread on the next sweep, including terminal snapshots; rate-limited hosts wait until the pause ends. */
     readonly requestSync: (key: ThreadPullRequestKey) => Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/PullRequestSyncReactor") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -152,23 +319,21 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
 
   const lastSyncedAt = new Map<string, number>();
-  const requested = new Map<string, number>();
-  let requestGeneration = 0;
-  // Requested keys wait in `requested` for one queued sweep, so a burst of links (an agent
+  const requested = new Set<string>();
+  // Requests arriving during a host read wait for the next sweep.
+  const pendingRequests = new Set<string>();
+  // PR keys wait in `pendingRequests` for one queued sweep, so a burst of links (an agent
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
-  // Rate limit pauses by project and host, since each project reads with its own credential.
-  // A paused host refuses every read without asking it, so the sweep leaves its pull requests
-  // due until the pause ends rather than failing each of them every minute.
+  // Pause per project and host because credentials are project-specific; leave paused PRs due until reset.
   const pausedUntil = new Map<string, number>();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
     if (entries.some((entry) => entry.link.snapshot === null)) return true;
     const active = entries.filter((entry) => isUnsettled(entry.thread));
-    // A merged snapshot without its merge time cannot settle the thread, so it keeps the slow
-    // cadence until the host supplies one (Bitbucket snapshots saved before it was read).
+    // Merged snapshots without mergedAt cannot settle threads; reread slowly until supplied.
     if (
       active.every(
         (entry) => entry.link.snapshot?.state === "merged" && entry.link.snapshot.mergedAt != null,
@@ -176,9 +341,17 @@ export const make = Effect.gen(function* () {
     ) {
       return false;
     }
-    if (active.some((entry) => entry.link.snapshot?.state === "open")) return true;
     const last = lastSyncedAt.get(key);
-    return last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS;
+    const sinceLastMs = last === undefined ? Number.POSITIVE_INFINITY : nowMs - last;
+    const open = active.filter((entry) => entry.link.snapshot?.state === "open");
+    if (open.length > 0) {
+      const quiet = open.every((entry) => {
+        const updatedAt = entry.link.snapshot?.updatedAt;
+        return updatedAt != null && nowMs - Date.parse(updatedAt) >= QUIET_AFTER_MS;
+      });
+      return !quiet || sinceLastMs >= QUIET_SYNC_INTERVAL_MS;
+    }
+    return sinceLastMs >= SLOW_SYNC_INTERVAL_MS;
   };
 
   const logSkipped =
@@ -195,21 +368,33 @@ export const make = Effect.gen(function* () {
     const groups = new Map<string, Array<LinkEntry>>();
     for (const thread of threads) {
       for (const link of visibleThreadPullRequests(thread.pullRequests ?? [])) {
-        const key = threadPullRequestKeyOf(link);
+        // Reads depend on the project's checkout and credentials, including their failures.
+        const key = `${thread.projectId}\0${threadPullRequestKeyOf(link)}`;
         const entries = groups.get(key) ?? [];
         entries.push({ thread, link });
         groups.set(key, entries);
       }
     }
 
+    // A host-level refresh reaches every project, each retaining its own pending retry.
+    for (const [key, entries] of groups) {
+      if (pendingRequests.has(threadPullRequestKeyOf(entries[0]!.link))) requested.add(key);
+    }
+    pendingRequests.clear();
+
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
     const linkedThisSweep = new Set<string>();
+    // Fresh stack reads by group, so a member flagged by a sibling is compared against what the
+    // host answered this sweep, not the saved layers that sibling is about to replace.
+    const stacksReadThisSweep = new Map<string, ThreadPullRequestStack | null>();
     const persistence = yield* Semaphore.make(1);
 
-    const syncEntry = Effect.fn("PullRequestSyncReactor.syncEntry")(function* (
+    // Effect.fn's stack frames close over these sweep-scoped bodies and their arguments, and a
+    // cache lookup forked inside keeps those frames, so a plain span leaves the sweep collectable.
+    const syncEntry = Effect.fnUntraced(function* (
       entry: LinkEntry,
       fields: SnapshotFields,
       fetchedStack: { readonly stack: ThreadPullRequestStack | null } | null,
@@ -220,9 +405,7 @@ export const make = Effect.gen(function* () {
         link.snapshot === null ||
         !snapshotFieldsEqual(link.snapshot, fields) ||
         !stacksEqual(link.stack, nextStack);
-      // Persist discovered siblings before a terminal snapshot can trigger settlement. A settled
-      // thread that shares this pull request with an active one takes the fresh snapshot, but
-      // gains no links.
+      // Persist siblings before terminal snapshots trigger settlement; settled threads get snapshots without new links.
       for (const layer of isUnsettled(thread) ? (fetchedStack?.stack?.layers ?? []) : []) {
         const layerKey = {
           host: normalizeThreadPullRequestKey(link).host,
@@ -239,7 +422,7 @@ export const make = Effect.gen(function* () {
         ) {
           continue;
         }
-        const url = siblingPullRequestUrl(link.url, layer.number);
+        const url = siblingChangeRequestUrl(link.url, layer.number);
         if (url === null) continue;
         const uuid = yield* crypto.randomUUIDv4();
         yield* engine.dispatch({
@@ -265,12 +448,9 @@ export const make = Effect.gen(function* () {
           stack: nextStack,
         });
       }
-    });
+    }, Effect.withSpan("PullRequestSyncReactor.syncEntry"));
 
-    const syncGroup = Effect.fn("PullRequestSyncReactor.syncGroup")(function* (
-      key: string,
-      entries: ReadonlyArray<LinkEntry>,
-    ) {
+    const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
       const ref = {
         projectId: first.thread.projectId,
@@ -278,19 +458,19 @@ export const make = Effect.gen(function* () {
         repository: first.link.repository,
         number: first.link.number,
       };
-      const generation = requested.get(key);
+      const refreshRequested = requested.has(key);
       // A held merged summary is served without asking the host, so a snapshot still missing its
       // merge time has to drop it or the slow-cadence re-read would hand back the same gap.
       const missingMergedAt = entries.some(
         (entry) => entry.link.snapshot?.state === "merged" && entry.link.snapshot.mergedAt == null,
       );
-      if (generation !== undefined || missingMergedAt) {
-        yield* pullRequests.invalidate({ reference: ref });
-      }
+      // A stack retry reads past the cache, or it could get back the layer list it is retrying.
+      const invalidated = refreshRequested || missingMergedAt || retryStacks.has(key);
+      if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
       const fields = snapshotFieldsOf(summary);
       const needsStack =
-        generation !== undefined ||
+        refreshRequested ||
         retryStacks.has(key) ||
         entries.some(
           (entry) =>
@@ -301,6 +481,14 @@ export const make = Effect.gen(function* () {
         );
       const knownUnstacked =
         summary.stack === null && entries.every((entry) => entry.link.stack === null);
+      // A sibling can flag this group while its summary read is in flight.
+      if (!invalidated && retryStacks.has(key) && !knownUnstacked) {
+        yield* pullRequests.invalidate({ reference: ref });
+      }
+      // The retry this read answers is consumed before the read, not after it: a sibling may
+      // flag this group again while the read is in flight, and that flag must survive to the
+      // next sweep because the answer below may predate the sibling's layers.
+      if (needsStack) retryStacks.delete(key);
       const fetchedStack = !needsStack
         ? null
         : knownUnstacked
@@ -326,12 +514,31 @@ export const make = Effect.gen(function* () {
           retryStacks.add(key);
           return;
         }
-        retryStacks.delete(key);
+        const fetched = fetchedStack.stack;
+        stacksReadThisSweep.set(key, fetched);
+        // New upper layers leave older members' fields unchanged; differing layer lists need a stack read.
+        // Only flag siblings in the same project: different credentials can yield lists that never agree.
+        if (fetched !== null) {
+          const fetchedKey = nativeStackKeyOf(first.link, fetched);
+          for (const [siblingKey, siblingEntries] of groups) {
+            if (siblingKey === key) continue;
+            if (siblingEntries[0]!.thread.projectId !== first.thread.projectId) continue;
+            const readThisSweep = stacksReadThisSweep.get(siblingKey);
+            const stale = siblingEntries.some(({ link }) => {
+              const stack = readThisSweep === undefined ? link.stack : readThisSweep;
+              return (
+                stack !== null &&
+                nativeStackKeyOf(link, stack) === fetchedKey &&
+                !sameLayerNumbers(stack, fetched)
+              );
+            });
+            if (stale) retryStacks.add(siblingKey);
+          }
+        }
       }
       // The host answered, so the cadence clock ticks even if a dispatch below is rejected.
       lastSyncedAt.set(key, nowMs);
-      // A refresh requested while the host read was in flight belongs to the next sweep.
-      if (requested.get(key) === generation) requested.delete(key);
+      requested.delete(key);
       yield* Effect.forEach(
         entries,
         (entry) =>
@@ -346,7 +553,7 @@ export const make = Effect.gen(function* () {
           ),
         { discard: true },
       );
-    });
+    }, Effect.withSpan("PullRequestSyncReactor.syncGroup"));
 
     const skips = new Map<string, { count: number; readonly key: string }>();
     const readGroup = (key: string, entries: ReadonlyArray<LinkEntry>, pauseKey: string) =>
@@ -372,8 +579,7 @@ export const make = Effect.gen(function* () {
         }
         const first = entries[0]!;
         const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
-        // Checked against the clock as each read starts, so a pause found earlier in this sweep
-        // holds the rest, and one that ends during the sweep lets the rest through.
+        // Check pauses at each read so changes during the sweep apply immediately.
         return Clock.currentTimeMillis.pipe(
           Effect.flatMap((startedAtMs) =>
             (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
@@ -382,8 +588,7 @@ export const make = Effect.gen(function* () {
           ),
         );
       },
-      // As wide as one batched summary read, so the sweep's reads on a host arrive together and
-      // GitHub answers them in one request rather than one `gh pr view` apiece.
+      // Match summary batch width so GitHub reads coalesce into one request.
       { concurrency: 25, discard: true },
     );
     for (const [reason, { count, key }] of skips) {
@@ -398,7 +603,8 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.catchCause(logSkipped("pull request sync sweep failed", {}))),
   );
 
-  const closeCommandThreads = new Set<ThreadId>();
+  // Threads that ran a close command this run, with the commands already read for.
+  const closeCommands = new Map<ThreadId, Set<string>>();
   const refreshOpenLinks = (threadId: ThreadId) =>
     projections.getThreadsWithPullRequests(threadId).pipe(
       Effect.flatMap((threads) =>
@@ -414,6 +620,34 @@ export const make = Effect.gen(function* () {
       ),
       Effect.catchCause(logSkipped("pull request refresh after run skipped", { threadId })),
     );
+
+  // An agent that opens a pull request from a shell gets it linked as link_pull_request would.
+  const linkCreatedChangeRequests = Effect.fn("PullRequestSyncReactor.linkCreatedChangeRequests")(
+    function* (threadId: ThreadId, item: CommandExecution) {
+      if (isOrchestrationV2WorkActive(item.status)) return;
+      yield* Effect.forEach(
+        changeRequestsCreatedBy(item.input, item.output ?? ""),
+        (created) =>
+          engine
+            .dispatch({
+              type: "thread.pull-request.link",
+              // Stable per command, so a repeated settlement cannot relink one the user unlinked.
+              commandId: CommandId.make(
+                `server:pr-created-link:${threadId}:${item.id}:${threadPullRequestKeyOf(created)}`,
+              ),
+              threadId,
+              ...created,
+              source: "created",
+            })
+            .pipe(
+              Effect.catchCause(
+                logSkipped("linking a pull request a command created failed", { threadId }),
+              ),
+            ),
+        { discard: true },
+      );
+    },
+  );
 
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
@@ -441,21 +675,23 @@ export const make = Effect.gen(function* () {
               requestSync,
               { discard: true },
             );
-          // An agent can merge or close its pull request from a shell (`gh pr merge`), which
-          // sends no merge notification. When a run that ran such a command ends, read the
-          // thread's open links fresh, so settlement does not wait for the next sweep and the
-          // cached summary. Other runs add no host reads.
-          case "turn-item.updated":
-            if (
-              event.payload.type === "command_execution" &&
-              PULL_REQUEST_CLOSE_COMMAND.test(event.payload.input)
-            ) {
-              closeCommandThreads.add(event.threadId);
-            }
-            return Effect.void;
+          // An agent can merge or close its pull request from a shell with its host's CLI, which
+          // sends no merge notification. Read the thread's open links fresh once that command
+          // ends, while the agent usually still replies, so settlement can land before the run
+          // ends. Read again when the run ends, since `merge --auto` returns before it merges.
+          case "turn-item.updated": {
+            const item = event.payload;
+            if (item.type !== "command_execution") return Effect.void;
+            const linked = linkCreatedChangeRequests(event.threadId, item);
+            if (!isChangeRequestCloseCommand(item.input)) return linked;
+            const ended = closeCommands.get(event.threadId) ?? new Set<string>();
+            closeCommands.set(event.threadId, ended);
+            if (isOrchestrationV2WorkActive(item.status) || ended.has(item.id)) return linked;
+            ended.add(item.id);
+            return Effect.andThen(linked, refreshOpenLinks(event.threadId));
+          }
           case "run.updated":
-            return isTerminalRunStatus(event.payload.status) &&
-              closeCommandThreads.delete(event.threadId)
+            return isTerminalRunStatus(event.payload.status) && closeCommands.delete(event.threadId)
               ? refreshOpenLinks(event.threadId)
               : Effect.void;
           default:
@@ -473,7 +709,7 @@ export const make = Effect.gen(function* () {
 
   const requestSync: PullRequestSyncReactor["Service"]["requestSync"] = (key) =>
     Effect.suspend(() => {
-      requested.set(threadPullRequestKeyOf(key), ++requestGeneration);
+      pendingRequests.add(threadPullRequestKeyOf(key));
       if (requestedSweepQueued) return Effect.void;
       requestedSweepQueued = true;
       return worker.enqueue("requested");

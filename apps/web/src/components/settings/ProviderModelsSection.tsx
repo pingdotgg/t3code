@@ -1,5 +1,3 @@
-"use client";
-
 import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -56,9 +54,7 @@ function describeModelCapabilities(model: ServerProviderModel): string[] {
   return labels;
 }
 
-export function groupModelsForDisplay<
-  T extends { readonly slug: string; readonly isCustom: boolean },
->(
+function groupModelsForDisplay<T extends { readonly slug: string; readonly isCustom: boolean }>(
   models: ReadonlyArray<T>,
   options: {
     readonly favoriteModels: ReadonlySet<string>;
@@ -79,7 +75,7 @@ export function groupModelsForDisplay<
   ];
 }
 
-export function nextHiddenModelsForBulkToggle(
+function nextHiddenModelsForBulkToggle(
   models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "isCustom">>,
   hiddenModels: ReadonlyArray<string>,
 ): string[] {
@@ -107,7 +103,7 @@ interface ProviderModelsSectionProps {
   readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => void;
   readonly onHiddenModelsChange: (
     next: ReadonlyArray<string>,
-    affectedModels?: ReadonlyArray<string>,
+    affectedModels: ReadonlyArray<string>,
   ) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onToggleFavorite: (model: string) => void;
@@ -160,6 +156,7 @@ export function ProviderModelsSection({
     : displayModels;
 
   // A model added or moved lands in a later commit, so each commit looks for the pending row.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the pending model's DOM row into view once a later commit renders it
   useEffect(() => {
     const slug = scrollToSlugRef.current;
     if (slug === null) return;
@@ -171,8 +168,7 @@ export function ProviderModelsSection({
     row.scrollIntoView({ block: "nearest" });
   });
 
-  // CustomModelEditor keys its option list on this array. Derived after the effect and
-  // checked against `hiddenModels` rather than the set built above it, so it stays cached.
+  // Derive after the effect and use hiddenModels directly to preserve the editor's option-array cache.
   const builtInModels = models.filter((model) => !model.isCustom);
   const allBuiltInModelsHidden =
     builtInModels.length > 0 && builtInModels.every((model) => hiddenModels.includes(model.slug));
@@ -338,7 +334,8 @@ export function ProviderModelsSection({
             type="button"
             size="xs"
             variant="ghost-muted"
-            className="ml-auto"
+            // The ghost padding would inset the label from the column edge the toggles align to.
+            className="-me-2 ml-auto"
             onClick={() => setIsAdding(true)}
           >
             <PlusIcon className="size-3" />
@@ -433,8 +430,6 @@ export function ProviderModelsSection({
   );
 }
 
-// A row gets its flags as primitives and handlers that never change, so toggling,
-// starring or moving one model re-renders that row and leaves the others cached.
 function ProviderModelRow({
   model,
   isHidden,
@@ -501,11 +496,29 @@ function ProviderModelRow({
         </TooltipPopup>
       </Tooltip>
       <span className="flex min-w-0 items-baseline gap-2">
-        <span className={cn(nameClassName, "truncate")}>{model.name}</span>
-        {model.name !== model.slug ? (
-          <code className="truncate font-mono text-2xs text-muted-foreground/70">{model.slug}</code>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span tabIndex={0} className="flex min-w-0 items-baseline gap-2 overflow-hidden" />
+            }
+          >
+            <span className={cn(nameClassName, "max-w-full shrink-0 truncate")}>{model.name}</span>
+            {model.name !== model.slug ? (
+              <code className="truncate font-mono text-2xs text-muted-foreground/70">
+                {model.slug}
+              </code>
+            ) : null}
+          </TooltipTrigger>
+          <TooltipPopup side="top" align="start">
+            <div>{model.name}</div>
+            {model.name !== model.slug ? (
+              <code className="font-mono text-2xs text-muted-foreground">{model.slug}</code>
+            ) : null}
+          </TooltipPopup>
+        </Tooltip>
+        {model.isCustom ? (
+          <span className="shrink-0 text-2xs text-muted-foreground/70">custom</span>
         ) : null}
-        {model.isCustom ? <span className="text-2xs text-muted-foreground/70">custom</span> : null}
       </span>
       <span className="text-2xs text-muted-foreground/70">
         {capLabels.length > 0 ? (
@@ -586,8 +599,7 @@ function ProviderModelRow({
           </>
         ) : null}
       </span>
-      {/* The trigger is a wrapper span: a disabled switch gets no pointer events,
-          so it could not open the tooltip itself. */}
+      {/* Disabled switches receive no pointer events; wrap the tooltip trigger. */}
       <Tooltip>
         <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
           <Switch

@@ -1,5 +1,3 @@
-"use client";
-
 import {
   createPreviewFramePainter,
   createPreviewStreamClient,
@@ -51,13 +49,10 @@ export interface ServerBrowserHandle {
 }
 
 const RESIZE_THROTTLE_MS = 150;
-const ACCESS_RETRY_MS = 10_000;
-// A recent probe answer near a new tap stands in for that tap's own answer,
-// which on a slow link arrives after the tap ends.
+// Reuse nearby probes when a slow link would return the tap's answer after it ends.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
-// Kept in the input so soft keyboards have something to delete: Android
-// reports Backspace only as a deletion of text, not as a key.
+// Android keyboards report Backspace as text deletion, so keep a deletable sentinel.
 const INPUT_SENTINEL = "\u200b";
 const BACKSPACE = { key: "Backspace", code: "Backspace", keyCode: 8 } as const;
 const DELETE = { key: "Delete", code: "Delete", keyCode: 46 } as const;
@@ -147,6 +142,7 @@ export function ServerBrowserSurface(props: {
   readonly onControl?: (control: PreviewStreamControl | null) => void;
   readonly onPopup?: (tabId: string) => void;
   readonly className?: string;
+  readonly pdfUrl?: string | null;
   readonly ref?: Ref<ServerBrowserHandle>;
 }) {
   const {
@@ -161,9 +157,9 @@ export function ServerBrowserSurface(props: {
     onControl,
     onPopup,
     className,
+    pdfUrl = null,
     ref,
   } = props;
-  const access = usePreviewStreamAccess(environmentId);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const keySentRef = useRef(false);
@@ -191,6 +187,7 @@ export function ServerBrowserSurface(props: {
   };
   const unauthorizedRef = useRef(0);
   const [accessDenied, setAccessDenied] = useState(false);
+  const access = usePreviewStreamAccess(environmentId, { retry: visible && !accessDenied });
   const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
   const pendingMoveRef = useRef<MouseInput | null>(null);
   const pendingWheelRef = useRef<WheelInput | null>(null);
@@ -215,8 +212,7 @@ export function ServerBrowserSurface(props: {
   const popupOpened = useEffectEvent((popupTabId: string) => onPopup?.(popupTabId));
   const [cap, setCap] = useState<{ width: number; height: number } | null>(null);
 
-  // These read only refs, so each is cached once. The stream effect keys on
-  // clearInput and would reconnect if it changed.
+  // Keep clearInput stable: a new identity reconnects the stream.
   const send = (input: PreviewStreamInput) => {
     clientRef.current?.send(input);
   };
@@ -307,11 +303,12 @@ export function ServerBrowserSurface(props: {
       reload: (options) =>
         send({ type: "reload", ...(options?.ignoreCache ? { ignoreCache: true } : {}) }),
       viewport: (setting) => send({ type: "viewport", setting }),
-      canvas: () => (hasFrameRef.current ? canvasRef.current : null),
+      canvas: () => (!pdfUrl && hasFrameRef.current ? canvasRef.current : null),
     }),
-    [send],
+    [pdfUrl, send],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the canvas container's size, sends resizes to the stream and grows the frame cap
   useEffect(() => {
     const element = canvasRef.current?.parentElement;
     if (!element) return;
@@ -342,8 +339,7 @@ export function ServerBrowserSurface(props: {
       if (previous?.width === size.width && previous.height === size.height) return;
       sizeRef.current = size;
       if (followSize) clientRef.current?.send({ type: "resize", ...size });
-      // Outgrowing the cap reconnects the stream, so grow it once the size settles
-      // rather than on every throttled resize of a drag.
+      // Growing the cap reconnects the stream; wait until resizing settles.
       if (capTimer !== null) clearTimeout(capTimer);
       capTimer = setTimeout(growCap, previous === null ? 0 : RESIZE_THROTTLE_MS * 2);
     };
@@ -358,6 +354,7 @@ export function ServerBrowserSurface(props: {
     };
   }, [followSize]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the preview stream client and paints its frames onto the canvas while visible
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!visible || accessDenied || hostSetup || !access || !cap || !canvas) return;
@@ -462,12 +459,7 @@ export function ServerBrowserSurface(props: {
     visible,
   ]);
 
-  useEffect(() => {
-    if (!visible || accessDenied || access !== null) return;
-    const timer = setInterval(() => refreshPreviewStreamAccess(environmentId), ACCESS_RETRY_MS);
-    return () => clearInterval(timer);
-  }, [access, accessDenied, environmentId, visible]);
-
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers a non-passive wheel listener on the canvas so it can stop the panel scrolling
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -488,6 +480,7 @@ export function ServerBrowserSurface(props: {
     return () => canvas.removeEventListener("wheel", onWheel);
   }, [pagePoint, queueWheel]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending input animation frame when the component unmounts
   useEffect(
     () => () => {
       if (inputFrameRef.current !== null) cancelAnimationFrame(inputFrameRef.current);
@@ -734,6 +727,14 @@ export function ServerBrowserSurface(props: {
         ) : null}
       </div>
       <div className="relative min-h-0 flex-1">
+        {pdfUrl ? (
+          <embed
+            src={pdfUrl}
+            type="application/pdf"
+            title="PDF document"
+            className="absolute inset-0 z-10 size-full border-0"
+          />
+        ) : null}
         <canvas
           ref={canvasRef}
           className="block size-full touch-none object-contain"
@@ -744,14 +745,13 @@ export function ServerBrowserSurface(props: {
           onMouseDown={(event) => event.preventDefault()}
           onContextMenu={(event) => event.preventDefault()}
         />
-        {agentCursor && control?.controller !== "you" ? (
+        {!pdfUrl && agentCursor && control?.controller !== "you" ? (
           <AgentCursorMark
             {...agentCursor}
             controller={control?.controller === "agent" ? "agent" : "none"}
           />
         ) : null}
-        {/* Focus target for page keyboard input. Pinned top-left so focusing it never
-          scrolls the surface; 16px keeps iOS from zooming the app on focus. */}
+        {/* Pin top-left to avoid focus scrolling; 16px prevents iOS focus zoom. */}
         <textarea
           ref={inputRef}
           aria-label="Browser page"
@@ -760,9 +760,8 @@ export function ServerBrowserSurface(props: {
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
-          disabled={control?.controller !== "you"}
+          disabled={pdfUrl !== null || control?.controller !== "you"}
           defaultValue={INPUT_SENTINEL}
-          // The caret must sit after the sentinel for a deletion to have something to delete.
           onFocus={(event) => resetInput(event.currentTarget)}
           className="sr-only top-0 left-0 text-base"
           onKeyDown={(event) => handleKey("down", event)}
@@ -773,7 +772,7 @@ export function ServerBrowserSurface(props: {
             if (text) send({ type: "text", text });
             resetInput(event.currentTarget);
           }}
-          // Copying the input would put its sentinel on this device's clipboard.
+          // Keep the sentinel off the clipboard.
           onCopy={(event) => event.preventDefault()}
           onCut={(event) => event.preventDefault()}
           onPaste={(event) => {

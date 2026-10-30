@@ -2,7 +2,9 @@ import {
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
+  EasDeviceHostConfig,
   type ServerSettings,
+  SimlockDeviceHostConfig,
   UsageLimitSourceConfig,
   secretSettingsFields,
 } from "@t3tools/contracts";
@@ -31,6 +33,8 @@ const providerSecretFields = new Map([
   ),
 ]);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
+const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
+const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
 export interface SettingsSecret {
@@ -95,16 +99,19 @@ export function mapSettingsSecrets(
           ...(instance.environment
             ? {
                 environment: instance.environment.map((variable) => {
+                  const { valueRedacted: _omit, ...rest } = variable;
+                  // A secret reference is not itself secret; storage sees the value cleared.
+                  const reference = typeof variable.value === "string" ? undefined : variable.value;
                   const result = map({
                     secretName: `provider-env-${encode(instanceId)}-${encode(variable.name)}`,
                     kind: "environment",
-                    value: variable.value,
-                    redacted: variable.valueRedacted === true,
+                    value: typeof variable.value === "string" ? variable.value : "",
+                    redacted: reference === undefined && variable.valueRedacted === true,
                     sensitive: variable.sensitive,
                     providerInstanceId: instanceId,
                     environmentVariable: variable.name,
                   });
-                  const { valueRedacted: _omit, ...rest } = variable;
+                  if (reference !== undefined) return { ...rest, value: reference };
                   return {
                     ...rest,
                     value: result.value,
@@ -142,5 +149,35 @@ export function mapSettingsSecrets(
     ]),
   ) as ServerSettings["usageLimitSources"];
 
-  return { ...settings, providerInstances, sourceControlHosts, usageLimitSources };
+  const easDeviceHosts = settings.easDeviceHosts.map(
+    (host) =>
+      mapFields(
+        host,
+        easDeviceHostSecretFields,
+        (field, serverHost) =>
+          `device-host-${encode(host.id)}-${encode(field)}` +
+          (serverHost === null ? "" : `-${encode(serverHost)}`),
+      ) as EasDeviceHostConfig,
+  );
+
+  // Its own prefix: an EAS and a Simlock host may share an id.
+  const simlockDeviceHosts = settings.simlockDeviceHosts.map(
+    (host) =>
+      mapFields(
+        host,
+        simlockDeviceHostSecretFields,
+        (field, serverHost) =>
+          `simlock-device-host-${encode(host.id)}-${encode(field)}` +
+          (serverHost === null ? "" : `-${encode(serverHost)}`),
+      ) as SimlockDeviceHostConfig,
+  );
+
+  return {
+    ...settings,
+    providerInstances,
+    sourceControlHosts,
+    usageLimitSources,
+    easDeviceHosts,
+    simlockDeviceHosts,
+  };
 }

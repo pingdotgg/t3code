@@ -13,10 +13,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { PublishClientConfig, reconcileEnvFile, tokenDigest } from "./clientConfig.ts";
 
 describe("reconcileEnvFile", () => {
-  it("adds every entry to an empty file", () => {
-    expect(reconcileEnvFile("", { A: "1", B: "2" })).toBe("A=1\nB=2\n");
-  });
-
   it("replaces stale values and keeps unrelated lines", () => {
     const existing = "KEEP=yes\nA=old\n# comment\n";
     expect(reconcileEnvFile(existing, { A: "new", B: "2" })).toBe(

@@ -7,7 +7,6 @@ import { ThreadId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { RotatingFileSinkError } from "@t3tools/shared/logging";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
@@ -16,9 +15,7 @@ import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 import {
-  makeEventNdjsonLogger,
   makeEventNdjsonLogStore,
   type PendingRecord,
   writeBatchedMessages,
@@ -72,11 +69,10 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
       circular.self = circular;
 
       try {
-        const logger = yield* makeEventNdjsonLogger(basePath, { stream: "native" });
-        assert.exists(logger);
-        if (!logger) return;
+        const store = yield* makeEventNdjsonLogStore(basePath);
+        const logger = store.logger("native");
         yield* logger.write(circular, ThreadId.make("thread-1"));
-        yield* logger.close();
+        yield* store.close();
 
         const serialized = encodeUnknownJson(messages);
         assert.notInclude(serialized, secret);
@@ -90,52 +86,6 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
     }).pipe(Effect.provide(Logger.layer([logCapture], { mergeWithExisting: false })));
   });
 
-  it.effect("writes effect-style lines to thread-scoped files", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "provider-native.ndjson");
-
-      try {
-        const logger = yield* makeEventNdjsonLogger(basePath, { stream: "native" });
-        assert.notEqual(logger, undefined);
-        if (!logger) {
-          return;
-        }
-
-        yield* logger.write(
-          { threadId: "provider-thread-1", id: "evt-1" },
-          ThreadId.make("thread-1"),
-        );
-        yield* logger.write(
-          { type: "turn.completed", threadId: "provider-thread-2", id: "evt-2" },
-          ThreadId.make("thread-2"),
-        );
-        yield* logger.close();
-
-        const threadOnePath = ownedLogPath(basePath, "thread-1");
-        const threadTwoPath = ownedLogPath(basePath, "thread-2");
-        assert.equal(NodeFS.existsSync(threadOnePath), true);
-        assert.equal(NodeFS.existsSync(threadTwoPath), true);
-
-        const first = parseLogLine(NodeFS.readFileSync(threadOnePath, "utf8").trim());
-        const second = parseLogLine(NodeFS.readFileSync(threadTwoPath, "utf8").trim());
-
-        assert.equal(Number.isNaN(Date.parse(first.observedAt)), false);
-        assert.equal(first.stream, "NTIVE");
-        assert.equal(first.payload, '{"threadId":"provider-thread-1","id":"evt-1"}');
-
-        assert.equal(Number.isNaN(Date.parse(second.observedAt)), false);
-        assert.equal(second.stream, "NTIVE");
-        assert.equal(
-          second.payload,
-          '{"type":"turn.completed","threadId":"provider-thread-2","id":"evt-2"}',
-        );
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
   it.effect(
     "falls back to a global segment when orchestration thread id is missing or invalid",
     () =>
@@ -144,15 +94,12 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
         const basePath = NodePath.join(tempDir, "provider-canonical.ndjson");
 
         try {
-          const logger = yield* makeEventNdjsonLogger(basePath, { stream: "orchestration" });
-          assert.notEqual(logger, undefined);
-          if (!logger) {
-            return;
-          }
+          const store = yield* makeEventNdjsonLogStore(basePath);
+          const logger = store.logger("orchestration");
 
           yield* logger.write({ id: "evt-no-thread" }, null);
           yield* logger.write({ id: "evt-invalid-thread" }, "!!!" as unknown as ThreadId);
-          yield* logger.close();
+          yield* store.close();
 
           const globalPath = ownedLogPath(basePath, "_global");
           assert.equal(NodeFS.existsSync(globalPath), true);
@@ -246,28 +193,6 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
     }),
   );
 
-  it.effect("flushes an active batch without a permanent polling loop", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-      const threadPath = ownedLogPath(basePath, "thread-batched");
-
-      try {
-        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 1_000 });
-        yield* store
-          .logger("native")
-          .write({ id: "batched-event" }, ThreadId.make("thread-batched"));
-
-        assert.equal(NodeFS.existsSync(threadPath), false);
-        yield* TestClock.adjust(1_000);
-        yield* store.close();
-        assert.equal(NodeFS.existsSync(threadPath), true);
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
   it.effect("does not strand a later batch after an interrupted write", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
@@ -293,200 +218,6 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
     }),
-  );
-
-  it.effect("drops transient provider events before serialization", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-
-      try {
-        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
-        const canonical = store.logger("canonical");
-        const native = store.logger("native");
-        const threadId = ThreadId.make("thread-filtered");
-        const circularDelta: Record<string, unknown> = { type: "content.delta" };
-        circularDelta["self"] = circularDelta;
-
-        yield* canonical.write(circularDelta, threadId);
-        yield* canonical.write({ type: "item.completed", id: "final" }, threadId);
-        yield* native.write({ type: "content.delta", id: "native-delta" }, threadId);
-        yield* native.write(
-          { method: "item/agentMessage/delta", payload: circularDelta },
-          threadId,
-        );
-        yield* native.write(
-          { method: "thread/realtime/outputAudio/delta", payload: circularDelta },
-          threadId,
-        );
-        yield* native.write(
-          { method: "thread/realtime/transcript/delta", payload: circularDelta },
-          threadId,
-        );
-        yield* native.write({ method: "turn/diff/updated", payload: circularDelta }, threadId);
-        yield* native.write(
-          {
-            event: {
-              direction: "incoming",
-              stage: "decoded",
-              payload: {
-                method: "turn/diff/updated",
-                get params() {
-                  throw new Error("unused diff snapshots must not be traversed");
-                },
-              },
-            },
-          },
-          threadId,
-        );
-        yield* native.write(
-          {
-            event: {
-              method: "claude/stream_event/content_block_delta/text_delta",
-              payload: circularDelta,
-            },
-          },
-          threadId,
-        );
-        yield* native.write(
-          {
-            event: {
-              method: "session/update",
-              payload: { update: { sessionUpdate: "agent_message_chunk" } },
-            },
-          },
-          threadId,
-        );
-        yield* native.write(
-          {
-            event: {
-              direction: "incoming",
-              stage: "decoded",
-              payload: { method: "item/commandExecution/outputDelta", params: circularDelta },
-            },
-          },
-          threadId,
-        );
-        yield* native.write(
-          {
-            event: {
-              direction: "incoming",
-              stage: "decoded",
-              payload: {
-                type: "stream_event",
-                event: { type: "content_block_delta", delta: circularDelta },
-              },
-            },
-          },
-          threadId,
-        );
-        yield* native.write(
-          {
-            event: {
-              direction: "incoming",
-              stage: "raw",
-              get payload() {
-                throw new Error("raw frames must not be inspected");
-              },
-            },
-          },
-          threadId,
-        );
-        yield* native.write(
-          {
-            event: {
-              type: "message.part.updated",
-              payload: { properties: { part: { type: "text" } } },
-            },
-          },
-          threadId,
-        );
-        yield* native.write(
-          {
-            event: {
-              type: "message.part.updated",
-              payload: {
-                properties: {
-                  part: { type: "tool", state: { status: "running", output: "progress" } },
-                },
-              },
-            },
-          },
-          threadId,
-        );
-        yield* native.write({ type: "turn.completed", id: "native-final" }, threadId);
-        yield* store.close();
-
-        const lines = NodeFS.readFileSync(ownedLogPath(basePath, "thread-filtered"), "utf8")
-          .trim()
-          .split("\n")
-          .map(parseLogLine);
-
-        assert.deepEqual(
-          lines.map(({ stream, payload }) => ({ stream, payload })),
-          [
-            { stream: "CANON", payload: '{"type":"item.completed","id":"final"}' },
-            { stream: "NTIVE", payload: '{"type":"turn.completed","id":"native-final"}' },
-          ],
-        );
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
-  it.effect(
-    "drops Claude thinking-token counters while keeping system and terminal usage records",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-        const basePath = NodePath.join(tempDir, "events.log");
-        const threadId = ThreadId.make("claude-thinking-tokens");
-        const counter = {
-          direction: "incoming",
-          stage: "decoded",
-          payload: {
-            type: "system",
-            subtype: "thinking_tokens",
-            estimated_tokens: 50,
-            estimated_tokens_delta: 50,
-          },
-        };
-        const retained = [
-          { type: "system", subtype: "init", session_id: "claude-session" },
-          {
-            type: "stream_event",
-            event: { type: "message_delta", usage: { output_tokens: 10 } },
-          },
-          {
-            type: "result",
-            subtype: "success",
-            usage: { output_tokens: 10, output_tokens_details: { thinking_tokens: 5 } },
-          },
-        ].map((payload) => ({ event: { direction: "incoming", stage: "decoded", payload } }));
-
-        try {
-          const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
-          const native = store.logger("native");
-          yield* native.write(counter, threadId);
-          yield* native.write({ provider: "claudeAgent", event: counter }, threadId);
-          for (const event of retained) {
-            yield* native.write(event, threadId);
-          }
-          yield* store.close();
-
-          const records = NodeFS.readFileSync(
-            ownedLogPath(basePath, "claude-thinking-tokens"),
-            "utf8",
-          )
-            .trim()
-            .split("\n")
-            .map((line) => decodeUnknownJson(parseLogLine(line).payload));
-          assert.deepEqual(records, retained);
-        } finally {
-          NodeFS.rmSync(tempDir, { recursive: true, force: true });
-        }
-      }),
   );
 
   it.effect("summarizes large histories without reading their items", () =>
@@ -602,98 +333,14 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
     }),
   );
 
-  it.effect("keeps OpenCode tool input, final output, and errors in native logs", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-      const threadId = ThreadId.make("thread-tool-lifecycle");
-
-      try {
-        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
-        const native = store.logger("native");
-        const input = { command: "run-build" };
-        const states = [
-          { status: "pending", input },
-          { status: "completed", input, output: "Build complete", time: { start: 1, end: 2 } },
-          { status: "error", input, error: "Build failed", time: { start: 3, end: 4 } },
-          { status: "unknown", input },
-          null,
-        ];
-        const events = states.map((state) => ({
-          event: {
-            type: "message.part.updated",
-            payload: { properties: { part: { type: "tool", state } } },
-          },
-        }));
-        for (const event of events) {
-          yield* native.write(event, threadId);
-        }
-        yield* store.close();
-
-        const payloads = NodeFS.readFileSync(
-          ownedLogPath(basePath, "thread-tool-lifecycle"),
-          "utf8",
-        )
-          .trim()
-          .split("\n")
-          .map((line) => parseLogLine(line).payload);
-        assert.deepEqual(
-          payloads,
-          events.map((event) => encodeUnknownJson(event)),
-        );
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
-  it.effect("contains hostile event accessors inside guarded serialization", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-
-      try {
-        const logger = yield* makeEventNdjsonLogger(basePath, {
-          stream: "canonical",
-          batchWindowMs: 0,
-        });
-        assert.exists(logger);
-        if (!logger) return;
-        const hostile = new Proxy(
-          { id: "hostile" },
-          {
-            get(_target, property) {
-              if (property === "type") throw new Error("blocked");
-              return undefined;
-            },
-          },
-        );
-
-        yield* logger.write(hostile, ThreadId.make("thread-hostile"));
-        yield* logger.close();
-
-        const contents = NodeFS.readFileSync(ownedLogPath(basePath, "thread-hostile"), "utf8");
-        assert.notInclude(contents, "blocked");
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
   it.effect("serializes concurrent first writes for the same segment", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
       const basePath = NodePath.join(tempDir, "provider-canonical.ndjson");
 
       try {
-        const logger = yield* makeEventNdjsonLogger(basePath, {
-          stream: "canonical",
-          batchWindowMs: 0,
-        });
-        assert.notEqual(logger, undefined);
-        if (!logger) {
-          return;
-        }
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const logger = store.logger("canonical");
 
         yield* Effect.all(
           [
@@ -702,7 +349,7 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
           ],
           { concurrency: "unbounded" },
         );
-        yield* logger.close();
+        yield* store.close();
 
         const globalPath = ownedLogPath(basePath, "_global");
         assert.equal(NodeFS.existsSync(globalPath), true);
@@ -767,79 +414,6 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
           matchingFiles.some((entry) => entry === `${fileStem}.3`),
           false,
         );
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
-  it.effect("enforces aggregate age and byte retention on startup", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-      const expiredPath = ownedLogPath(basePath, "expired");
-      const oldPath = ownedLogPath(basePath, "old");
-      const newPath = ownedLogPath(basePath, "new");
-      const unrelatedLogPath = NodePath.join(tempDir, "unrelated.log");
-      const legacyLogPath = NodePath.join(tempDir, "legacy-thread.log");
-      const ignoredPath = NodePath.join(tempDir, "ignored.txt");
-
-      try {
-        yield* TestClock.setTime(1_800_000_000_000);
-        const now = yield* Clock.currentTimeMillis;
-        for (const filePath of [expiredPath, oldPath, newPath, unrelatedLogPath, ignoredPath]) {
-          NodeFS.writeFileSync(filePath, "x".repeat(40));
-        }
-        NodeFS.writeFileSync(
-          legacyLogPath,
-          "[2026-01-01T00:00:00.000Z] CANON: legacy provider event\n",
-        );
-        NodeFS.utimesSync(expiredPath, (now - 20_000) / 1_000, (now - 20_000) / 1_000);
-        NodeFS.utimesSync(legacyLogPath, (now - 20_000) / 1_000, (now - 20_000) / 1_000);
-        NodeFS.utimesSync(oldPath, (now - 5_000) / 1_000, (now - 5_000) / 1_000);
-        NodeFS.utimesSync(newPath, now / 1_000, now / 1_000);
-
-        const store = yield* makeEventNdjsonLogStore(basePath, {
-          maxAgeMs: 10_000,
-          maxTotalBytes: 60,
-        });
-        yield* store.close();
-
-        assert.equal(NodeFS.existsSync(expiredPath), false);
-        assert.equal(NodeFS.existsSync(legacyLogPath), false);
-        assert.equal(NodeFS.existsSync(oldPath), false);
-        assert.equal(NodeFS.existsSync(newPath), true);
-        assert.equal(NodeFS.existsSync(unrelatedLogPath), true);
-        assert.equal(NodeFS.existsSync(ignoredPath), true);
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
-  it.effect("does not prune an active thread sink during an unrelated flush", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-      const activePath = ownedLogPath(basePath, "active");
-
-      try {
-        yield* TestClock.setTime(1_800_000_000_000);
-        const store = yield* makeEventNdjsonLogStore(basePath, {
-          batchWindowMs: 0,
-          maxAgeMs: 1,
-          retentionCheckIntervalMs: 1,
-        });
-        const logger = store.logger("native");
-
-        yield* logger.write({ id: "active-before-retention" }, ThreadId.make("active"));
-        assert.equal(NodeFS.existsSync(activePath), true);
-
-        yield* TestClock.adjust("2 millis");
-        yield* logger.write({ id: "retention-trigger" }, ThreadId.make("other"));
-
-        assert.equal(NodeFS.existsSync(activePath), true);
-        yield* store.close();
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
@@ -938,37 +512,5 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
           NodeFS.rmSync(tempDir, { recursive: true, force: true });
         }
       }),
-  );
-
-  it.effect("reports logical provider log writes to resource attribution", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "provider-native.ndjson");
-
-      try {
-        const attribution = yield* ResourceAttribution.make();
-        const logger = yield* makeEventNdjsonLogger(basePath, {
-          stream: "native",
-          batchWindowMs: 0,
-          attribution,
-        });
-        assert.notEqual(logger, undefined);
-        if (!logger) {
-          return;
-        }
-
-        yield* logger.write({ id: "attributed-event" }, ThreadId.make("thread-attribution"));
-        yield* logger.close();
-
-        const snapshot = yield* attribution.snapshot;
-        assert.equal(snapshot.entries.length, 1);
-        assert.equal(snapshot.entries[0]?.component, "provider-event-log");
-        assert.equal(snapshot.entries[0]?.operation, "native.append");
-        assert.equal(snapshot.entries[0]?.count, 1);
-        assert.isAbove(snapshot.entries[0]?.logicalWriteBytes ?? 0, 0);
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
   );
 });

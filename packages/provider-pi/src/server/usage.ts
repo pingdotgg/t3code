@@ -62,8 +62,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
   if (timestampMs === null) return [];
   const source = entry.type === "message" ? entry.message : entry;
   const usage = source.usage;
-  // Pi's auxiliary tool and summary records carry no model attribution. Match
-  // Pi's own breakdown rather than assigning them to the conversation model.
+  // Auxiliary tool/summary records lack model attribution; match Pi's breakdown.
   const rateModel =
     "model" in source
       ? "responseModel" in source
@@ -81,8 +80,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
     reasoningTokens: Math.min(outputTokens, tokenCount(usage.reasoning)),
   };
   const cost = usage.cost?.total;
-  // Pi defaults omitted catalog rates to zero. Let shared pricing estimate
-  // API-equivalent cost when the transcript has no positive cost estimate.
+  // Omitted Pi rates default to zero; use shared estimates without positive transcript cost.
   const reportedCostUsd =
     typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null;
   if (totalTokens(totals) === 0 && reportedCostUsd === null) return [];
@@ -96,9 +94,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
       totals,
       reportedCostUsd,
       speed: "standard",
-      // Forks copy entries verbatim, including ID/timestamp. Entry IDs are only
-      // eight random hex digits, so retain timestamp/model to avoid collisions
-      // across unrelated sessions.
+      // Forks preserve IDs/timestamps; short random IDs need timestamp/model to avoid cross-session collisions.
       dedupeKey: JSON.stringify(["pi", entry.id, entry.timestamp, model]),
     },
   ];
@@ -135,16 +131,21 @@ export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {
   directories: Effect.fn("piUsageReader.directories")(function* ({ environment }) {
     const path = yield* Path.Path;
     const home = yield* HostProcess.HomeDirectory;
-    const sessionDir = environment.PI_CODING_AGENT_SESSION_DIR?.trim();
-    if (sessionDir) return [{ dir: path.resolve(expandHomePath(sessionDir, home)) }];
-    const agentDir = environment.PI_CODING_AGENT_DIR?.trim();
-    return [
-      {
-        dir: path.resolve(
-          agentDir ? expandHomePath(agentDir, home) : path.join(home, ".pi", "agent"),
-          "sessions",
-        ),
-      },
-    ];
+    return [{ dir: resolvePiSessionsDir(environment, home, path) }];
   }),
 };
+
+/** Where Pi stores session JSONL files for a provider environment, matching Pi's own lookup. */
+export function resolvePiSessionsDir(
+  environment: NodeJS.ProcessEnv,
+  home: string,
+  path: Path.Path,
+): string {
+  const sessionDir = environment.PI_CODING_AGENT_SESSION_DIR?.trim();
+  if (sessionDir) return path.resolve(expandHomePath(sessionDir, home));
+  const agentDir = environment.PI_CODING_AGENT_DIR?.trim();
+  return path.resolve(
+    agentDir ? expandHomePath(agentDir, home) : path.join(home, ".pi", "agent"),
+    "sessions",
+  );
+}

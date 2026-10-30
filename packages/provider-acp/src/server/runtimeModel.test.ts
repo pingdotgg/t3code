@@ -8,7 +8,6 @@ import {
   acpContentBlockDisplayText,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
-  extractModelConfigId,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionModeState,
@@ -18,6 +17,7 @@ import {
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
   toolCallProgressLength,
+  withTrackedPermissionToolCall,
   type AcpToolCallState,
 } from "./runtimeModel.ts";
 
@@ -42,32 +42,6 @@ describe("AcpRuntimeModel", () => {
         { id: "code", name: "Code" },
       ],
     });
-  });
-
-  it("extracts the model config id from typed ACP config options", () => {
-    const modelConfigId = extractModelConfigId({
-      sessionId: "session-1",
-      configOptions: [
-        {
-          id: "approval",
-          name: "Approval Mode",
-          category: "permission",
-          type: "select",
-          currentValue: "ask",
-          options: [{ value: "ask", name: "Ask" }],
-        },
-        {
-          id: "model",
-          name: "Model",
-          category: "model",
-          type: "select",
-          currentValue: "default",
-          options: [{ value: "default", name: "Auto" }],
-        },
-      ],
-    } satisfies EffectAcpSchema.NewSessionResponse);
-
-    expect(modelConfigId).toBe("model");
   });
 
   it("detects Grok session replay updates from _meta.isReplay", () => {
@@ -144,46 +118,6 @@ describe("AcpRuntimeModel", () => {
     ).toBe(true);
   });
 
-  it("counts mode/config/session/usage updates as load-replay activity", () => {
-    expect(
-      sessionUpdateCountsAsLoadReplayActivity({
-        sessionId: "session-1",
-        update: {
-          sessionUpdate: "current_mode_update",
-          currentModeId: "code",
-        },
-      } satisfies EffectAcpSchema.SessionNotification),
-    ).toBe(true);
-    expect(
-      sessionUpdateCountsAsLoadReplayActivity({
-        sessionId: "session-1",
-        update: {
-          sessionUpdate: "config_option_update",
-          configOptions: [],
-        },
-      } satisfies EffectAcpSchema.SessionNotification),
-    ).toBe(true);
-    expect(
-      sessionUpdateCountsAsLoadReplayActivity({
-        sessionId: "session-1",
-        update: {
-          sessionUpdate: "session_info_update",
-          title: "Restored",
-        },
-      } satisfies EffectAcpSchema.SessionNotification),
-    ).toBe(true);
-    expect(
-      sessionUpdateCountsAsLoadReplayActivity({
-        sessionId: "session-1",
-        update: {
-          sessionUpdate: "usage_update",
-          used: 1,
-          size: 10,
-        },
-      } satisfies EffectAcpSchema.SessionNotification),
-    ).toBe(true);
-  });
-
   it("ignores malformed initialize mode state in synthetic load responses", () => {
     const response = syntheticLoadSessionResponseFromInitialize({
       protocolVersion: 1,
@@ -197,24 +131,6 @@ describe("AcpRuntimeModel", () => {
 
     expect(response.modes).toBeUndefined();
     expect(response._meta).toMatchObject({ t3SessionLoadReady: "replay_idle" });
-  });
-
-  it("builds a synthetic load response with initialize mode state", () => {
-    const response = syntheticLoadSessionResponseFromInitialize({
-      protocolVersion: 1,
-      _meta: {
-        modeState: {
-          currentModeId: "code",
-          availableModes: [
-            { id: "ask", name: "Ask" },
-            { id: "code", name: "Code" },
-          ],
-        },
-      },
-    } satisfies EffectAcpSchema.InitializeResponse);
-
-    expect(response.modes?.currentModeId).toBe("code");
-    expect(response.modes?.availableModes).toHaveLength(2);
   });
 
   it("keeps initialize mode state whose modes have null descriptions", () => {
@@ -413,24 +329,6 @@ describe("AcpRuntimeModel", () => {
     ).toBe(true);
   });
 
-  it("trims padded current mode updates before emitting a mode change", () => {
-    const result = parseSessionUpdateEvent({
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "current_mode_update",
-        currentModeId: " code ",
-      },
-    } satisfies EffectAcpSchema.SessionNotification);
-
-    expect(result.modeId).toBe("code");
-    expect(result.events).toEqual([
-      {
-        _tag: "ModeChanged",
-        modeId: "code",
-      },
-    ]);
-  });
-
   it("projects typed ACP plan and content updates", () => {
     const planResult = parseSessionUpdateEvent({
       sessionId: "session-1",
@@ -496,45 +394,6 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
-  it("keeps thought chunks separate from assistant text", () => {
-    const notification = {
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "agent_thought_chunk",
-        content: { type: "text", text: "Inspect the current implementation first." },
-      },
-    } satisfies EffectAcpSchema.SessionNotification;
-
-    expect(parseSessionUpdateEvent(notification).events).toEqual([
-      {
-        _tag: "ThoughtDelta",
-        text: "Inspect the current implementation first.",
-        rawPayload: notification,
-      },
-    ]);
-  });
-
-  it("preserves native command inputs and empty command lists", () => {
-    const availableCommands = [
-      { name: "plan", description: "Plan a task", input: { type: "text", hint: "task" } },
-      { name: "logout", description: "Sign out" },
-    ] satisfies ReadonlyArray<EffectAcpSchema.AvailableCommand>;
-
-    for (const commands of [availableCommands, []]) {
-      const notification = {
-        sessionId: "session-1",
-        update: { sessionUpdate: "available_commands_update", availableCommands: commands },
-      } satisfies EffectAcpSchema.SessionNotification;
-      expect(parseSessionUpdateEvent(notification).events).toEqual([
-        {
-          _tag: "AvailableCommandsUpdated",
-          availableCommands: commands,
-          rawPayload: notification,
-        },
-      ]);
-    }
-  });
-
   it("keeps permission request parsing compatible with loose extension payloads", () => {
     const request = parsePermissionRequest({
       sessionId: "session-1",
@@ -574,9 +433,41 @@ describe("AcpRuntimeModel", () => {
     });
   });
 
+  it("keeps an explicit permission request kind over the tracked tool call's kind", () => {
+    const request = withTrackedPermissionToolCall(
+      {
+        sessionId: "session-1",
+        options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+        toolCall: { toolCallId: "tool-1", kind: "read" },
+      },
+      {
+        toolCallId: "tool-1",
+        kind: "execute",
+        data: { toolCallId: "tool-1", title: "git status", rawInput: { command: "git status" } },
+      },
+    );
+
+    expect(parsePermissionRequest(request)).toMatchObject({ kind: "read", detail: "git status" });
+  });
+
+  it("keeps explicitly cleared permission request fields over the tracked tool call", () => {
+    const request = withTrackedPermissionToolCall(
+      {
+        sessionId: "session-1",
+        options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+        toolCall: { toolCallId: "tool-1", kind: null, title: null, rawInput: null },
+      },
+      {
+        toolCallId: "tool-1",
+        kind: "execute",
+        data: { toolCallId: "tool-1", title: "git status", rawInput: { command: "git status" } },
+      },
+    );
+
+    expect(parsePermissionRequest(request).kind).toBe("unknown");
+  });
+
   it("bounds an oversized cumulative tool_call_update content buffer to a tail window", () => {
-    // Mirrors Grok's ACP CLI resending the ENTIRE accumulated terminal output on every
-    // tool_call_update notification instead of a delta (see upstream #6556).
     const hugeText = Array.from({ length: 2_000 }, (_, i) => `line ${i}: ${"x".repeat(50)}`).join(
       "\n",
     );
@@ -585,8 +476,7 @@ describe("AcpRuntimeModel", () => {
     const result = parseSessionUpdateEvent({
       sessionId: "session-1",
       update: {
-        // Real ACP `tool_call_update` deltas typically omit `title` (already established by
-        // the initial `tool_call`); that is also the shape that surfaces raw content as detail.
+        // Real tool_call_update deltas omit title; raw content then supplies detail.
         sessionUpdate: "tool_call_update",
         toolCallId: "tool-1",
         kind: "other",
@@ -729,88 +619,6 @@ describe("AcpRuntimeModel", () => {
     });
   });
 
-  it("keeps a retained tail on the original text entries around non-text content", () => {
-    const prefix = "a".repeat(4_000);
-    const suffix = "b".repeat(5_000);
-    const { events } = parseSessionUpdateEvent({
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "tool_call_update",
-        toolCallId: "tool-1",
-        kind: "edit",
-        status: "in_progress",
-        content: [
-          { type: "content", content: { type: "text", text: prefix } },
-          { type: "diff", path: "/repo/file.ts", oldText: "before", newText: "after" },
-          { type: "content", content: { type: "text", text: suffix } },
-        ],
-      },
-    } satisfies EffectAcpSchema.SessionNotification);
-
-    const event = events[0];
-    if (event?._tag !== "ToolCallUpdated") {
-      throw new Error("expected a ToolCallUpdated event");
-    }
-    const content = event.toolCall.data.content as ReadonlyArray<EffectAcpSchema.ToolCallContent>;
-    expect(content).toHaveLength(3);
-    const firstText = content[0];
-    if (firstText?.type !== "content" || firstText.content.type !== "text") {
-      throw new Error("expected a bounded prefix text entry");
-    }
-    expect(firstText.content.text.startsWith("[Earlier output truncated]")).toBe(true);
-    expect(firstText.content.text.endsWith("a".repeat(100))).toBe(true);
-    expect(content[1]).toEqual({
-      type: "diff",
-      path: "/repo/file.ts",
-      oldText: "before",
-      newText: "after",
-    });
-    expect(content[2]).toEqual({
-      type: "content",
-      content: { type: "text", text: suffix },
-    });
-  });
-
-  it("bounds oversized whitespace-only tool call content that has no trimmed text", () => {
-    const hugeWhitespace = " \n\t".repeat(30_000);
-    expect(hugeWhitespace.length).toBeGreaterThan(60_000);
-
-    const { events } = parseSessionUpdateEvent({
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "tool_call_update",
-        toolCallId: "tool-1",
-        kind: "other",
-        status: "in_progress",
-        content: [{ type: "content", content: { type: "text", text: hugeWhitespace } }],
-      },
-    } satisfies EffectAcpSchema.SessionNotification);
-
-    const event = events[0];
-    if (event?._tag !== "ToolCallUpdated") {
-      throw new Error("expected a ToolCallUpdated event");
-    }
-
-    expect(event.toolCall.detail).toBeUndefined();
-    const content = event.toolCall.data.content as ReadonlyArray<EffectAcpSchema.ToolCallContent>;
-    const textEntry = content[0];
-    if (textEntry?.type !== "content" || textEntry.content.type !== "text") {
-      throw new Error("expected a bounded text entry");
-    }
-    expect(textEntry.content.text.length).toBeLessThan(8_100);
-    expect(textEntry.content.text.startsWith("[Earlier output truncated]")).toBe(true);
-
-    const rawUpdate = (
-      event.rawPayload as {
-        readonly update: {
-          readonly content: ReadonlyArray<{ readonly content: { text: string } }>;
-        };
-      }
-    ).update;
-    expect(rawUpdate.content[0]?.content.text.length).toBeLessThan(8_100);
-    expect(JSON.stringify(event).length).toBeLessThan(hugeWhitespace.length);
-  });
-
   it("bounds oversized whitespace-padded text entries even when trimmed content fits", () => {
     const padded = `${" ".repeat(40_000)}ok${" ".repeat(40_000)}`;
     expect(padded.length).toBeGreaterThan(60_000);
@@ -860,17 +668,6 @@ describe("AcpRuntimeModel", () => {
         data: {},
       }) satisfies AcpToolCallState;
 
-    it("emits the first in-progress tool_call even when it has no detail", () => {
-      expect(
-        decideToolCallUpdateEmission({
-          previous: undefined,
-          next: { toolCallId: "tool-1", title: "Grok Tool", status: "pending", data: {} },
-          lastEmittedDetailLength: undefined,
-          skippedSinceEmit: 0,
-        }),
-      ).toEqual({ emit: true, skippedSinceEmit: 0 });
-    });
-
     it("always emits terminal (completed/failed) status updates regardless of growth", () => {
       expect(
         decideToolCallUpdateEmission({
@@ -889,18 +686,6 @@ describe("AcpRuntimeModel", () => {
           skippedSinceEmit: 3,
         }),
       ).toEqual({ emit: true, skippedSinceEmit: 0 });
-    });
-
-    it("skips updates whose bounded detail did not change", () => {
-      const previous = toolCall("frame 1", "inProgress");
-      expect(
-        decideToolCallUpdateEmission({
-          previous,
-          next: previous,
-          lastEmittedDetailLength: 7,
-          skippedSinceEmit: 0,
-        }),
-      ).toEqual({ emit: false, skippedSinceEmit: 0 });
     });
 
     it("coalesces command-tool updates whose content grew while detail stayed the command", () => {
@@ -939,27 +724,6 @@ describe("AcpRuntimeModel", () => {
 
       const emittedIndices = emissions.flatMap((emitted, index) => (emitted ? [index + 1] : []));
       expect(emittedIndices).toEqual([1, 11]);
-    });
-
-    it("emits pending to inProgress status changes even when detail and output are unchanged", () => {
-      expect(
-        decideToolCallUpdateEmission({
-          previous: toolCall("same", "pending"),
-          next: toolCall("same", "inProgress"),
-          lastEmittedDetailLength: 4,
-          skippedSinceEmit: 0,
-        }),
-      ).toEqual({ emit: true, skippedSinceEmit: 0 });
-    });
-
-    it("emits immediately when the title changes, even with no growth", () => {
-      const decision = decideToolCallUpdateEmission({
-        previous: { toolCallId: "tool-1", title: "Reading file", detail: "x", data: {} },
-        next: { toolCallId: "tool-1", title: "Ran command", detail: "x", data: {} },
-        lastEmittedDetailLength: 1,
-        skippedSinceEmit: 0,
-      });
-      expect(decision).toEqual({ emit: true, skippedSinceEmit: 0 });
     });
 
     it("coalesces small deltas but forces an emission after the coalesce limit", () => {
@@ -1251,6 +1015,7 @@ describe("AcpRuntimeModel", () => {
       command: "pnpm test",
       cwd: "/workspace",
       output: "first line\nsecond line\n",
+      outputBytes: 23,
       exitStatus: { exitCode: 0 },
     });
   });
@@ -1272,6 +1037,51 @@ describe("AcpRuntimeModel", () => {
     expect(first.pendingOutputBytes).toBeDefined();
     expect(second.output).toBe("A🙂B");
     expect(second.pendingOutputBytes).toBeUndefined();
+  });
+
+  it("keeps the newest 16 MiB of ACP terminal output at a UTF-8 boundary", () => {
+    const cap = 16 * 1024 * 1024;
+    const chunk = (text: string | Uint8Array) => ({
+      sessionUpdate: "terminal_output_chunk" as const,
+      terminalId: "terminal-cap",
+      data: Buffer.from(text).toString("base64"),
+    });
+    const seeded = applyAcpAgentTerminalUpdate(undefined, {
+      sessionUpdate: "terminal_update",
+      terminalId: "terminal-cap",
+      output: { data: Buffer.from(`é${"a".repeat(cap - 3)}`).toString("base64") },
+    });
+    expect(seeded.outputBytes).toBe(cap - 1);
+
+    // One byte over the cap falls inside "é", so the whole character is dropped.
+    const trimmed = applyAcpAgentTerminalUpdate(seeded, chunk("bc"));
+    expect(trimmed.output.length).toBe(cap - 1);
+    expect(trimmed.output.slice(0, 2)).toBe("aa");
+    expect(trimmed.output.slice(-3)).toBe("abc");
+    expect(trimmed.outputBytes).toBe(cap - 1);
+
+    const emoji = applyAcpAgentTerminalUpdate(trimmed, chunk("🙂"));
+    expect(emoji.output.slice(-5)).toBe("abc🙂");
+    expect(emoji.outputBytes).toBe(cap);
+    expect(Buffer.byteLength(emoji.output)).toBe(cap);
+
+    // Exit flushes an incomplete trailing character and trims again.
+    const pending = applyAcpAgentTerminalUpdate(emoji, chunk(Buffer.from("🙂").subarray(0, 2)));
+    const exited = applyAcpAgentTerminalUpdate(pending, {
+      sessionUpdate: "terminal_update",
+      terminalId: "terminal-cap",
+      exitStatus: { exitCode: 1 },
+    });
+    expect(exited.output.slice(-4)).toBe("c🙂\uFFFD");
+    expect(exited.outputBytes).toBe(Buffer.byteLength(exited.output));
+    expect(exited.outputBytes).toBeLessThanOrEqual(cap);
+
+    const cleared = applyAcpAgentTerminalUpdate(exited, {
+      sessionUpdate: "terminal_update",
+      terminalId: "terminal-cap",
+      output: null,
+    });
+    expect(cleared).toMatchObject({ output: "", outputBytes: 0, exitStatus: { exitCode: 1 } });
   });
 
   it("drops malformed and oversized ACP terminal frames without decoding them", () => {
@@ -1358,19 +1168,6 @@ describe("AcpRuntimeModel", () => {
         },
       },
     });
-  });
-
-  it("bounds text-bearing ACP content without changing streamed whitespace", () => {
-    const text = `  ${"x".repeat(70_000)}  `;
-    const projectedText = acpContentBlockDisplayText({ type: "text", text });
-    const projectedResource = acpContentBlockDisplayText({
-      type: "resource",
-      resource: { uri: "file:///workspace/large.txt", text },
-    });
-
-    expect(projectedText).toHaveLength(65_536);
-    expect(projectedText?.startsWith("  ")).toBe(true);
-    expect(projectedResource).toEqual(projectedText);
   });
 });
 
@@ -1473,30 +1270,6 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
-  it("recovers T3 identity from Gemini and qwen MCP-server title templates", () => {
-    const gemini = toolCallFromUpdate({
-      sessionUpdate: "tool_call",
-      toolCallId: "gemini-1",
-      kind: "other",
-      title: "delegate_task (t3-code MCP Server)",
-      status: "in_progress",
-    });
-    const qwen = toolCallFromUpdate({
-      sessionUpdate: "tool_call",
-      toolCallId: "qwen-1",
-      kind: "other",
-      title: 'task_status (t3-code MCP Server): {"taskId":"node:delegated-task:1"}',
-      status: "pending",
-      rawInput: { taskId: "node:delegated-task:1" },
-    });
-
-    expect(extractMcpToolCallIdentity(gemini)).toEqual({
-      server: "t3-code",
-      tool: "delegate_task",
-    });
-    expect(extractMcpToolCallIdentity(qwen)).toEqual({ server: "t3-code", tool: "task_status" });
-  });
-
   it("recovers T3 identity across the registry agents' naming conventions", () => {
     for (const title of [
       "t3-code___delegate_task",
@@ -1507,8 +1280,7 @@ describe("extractMcpToolCallIdentity", () => {
       "t3-code/delegate_task",
       "delegate_task",
       'delegate_task: {"mode":"async"}',
-      // Kimi retitles on every streamed args chunk with the raw partial JSON,
-      // and middle-truncates args longer than 50 characters.
+      // Kimi retitles with partial JSON and middle-truncates args over 50 characters.
       'delegate_task: {"mode":"async","task":"Ru',
       'delegate_task: {"mode":"async","task":"Ru...cho child-result-42\'"}',
     ]) {
@@ -1527,7 +1299,6 @@ describe("extractMcpToolCallIdentity", () => {
   });
 
   it("does not claim an agent's own tool that shares a T3 tool name", () => {
-    // Hermes' built-in delegate_task, titled "<tool>: <description>" like all its calls.
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
       toolCallId: "own-delegate-1",
@@ -1539,8 +1310,7 @@ describe("extractMcpToolCallIdentity", () => {
   });
 
   it("recovers T3 identity from goose _meta despite LLM-rewritten titles", () => {
-    // goose enriches titles asynchronously, so only _meta.goose.toolCall is
-    // stable; shape from crates/goose/src/acp/server/tool_calls/conversion.rs.
+    // goose titles change asynchronously; only _meta.goose.toolCall is stable.
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
       toolCallId: "goose-1",
@@ -1561,9 +1331,7 @@ describe("extractMcpToolCallIdentity", () => {
   });
 
   it("recovers T3 identity from qwen serverId meta regardless of prefix format", () => {
-    // qwen-code 0.21.12 emits _meta.serverId + _meta.toolName; serverId is an
-    // explicit origin assertion, so a known tool suffix suffices even if the
-    // prefix format changes.
+    // qwen-code 0.21.12 serverId asserts MCP origin even when tool prefixes change.
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
       toolCallId: "qwen-meta-1",

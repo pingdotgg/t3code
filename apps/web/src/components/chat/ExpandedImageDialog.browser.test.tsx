@@ -1,74 +1,43 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { SnapShotSource } from "@t3tools/contracts";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
-import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
-import { ExpandedImageDialogHost, openExpandedImagePreview } from "./ExpandedImageDialog";
+import "~/index.css";
+import { render } from "../../../test/render";
+import { ExpandedImageDialog } from "./ExpandedImageDialog";
 
-let root: Root;
-let container: HTMLDivElement;
+const PIXEL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
-const preview = {
-  images: [
-    { src: "data:image/gif;base64,R0lGODlhAQABAAAAACw=", name: "one.png" },
-    { src: "data:image/gif;base64,R0lGODlhAQABAAAAACw=", name: "two.png" },
-  ],
-  index: 0,
+const snapShotSource: SnapShotSource = {
+  kind: "snap-shot",
+  capturedAt: "2026-01-01T00:00:00.000Z",
+  appName: "Finder",
+  windowTitle: "Downloads",
 };
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
+describe("ExpandedImageDialog", () => {
+  it("Escape closes a popup opened inside the dialog before the dialog", async () => {
+    const onClose = vi.fn();
+    await using screen = await render(
+      <ExpandedImageDialog
+        preview={{ images: [{ src: PIXEL, name: "shot.png", source: snapShotSource }], index: 0 }}
+        onClose={onClose}
+      />,
+      // The dialog renders no links and reads no route.
+      { router: false },
+    );
 
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+    await userEvent.click(screen.getByRole("button", { name: "No accessibility data" }));
+    await expect.element(screen.getByText("Accessibility data")).toBeVisible();
 
-const host = (threadKey: string) => (
-  <AppAtomRegistryProvider>
-    <ExpandedImageDialogHost threadKey={threadKey} />
-  </AppAtomRegistryProvider>
-);
+    await userEvent.keyboard("{Escape}");
+    await expect.element(screen.getByText("Accessibility data")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
 
-const dialog = () => document.querySelector('[role="dialog"]');
-
-describe("ExpandedImageDialogHost", () => {
-  it("opens for its thread, steps with arrows, and closes on Escape with focus back on the opener", async () => {
-    const opener = document.createElement("button");
-    document.body.append(opener);
-    await act(() => root.render(host("env:a")));
-    opener.focus();
-
-    await act(() => openExpandedImagePreview("env:a", preview));
-    expect(dialog()?.textContent).toContain("one.png (1/2)");
-
-    await act(() => {
-      dialog()?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-    });
-    expect(dialog()?.textContent).toContain("two.png (2/2)");
-
-    await act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
-    await vi.waitFor(() => expect(dialog()).toBeNull());
-    expect(document.activeElement).toBe(opener);
-    opener.remove();
-  });
-
-  it("ignores another thread's preview and drops its own when the thread changes", async () => {
-    await act(() => root.render(host("env:a")));
-    await act(() => openExpandedImagePreview("env:b", preview));
-    expect(dialog()).toBeNull();
-
-    await act(() => openExpandedImagePreview("env:a", preview));
-    expect(dialog()).not.toBeNull();
-
-    await act(() => root.render(host("env:b")));
-    await vi.waitFor(() => expect(dialog()).toBeNull());
+    // Focus returns to the popup's trigger and opens its tooltip; leave it for a plain control.
+    (screen.getByRole("button", { name: "Close image preview" }).element() as HTMLElement).focus();
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
 });
