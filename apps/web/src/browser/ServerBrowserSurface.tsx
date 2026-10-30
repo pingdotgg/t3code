@@ -407,7 +407,8 @@ export function ServerBrowserSurface(props: {
             setPromptText(next.dialog?.defaultValue ?? "");
           if (next.controller !== "you") {
             clearInput();
-          } else if (previous?.controller !== "you") {
+          }
+          if (previous === null || (next.controller === "you" && previous.controller !== "you")) {
             const size = sizeRef.current;
             if (followSize && size) client.send({ type: "resize", ...size });
           }

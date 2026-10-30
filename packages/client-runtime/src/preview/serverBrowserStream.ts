@@ -375,7 +375,8 @@ export function createPreviewStreamClient(
     send: (input) => {
       if (socket?.readyState !== WebSocket.OPEN) return false;
       if (!control?.canOperate) return false;
-      if (input.type !== "takeControl" && control.controller !== "you") return false;
+      if (input.type !== "takeControl" && input.type !== "resize" && control.controller !== "you")
+        return false;
       socket.send(JSON.stringify(input));
       return true;
     },
