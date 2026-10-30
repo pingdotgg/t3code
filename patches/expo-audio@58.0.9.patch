@@ -72,9 +72,10 @@ diff --git a/ios/AudioModule.swift b/ios/AudioModule.swift
          !self.isSessionInUse else {
          return
 diff --git a/src/AudioModule.types.ts b/src/AudioModule.types.ts
+index 3194a8ebd1b91793d03a1692c563b5d2e83c2738..e7e713199f776b60093b75da782197427cf2000d 100644
 --- a/src/AudioModule.types.ts
 +++ b/src/AudioModule.types.ts
-@@ -27,6 +27,8 @@
+@@ -24,6 +24,8 @@ import type { AudioStream } from './AudioStream.types';
   */
  export declare class NativeAudioModule extends NativeModule {
    setIsAudioActiveAsync(active: boolean): Promise<void>;
@@ -83,7 +84,7 @@ diff --git a/src/AudioModule.types.ts b/src/AudioModule.types.ts
    setAudioModeAsync(category: Partial<AudioMode>): Promise<void>;
    requestRecordingPermissionsAsync(): Promise<PermissionResponse>;
    requestNotificationPermissionsAsync(): Promise<PermissionResponse>;
-@@ -175,8 +175,9 @@
+@@ -175,8 +177,9 @@ export declare class AudioPlayer extends SharedObject<AudioEvents> {
 
    /**
     * Pauses the player.
@@ -94,10 +95,22 @@ diff --git a/src/AudioModule.types.ts b/src/AudioModule.types.ts
 
    /**
     * Replaces the current audio source with a new one.
+@@ -343,7 +346,9 @@ export declare class AudioRecorder extends SharedObject<RecordingEvents> {
+    * @param inputUid The uid of a `RecordingInput`.
+    * @return A `Promise` that is resolved if successful or rejected if not.
+    */
+-  setInput(inputUid: string): void;
++  setInput(inputUid: string): void | Promise<void>;
++  /** Android only: cancel a pending recording-input selection. */
++  cancelInputSelection?(): void;
+
+   /**
+    * Status of the current recording.
 diff --git a/build/AudioModule.types.d.ts b/build/AudioModule.types.d.ts
+index 0d63c9b949cfae7a101902fc3bb70fcf46094f68..b590f9654bbf74b5052b71e31b7ed6d3d0050aa4 100644
 --- a/build/AudioModule.types.d.ts
 +++ b/build/AudioModule.types.d.ts
-@@ -6,6 +6,8 @@
+@@ -8,6 +8,8 @@ import type { AudioStream } from './AudioStream.types';
   */
  export declare class NativeAudioModule extends NativeModule {
      setIsAudioActiveAsync(active: boolean): Promise<void>;
@@ -106,7 +119,7 @@ diff --git a/build/AudioModule.types.d.ts b/build/AudioModule.types.d.ts
      setAudioModeAsync(category: Partial<AudioMode>): Promise<void>;
      requestRecordingPermissionsAsync(): Promise<PermissionResponse>;
      requestNotificationPermissionsAsync(): Promise<PermissionResponse>;
-@@ -135,8 +135,9 @@
+@@ -135,8 +137,9 @@ export declare class AudioPlayer extends SharedObject<AudioEvents> {
      play(): void;
      /**
       * Pauses the player.
@@ -117,22 +130,61 @@ diff --git a/build/AudioModule.types.d.ts b/build/AudioModule.types.d.ts
      /**
       * Replaces the current audio source with a new one.
       */
+@@ -273,7 +276,9 @@ export declare class AudioRecorder extends SharedObject<RecordingEvents> {
+      * @param inputUid The uid of a `RecordingInput`.
+      * @return A `Promise` that is resolved if successful or rejected if not.
+      */
+-    setInput(inputUid: string): void;
++    setInput(inputUid: string): void | Promise<void>;
++    /** Android only: cancel a pending recording-input selection. */
++    cancelInputSelection?(): void;
+     /**
+      * Status of the current recording.
+      */
 diff --git a/android/src/main/java/expo/modules/audio/AudioModule.kt b/android/src/main/java/expo/modules/audio/AudioModule.kt
+index 6c81fce3dd518d3b82e3280940a001c7be84dd0a..16125c679c870e2eae48f8db953dedd3fc842c3d 100644
 --- a/android/src/main/java/expo/modules/audio/AudioModule.kt
 +++ b/android/src/main/java/expo/modules/audio/AudioModule.kt
-@@ -678,5 +678,5 @@
+@@ -677,7 +677,7 @@ class AudioModule : Module() {
+         }
        }
 
 -      Function("pause") { player: AudioPlayer ->
 +      Function("pause") { player: AudioPlayer, /* deactivateSession - iOS only */ _: Boolean? ->
          runOnMain {
            player.isPaused = false
+           player.ref.pause()
+@@ -824,10 +824,14 @@ class AudioModule : Module() {
+         return@Function recorder.getAvailableInputs(audioManager)
+       }
 
+-      Function("setInput") { recorder: AudioRecorder, input: String ->
++      AsyncFunction("setInput") Coroutine { recorder: AudioRecorder, input: String ->
+         recorder.setInput(input, audioManager)
+       }
+
++      Function("cancelInputSelection") { recorder: AudioRecorder ->
++        recorder.cancelInputSelection()
++      }
++
+       Function("startRecordingAtTime") { recorder: AudioRecorder, seconds: Double ->
+         checkRecordingPermission()
+         if (recorder.isPrepared) {
 diff --git a/android/src/main/java/expo/modules/audio/AudioRecorder.kt b/android/src/main/java/expo/modules/audio/AudioRecorder.kt
-index 2ff4a474fdea3efa652436a8a3960c3669ad298b..ab006b4321ad3854a80a52b3d41075bbd370bcd7 100644
+index 2ff4a474fdea3efa652436a8a3960c3669ad298b..63229cea73ef0d2fe245b5d2a2675044ce621dc8 100644
 --- a/android/src/main/java/expo/modules/audio/AudioRecorder.kt
 +++ b/android/src/main/java/expo/modules/audio/AudioRecorder.kt
-@@ -42,6 +42,11 @@ class AudioRecorder(
+@@ -19,6 +19,9 @@ import expo.modules.kotlin.exception.CodedException
+ import expo.modules.kotlin.exception.Exceptions
+ import expo.modules.kotlin.sharedobjects.SharedObject
+ import kotlinx.coroutines.Job
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.currentCoroutineContext
++import kotlinx.coroutines.job
+ import kotlinx.coroutines.delay
+ import kotlinx.coroutines.launch
+ import java.io.File
+@@ -42,12 +45,19 @@ class AudioRecorder(
    var isPrepared = false
 
    private var recorder: MediaRecorder? = null
@@ -144,7 +196,27 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..ab006b4321ad3854a80a52b3d41075bb
    val id = UUID.randomUUID().toString()
    var startTime = 0L
    var isRecording = false
-@@ -248,7 +253,11 @@ class AudioRecorder(
+   var isPaused = false
+   private var isPausedBySystem = false
+   private var recordingTimerJob: Job? = null
++  private var inputSelectionJob: Job? = null
++  private var inputSelectionCanceled = false
+   private var durationLimitMillis: Long? = null
+   var useForegroundService = false
+
+@@ -90,6 +100,7 @@ class AudioRecorder(
+       throw AudioRecorderAlreadyPreparedException()
+     }
+
++    synchronized(this) { inputSelectionCanceled = false }
+     val recordingOptions = options ?: this.options
+     val mediaRecorder = createRecorder(recordingOptions)
+     recorder = mediaRecorder
+@@ -245,10 +256,15 @@ class AudioRecorder(
+   }
+
+   private fun reset() {
++    cancelInputSelection()
      recordingTimerJob?.cancel()
      recordingTimerJob = null
 
@@ -157,7 +229,7 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..ab006b4321ad3854a80a52b3d41075bb
      recorder = null
      isRecording = false
      isPaused = false
-@@ -475,48 +484,37 @@ class AudioRecorder(
+@@ -475,48 +491,59 @@ class AudioRecorder(
      ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
    fun getAvailableInputs(audioManager: AudioManager) =
@@ -168,12 +240,33 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..ab006b4321ad3854a80a52b3d41075bb
 -      } else {
 -        null
 -      }
--    }
 +    recordingInputs(audioManager).map(::getMapFromDeviceInfo)
++
++  suspend fun setInput(uid: String, audioManager: AudioManager) {
++    val job = currentCoroutineContext().job
++    synchronized(this) {
++      if (inputSelectionCanceled) throw CancellationException("Input selection canceled")
++      inputSelectionJob = job
++    }
++    try {
++      setInputDevice(uid, audioManager)
++    } finally {
++      synchronized(this) { if (inputSelectionJob === job) inputSelectionJob = null }
+     }
++  }
++
++  fun cancelInputSelection() {
++    val job = synchronized(this) {
++      inputSelectionCanceled = true
++      inputSelectionJob
++    }
++    job?.cancel()
++  }
 
    @Suppress("DEPRECATION")
-   fun setInput(uid: String, audioManager: AudioManager) {
+-  fun setInput(uid: String, audioManager: AudioManager) {
 -    val deviceInfo: AudioDeviceInfo? = getDeviceInfoFromUid(uid, audioManager)
++  private suspend fun setInputDevice(uid: String, audioManager: AudioManager) {
 +    val deviceInfo = getDeviceInfoFromUid(uid, audioManager) ?: throw PreferredInputNotFoundException()
 
      if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
@@ -201,7 +294,8 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..ab006b4321ad3854a80a52b3d41075bb
 -    val success = recorder?.setPreferredDevice(deviceInfo)
 -    if (success == false) {
 -      throw PreferredInputNotFoundException()
-+      if (recorder?.setPreferredDevice(deviceInfo.takeIf { it.isSource }) != true) {
++      val source = getDeviceInfoFromUid(uid, audioManager)?.takeIf { it.isSource }
++      if (recorder?.setPreferredDevice(source) != true) {
 +        throw PreferredInputNotFoundException()
 +      }
 +    } catch (error: Exception) {
@@ -291,22 +385,25 @@ index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..ec3e0274d0a84fd8c7960cc0ea1b3005
    return MediaSession.Builder(context, PlayRequestingPlayer(player, onPlay))
 diff --git a/android/src/main/java/expo/modules/audio/RecordingInputRoute.kt b/android/src/main/java/expo/modules/audio/RecordingInputRoute.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..2d584666da29c3f87ee5ee819e880b003ccceb32
+index 0000000000000000000000000000000000000000..cdba9724318cf06afd21b4df6b895b381afa8e6f
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/audio/RecordingInputRoute.kt
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,53 @@
 +package expo.modules.audio
 +
 +import android.media.AudioDeviceInfo
 +import android.media.AudioManager
 +import androidx.annotation.RequiresApi
 +import java.io.Closeable
++import java.util.concurrent.Executor
++import kotlinx.coroutines.CompletableDeferred
++import kotlinx.coroutines.withTimeout
 +
 +@RequiresApi(31)
 +internal class RecordingInputRoute(private val manager: AudioManager) : Closeable {
 +  private var previousMode: Int? = null
 +
-+  fun select(input: AudioDeviceInfo) {
++  suspend fun select(input: AudioDeviceInfo) {
 +    if (!isBluetoothInput(input.type)) {
 +      close()
 +      return
@@ -316,13 +413,22 @@ index 0000000000000000000000000000000000000000..2d584666da29c3f87ee5ee819e880b00
 +      it.isSink && it.type == input.type &&
 +        if (input.address.isNotBlank()) it.address == input.address else it.productName == input.productName
 +    } ?: throw PreferredInputNotFoundException()
-+    if (previousMode == null) previousMode = manager.mode
++    val ready = CompletableDeferred<Unit>()
++    val listener = AudioManager.OnCommunicationDeviceChangedListener {
++      if (it?.id == output.id) ready.complete(Unit)
++    }
++    manager.addOnCommunicationDeviceChangedListener(Executor { it.run() }, listener)
 +    try {
++      if (previousMode == null) previousMode = manager.mode
 +      manager.mode = AudioManager.MODE_IN_COMMUNICATION
 +      if (!manager.setCommunicationDevice(output)) throw PreferredInputNotFoundException()
++      if (manager.communicationDevice?.id == output.id) ready.complete(Unit)
++      withTimeout(5_000) { ready.await() }
 +    } catch (error: Exception) {
 +      close()
 +      throw error
++    } finally {
++      manager.removeOnCommunicationDeviceChangedListener(listener)
 +    }
 +  }
 +
@@ -338,16 +444,24 @@ index 0000000000000000000000000000000000000000..2d584666da29c3f87ee5ee819e880b00
 +}
 diff --git a/android/src/test/java/expo/modules/audio/RecordingInputTest.kt b/android/src/test/java/expo/modules/audio/RecordingInputTest.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..90d3feec81b2e76b611c6aa14a96333c004512b5
+index 0000000000000000000000000000000000000000..65939af4f953e5125fffb763c1734706f640453f
 --- /dev/null
 +++ b/android/src/test/java/expo/modules/audio/RecordingInputTest.kt
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,151 @@
 +package expo.modules.audio
 +
 +import android.media.AudioDeviceInfo
 +import android.media.AudioManager
 +import io.mockk.every
 +import io.mockk.mockk
++import kotlinx.coroutines.CoroutineStart
++import kotlinx.coroutines.ExperimentalCoroutinesApi
++import kotlinx.coroutines.TimeoutCancellationException
++import kotlinx.coroutines.async
++import kotlinx.coroutines.cancelAndJoin
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.test.advanceUntilIdle
++import kotlinx.coroutines.test.runTest
 +import org.junit.Assert.*
 +import org.junit.Test
 +
@@ -388,46 +502,111 @@ index 0000000000000000000000000000000000000000..90d3feec81b2e76b611c6aa14a96333c
 +  }
 +
 +  @Test
-+  fun communicationRouteUsesMatchingOutputAndRestoresMode() {
++  fun communicationRouteWaitsForMatchingOutputAndRestoresMode() = runTest {
 +    for (type in listOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET)) {
 +      val input = device(type, 10, "target")
 +      val wrong = device(type, 20, "other", sink = true)
 +      val output = device(type, 30, "target", sink = true)
-+      val manager = mockk<AudioManager>()
-+      var mode = AudioManager.MODE_NORMAL
-+      var routed: AudioDeviceInfo? = null
-+      every { manager.availableCommunicationDevices } returns listOf(input, wrong, output)
-+      every { manager.mode } answers { mode }
-+      every { manager.mode = any() } answers { mode = firstArg() }
-+      every { manager.setCommunicationDevice(any()) } answers { routed = firstArg(); true }
-+      every { manager.clearCommunicationDevice() } answers { routed = null }
-+      val route = RecordingInputRoute(manager)
-+      route.select(input)
-+      assertSame(output, routed)
-+      assertEquals(AudioManager.MODE_IN_COMMUNICATION, mode)
++      val harness = RouteHarness(listOf(input, wrong, output))
++      val route = RecordingInputRoute(harness.manager)
++      val preparing = async(start = CoroutineStart.UNDISPATCHED) { route.select(input) }
++      assertSame(output, harness.requested)
++      assertFalse(preparing.isCompleted)
++      harness.confirm(wrong)
++      assertFalse(preparing.isCompleted)
++      harness.confirm(output)
++      preparing.await()
++      assertEquals(AudioManager.MODE_IN_COMMUNICATION, harness.mode)
++      assertTrue(harness.listeners.isEmpty())
 +      route.close()
 +      route.close()
-+      assertNull(routed)
-+      assertEquals(AudioManager.MODE_NORMAL, mode)
++      assertNull(harness.requested)
++      assertEquals(AudioManager.MODE_NORMAL, harness.mode)
++      harness.active = output
 +      route.select(output)
 +      route.select(device(AudioDeviceInfo.TYPE_BUILTIN_MIC, 1, ""))
-+      assertNull(routed)
-+      assertEquals(AudioManager.MODE_NORMAL, mode)
++      assertNull(harness.requested)
++      assertEquals(AudioManager.MODE_NORMAL, harness.mode)
 +    }
 +  }
 +
 +  @Test
-+  fun rejectedRouteDoesNotLeaveCommunicationModeActive() {
++  fun rejectedRouteDoesNotLeaveCommunicationModeActive() = runTest {
 +    val input = device(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 1, "target")
 +    val output = device(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 2, "target", sink = true)
++    val harness = RouteHarness(listOf(output), accepted = false)
++    val error = runCatching { RecordingInputRoute(harness.manager).select(input) }.exceptionOrNull()
++    assertTrue(error is PreferredInputNotFoundException)
++    assertEquals(AudioManager.MODE_NORMAL, harness.mode)
++    assertTrue(harness.listeners.isEmpty())
++  }
++
++  @Test
++  fun cancellationRemovesListenerAndPendingRoute() = runTest {
++    val output = device(AudioDeviceInfo.TYPE_BLE_HEADSET, 2, "target", sink = true)
++    val harness = RouteHarness(listOf(output))
++    val route = RecordingInputRoute(harness.manager)
++    val preparing = launch(start = CoroutineStart.UNDISPATCHED) { route.select(output) }
++    preparing.cancelAndJoin()
++    assertNull(harness.requested)
++    assertEquals(AudioManager.MODE_NORMAL, harness.mode)
++    assertTrue(harness.listeners.isEmpty())
++  }
++
++  @OptIn(ExperimentalCoroutinesApi::class)
++  @Test
++  fun timeoutRemovesListenerAndPendingRoute() = runTest {
++    val output = device(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 2, "target", sink = true)
++    val harness = RouteHarness(listOf(output))
++    val route = RecordingInputRoute(harness.manager)
++    val preparing = async(start = CoroutineStart.UNDISPATCHED) {
++      runCatching { route.select(output) }.exceptionOrNull()
++    }
++    advanceUntilIdle()
++    assertTrue(preparing.await() is TimeoutCancellationException)
++    assertNull(harness.requested)
++    assertEquals(AudioManager.MODE_NORMAL, harness.mode)
++    assertTrue(harness.listeners.isEmpty())
++  }
++
++  private class RouteHarness(devices: List<AudioDeviceInfo>, accepted: Boolean = true) {
 +    val manager = mockk<AudioManager>()
 +    var mode = AudioManager.MODE_NORMAL
-+    every { manager.availableCommunicationDevices } returns listOf(output)
-+    every { manager.mode } answers { mode }
-+    every { manager.mode = any() } answers { mode = firstArg() }
-+    every { manager.setCommunicationDevice(any()) } returns false
-+    every { manager.clearCommunicationDevice() } returns Unit
-+    assertThrows(PreferredInputNotFoundException::class.java) { RecordingInputRoute(manager).select(input) }
-+    assertEquals(AudioManager.MODE_NORMAL, mode)
++    var requested: AudioDeviceInfo? = null
++    var active: AudioDeviceInfo? = null
++    val listeners = mutableSetOf<AudioManager.OnCommunicationDeviceChangedListener>()
++
++    init {
++      every { manager.availableCommunicationDevices } returns devices
++      every { manager.mode } answers { mode }
++      every { manager.mode = any() } answers { mode = firstArg() }
++      every { manager.communicationDevice } answers { active }
++      every { manager.setCommunicationDevice(any()) } answers { requested = firstArg(); accepted }
++      every { manager.clearCommunicationDevice() } answers { requested = null }
++      every { manager.addOnCommunicationDeviceChangedListener(any(), any()) } answers {
++        listeners.add(secondArg())
++        Unit
++      }
++      every { manager.removeOnCommunicationDeviceChangedListener(any()) } answers {
++        listeners.remove(firstArg())
++        Unit
++      }
++    }
++
++    fun confirm(device: AudioDeviceInfo) {
++      active = device
++      listeners.toList().forEach { it.onCommunicationDeviceChanged(device) }
++    }
 +  }
 +}
+diff --git a/android/build.gradle b/android/build.gradle
+index 88e464d2030f4b3a929a5b4c80521bdaecebd966..4708c9358e1afc973986fae5e95f7c3776248988 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -37,5 +37,6 @@ dependencies {
+   implementation "androidx.media3:media3-exoplayer-smoothstreaming:$androidxMedia3Version"
+
+   testImplementation 'junit:junit:4.13.2'
++  testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2'
+   testImplementation 'io.mockk:mockk:1.14.9'
+ }
