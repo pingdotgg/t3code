@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeEvents from "node:events";
+import { vi } from "vite-plus/test";
 
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 
@@ -172,22 +173,28 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("sends a page one screenshot at a time", () =>
+  it.effect("keeps native screenshots serialized beyond the scaled capture deadline", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
+      Object.assign(debuggee.tab.webContents, {
+        id: 42,
+        hostWebContents: { isDestroyed: () => false, executeJavaScript: async () => false },
+      });
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
 
       yield* command(host, 1, "Page.captureScreenshot");
       yield* command(host, 2, "Page.captureScreenshot");
-      yield* command(host, 3, "DOM.enable");
       yield* settle;
-      expect(debuggee.sent).toEqual([1, 3]);
+      expect(debuggee.sent).toEqual([1]);
+
+      yield* TestClock.adjust("6 seconds");
+      expect(debuggee.sent).toEqual([1]);
 
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(1);
-      expect(debuggee.sent).toEqual([1, 3, 2]);
+      expect(debuggee.sent).toEqual([1, 2]);
     }).pipe(Effect.scoped),
   );
 
@@ -213,6 +220,48 @@ describe("DesktopBrowserHost", () => {
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(2);
       expect(debuggee.sent).toEqual([1, 2, 3]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("never starts a stale native copy after navigation during the transform probe", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      const probeStarted = Promise.withResolvers<void>();
+      const probe = Promise.withResolvers<boolean>();
+      let probing = true;
+      const capturePage = vi.fn(async () => ({ toDataURL: () => "data:image/png;base64,eA==" }));
+      Object.assign(debuggee.tab.webContents, {
+        id: 42,
+        capturePage,
+        hostWebContents: {
+          isDestroyed: () => false,
+          executeJavaScript: async () => {
+            if (probing) {
+              probing = false;
+              probeStarted.resolve();
+              return probe.promise;
+            }
+            return true;
+          },
+        },
+      });
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      yield* command(host, 1, "Page.captureScreenshot");
+      yield* Effect.promise(() => probeStarted.promise);
+      yield* command(host, 2, "Page.captureScreenshot");
+      const sent = debuggee.nextSend();
+      debuggee.navigate();
+      yield* Effect.promise(() => sent);
+      expect(debuggee.sent).toEqual([2]);
+      expect(capturePage).toHaveBeenCalledOnce();
+      probe.resolve(true);
+      yield* settle;
+      expect(capturePage).toHaveBeenCalledOnce();
+      expect(yield* Queue.take(replies)).toBe(1);
+      debuggee.release();
+      expect(yield* Queue.take(replies)).toBe(2);
     }).pipe(Effect.scoped),
   );
 

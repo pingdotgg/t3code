@@ -75,6 +75,7 @@ import {
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
+import { capturePreviewPage } from "./PreviewCapture.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
 
@@ -586,15 +587,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     const capture = Effect.gen(function* () {
       yield* requireCurrentGuest;
-      const image = yield* Effect.tryPromise({
-        try: (_signal) => wc.capturePage(),
-        catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
-      }).pipe(
-        Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
-        Effect.catchTags({
-          TimeoutError: (cause) =>
-            Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
-        }),
+      const image = yield* capturePreviewPage(tabId, wc).pipe(
+        Effect.mapError(
+          (error) =>
+            new PreviewOperationError({
+              ...errorContext,
+              cause: "cause" in error ? error.cause : error,
+            }),
+        ),
       );
       yield* requireCurrentGuest;
       return image;

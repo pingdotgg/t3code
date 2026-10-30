@@ -6,6 +6,7 @@ import {
   type DesktopBrowserEvent as DesktopBrowserEventType,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,6 +17,7 @@ import * as Stream from "effect/Stream";
 
 import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts";
 import { sendPageCommand } from "./GuestInput.ts";
+import { resetPreviewCapture, withUnscaledPreviewCapture } from "./PreviewCapture.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
@@ -115,7 +117,9 @@ export const make = Effect.gen(function* () {
     readonly key: DesktopBrowserTabKey;
     readonly active: boolean;
   }>();
-  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const context = yield* Effect.context<never>();
+  const runFork = Effect.runForkWith(context);
+  const runPromise = Effect.runPromiseWith(context);
   const tabs = new Map<string, AttachedTab>();
   /** Threads whose agent turn runs, by the server's account. */
   const agentTurns = new Set<string>();
@@ -328,10 +332,27 @@ export const make = Effect.gen(function* () {
           // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
           const forward = (current?: () => boolean) => {
             const change = tab.focusChange;
-            const run = () =>
+            const sendCurrent = () =>
               current === undefined || current()
                 ? send(method, params, sessionId)
                 : Promise.reject(new Error("The page this screenshot was for has moved on."));
+            const run = () =>
+              method === "Page.captureScreenshot" &&
+              sessionId === undefined &&
+              (current === undefined || current())
+                ? runPromise(
+                    withUnscaledPreviewCapture(
+                      tab.key.tabId,
+                      webContents,
+                      Effect.tryPromise(sendCurrent),
+                      "data-preview-server-tab",
+                      undefined,
+                      current,
+                    ),
+                  ).catch((error: unknown) => {
+                    throw Cause.isUnknownError(error) ? error.cause : error;
+                  })
+                : sendCurrent();
             return change === null ? run() : change.then(run);
           };
           return method === "Page.captureScreenshot"
@@ -431,6 +452,7 @@ export const make = Effect.gen(function* () {
       // A screenshot pending when the page loads a new document, a reload included, can
       // stay unanswered. A crashed page lands here once it reloads, well after its renderer died.
       onNewDocument: () => {
+        resetPreviewCapture(debuggee.webContents);
         // Before the next screenshot starts, so its own hold survives.
         dropFocusHolds(tab);
         if (tab.screenshotTurn !== null) nextScreenshot(tab);
