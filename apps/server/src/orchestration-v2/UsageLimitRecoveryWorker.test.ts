@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import { type OrchestrationV2DomainEvent, RunId, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { describe, expect } from "vite-plus/test";
 
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -68,3 +69,44 @@ it.effect("idle sweeps skip SQL until the next wake time or a relevant event", (
     }).pipe(Effect.provide(layer));
   }),
 );
+
+const stoppedAt = "2026-10-18T10:00:00.000Z";
+const resetAt = "2026-10-18T11:00:00.000Z";
+const candidate: ProjectionStore.ProjectionLimitRecoveryCandidate = {
+  id: ThreadId.make("quota-test"),
+  status: "failed",
+  lastErrorClass: "usage_limit",
+  latestRunId: RunId.make("stopped-run"),
+  usageLimitResetAt: resetAt,
+  archivedAt: null,
+  settledOverride: "active",
+  pendingRuntimeRequest: null,
+  latestRunCompletedAt: DateTime.makeUnsafe(stoppedAt),
+  updatedAt: DateTime.makeUnsafe(stoppedAt),
+  limitRecovery: null,
+  snoozedUntil: null,
+};
+
+describe("quota reset continuation provenance", () => {
+  it("attributes reset continuations to T3 while preserving the original recovery identity", () => {
+    const armed = {
+      ...candidate,
+      limitRecovery: { runId: candidate.latestRunId!, resetAt, autoResume: true, snooze: true },
+    };
+    expect(
+      UsageLimitRecoveryWorker.limitRecoveryCommand(armed, true, Date.parse(resetAt) - 1),
+    ).toBeNull();
+    const resume = UsageLimitRecoveryWorker.limitRecoveryCommand(armed, true, Date.parse(resetAt));
+    expect(resume).toMatchObject({
+      type: "message.dispatch",
+      createdBy: "agent",
+      creationSource: "server",
+      usageLimitContinuationOfRunId: candidate.latestRunId,
+      text: "Continue where you left off.",
+    });
+    expect(resume?.commandId).toEqual(
+      UsageLimitRecoveryWorker.limitRecoveryCommand(armed, true, Date.parse(resetAt) + 1)
+        ?.commandId,
+    );
+  });
+});
