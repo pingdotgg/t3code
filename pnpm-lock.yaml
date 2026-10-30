@@ -268,6 +268,8 @@ overrides:
   react-native-image-viewing: 0.2.2
   mdast-util-math: 3.0.0
   micromark-extension-llm-math: 3.1.0
+  micromark: 4.0.2
+  mdast-util-to-hast: 13.2.1
   alchemy: 2.0.0-beta.84
   expo-audio: 58.0.9
   expo-network: 58.0.3
@@ -379,8 +381,10 @@ patchedDependencies:
   expo-video@58.0.11: e80ec3ef8c4af50a607beea1c0917e71ba679844efdb702b45d17a5f03cf466c
   expo-widgets@58.0.20: 8bf49067f93742855e15f29559ac75c8b50230b47069060993c9ea01dac11171
   mdast-util-math@3.0.0: afe6b2c89e1eaddfd3c90cf2723f12c9a17d513e65beff51653781486013251c
+  mdast-util-to-hast@13.2.1: 57ea46c73aea3c876ab8d351fe0482ddd081dcb4a0610576e399dbe5eb59d2b1
   micromark-extension-gfm-table@2.1.1: 9ad23a530e45d9f83cba1da8654fe16d5af8b59d5c73d5c7a7c91fd25b9be1d8
   micromark-extension-llm-math@3.1.0: 7beb6ac4ba52166286593a494531aace81547e55fdddecf892824c25bd84d15a
+  micromark@4.0.2: cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67
   node-pty@1.2.0-beta.15: f1e680afec85f650699ea756f91f469844ec4c976f4f168492a45c6b3f67d651
   react-native-gesture-handler@3.3.0: abe20e1d1c23549297cbbc818e14fe479b41455930d9663135d6b40fe359b626
   react-native-image-viewing@0.2.2: 419f35ee91eac88ced9438058281db5eb09d9c799d8974c1172926068c9448cf
@@ -1150,6 +1154,9 @@ importers:
       heic-to:
         specifier: ^1.5.2
         version: 1.5.2
+      html-url-attributes:
+        specifier: ^3.0.1
+        version: 3.0.1
       jose:
         specifier: 'catalog:'
         version: 6.2.2
@@ -1168,6 +1175,12 @@ importers:
       lucide-react:
         specifier: ^0.564.0
         version: 0.564.0(react@19.3.0)
+      mdast-util-from-markdown:
+        specifier: ^2.0.3
+        version: 2.0.3(supports-color@8.1.1)
+      micromark-util-combine-extensions:
+        specifier: ^2.0.1
+        version: 2.0.1
       morphicons:
         specifier: ^1.7.1
         version: 1.7.1(react-native-svg@15.16.0(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -1195,6 +1208,9 @@ importers:
       remark-parse:
         specifier: 'catalog:'
         version: 11.0.0(supports-color@8.1.1)
+      remark-rehype:
+        specifier: 'catalog:'
+        version: 11.1.2
       saxes:
         specifier: 6.0.0
         version: 6.0.0
@@ -1216,6 +1232,9 @@ importers:
       use-sync-external-store:
         specifier: ^1.6.0
         version: 1.6.0(react@19.3.0)
+      vfile:
+        specifier: ^6.0.3
+        version: 6.0.3
       zustand:
         specifier: ^5.0.11
         version: 5.0.14(@types/react@19.3.0)(react@19.3.0)(use-sync-external-store@1.6.0(react@19.3.0))
@@ -1238,6 +1257,9 @@ importers:
       '@types/culori':
         specifier: ^4.0.1
         version: 4.0.1
+      '@types/hast':
+        specifier: ^3.0.4
+        version: 3.0.5
       '@types/mdast':
         specifier: ^4.0.4
         version: 4.0.4
@@ -1265,6 +1287,9 @@ importers:
       compression:
         specifier: ^1.8.2
         version: 1.8.2(supports-color@8.1.1)
+      micromark-util-types:
+        specifier: 'catalog:'
+        version: 2.0.2
       oxc-transform-react:
         specifier: ~0.152.0
         version: 0.152.0
@@ -1988,14 +2013,17 @@ importers:
         specifier: 'catalog:'
         version: 3.1.0(supports-color@8.1.1)
       mdast-util-to-hast:
-        specifier: ^13.2.1
-        version: 13.2.1
+        specifier: 13.2.1
+        version: 13.2.1(patch_hash=57ea46c73aea3c876ab8d351fe0482ddd081dcb4a0610576e399dbe5eb59d2b1)
       micromark-extension-directive:
         specifier: 'catalog:'
         version: 4.0.0
       micromark-util-character:
         specifier: 'catalog:'
         version: 2.1.1
+      property-information:
+        specifier: ^7.2.0
+        version: 7.2.0
       rehype-raw:
         specifier: 'catalog:'
         version: 7.0.0
@@ -19117,7 +19145,7 @@ snapshots:
       hast-util-from-parse5: 8.0.3
       hast-util-to-parse5: 8.0.1
       html-void-elements: 3.0.0
-      mdast-util-to-hast: 13.2.1
+      mdast-util-to-hast: 13.2.1(patch_hash=57ea46c73aea3c876ab8d351fe0482ddd081dcb4a0610576e399dbe5eb59d2b1)
       parse5: 7.3.0
       unist-util-position: 5.0.0
       unist-util-visit: 5.1.0
@@ -19139,7 +19167,7 @@ snapshots:
       comma-separated-tokens: 2.0.3
       hast-util-whitespace: 3.0.0
       html-void-elements: 3.0.0
-      mdast-util-to-hast: 13.2.1
+      mdast-util-to-hast: 13.2.1(patch_hash=57ea46c73aea3c876ab8d351fe0482ddd081dcb4a0610576e399dbe5eb59d2b1)
       property-information: 7.2.0
       space-separated-tokens: 2.0.2
       stringify-entities: 4.0.4
@@ -19706,7 +19734,7 @@ snapshots:
       decode-named-character-reference: 1.3.0
       devlop: 1.1.0
       mdast-util-to-string: 4.0.0
-      micromark: 4.0.2(supports-color@8.1.1)
+      micromark: 4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1)
       micromark-util-decode-numeric-character-reference: 2.0.2
       micromark-util-decode-string: 2.0.1
       micromark-util-normalize-identifier: 2.0.1
@@ -19834,7 +19862,7 @@ snapshots:
       '@types/mdast': 4.0.4
       unist-util-is: 6.0.1
 
-  mdast-util-to-hast@13.2.1:
+  mdast-util-to-hast@13.2.1(patch_hash=57ea46c73aea3c876ab8d351fe0482ddd081dcb4a0610576e399dbe5eb59d2b1):
     dependencies:
       '@types/hast': 3.0.5
       '@types/mdast': 4.0.4
@@ -20235,7 +20263,7 @@ snapshots:
 
   micromark-util-types@2.0.2: {}
 
-  micromark@4.0.2(supports-color@8.1.1):
+  micromark@4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1):
     dependencies:
       '@types/debug': 4.1.13
       debug: 4.4.3(supports-color@8.1.1)
@@ -21148,7 +21176,7 @@ snapshots:
       devlop: 1.1.0
       hast-util-to-jsx-runtime: 2.3.6(supports-color@8.1.1)
       html-url-attributes: 3.0.1
-      mdast-util-to-hast: 13.2.1
+      mdast-util-to-hast: 13.2.1(patch_hash=57ea46c73aea3c876ab8d351fe0482ddd081dcb4a0610576e399dbe5eb59d2b1)
       react: 19.3.0
       remark-parse: 11.0.0(supports-color@8.1.1)
       remark-rehype: 11.1.2
@@ -21443,7 +21471,7 @@ snapshots:
     dependencies:
       '@types/hast': 3.0.5
       '@types/mdast': 4.0.4
-      mdast-util-to-hast: 13.2.1
+      mdast-util-to-hast: 13.2.1(patch_hash=57ea46c73aea3c876ab8d351fe0482ddd081dcb4a0610576e399dbe5eb59d2b1)
       unified: 11.0.5
       vfile: 6.0.3
 

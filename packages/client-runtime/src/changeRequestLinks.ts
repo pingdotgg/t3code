@@ -150,3 +150,21 @@ export function projectChangeRequestUrl(
     ...(ownRepository && identity.webUrl !== undefined ? { webUrl: identity.webUrl } : {}),
   });
 }
+
+export function projectCommitUrl(
+  identity: RepositoryIdentity | null | undefined,
+  sha: string,
+): string | null {
+  if (identity?.provider === undefined) return null;
+  const [host, ...path] = identity.canonicalKey.split("/");
+  if (!host) return null;
+  return (
+    sourceControlClients.get(identity.provider).commitUrl?.({
+      host,
+      repository: path.join("/"),
+      sha,
+      remoteUrl: identity.locator.remoteUrl.trim(),
+      ...(identity.webUrl !== undefined ? { webUrl: identity.webUrl } : {}),
+    }) ?? null
+  );
+}

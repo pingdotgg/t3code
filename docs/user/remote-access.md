@@ -374,7 +374,8 @@ shows that it was removed from T3 Connect. To link it again, turn on
 command-line host that released its tunnel when it last stopped may link itself
 again on its next start; run `t3 connect unlink` on that host to keep it off.
 Removing an environment from a device's connection settings only forgets it on
-that device; it stays registered to your account.
+that device and doesn't change your T3 Connect account. A device keeps a saved
+environment after it's deregistered until you remove it from that device.
 
 When idle tunnel cleanup is enabled, T3 Connect removes a linked environment's
 tunnel after it stays offline for several minutes. The environment stays linked

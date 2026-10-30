@@ -113,6 +113,10 @@ function attachListItemIndentationNormalizer(this: MarkdownParser) {
       if (!node.children) {
         return;
       }
+      if (!node.children.some((child) => isSameLineOverIndentedCode(child, node, source))) {
+        for (const child of node.children) visit(child, source);
+        return;
+      }
       node.children = node.children.flatMap((child) => {
         if (isSameLineOverIndentedCode(child, node, source)) {
           const recovered = blocksFromIndentedCode(child, this);
