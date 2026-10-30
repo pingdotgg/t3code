@@ -347,6 +347,27 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
+  it.effect("registers the production scheme even under unpackaged Electron without a launcher override", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        environment: {
+          isPackaged: false,
+          isDevelopment: false,
+          desktopLauncherPath: Option.none(),
+          appImagePath: Option.some("/opt/T3-Code.AppImage"),
+        },
+      });
+
+      assert.include(recorded.files[0]?.content, "Exec=/opt/T3-Code.AppImage %U");
+      assert.deepEqual(
+        recorded.commands.map(({ command }) => command),
+        ["update-desktop-database", "xdg-mime"],
+      );
+    });
+  });
+
   it.effect("writes the portal identity without claiming the URL scheme in development", () => {
     const nonLinux = emptyRecording();
     const unpackaged = emptyRecording();
@@ -356,6 +377,8 @@ describe("DesktopLinuxUrlHandler", () => {
       yield* runRegister(unpackaged, {
         environment: {
           isPackaged: false,
+          isDevelopment: true,
+          desktopLauncherPath: Option.some("/tmp/t3code-dev-launcher"),
           linuxDesktopEntryName: "com.t3tools.T3Code.Development.desktop",
         },
       });
