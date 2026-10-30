@@ -135,14 +135,18 @@ it.each([
   expect(received).toEqual(launcher);
 });
 
-function UnavailableTerminalCommand({ command }: { command: KeybindingCommand }) {
+function UnavailableTerminalCommand({
+  command,
+  owner,
+}: {
+  command: KeybindingCommand;
+  owner: "drawer" | "right-panel" | null;
+}) {
   useChatShortcuts({
     enabled: true,
-    keybindings: compileResolvedKeybindingsConfig([
-      { key: "cmd+[", command, when: "terminalFocus" },
-    ]),
+    keybindings: compileResolvedKeybindingsConfig([{ key: "cmd+[", command }]),
     scriptKeybindings: [],
-    getShortcutContext: () => ({ ...shortcutContext, terminalFocus: true }),
+    getShortcutContext: () => ({ ...shortcutContext, terminalFocus: owner !== null }),
     threadFindActive: false,
     composerRef: { current: null },
     branchToolbarRef: { current: null },
@@ -151,32 +155,36 @@ function UnavailableTerminalCommand({ command }: { command: KeybindingCommand })
     fallback: () => undefined,
   });
   return (
-    <div data-terminal-owner="drawer">
+    <div data-terminal-owner={owner ?? undefined}>
       <input ref={focusOnMount} />
     </div>
   );
 }
 
 it.each([
-  ["terminal.previous", true],
-  ["terminal.next", true],
-  ["terminal.new", false],
-] as const)(
-  "handles unavailable %s without changing unrelated shortcut fallthrough",
-  async (command, prevented) => {
-    await using screen = await render(<UnavailableTerminalCommand command={command} />, options);
-    const input = screen.container.querySelector("input")!;
-    const received: string[] = [];
-    input.addEventListener("keydown", (event) => received.push(event.key));
-    const event = new KeyboardEvent("keydown", {
-      key: "[",
-      code: "BracketLeft",
-      metaKey: true,
-      bubbles: true,
-      cancelable: true,
-    });
-    input.dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(prevented);
-    expect(received).toEqual(prevented ? [] : ["["]);
-  },
-);
+  ["terminal.previous", "drawer", true],
+  ["terminal.next", "drawer", true],
+  ["terminal.new", "drawer", false],
+  ["terminal.previous", "right-panel", true],
+  ["terminal.next", "right-panel", true],
+  ["terminal.previous", null, false],
+  ["terminal.next", null, false],
+] as const)("handles unavailable %s with focus owner %s", async (command, owner, prevented) => {
+  await using screen = await render(
+    <UnavailableTerminalCommand command={command} owner={owner} />,
+    options,
+  );
+  const input = screen.container.querySelector("input")!;
+  const received: string[] = [];
+  input.addEventListener("keydown", (event) => received.push(event.key));
+  const event = new KeyboardEvent("keydown", {
+    key: "[",
+    code: "BracketLeft",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(prevented);
+  expect(received).toEqual(prevented ? [] : ["["]);
+});
