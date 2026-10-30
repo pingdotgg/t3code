@@ -41,6 +41,7 @@ import {
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
+import { makeProviderEventRoutingState, routeProviderEvent } from "../RunExecutionService.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
@@ -1059,22 +1060,41 @@ describe("AntigravityAdapterV2 subagent tools", () => {
             title: "must not replace the title while no turn is active",
           },
         });
-        yield* session.startTurn(
-          makeTurnInput({
+        const nextInput = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection,
+          ordinal: 2,
+          now: yield* DateTime.now,
+        });
+        const routeEvents = (
+          events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+          input: ProviderAdapter.ProviderAdapterV2TurnInput,
+        ) => {
+          const identity = {
             threadId,
-            providerThread,
-            instanceId,
-            runtimePolicy,
-            modelSelection,
-            ordinal: 2,
-            now: yield* DateTime.now,
-          }),
-        );
-        const nextEvents = Array.from(
-          yield* session.events.pipe(
-            Stream.takeUntil((event) => event.type === "turn.terminal"),
-            Stream.runCollect,
+            runId: input.runId,
+            attemptId: input.attemptId,
+            providerThreadId: providerThread.id,
+          };
+          let state = makeProviderEventRoutingState({ identity, providerTurnId: null });
+          return events.filter((event) => {
+            const [accepted, next] = routeProviderEvent(event, identity, state);
+            state = next;
+            return accepted;
+          });
+        };
+        yield* session.startTurn(nextInput);
+        const nextEvents = routeEvents(
+          Array.from(
+            yield* session.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
           ),
+          nextInput,
         );
         const resumedMessage = nextEvents.findLast(
           (event) => event.type === "message.updated" && event.message.threadId === childThreadId,
@@ -1122,7 +1142,7 @@ describe("AntigravityAdapterV2 subagent tools", () => {
         assert.equal(previousChild?.result, "Saved child result");
         assert.equal(nextChild?.id, previousChild?.id);
         assert.equal(nextChild?.childThreadId, previousChild?.childThreadId);
-        assert.equal(nextChild?.runId, previousChild?.runId);
+        assert.equal(nextChild?.runId, nextInput.runId);
         assert.equal(nextChild?.prompt, previousChild?.prompt);
         assert.equal(nextChild?.title, previousChild?.title);
         assert.equal(nextChild?.model, previousChild?.model);
@@ -1141,22 +1161,24 @@ describe("AntigravityAdapterV2 subagent tools", () => {
         assert.equal(nextTool?.ordinal, previousTool?.ordinal);
         assert.deepEqual(nextTool?.startedAt, previousTool?.startedAt);
         assert.equal(nextTool?.status, "completed");
-        yield* session.startTurn(
-          makeTurnInput({
-            threadId,
-            providerThread,
-            instanceId,
-            runtimePolicy,
-            modelSelection,
-            ordinal: 3,
-            now: yield* DateTime.now,
-          }),
-        );
-        const textOnlyEvents = Array.from(
-          yield* session.events.pipe(
-            Stream.takeUntil((event) => event.type === "turn.terminal"),
-            Stream.runCollect,
+        const textOnlyInput = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection,
+          ordinal: 3,
+          now: yield* DateTime.now,
+        });
+        yield* session.startTurn(textOnlyInput);
+        const textOnlyEvents = routeEvents(
+          Array.from(
+            yield* session.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
           ),
+          textOnlyInput,
         );
         const textOnlyMessage = textOnlyEvents.findLast(
           (event) => event.type === "message.updated" && event.message.threadId === childThreadId,

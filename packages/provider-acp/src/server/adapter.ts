@@ -465,14 +465,7 @@ export interface AcpAdapterV2SubagentUpdate {
   readonly prompt: string;
   readonly title: string | null;
   readonly model: string | null;
-  readonly status:
-    | "pending"
-    | "running"
-    | "idle"
-    | "completed"
-    | "failed"
-    | "interrupted"
-    | "cancelled";
+  readonly status: OrchestrationV2Subagent["status"];
   readonly childSessionId: string | null;
   readonly result: string | null;
   readonly suppressNormalTool?: boolean;
@@ -2991,6 +2984,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             updatedAt: now,
           };
           const providerThreadId = subagent.task.providerThreadId;
+          yield* emitProviderEvent({ type: "subagent.updated", driver, subagent: subagent.task });
           yield* emitProviderEvent({
             type: "node.updated",
             driver,
@@ -3033,7 +3027,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               completedAt: subagent.task.completedAt,
             },
           });
-          yield* emitProviderEvent({ type: "subagent.updated", driver, subagent: subagent.task });
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver,
@@ -4917,11 +4910,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const adopted = adoptedSubagents.get(notification.sessionId);
               if (adopted?.nativeThreadId === context.nativeThreadId) {
                 subagent = adopted.subagent;
+                subagent.task = {
+                  ...subagent.task,
+                  runId: context.input.runId,
+                  parentNodeId: context.input.rootNodeId,
+                };
+                subagent.providerTurnId = context.providerTurnId;
+                subagent.turnItemOrdinal = yield* resolveItemOrdinal(
+                  context,
+                  subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
+                );
+                subagent.terminalStatusProjected = false;
                 context.subagents.set(
                   subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
                   subagent,
                 );
                 context.subagentsBySessionId.set(notification.sessionId, subagent);
+                yield* emitSubagent(context, {
+                  nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
+                  childSessionId: notification.sessionId,
+                  prompt: subagent.task.prompt,
+                  title: subagent.task.title,
+                  model: subagent.task.model,
+                  status: subagent.task.status,
+                  result: subagent.task.result,
+                });
               }
             }
             if (
