@@ -76,7 +76,9 @@ export const npmReleasePublishedAtom = Atom.family((version: string) =>
           reason: `t3@${version} is not in this environment's npm registry yet`,
         };
       }
-      return { published: AsyncResult.isSuccess(release), reason: null };
+      return AsyncResult.isSuccess(release)
+        ? { published: true, reason: null }
+        : { published: false, reason: "Still checking this environment's npm registry" };
     }),
   ),
 );

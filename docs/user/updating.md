@@ -145,9 +145,10 @@ details** to include the error in a bug report.
 
 ## Registries and proxies
 
-Each server checks npm-published releases of T3 Code and providers with its own
-npm, so the checks use npm's configured registry, authentication, and proxy
-settings.
+Each server checks T3 Code releases, and providers installed with npm, through
+its own npm, so the checks use npm's configured registry, authentication, and
+proxy settings. Providers installed with Homebrew or pnpm check through those
+tools.
 Configure npm on the server's machine. If that registry cannot be reached, the
 release shows as unavailable; T3 Code does not try the public registry instead.
 Machines without npm check the public npm registry directly.

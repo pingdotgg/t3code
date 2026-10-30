@@ -31,6 +31,7 @@ vi.mock("./primaryEnvironment", () => ({
 const version = "0.0.46-nightly.20261012.3021";
 const first = EnvironmentId.make("first");
 const second = EnvironmentId.make("second");
+const pending = EnvironmentId.make("pending");
 const decodeServerConfig = Schema.decodeUnknownSync(ServerConfig);
 
 const configFor = (environmentId: EnvironmentId | null, supported = true) =>
@@ -76,15 +77,20 @@ function setup(supported = true) {
 it("checks publication separately against each environment's registry", () => {
   const query = setup();
   query.mockImplementation(({ environmentId }) =>
-    Atom.make(AsyncResult.success(environmentId === first ? { version } : null)),
+    Atom.make(
+      environmentId === pending
+        ? AsyncResult.initial(true)
+        : AsyncResult.success(environmentId === first ? { version } : null),
+    ),
   );
   const registry = AtomRegistry.make();
   try {
     expect(
-      registry.get(npmReleasePublishedAtom(version)(environmentIdsKey([first, second]))),
+      registry.get(npmReleasePublishedAtom(version)(environmentIdsKey([first, second, pending]))),
     ).toEqual([
       { published: true, reason: null },
       { published: false, reason: `t3@${version} is not in this environment's npm registry yet` },
+      { published: false, reason: "Still checking this environment's npm registry" },
     ]);
     expect(query).toHaveBeenCalledWith({ environmentId: first, input: { spec: version } });
     expect(query).toHaveBeenCalledWith({ environmentId: second, input: { spec: version } });
