@@ -295,6 +295,11 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
 );
 
 const STOCK_LFS_CONFIG = { "filter.lfs.process": "git-lfs filter-process" };
+// `canDeferLfs` reads these, and the shell running the suite may set them.
+const stubLfsEnv = (skipSmudge = "") => {
+  vi.stubEnv("GIT_LFS_SKIP_SMUDGE", skipSmudge);
+  vi.stubEnv("GIT_LFS_SKIP_DOWNLOAD_ERRORS", "");
+};
 
 it.effect.each([
   ["tracks LFS files", STOCK_LFS_CONFIG, "lfs", undefined, true],
@@ -337,7 +342,7 @@ it.effect.each([
     }
 
     const commands: Array<GitVcsDriver.ExecuteGitInput> = [];
-    if (skipSmudge !== undefined) vi.stubEnv("GIT_LFS_SKIP_SMUDGE", skipSmudge);
+    stubLfsEnv(skipSmudge);
     yield* Effect.gen(function* () {
       const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
       yield* service.cloneRepository({ remoteUrl: source, destinationPath });
@@ -385,6 +390,7 @@ it.effect("reports LFS download progress at git's pace and keeps its error text 
     const progress: Array<GitCloneProgressLine> = [];
     let pullEnv: NodeJS.ProcessEnv | undefined;
 
+    stubLfsEnv();
     const error = yield* Effect.gen(function* () {
       const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
       return yield* Effect.flip(
@@ -394,6 +400,7 @@ it.effect("reports LFS download progress at git's pace and keeps its error text 
         ),
       );
     }).pipe(
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
       Effect.provide(
         layer({
           git: {
