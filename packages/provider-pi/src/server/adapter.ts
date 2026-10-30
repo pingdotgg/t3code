@@ -39,7 +39,10 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
-import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
+import {
+  cuaCallContext,
+  mcpToolPresentation,
+} from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { parsePiCompactCommand, type PiCompactCommand } from "./commands.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -1078,7 +1081,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             ...shared,
             title: toolName,
             type: "dynamic_tool",
-            ...mcpToolPresentation({ toolName }),
+            ...mcpToolPresentation({
+              toolName,
+              ...cuaCallContext({
+                serverName: /^mcp__(.+?)__/u.exec(toolName)?.[1],
+                toolName: /^mcp__.+?__(.+)$/u.exec(toolName)?.[1],
+                threadId: shared.threadId,
+                status: shared.status,
+                args: args ?? {},
+                result: resultRecord,
+              }),
+            }),
             toolName,
             input: args ?? {},
             ...(output === undefined ? {} : { output }),

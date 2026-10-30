@@ -42,7 +42,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
+import {
+  cuaCallContext,
+  mcpToolPresentation,
+} from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
@@ -1403,6 +1406,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   ? mcpToolPresentation({
                       serverName: toolCall.args.providerIdentifier,
                       toolName: toolCall.args.toolName,
+                      ...cuaCallContext({
+                        serverName: toolCall.args.providerIdentifier,
+                        toolName: toolCall.args.toolName,
+                        threadId: base.threadId,
+                        status: base.status,
+                        args: toolCall.args.args,
+                        result: cursorToolOutput(toolCall),
+                      }),
                     })
                   : {}),
                 toolName: cursorToolName(toolCall),
