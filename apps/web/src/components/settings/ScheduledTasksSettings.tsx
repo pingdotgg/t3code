@@ -711,6 +711,13 @@ function ScheduledTaskRow({
   });
   const act = async (action: "toggle" | "run" | "delete") => {
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    if (action === "delete") {
+      const message = `Delete "${task.title}"?\nThis cannot be undone.`;
+      const confirmed =
+        (await requestConfirmDialog(message, { variant: "destructive" })) ??
+        window.confirm(message);
+      if (!confirmed) return;
+    }
     setBusy(true);
     const result =
       action === "toggle"
