@@ -4,6 +4,7 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import type { MarkedText } from "@t3tools/client-runtime/errors";
+import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
 
@@ -20,6 +21,21 @@ export function runtimeConnectionErrorText(
     resolve,
   );
 }
+
+/** Status for an environment that holds no connection: its switch is off, or a Focus pauses it. */
+export function offStatusText(
+  environment: { readonly isPausedByFocus: boolean },
+  resolve: MessageResolver = m,
+): string {
+  return environment.isPausedByFocus
+    ? resolve(
+        msg("Paused by Focus", { $context: "an iOS Focus filter leaves this environment out" }),
+      )
+    : resolve(msg("Off", { $context: "environment is switched off" }));
+}
+
+/** A paused environment keeps the user's switch on, drawn dimmed. */
+export const PAUSED_SWITCH_OPACITY = 0.4;
 
 export function environmentStatusText(
   connection: EnvironmentConnectionPresentation,
