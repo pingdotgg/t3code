@@ -420,10 +420,14 @@ const make = Effect.gen(function* () {
           : Boolean(config.desktopBootstrapToken) && credential === config.desktopBootstrapToken;
       if (isDesktopCredential) {
         if (
-          input?.requestedScopes !== undefined &&
-          !input.requestedScopes.some((scope) =>
-            AuthStandardClientScopes.some((granted) => granted === scope),
-          )
+          (input?.requestedScopes !== undefined &&
+            !input.requestedScopes.some((scope) =>
+              AuthStandardClientScopes.some((granted) => granted === scope),
+            )) ||
+          (input?.requiredScopes !== undefined &&
+            !input.requiredScopes.every((scope) =>
+              AuthStandardClientScopes.some((granted) => granted === scope),
+            ))
         ) {
           return yield* new BootstrapCredentialScopeNotGrantedError({});
         }
