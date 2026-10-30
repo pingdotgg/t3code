@@ -985,6 +985,10 @@ export class GhosttyTerminalSurface {
     return this.core.selectionText();
   }
 
+  get selectionClickCount(): number {
+    return this.selectionClickSequence?.count ?? 0;
+  }
+
   selectAll(): void {
     this.clearPrimedCopy();
     const range = this.core.selectAll();
