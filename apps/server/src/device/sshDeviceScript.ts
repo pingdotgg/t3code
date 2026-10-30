@@ -174,8 +174,10 @@ async function install(name, version, entry) {
     return help.status === 0 && /\bemulated\b/.test(text) && !/\bimagefile\b/.test(text) ? ['-camera-' + facing, 'emulated'] : [];
   }) : [];
   const emulatorExtraArgs = [cameraArgs.join(' '), process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS].filter(Boolean).join(' ');
+  // The hub's vendored tools spawn adb from the PATH it started with, so an SDK installed later needs a new hub.
+  const androidHome = process.env.ANDROID_HOME;
   let hub = read(hubFile);
-  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || hub.emulatorExtraArgs !== emulatorExtraArgs || !await healthy(hub.port, '/readyz')) {
+  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || hub.emulatorExtraArgs !== emulatorExtraArgs || hub.androidHome !== androidHome || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
     for (let attempt = 0; attempt < 5; attempt++) {
       const hubPort = await port();
@@ -186,7 +188,7 @@ async function install(name, version, entry) {
       try { await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
       finally { fs.closeSync(log); }
       child.unref();
-      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry, platform: hubPlatform, emulatorExtraArgs };
+      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry, platform: hubPlatform, emulatorExtraArgs, androidHome };
       write(hubFile, hub);
       const deadline = Date.now() + 30000;
       let listening = false;

@@ -440,6 +440,66 @@ it.effect.each([
   }),
 );
 
+it.effect("restarts the hub with an Android SDK installed after it started", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-sdk-" });
+    const installDir = `${baseDir}/tools/expo-device-hub/${DEVICE_HUB_VERSION}`;
+    yield* fs.makeDirectory(`${installDir}/node_modules/expo-device-hub/dist/server`, {
+      recursive: true,
+    });
+    yield* fs.writeFileString(`${installDir}/node_modules/expo-device-hub/dist/server/cli.mjs`, "");
+    yield* fs.writeFileString(`${installDir}/.install-complete`, DEVICE_HUB_VERSION);
+    const hubEnvironments: Array<Record<string, string | undefined> | undefined> = [];
+    const host = yield* LocalDeviceHost.make().pipe(
+      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+      Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "/usr/bin" }),
+      Effect.provideService(HostProcess.IsExecutable, false),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          if (command._tag === "StandardCommand") hubEnvironments.push(command.options.env);
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(123),
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          );
+        }),
+      ),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.succeed(processOutput(0)),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+        ),
+      ),
+    );
+    yield* host.ensureReady(() => Effect.void);
+    yield* host.ensureReady(() => Effect.void);
+    const sdk = `${baseDir}/Library/Android/sdk`;
+    yield* fs.makeDirectory(`${sdk}/platform-tools`, { recursive: true });
+    yield* fs.writeFileString(`${sdk}/platform-tools/adb`, "");
+    yield* host.ensureReady(() => Effect.void);
+    expect(hubEnvironments.map((env) => [env?.ANDROID_HOME, env?.PATH])).toEqual([
+      [undefined, "/usr/bin"],
+      [sdk, `${sdk}/platform-tools:${sdk}/emulator:/usr/bin`],
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps local Android and iOS available without ffmpeg", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
