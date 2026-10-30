@@ -190,10 +190,13 @@ scheme uses HTTP, so include `https://` when your server uses HTTPS.
 The desktop app can reach an environment that an access proxy such as
 Cloudflare Access protects, while that proxy and T3 Code pairing both stay on.
 Create a service token for the proxy. In Cloudflare Zero Trust, that is
-**Access → Service Auth**; then add a **Service Auth** policy that allows that
-token to the application. Then either paste its headers into **Access gateway
-headers** when you add the environment, or add them first in **Settings →
-Environments → Access gateways**:
+**Access → Service credentials → Service Tokens**; then add a **Service Auth**
+policy that allows that token to the application. Cloudflare Access rejects
+CORS preflight requests even when they carry the token, so also turn on
+**Bypass options requests to origin** in the application's CORS settings. Your
+T3 Code server answers those itself. Then either paste the token's headers into
+**Access gateway headers** when you add the environment, or add them first in
+**Settings → Environments → Access gateways**:
 
 ```text
 CF-Access-Client-Id: <client id>
