@@ -239,7 +239,11 @@ function pullRequestMarkdownContext(
   detail: Pick<PullRequestDetail, "provider" | "url"> | null,
   threadRef: ScopedThreadRef | null,
 ) {
-  return { autolinks: changeRequestReferenceAutolinker(detail), threadRef };
+  return {
+    autolinks: changeRequestReferenceAutolinker(detail),
+    lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
+    threadRef,
+  };
 }
 
 function pullRequestStackReference(
@@ -1225,7 +1229,7 @@ export function PullRequestDetailPanel({
   const resolveConflictsControl = (
     <PullRequestResolveConflictsButton
       handoff={handoff}
-      unavailable={attachTarget === null && checkoutRoot === null}
+      unavailable={attachTarget === null && (checkoutRoot === null || !canPrepareWorktree)}
       onResolve={startResolveConflicts}
     />
   );
@@ -1381,6 +1385,8 @@ export function PullRequestDetailPanel({
                 onSelectMergeMethod={selectMergeMethod}
                 showsDeleteBranch={showsDeleteBranch}
                 environmentConnected={environmentConnected}
+                canWriteSourceControl={canWriteSourceControl}
+                onMaintainerEditsSaved={refreshDetail}
                 confirmDeleteBranch={confirmDeleteBranch}
                 pendingAction={pendingAction}
                 perform={perform}

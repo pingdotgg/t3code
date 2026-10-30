@@ -127,6 +127,33 @@ export const DeviceEasAccount = Schema.Struct({
 });
 export type DeviceEasAccount = typeof DeviceEasAccount.Type;
 
+export const DeviceSimlockIdentityInput = Schema.Struct({
+  /** Without one, the gateway this machine's agent-device points at. */
+  gatewayUrl: Schema.optional(TrimmedString),
+  /** A saved Simlock host whose stored token is checked when no new token is given. */
+  hostId: Schema.optional(DeviceHostId),
+  agentToken: Schema.optional(TrimmedString),
+});
+export type DeviceSimlockIdentityInput = typeof DeviceSimlockIdentityInput.Type;
+
+export const DeviceSimlockIdentity = Schema.Struct({
+  gatewayUrl: Schema.String,
+  /** The label the gateway gave the token. */
+  signedInAs: Schema.String,
+  /** `env`: this machine's AGENT_DEVICE_DAEMON_AUTH_TOKEN, used because it targets this gateway. */
+  tokenSource: Schema.Literals(["entered", "settings", "env"]),
+});
+export type DeviceSimlockIdentity = typeof DeviceSimlockIdentity.Type;
+
+export class DeviceSimlockIdentityError extends Schema.TaggedError<DeviceSimlockIdentityError>()(
+  "DeviceSimlockIdentityError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
 /** Checking an Expo credential failed; no device host is involved yet. */
 export class DeviceEasAccountError extends Schema.TaggedError<DeviceEasAccountError>()(
   "DeviceEasAccountError",

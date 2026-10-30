@@ -70,7 +70,7 @@ import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionS
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
+import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
@@ -396,9 +396,18 @@ export function ScheduledTasksSettings(target: {
       replace: true,
     });
   };
-  const canCreate = useAtomValue(
-    serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
+  const createPermissions = useAtomValue(
+    scheduledTaskCreatePermissionsAtom(
+      environmentIdsKey(connectedEnvironments.map((entry) => entry.environmentId)),
+    ),
   );
+  const permittedEnvironments = connectedEnvironments.filter(
+    (_entry, index) => createPermissions[index],
+  );
+  const creationEnvironment =
+    permittedEnvironments.find(
+      (entry) => entry.environmentId === defaultEnvironment?.environmentId,
+    ) ?? permittedEnvironments[0];
   return (
     <SettingsPageContainer>
       <SettingsSection
@@ -408,10 +417,10 @@ export function ScheduledTasksSettings(target: {
           <Button
             size="xs"
             variant="ghost-muted"
-            disabled={!defaultEnvironment || !canCreate}
+            disabled={!creationEnvironment}
             onClick={() =>
-              defaultEnvironment &&
-              setEditor({ environmentId: defaultEnvironment.environmentId, task: null })
+              creationEnvironment &&
+              setEditor({ environmentId: creationEnvironment.environmentId, task: null })
             }
           >
             <PlusIcon className="size-3" />
@@ -463,6 +472,11 @@ export function ScheduledTasksSettings(target: {
     </SettingsPageContainer>
   );
 }
+
+const scheduledTaskCreatePermissionsAtom = environmentAtomList(
+  "web-scheduled-task-create-permissions",
+  serverEnvironment.upsertScheduledTask.permissionAtom,
+);
 
 const scheduledTasksListAtom = environmentAtomList("web-scheduled-tasks-list", (environmentId) =>
   serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
@@ -527,19 +541,13 @@ function ScheduledTaskEnvironmentList({
     <SettingsGroup>
       {populated.map(({ environment, tasks }) => {
         const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
-        const transport = environmentTransportLabel(environment);
         return (
           <div key={environment.environmentId} className="divide-y divide-border/50">
             <EnvironmentRow
               kind={resolveEnvironmentMachineKind(environment.serverConfig)}
               label={primary}
               subtitle={
-                <>
-                  {secondary && secondary !== transport ? (
-                    <span className="block truncate">{secondary}</span>
-                  ) : null}
-                  <span className="block truncate">{transport}</span>
-                </>
+                <ScheduledTaskEnvironmentSubtitle environment={environment} secondary={secondary} />
               }
             >
               <ConnectionStatusDot
@@ -594,6 +602,24 @@ function ScheduledTaskEnvironmentList({
         );
       })}
     </SettingsGroup>
+  );
+}
+
+function ScheduledTaskEnvironmentSubtitle({
+  environment,
+  secondary,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly secondary: string;
+}) {
+  const transport = useEnvironmentTransportLabel(environment);
+  return (
+    <>
+      {secondary && secondary !== transport ? (
+        <span className="block truncate">{secondary}</span>
+      ) : null}
+      <span className="block truncate">{transport}</span>
+    </>
   );
 }
 

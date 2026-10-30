@@ -4,6 +4,9 @@ import { defineConfig, normalizePath } from "vite-plus";
 import "vite-plus/test/config";
 
 const reactTests = [
+  "src/features/workspace/workspace-tabs-state.test.ts",
+  "src/state/use-thread-pr.demand.test.tsx",
+  "src/features/threads/git/GitBranchesSheet.occupancy.test.tsx",
   "src/features/files/useFileTreeEntries.test.tsx",
   "src/features/projects/AddProjectScreen.test.ts",
   "src/lib/useMediaVideoPlayback.test.tsx",
@@ -14,6 +17,7 @@ const reactTests = [
   "src/features/pull-requests/usePullRequestDiff.test.tsx",
   "src/components/ProjectFavicon.test.tsx",
   "src/components/ui/Dialog.android.test.tsx",
+  "src/features/pull-requests/usePullRequestList.test.tsx",
   "src/features/files/ZipArchiveView.test.tsx",
   "src/features/pull-requests/guide/useReviewGuide.test.tsx",
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
@@ -27,6 +31,7 @@ const reactTests = [
   "src/native/useRetryingImageSource.test.tsx",
   "src/state/queries.debounce.test.tsx",
   "src/state/use-selected-thread-git-actions.test.tsx",
+  "src/state/use-selected-thread-git-state.test.tsx",
   "src/features/terminal/useTerminalExitNavigation.test.tsx",
   "src/features/threads/use-thread-list-now.test.tsx",
   "src/features/home/home-list-options.test.tsx",

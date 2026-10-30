@@ -14,12 +14,16 @@ import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
+import { mutateProjectWithClone } from "../../../project/ProjectMutation.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import * as DateTime from "effect/DateTime";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -181,7 +185,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           input.modelSelection ??
           launchedModel ??
           caller?.modelSelection ??
-          projectDefaults?.defaultModelSelection ??
+          (projectDefaults
+            ? resolveNewThreadModelSelection({
+                defaultSelection: projectDefaults.defaultModelSelection,
+                fallbackSelection: projectDefaults.fallbackModelSelection,
+                providers: yield* ProviderRegistry.ProviderRegistry.pipe(
+                  Effect.flatMap((registry) => registry.getProviders),
+                ),
+                settings: projectDefaults,
+                projectId,
+                now: DateTime.toEpochMillis(yield* DateTime.now),
+              }).selection
+            : null) ??
           undefined;
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
@@ -240,7 +255,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {
           threadId: thread.id,
-          link: formatThreadLink({ environmentId: scope.environmentId, threadId: thread.id }),
+          link: McpInvocationContext.threadLinkFor(scope, thread.id),
           projectId: thread.projectId,
           modelSelection: thread.modelSelection,
           runId: run?.id ?? null,
@@ -330,9 +345,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
-      return yield* projects
-        .delete({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(projectFailure));
+      const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
+      return yield* mutateProjectWithClone(projects, clones, {
+        ...input,
+        type: "project.delete",
+        commandId: yield* newCommandId(),
+      }).pipe(Effect.mapError(projectFailure));
     }),
   ),
   t3_project_clone: McpToolAccess.writesEnvironment(

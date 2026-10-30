@@ -625,6 +625,29 @@ function nestedGrepWorkspaceResults(success: Record<string, unknown>): Record<st
   );
 }
 
+function nestedArray(value: unknown): ReadonlyArray<unknown> {
+  return Array.isArray(value) ? value : [];
+}
+
+function nestedLsDirectory(rawNode: unknown): CursorLsDirectoryNode {
+  const node = unknownRecord(rawNode);
+  return {
+    absPath: typeof node?.absPath === "string" ? node.absPath : "",
+    childrenDirs: nestedArray(node?.childrenDirs).map(nestedLsDirectory),
+    childrenFiles: nestedArray(node?.childrenFiles).flatMap((rawFile) => {
+      const name = unknownRecord(rawFile)?.name;
+      return typeof name === "string" ? [{ name }] : [];
+    }),
+    childrenWereProcessed: node?.childrenWereProcessed === true,
+    fullSubtreeExtensionCounts: Object.fromEntries(
+      Object.entries(unknownRecord(node?.fullSubtreeExtensionCounts) ?? {}).filter(
+        (entry): entry is [string, number] => typeof entry[1] === "number",
+      ),
+    ),
+    numFiles: typeof node?.numFiles === "number" ? node.numFiles : 0,
+  };
+}
+
 export function nestedToolCallFromEnvelope(
   envelope: Record<string, unknown>,
 ): { readonly callId: string; readonly toolCall: ToolCall } | undefined {
@@ -730,6 +753,66 @@ export function nestedToolCallFromEnvelope(
         } as unknown as ToolCall,
       };
     }
+    case "lsToolCall":
+      return {
+        callId: nestedCallId,
+        toolCall: {
+          type: "ls",
+          args: { path: typeof args.path === "string" ? args.path : "" },
+          result: nestedToolResult(call.result, (value) => ({
+            directoryTreeRoot: nestedLsDirectory(value.directoryTreeRoot),
+          })),
+        } as unknown as ToolCall,
+      };
+    case "readLintsToolCall":
+      return {
+        callId: nestedCallId,
+        toolCall: {
+          type: "readLints",
+          args: {
+            paths: nestedArray(args.paths).filter(
+              (path): path is string => typeof path === "string",
+            ),
+          },
+          result: nestedToolResult(call.result, (value) => ({
+            fileDiagnostics: nestedArray(value.fileDiagnostics).map((rawFile) => {
+              const file = unknownRecord(rawFile);
+              return {
+                path: typeof file?.path === "string" ? file.path : "",
+                diagnostics: nestedArray(file?.diagnostics).flatMap((rawDiagnostic) => {
+                  const diagnostic = unknownRecord(rawDiagnostic);
+                  return diagnostic === undefined
+                    ? []
+                    : [
+                        {
+                          ...diagnostic,
+                          message: typeof diagnostic.message === "string" ? diagnostic.message : "",
+                        },
+                      ];
+                }),
+              };
+            }),
+            totalFiles: typeof value.totalFiles === "number" ? value.totalFiles : 0,
+            totalDiagnostics:
+              typeof value.totalDiagnostics === "number" ? value.totalDiagnostics : 0,
+          })),
+        } as unknown as ToolCall,
+      };
+    case "mcpToolCall":
+      return {
+        callId: nestedCallId,
+        toolCall: {
+          type: "mcp",
+          args,
+          result: nestedToolResult(call.result, (value) => ({
+            content: nestedArray(value.content).flatMap((rawPart) => {
+              const part = unknownRecord(rawPart);
+              return part === undefined ? [] : [part];
+            }),
+            isError: value.isError === true,
+          })),
+        } as unknown as ToolCall,
+      };
     default: {
       const type = wrapperName.slice(0, -"ToolCall".length);
       return {
@@ -2423,7 +2506,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                                     cause: result.error,
                                     // makeProviderFailure never reads a cause's own text.
                                     message: result.error?.message,
-                                    class: "provider_error",
+                                    class: CursorAgentSdk.isCursorUsageLimitError(result.error)
+                                      ? "usage_limit"
+                                      : "provider_error",
                                   })
                                 : makeProviderFailure({
                                     cause: transportFailure,
@@ -2449,7 +2534,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                               message: CursorAgentSdk.isCursorAgentSdkRunnerError(cause)
                                 ? CursorAgentSdk.cursorSdkFailureMessage(cause)
                                 : undefined,
-                              class: "transport_error",
+                              class: CursorAgentSdk.isCursorUsageLimitError(cause)
+                                ? "usage_limit"
+                                : "transport_error",
                             }),
                           }),
                     });

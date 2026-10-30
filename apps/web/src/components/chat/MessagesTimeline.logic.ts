@@ -1,4 +1,5 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
@@ -594,6 +595,10 @@ type MessagesTimelineRowContent =
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
+      /** Another of your messages follows directly, so the two sit closer together. */
+      groupedWithNext?: boolean;
+      /** Set when the message above is a steer too, so the label shows once. */
+      continuesSteer?: boolean;
     }
   | {
       kind: "assistant-meta";
@@ -983,6 +988,24 @@ function failedTimelineRunIds(
     if (runId) failed.add(runId);
   }
   return failed;
+}
+
+/** Usage-limit pauses keep their tool groups; any other failure itemizes the run's work. */
+function itemizedFailedRunIds(
+  entries: ReadonlyArray<TimelineEntry>,
+  failedRunIds: ReadonlySet<RunId>,
+) {
+  const usageLimited = new Set<RunId>();
+  const otherFailures = new Set<RunId>();
+  for (const entry of entries) {
+    const item = timelineEntryFailedItem(entry);
+    if (item?.runId) {
+      (item.failure.class === "usage_limit" ? usageLimited : otherFailures).add(item.runId);
+    }
+  }
+  return new Set(
+    [...failedRunIds].filter((runId) => !usageLimited.has(runId) || otherFailures.has(runId)),
+  );
 }
 
 function deriveTurnFolds(input: {
@@ -1422,6 +1445,7 @@ export function deriveMessagesTimelineRows(input: {
   const nextRows: MessagesTimelineRow[] = [];
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
+  const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
   const completeSupersededReplyIds = completeSupersededReplyEntryIds(timelineEntries);
   const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(
@@ -1448,6 +1472,7 @@ export function deriveMessagesTimelineRows(input: {
     liveSubagentEntryIds,
     completeSupersededReplyEntryIds: completeSupersededReplyIds,
   });
+  const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
   const collapsedEntryIds = new Set<string>();
   const collapsedFoldMemberIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -1693,14 +1718,14 @@ export function deriveMessagesTimelineRows(input: {
 
     const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
     if (turnFold) {
-      const deferredWorkItemIds = timelineEntries.flatMap((entry) =>
-        turnFold.entryIds.has(entry.id) &&
-        entry.kind === "work" &&
-        entry.entry.projectedItem?.item.deferredWork &&
-        !supersededWorkItemIds.has(String(entry.entry.projectedItem.sourceItemId))
+      const deferredWorkItemIds = [...turnFold.entryIds].flatMap((entryId) => {
+        const entry = timelineEntryById.get(entryId);
+        return entry?.kind === "work" &&
+          entry.entry.projectedItem?.item.deferredWork &&
+          !supersededWorkItemIds.has(String(entry.entry.projectedItem.sourceItemId))
           ? [String(entry.entry.projectedItem.sourceItemId)]
-          : [],
-      );
+          : [];
+      });
       nextRows.push({
         kind: "turn-fold",
         id: `turn-fold:${turnFold.runId}`,
@@ -1783,7 +1808,7 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.kind === "work") {
       if (
         isPendingApproval(timelineEntry.entry) ||
-        (timelineEntry.entry.runId != null && failedRunIds.has(timelineEntry.entry.runId)) ||
+        (timelineEntry.entry.runId != null && itemizedRunIds.has(timelineEntry.entry.runId)) ||
         (timelineEntry.entry.itemType === "error" &&
           timelineEntry.entry.toolLifecycleStatus === "failed") ||
         timelineEntry.entry.tone === "error" ||
@@ -1809,6 +1834,8 @@ export function deriveMessagesTimelineRows(input: {
           !nextEntry ||
           nextEntry.kind !== "work" ||
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
+          (nextEntry.entry.itemType === "error" &&
+            nextEntry.entry.toolLifecycleStatus === "failed") ||
           nextEntry.entry.tone === "error" ||
           nextEntry.entry.sourceActivityKind === "runtime.error" ||
           nextEntry.entry.itemType === "system_notice" ||
@@ -2124,11 +2151,34 @@ export function deriveMessagesTimelineRows(input: {
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
-  return result.map((row, index) =>
-    timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
-      ? { ...row, continuesWorkLog: true }
-      : row,
+  return result.map((row, index) => {
+    if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
+      return { ...row, continuesWorkLog: true };
+    }
+    if (!timelineRowIsOwnUserMessage(row)) return row;
+    const previous = result[index - 1];
+    const groupedWithNext = timelineRowIsOwnUserMessage(result[index + 1]);
+    const continuesSteer =
+      timelineRowIsOwnUserMessage(previous) &&
+      messageIsSteer(row.message) &&
+      messageIsSteer(previous.message);
+    if (!groupedWithNext && !continuesSteer) return row;
+    return { ...row, groupedWithNext, continuesSteer };
+  });
+}
+
+function timelineRowIsOwnUserMessage(
+  row: MessagesTimelineRow | undefined,
+): row is Extract<MessagesTimelineRow, { kind: "message" }> {
+  return (
+    row?.kind === "message" &&
+    row.message.role === "user" &&
+    resolveUserMessagePresentation(row.message).attribution === null
   );
+}
+
+function messageIsSteer(message: ChatMessage): boolean {
+  return message.inputIntent === "steer" || message.inputIntent === "promoted_queued_to_steer";
 }
 
 function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
@@ -2468,7 +2518,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
-        a.revertTurnCount === bm.revertTurnCount
+        a.revertTurnCount === bm.revertTurnCount &&
+        a.groupedWithNext === bm.groupedWithNext &&
+        a.continuesSteer === bm.continuesSteer
       );
     }
   }
