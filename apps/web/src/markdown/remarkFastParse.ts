@@ -18,10 +18,13 @@ function usesMath(extensions: ReadonlyArray<unknown>): boolean {
  * Parses with parseMarkdown, which builds the tree remark-parse builds with the chat's syntax
  * extensions. Use after remark-parse and the syntax plugins, so it can see what they need.
  */
-export function remarkFastParse(this: Processor) {
+function attachFastParse(this: Processor) {
   const fallback = this.parser;
   this.parser = (document) => {
-    if (usesMath(this.data().micromarkExtensions ?? [])) return fallback!(document, undefined as never);
+    if (usesMath(this.data().micromarkExtensions ?? []))
+      return fallback!(document, undefined as never);
     return parseMarkdown(document) as Root;
   };
 }
+
+export const remarkFastParse = attachFastParse;

@@ -107,6 +107,7 @@
     "@vercel/config": "^0.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "@vitest/browser-playwright": "5.0.5",
+    "commonmark-spec": "0.31.2",
     "compression": "^1.8.2",
     "micromark-util-types": "catalog:",
     "oxc-transform-react": "~0.152.0",

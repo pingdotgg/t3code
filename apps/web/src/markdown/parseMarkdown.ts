@@ -68,7 +68,11 @@ interface ParsedDefinition {
 
 type ParagraphBlock = Block & { definitions?: ParsedDefinition[] };
 type TableBlock = Block & { align?: Array<"left" | "right" | "center" | null> };
-type DirectiveBlock = Block & { name?: string; attributes?: Record<string, string>; labelRange?: [number, number] | undefined };
+type DirectiveBlock = Block & {
+  name?: string;
+  attributes?: Record<string, string>;
+  labelRange?: [number, number] | undefined;
+};
 
 export function parseMarkdown(document: string, options: ParseOptions = {}): Root {
   const source = document.charCodeAt(0) === 0xfeff ? document.slice(1) : document;
@@ -118,8 +122,6 @@ class DocumentParser {
   position(start: number, end: number) {
     return { start: this.point(start), end: this.point(end) };
   }
-
-  // --- Block hooks --------------------------------------------------------------------------
 
   onFinalize(block: Block) {
     if (block.type === "paragraph") this.extractDefinitions(block as ParagraphBlock);
@@ -224,7 +226,9 @@ class DocumentParser {
     }
     const authored = s.slice(destStart, destEnd);
     const url =
-      isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : unescapeString(authored);
+      isWindowsAbsolutePath(authored) && !authored.includes("&")
+        ? authored
+        : unescapeString(authored);
     // Optional title, which must be separated by whitespace.
     const beforeTitle = i;
     let j = skipSpacesAndOneEol(s, i);
@@ -379,8 +383,6 @@ class DocumentParser {
     return true;
   }
 
-  // --- Conversion to mdast ------------------------------------------------------------------
-
   contentOf(lines: ReadonlyArray<ContentLine>): Content {
     const s = this.source;
     let text = "";
@@ -418,7 +420,13 @@ class DocumentParser {
   inlines(lines: ReadonlyArray<ContentLine>): PhrasingContent[] {
     if (lines.length === 0) return [];
     const content = this.contentOf(lines);
-    const children = new InlineParser(this.source, content, this.definitions, { math: this.math, directives: true }, this).parse();
+    const children = new InlineParser(
+      this.source,
+      content,
+      this.definitions,
+      { math: this.math, directives: true },
+      this,
+    ).parse();
     // mdast-util-gfm-table: escaped pipes in table code spans lose their backslash.
     if (this.inTable) unescapeTableCode(children);
     return children;
@@ -487,7 +495,11 @@ class DocumentParser {
         const codeLines = block.lines.slice(0, count);
         let value = this.joinLines(codeLines);
         // micromark keeps all but the last line ending of trailing indented blank lines.
-        if (codeLines.length > 1 && codeLines.at(-1)!.start === codeLines.at(-1)!.end && codeLines.at(-1)!.pad === 0) {
+        if (
+          codeLines.length > 1 &&
+          codeLines.at(-1)!.start === codeLines.at(-1)!.end &&
+          codeLines.at(-1)!.pad === 0
+        ) {
           value = value.slice(0, -1);
         }
         out.push({
@@ -523,7 +535,12 @@ class DocumentParser {
       }
       case "html": {
         let count = block.lines.length;
-        while (count > 1 && block.htmlType >= 6 && s.slice(block.lines[count - 1]!.start, block.lines[count - 1]!.end).trim() === "") count--;
+        while (
+          count > 1 &&
+          block.htmlType >= 6 &&
+          s.slice(block.lines[count - 1]!.start, block.lines[count - 1]!.end).trim() === ""
+        )
+          count--;
         const lines = block.lines.slice(0, count);
         const last = lines.at(-1)!;
         const end = block.closed || block.htmlType >= 6 ? last.end : this.openBlockEnd(block);
@@ -539,7 +556,10 @@ class DocumentParser {
         out.push({
           type: "blockquote",
           children,
-          position: this.position(block.start, Math.max(endOf(children, block.end), block.lastMatchedEnd)),
+          position: this.position(
+            block.start,
+            Math.max(endOf(children, block.end), block.lastMatchedEnd),
+          ),
         });
         return;
       }
@@ -578,7 +598,9 @@ class DocumentParser {
           name: directive.name,
           attributes: directive.attributes,
           children: directive.labelRange
-            ? this.inlines([{ start: directive.labelRange[0], end: directive.labelRange[1], pad: 0 }])
+            ? this.inlines([
+                { start: directive.labelRange[0], end: directive.labelRange[1], pad: 0 },
+              ])
             : [],
           position: this.position(block.start, block.end),
         } as unknown as RootContent);
@@ -597,7 +619,10 @@ class DocumentParser {
       const line = lines[i]!;
       if (i > 0) {
         const previous = lines[i - 1]!.end;
-        value += s.charCodeAt(previous) === CR && s.charCodeAt(previous + 1) === LF ? "\r\n" : (s[previous] ?? "\n");
+        value +=
+          s.charCodeAt(previous) === CR && s.charCodeAt(previous + 1) === LF
+            ? "\r\n"
+            : (s[previous] ?? "\n");
       }
       value += " ".repeat(line.pad) + s.slice(line.start, line.end);
     }
@@ -619,11 +644,18 @@ class DocumentParser {
     const children = this.convertChildren(block) as BlockContent[];
     let checked: boolean | null = null;
     const first = children[0];
-    if (first?.type === "paragraph" && first.position!.start.line === this.point(block.start).line) {
+    if (
+      first?.type === "paragraph" &&
+      first.position!.start.line === this.point(block.start).line
+    ) {
       const head = first.children[0];
       // micromark-extension-gfm-task-list-item: whitespace, then more than the end of input.
       const match = head?.type === "text" ? /^\[([ \t]|[xX])\][ \t]+/.exec(head.value) : null;
-      if (head?.type === "text" && match && (match[0].length < head.value.length || first.children.length > 1)) {
+      if (
+        head?.type === "text" &&
+        match &&
+        (match[0].length < head.value.length || first.children.length > 1)
+      ) {
         checked = match[1] !== " " && match[1] !== "\t";
         // mdast-util-gfm-task-list-item drops the check and one whitespace character.
         head.value = head.value.slice(4);
@@ -660,11 +692,13 @@ class DocumentParser {
     const rows: TableRow[] = [];
     block.lines.forEach((line, index) => {
       if (index === 1) return;
-      const cells: TableCell[] = splitRow(s, line.start, line.end).map(([start, end, cellStart, cellEnd]) => ({
-        type: "tableCell",
-        children: this.inlines(start < end ? [{ start, end, pad: 0 }] : []),
-        position: this.position(cellStart, cellEnd),
-      }));
+      const cells: TableCell[] = splitRow(s, line.start, line.end).map(
+        ([start, end, cellStart, cellEnd]) => ({
+          type: "tableCell",
+          children: this.inlines(start < end ? [{ start, end, pad: 0 }] : []),
+          position: this.position(cellStart, cellEnd),
+        }),
+      );
       rows.push({
         type: "tableRow",
         children: cells,
@@ -683,7 +717,8 @@ class DocumentParser {
 
 function unescapeTableCode(nodes: PhrasingContent[]) {
   for (const node of nodes) {
-    if (node.type === "inlineCode") node.value = node.value.replace(/\\([\\|])/g, (all, char) => (char === "|" ? char : all));
+    if (node.type === "inlineCode")
+      node.value = node.value.replace(/\\([\\|])/g, (all, char) => (char === "|" ? char : all));
     else if ("children" in node) unescapeTableCode(node.children as PhrasingContent[]);
   }
 }
@@ -759,7 +794,11 @@ function parseDelimiterRow(
 }
 
 /** Cells of a table row: [contentStart, contentEnd, cellStart, cellEnd] source ranges. */
-function splitRow(s: string, start: number, lineEnd: number): Array<[number, number, number, number]> {
+function splitRow(
+  s: string,
+  start: number,
+  lineEnd: number,
+): Array<[number, number, number, number]> {
   const end = trimEnd(s, start, lineEnd);
   const cells: Array<[number, number, number, number]> = [];
   let i = start;

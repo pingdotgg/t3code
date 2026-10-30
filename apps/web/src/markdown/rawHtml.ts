@@ -11,7 +11,9 @@ type Point = Position["start"];
 
 class Bail extends Error {}
 
-const VOID = new Set("area base br col embed hr img input keygen link meta param source track wbr".split(" "));
+const VOID = new Set(
+  "area base br col embed hr img input keygen link meta param source track wbr".split(" "),
+);
 const FORMATTING = new Set("a b big code em font i nobr s small strike strong tt u".split(" "));
 // Start tags that close an open `p` (parse5's "in body" rules).
 const CLOSES_P = new Set(
@@ -58,7 +60,12 @@ function tokenize(value: string): Token[] {
   let textStart = 0;
   const flushText = (end: number) => {
     if (end > textStart) {
-      tokens.push({ kind: "text", value: decodeHTML(normalizeNewlines(value.slice(textStart, end))), start: textStart, end });
+      tokens.push({
+        kind: "text",
+        value: decodeHTML(normalizeNewlines(value.slice(textStart, end))),
+        start: textStart,
+        end,
+      });
     }
   };
   while (i < value.length) {
@@ -85,7 +92,13 @@ function tokenize(value: string): Token[] {
     } else if (next === 47) {
       if (!isAlpha(value.charCodeAt(lt + 2))) throw new Bail();
       let j = lt + 2;
-      while (j < value.length && !isSpace(value.charCodeAt(j)) && value[j] !== "/" && value[j] !== ">") j++;
+      while (
+        j < value.length &&
+        !isSpace(value.charCodeAt(j)) &&
+        value[j] !== "/" &&
+        value[j] !== ">"
+      )
+        j++;
       const close = value.indexOf(">", j);
       if (close < 0) throw new Bail();
       end = close + 1;
@@ -110,7 +123,8 @@ function tokenize(value: string): Token[] {
 
 function startTag(value: string, at: number): StartToken {
   let j = at + 1;
-  while (j < value.length && !isSpace(value.charCodeAt(j)) && value[j] !== "/" && value[j] !== ">") j++;
+  while (j < value.length && !isSpace(value.charCodeAt(j)) && value[j] !== "/" && value[j] !== ">")
+    j++;
   const name = value.slice(at + 1, j).toLowerCase();
   const attributes: Record<string, string> = {};
   let selfClosing = false;
@@ -124,10 +138,18 @@ function startTag(value: string, at: number): StartToken {
       j++;
     }
     if (j >= value.length) throw new Bail();
-    if (value[j] === ">") return { kind: "start", name, attributes, selfClosing, start: at, end: j + 1 };
+    if (value[j] === ">")
+      return { kind: "start", name, attributes, selfClosing, start: at, end: j + 1 };
     // Attribute name; a leading `=` belongs to it.
     let k = j + 1;
-    while (k < value.length && !isSpace(value.charCodeAt(k)) && value[k] !== "/" && value[k] !== ">" && value[k] !== "=") k++;
+    while (
+      k < value.length &&
+      !isSpace(value.charCodeAt(k)) &&
+      value[k] !== "/" &&
+      value[k] !== ">" &&
+      value[k] !== "="
+    )
+      k++;
     const attributeName = value.slice(j, k).toLowerCase();
     j = k;
     while (j < value.length && isSpace(value.charCodeAt(j))) j++;
@@ -271,7 +293,10 @@ function assemble(children: ReadonlyArray<ElementContent | RawNode>, scope: Scop
     // A Markdown element: parse5 sees its start tag, its children, then its end tag.
     if (scope.open.some((element) => FORMATTING.has(element.tagName))) throw new Bail();
     if (CLOSES_P.has(child.tagName)) closeParagraph(scope);
-    if (child.tagName === "a" && (scope.inLink || scope.open.some((element) => element.tagName === "a"))) {
+    if (
+      child.tagName === "a" &&
+      (scope.inLink || scope.open.some((element) => element.tagName === "a"))
+    ) {
       throw new Bail();
     }
     const element: Element = { ...child, children: [] };
@@ -324,8 +349,10 @@ function applyToken(token: Token, raw: RawNode, scope: Scope) {
         if (scope.inParagraph) throw new Bail();
         closeParagraph(scope);
       }
-      if (HEADINGS.has(name) && HEADINGS.has((current(scope) as Element).tagName ?? "")) scope.open.pop();
-      if (name === "a" && (scope.inLink || scope.open.some((element) => element.tagName === "a"))) throw new Bail();
+      if (HEADINGS.has(name) && HEADINGS.has((current(scope) as Element).tagName ?? ""))
+        scope.open.pop();
+      if (name === "a" && (scope.inLink || scope.open.some((element) => element.tagName === "a")))
+        throw new Bail();
       const element = h(name, token.attributes) as Element;
       const start = pointIn(raw, token.start);
       const end = pointIn(raw, token.end);
@@ -338,7 +365,8 @@ function applyToken(token: Token, raw: RawNode, scope: Scope) {
     case "end": {
       const { name } = token;
       if (name === "br" || name === "p") {
-        if (name === "br" || !scope.open.some((element) => element.tagName === "p")) throw new Bail();
+        if (name === "br" || !scope.open.some((element) => element.tagName === "p"))
+          throw new Bail();
       }
       const index = scope.open.findLastIndex((element) => element.tagName === name);
       if (index < 0) {

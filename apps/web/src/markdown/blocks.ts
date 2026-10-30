@@ -15,16 +15,15 @@ export const APOS = 39;
 export const LPAREN = 40;
 export const RPAREN = 41;
 export const STAR = 42;
-export const PLUS = 43;
+const PLUS = 43;
 export const DASH = 45;
-export const DOT = 46;
-export const SLASH = 47;
+const DOT = 46;
+const SLASH = 47;
 export const COLON = 58;
 export const SEMI = 59;
 export const LT = 60;
-export const EQ = 61;
+const EQ = 61;
 export const GT = 62;
-export const QUESTION = 63;
 export const LBRACKET = 91;
 export const BACKSLASH = 92;
 export const RBRACKET = 93;
@@ -140,7 +139,7 @@ export function newBlock(type: BlockType, start: number): Block {
 }
 
 export const isSpaceOrTab = (code: number) => code === SPACE || code === TAB;
-export const isLineEnding = (code: number) => code === LF || code === CR;
+const isLineEnding = (code: number) => code === LF || code === CR;
 const isDigit = (code: number) => code >= 48 && code <= 57;
 const isAsciiAlpha = (code: number) => (code | 32) >= 97 && (code | 32) <= 122;
 
@@ -488,12 +487,7 @@ export class BlockParser {
       }
     }
 
-    if (
-      !this.allClosed &&
-      !this.blank &&
-      this.tip.type === "paragraph" &&
-      !allMatched
-    ) {
+    if (!this.allClosed && !this.blank && this.tip.type === "paragraph" && !allMatched) {
       // Lazy paragraph continuation.
       const indent = contentStart;
       this.advanceNextNonspace();
@@ -521,8 +515,13 @@ export class BlockParser {
     }
     // The rest of an item's own marker line is not a blank line inside it.
     const atMarker = t === "listItem" && container.start >= start;
-    if (this.blank && !atMarker && t !== "code" && t !== "math" && t !== "html") {
+    if (this.blank && t === "code" && !container.fenced) {
+      // Blank lines in indented code are code only if more code follows.
+      container.pendingBlank = true;
+    } else if (this.blank && !atMarker && t !== "code" && t !== "math" && t !== "html") {
       this.markBlank(container);
+    } else if (!this.blank && t === "code") {
+      container.pendingBlank = false;
     }
 
     switch (t) {
@@ -630,7 +629,11 @@ export class BlockParser {
       return 2;
     }
     // A delimiter row under a paragraph line makes a table before anything else starts.
-    if ((c === PIPE || c === DASH || c === COLON) && container.type === "paragraph" && this.tryTable(container)) {
+    if (
+      (c === PIPE || c === DASH || c === COLON) &&
+      container.type === "paragraph" &&
+      this.tryTable(container)
+    ) {
       return 2;
     }
     switch (c) {
@@ -864,11 +867,7 @@ export class BlockParser {
 
     this.closeUnmatchedBlocks();
     const tip = this.tip;
-    if (
-      tip.type !== "list" ||
-      tip.ordered !== ordered ||
-      tip.bulletChar !== bulletChar
-    ) {
+    if (tip.type !== "list" || tip.ordered !== ordered || tip.bulletChar !== bulletChar) {
       const list = this.addChild("list", markerStart);
       list.ordered = ordered;
       list.bulletChar = bulletChar;
@@ -990,13 +989,19 @@ export class BlockParser {
     block.open = false;
     const parent = block.parent;
     if (block.type !== "root" && block.end < block.start) block.end = block.start;
-    if (end >= 0 && block.lines.length === 0 && block.children.length === 0 && block.end === block.start) {
+    if (
+      end >= 0 &&
+      block.lines.length === 0 &&
+      block.children.length === 0 &&
+      block.end === block.start
+    ) {
       block.end = Math.max(block.end, end);
     }
     // Blank lines a nested list ended with lie between the enclosing item's children.
     if (block.pendingBlank && (block.type === "listItem" || block.type === "list") && parent) {
       if (parent.type === "listItem" || parent.type === "list") parent.pendingBlank = true;
     }
+    if (block.pendingBlank && block.type === "code" && parent) this.markBlank(parent);
     this.onFinalize(block);
     this.tip = parent ?? this.root;
   }
@@ -1036,7 +1041,15 @@ export function scanHtmlTag(source: string, at: number, end: number, lineOnly: b
     i = ws + 1;
     while (i < limit) {
       const n = source.charCodeAt(i);
-      if (isAsciiAlpha(n) || isDigit(n) || n === UNDERSCORE || n === DOT || n === COLON || n === DASH) i++;
+      if (
+        isAsciiAlpha(n) ||
+        isDigit(n) ||
+        n === UNDERSCORE ||
+        n === DOT ||
+        n === COLON ||
+        n === DASH
+      )
+        i++;
       else break;
     }
     // Optional value.
@@ -1054,7 +1067,16 @@ export function scanHtmlTag(source: string, at: number, end: number, lineOnly: b
       let u = v;
       while (u < limit) {
         const n = source.charCodeAt(u);
-        if (isWhitespaceCode(n) || n === QUOTE || n === APOS || n === EQ || n === LT || n === GT || n === BACKTICK) break;
+        if (
+          isWhitespaceCode(n) ||
+          n === QUOTE ||
+          n === APOS ||
+          n === EQ ||
+          n === LT ||
+          n === GT ||
+          n === BACKTICK
+        )
+          break;
         u++;
       }
       if (u === v) return -1;

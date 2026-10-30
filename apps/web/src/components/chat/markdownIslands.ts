@@ -80,11 +80,7 @@ function containsIsland(node: Element, isIsland: MarkdownIslandOptions["isIsland
   return false;
 }
 
-function renderContent(
-  node: RootContent,
-  key: number,
-  options: MarkdownIslandOptions,
-): ReactNode {
+function renderContent(node: RootContent, key: number, options: MarkdownIslandOptions): ReactNode {
   if (node.type === "text") return node.value;
   if (node.type !== "element") return null;
   if (options.isIsland(node)) {

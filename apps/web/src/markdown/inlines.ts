@@ -101,8 +101,6 @@ function classifyBefore(text: string, at: number): 0 | 1 | 2 {
   return classify(text, at - 1);
 }
 
-// --- Inline nodes under construction --------------------------------------------------------
-
 interface InlineNode {
   kind: "node" | "text" | "delim" | "bracket";
   /** Source offsets. */
@@ -274,14 +272,20 @@ export class InlineParser {
 
   appendLiteralAutolink(start: number, end: number) {
     const value = this.s.slice(start, end);
-    const url = value.includes("@") && !/^(?:https?:\/\/|www\.)/i.test(value)
-      ? `mailto:${value}`
-      : /^www\./i.test(value)
-        ? `http://${value}`
-        : value;
+    const url =
+      value.includes("@") && !/^(?:https?:\/\/|www\.)/i.test(value)
+        ? `mailto:${value}`
+        : /^www\./i.test(value)
+          ? `http://${value}`
+          : value;
     const position = this.position(this.src(start), this.srcEnd(end));
     this.appendNode(
-      { type: "link", title: null, url, children: [{ type: "text", value, position }] } as PhrasingContent,
+      {
+        type: "link",
+        title: null,
+        url,
+        children: [{ type: "text", value, position }],
+      } as PhrasingContent,
       this.src(start),
       this.srcEnd(end),
     );
@@ -290,7 +294,9 @@ export class InlineParser {
   isSpecial(c: number): boolean {
     if (c >= 128) return false;
     const kind = SPECIAL[c]!;
-    return kind === 1 || (kind === 2 && this.options.math) || (kind === 3 && this.options.directives);
+    return (
+      kind === 1 || (kind === 2 && this.options.math) || (kind === 3 && this.options.directives)
+    );
   }
 
   parseSpecial(c: number): boolean {
@@ -326,8 +332,6 @@ export class InlineParser {
     }
   }
 
-  // --- Line endings and escapes -------------------------------------------------------------
-
   parseLineEnding(): boolean {
     const { s } = this;
     const at = this.pos;
@@ -350,7 +354,11 @@ export class InlineParser {
           const breakStart = this.src(at) - trailingSpaces;
           this.pos = at + eolLength;
           this.skipLeadingSpace();
-          this.appendNode({ type: "break" } as PhrasingContent, breakStart, this.src(at) + eolLength);
+          this.appendNode(
+            { type: "break" } as PhrasingContent,
+            breakStart,
+            this.src(at) + eolLength,
+          );
           return true;
         }
         if (tail.value === "") this.remove(tail);
@@ -364,7 +372,10 @@ export class InlineParser {
 
   skipLeadingSpace() {
     const { s } = this;
-    while (this.pos < s.length && (s.charCodeAt(this.pos) === SPACE || s.charCodeAt(this.pos) === TAB)) {
+    while (
+      this.pos < s.length &&
+      (s.charCodeAt(this.pos) === SPACE || s.charCodeAt(this.pos) === TAB)
+    ) {
       this.pos++;
     }
   }
@@ -387,7 +398,7 @@ export class InlineParser {
       this.appendNode({ type: "break" } as PhrasingContent, this.src(at), this.src(at + 1) + eol);
       return true;
     }
-    if (this.options.math && (next === LPAREN)) {
+    if (this.options.math && next === LPAREN) {
       if (this.parseTexMath()) return true;
     }
     if (isAsciiPunctuation(next)) {
@@ -408,8 +419,6 @@ export class InlineParser {
     }
     this.appendText(char, start, end);
   }
-
-  // --- Code spans and math ------------------------------------------------------------------
 
   parseCodeSpan(): boolean {
     const { s } = this;
@@ -511,8 +520,6 @@ export class InlineParser {
     );
     return true;
   }
-
-  // --- Emphasis and strikethrough -----------------------------------------------------------
 
   parseDelimiterRun(char: number): boolean {
     const { s } = this;
@@ -711,8 +718,6 @@ export class InlineParser {
     return out;
   }
 
-  // --- Links, images, footnote calls --------------------------------------------------------
-
   parseOpenBracket(image: boolean): boolean {
     const { s } = this;
     const start = this.pos;
@@ -777,8 +782,11 @@ export class InlineParser {
     let after = start + 1;
     let url: string | null = null;
     let title: string | null = null;
-    let reference: { identifier: string; label: string; type: "full" | "collapsed" | "shortcut" } | null =
-      null;
+    let reference: {
+      identifier: string;
+      label: string;
+      type: "full" | "collapsed" | "shortcut";
+    } | null = null;
     // Inline link.
     if (s.charCodeAt(after) === LPAREN) {
       const parsed = this.parseInlineDestination(after + 1);
@@ -801,7 +809,11 @@ export class InlineParser {
         }
       } else if (labelEnd === after + 2 || !opener.bracketAfter) {
         const identifier = normalizeIdentifier(ownLabel);
-        if (ownLabel.length <= 999 && this.definitions.links.has(identifier) && !/^\^/.test(ownLabel)) {
+        if (
+          ownLabel.length <= 999 &&
+          this.definitions.links.has(identifier) &&
+          !/^\^/.test(ownLabel)
+        ) {
           reference = {
             identifier,
             label: unescapeString(ownLabel),
@@ -934,7 +946,10 @@ export class InlineParser {
       i = j;
     }
     const authored = s.slice(rawStart, rawEnd);
-    url = isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : unescapeString(authored);
+    url =
+      isWindowsAbsolutePath(authored) && !authored.includes("&")
+        ? authored
+        : unescapeString(authored);
     const afterDest = i;
     i = skipWhitespace(s, i);
     let title: string | null = null;
@@ -959,8 +974,6 @@ export class InlineParser {
     if (s.charCodeAt(i) !== RPAREN) return null;
     return { url, title, end: i + 1 };
   }
-
-  // --- Autolinks, HTML, entities ------------------------------------------------------------
 
   parseAutolink(): boolean {
     const { s } = this;
@@ -995,9 +1008,10 @@ export class InlineParser {
       }
     }
     // Email autolink.
-    const email = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*>/.exec(
-      s.slice(i, i + 400),
-    );
+    const email =
+      /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*>/.exec(
+        s.slice(i, i + 400),
+      );
     if (email) {
       const value = email[0].slice(0, -1);
       const k = i + value.length;
@@ -1007,9 +1021,7 @@ export class InlineParser {
           type: "link",
           title: null,
           url: `mailto:${value}`,
-          children: [
-            { type: "text", value, position: this.position(this.src(i), this.srcEnd(k)) },
-          ],
+          children: [{ type: "text", value, position: this.position(this.src(i), this.srcEnd(k)) }],
         } as PhrasingContent,
         this.src(start),
         this.srcEnd(k + 1),
@@ -1062,8 +1074,6 @@ export class InlineParser {
     return true;
   }
 
-  // --- Codex text directives ----------------------------------------------------------------
-
   parseTextDirective(): boolean {
     const { s } = this;
     const start = this.pos;
@@ -1073,7 +1083,9 @@ export class InlineParser {
     for (const candidate of TEXT_DIRECTIVE_NAMES) {
       if (s.startsWith(candidate, start + 1)) {
         const after = s.charCodeAt(start + 1 + candidate.length);
-        if (!(after === 45 || after === UNDERSCORE || /[A-Za-z0-9]/.test(String.fromCharCode(after)))) {
+        if (
+          !(after === 45 || after === UNDERSCORE || /[A-Za-z0-9]/.test(String.fromCharCode(after)))
+        ) {
           name = candidate;
           break;
         }
@@ -1136,7 +1148,21 @@ function stripPadding(value: string): string {
 
 // 1 always starts a construct, 2 with math, 3 with directives.
 const SPECIAL = new Uint8Array(128);
-for (const c of [LF, CR, BACKSLASH, BACKTICK, STAR, UNDERSCORE, TILDE, LBRACKET, RBRACKET, BANG, LT, AMP]) SPECIAL[c] = 1;
+for (const c of [
+  LF,
+  CR,
+  BACKSLASH,
+  BACKTICK,
+  STAR,
+  UNDERSCORE,
+  TILDE,
+  LBRACKET,
+  RBRACKET,
+  BANG,
+  LT,
+  AMP,
+])
+  SPECIAL[c] = 1;
 SPECIAL[DOLLAR] = 2;
 SPECIAL[COLON] = 3;
 
@@ -1219,7 +1245,7 @@ function skipWhitespace(s: string, at: number): number {
   return i;
 }
 
-export function plainText(children: ReadonlyArray<PhrasingContent>): string {
+function plainText(children: ReadonlyArray<PhrasingContent>): string {
   let out = "";
   for (const child of children) {
     if ("value" in child && typeof child.value === "string") out += child.value;
@@ -1229,7 +1255,7 @@ export function plainText(children: ReadonlyArray<PhrasingContent>): string {
   return out;
 }
 
-export function matchEntity(s: string, at: number): { value: string; end: number } | null {
+function matchEntity(s: string, at: number): { value: string; end: number } | null {
   if (s.charCodeAt(at) !== AMP) return null;
   if (s.charCodeAt(at + 1) === HASH) {
     const hex = (s.charCodeAt(at + 2) | 32) === 120;
@@ -1250,7 +1276,7 @@ export function matchEntity(s: string, at: number): { value: string; end: number
   return value === null ? null : { value, end: i + 1 };
 }
 
-export function decodeEntities(value: string): string {
+function decodeEntities(value: string): string {
   if (!value.includes("&")) return value;
   let out = "";
   let i = 0;

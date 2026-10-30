@@ -129,7 +129,7 @@ function rehypePreserveImageSourceMeta() {
   };
 }
 
-export const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
+const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,

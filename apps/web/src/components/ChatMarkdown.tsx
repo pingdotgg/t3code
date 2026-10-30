@@ -1716,10 +1716,7 @@ function hastClassName(node: HastElement): string | undefined {
 }
 
 // Paragraphs and list items turn skill mentions in their text into chips, except in code and links.
-function hastTextHasSkill(
-  node: HastElement,
-  skills: ReadonlyArray<ServerProviderSkill>,
-): boolean {
+function hastTextHasSkill(node: HastElement, skills: ReadonlyArray<ServerProviderSkill>): boolean {
   return node.children.some((child) =>
     child.type === "text"
       ? !matchInlineSkills(child.value, skills).next().done
@@ -1807,7 +1804,9 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
             ? withProperties(node, { dataListItemOffset: node.position?.start.offset })
             : node;
         case "input":
-          return node.properties.type === "checkbox" ? withProperties(node, { readOnly: true }) : node;
+          return node.properties.type === "checkbox"
+            ? withProperties(node, { readOnly: true })
+            : node;
         default:
           return node;
       }

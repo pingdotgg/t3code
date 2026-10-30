@@ -68,7 +68,10 @@ export function createMarkdownRenderer({
     .use(FAST_PARSE ? [remarkFastParse] : [])
     .use(remarkPlugins)
     .freeze();
-  const rehype = unified().use(remarkRehype, { allowDangerousHtml: true }).use(rehypePlugins).freeze();
+  const rehype = unified()
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(rehypePlugins)
+    .freeze();
   const toHast = (file: VFile): Root => {
     const mdast = remark.runSync(remark.parse(file), file) as MdastRoot;
     return (FAST_PARSE && directHast?.(mdast)) || (rehype.runSync(mdast as never, file) as Root);

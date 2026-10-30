@@ -31,7 +31,11 @@ class Bail extends Error {}
 function copyPosition(position: Position | undefined): Position | undefined {
   if (!position) return undefined;
   return {
-    start: { line: position.start.line, column: position.start.column, offset: position.start.offset },
+    start: {
+      line: position.start.line,
+      column: position.start.column,
+      offset: position.start.offset,
+    },
     end: { line: position.end.line, column: position.end.column, offset: position.end.offset },
   } as Position;
 }
@@ -96,7 +100,8 @@ function trimLine(value: string, start: boolean, end: boolean): string {
     while (value.charCodeAt(startIndex) === 9 || value.charCodeAt(startIndex) === 32) startIndex++;
   }
   if (end) {
-    while (value.charCodeAt(endIndex - 1) === 9 || value.charCodeAt(endIndex - 1) === 32) endIndex--;
+    while (value.charCodeAt(endIndex - 1) === 9 || value.charCodeAt(endIndex - 1) === 32)
+      endIndex--;
   }
   return endIndex > startIndex ? value.slice(startIndex, endIndex) : "";
 }
@@ -106,14 +111,18 @@ const isAsciiAlphanumeric = (c: number) =>
 const URI_SAFE = /[!#$&-;=?-Z_a-z~]/;
 
 /** micromark-util-sanitize-uri's normalizeUri. */
-export function normalizeUri(value: string): string {
+function normalizeUri(value: string): string {
   let out = "";
   let start = 0;
   let skip = 0;
   for (let index = 0; index < value.length; index++) {
     const code = value.charCodeAt(index);
     let replace = "";
-    if (code === 37 && isAsciiAlphanumeric(value.charCodeAt(index + 1)) && isAsciiAlphanumeric(value.charCodeAt(index + 2))) {
+    if (
+      code === 37 &&
+      isAsciiAlphanumeric(value.charCodeAt(index + 1)) &&
+      isAsciiAlphanumeric(value.charCodeAt(index + 2))
+    ) {
       skip = 2;
     } else if (code < 128) {
       if (!URI_SAFE.test(String.fromCharCode(code))) replace = String.fromCharCode(code);
@@ -218,7 +227,9 @@ class Converter {
 
   /** applyData: hName, hProperties and hChildren from remark plugins. */
   applyData(node: Nodes, result: ElementContent): ElementContent {
-    const data = (node as { data?: { hName?: string; hProperties?: Properties; hChildren?: ElementContent[] } }).data;
+    const data = (
+      node as { data?: { hName?: string; hProperties?: Properties; hChildren?: ElementContent[] } }
+    ).data;
     if (!data) return result;
     let out = result;
     if (data.hName) {
@@ -245,7 +256,8 @@ class Converter {
 
   /** rehypeTextDirection isolates code outside `pre` left to right. */
   isolate(node: ElementContent): ElementContent {
-    if (node.type === "element" && node.tagName === "code") node.properties = { ...node.properties, dir: "ltr" };
+    if (node.type === "element" && node.tagName === "code")
+      node.properties = { ...node.properties, dir: "ltr" };
     return node;
   }
 
@@ -263,7 +275,10 @@ class Converter {
       case "thematicBreak":
         return this.applyData(node, element("hr", {}, [], position));
       case "blockquote":
-        return this.applyData(node, element("blockquote", {}, wrap(this.all(node), true), position));
+        return this.applyData(
+          node,
+          element("blockquote", {}, wrap(this.all(node), true), position),
+        );
       case "break":
         return [this.applyData(node, element("br", {}, [], position)), text("\n")];
       case "text":
@@ -275,7 +290,12 @@ class Converter {
       case "delete":
         return this.applyData(node, element("del", {}, this.all(node), position));
       case "inlineCode": {
-        const code = element("code", {}, [text(node.value.replace(/\r?\n|\r/g, " "), position)], position);
+        const code = element(
+          "code",
+          {},
+          [text(node.value.replace(/\r?\n|\r/g, " "), position)],
+          position,
+        );
         return this.isolate(this.applyData(node, code));
       }
       case "code": {
@@ -313,7 +333,10 @@ class Converter {
         } else url = node.url;
         const properties: Properties = {};
         const src = normalizeUri(url);
-        const title = node.type === "image" ? node.title : this.definitions.get(node.identifier.toUpperCase())?.title;
+        const title =
+          node.type === "image"
+            ? node.title
+            : this.definitions.get(node.identifier.toUpperCase())?.title;
         // rehypePreserveImageSourceMeta reads src and title before sanitizing drops them.
         if (safeProtocol(src, this.srcProtocols)) properties.src = src;
         properties.alt = node.alt ?? "";
@@ -331,7 +354,11 @@ class Converter {
         return this.footnoteReference(node.identifier, position);
       case "html":
         this.hasRaw = true;
-        return { type: "raw", value: node.value, position: copyPosition(position) } as unknown as ElementContent;
+        return {
+          type: "raw",
+          value: node.value,
+          position: copyPosition(position),
+        } as unknown as ElementContent;
       case "definition":
       case "footnoteDefinition":
       case "yaml" as never:
@@ -358,7 +385,10 @@ class Converter {
     if (node.children.some((item) => typeof item.checked === "boolean")) {
       properties.className = ["contains-task-list"];
     }
-    return this.applyData(node, element(tagName, properties, wrap(results, true), node.position)) as Element;
+    return this.applyData(
+      node,
+      element(tagName, properties, wrap(results, true), node.position),
+    ) as Element;
   }
 
   listItem(node: ListItem, parent: Parent | undefined): Element {
@@ -386,11 +416,13 @@ class Converter {
       if (loose || index !== 0 || child.type !== "element" || child.tagName !== "p") {
         children.push(NEWLINE());
       }
-      if (child.type === "element" && child.tagName === "p" && !loose) children.push(...child.children);
+      if (child.type === "element" && child.tagName === "p" && !loose)
+        children.push(...child.children);
       else children.push(child);
     }
     const tail = results.at(-1);
-    if (tail && (loose || tail.type !== "element" || tail.tagName !== "p")) children.push(NEWLINE());
+    if (tail && (loose || tail.type !== "element" || tail.tagName !== "p"))
+      children.push(NEWLINE());
     return this.applyData(node, element("li", properties, children, node.position)) as Element;
   }
 
@@ -408,7 +440,10 @@ class Converter {
         if (alignValue) properties.align = alignValue;
         cells.push(
           cell
-            ? (this.applyData(cell, element(tagName, properties, this.all(cell), cell.position)) as Element)
+            ? (this.applyData(
+                cell,
+                element(tagName, properties, this.all(cell), cell.position),
+              ) as Element)
             : element(tagName, properties, []),
         );
       }
@@ -429,7 +464,10 @@ class Converter {
         ),
       );
     }
-    return this.applyData(node, element("table", {}, wrap(sections, true), node.position)) as Element;
+    return this.applyData(
+      node,
+      element("table", {}, wrap(sections, true), node.position),
+    ) as Element;
   }
 
   footnoteReference(identifier: string, position: Position | undefined): Element {
@@ -496,12 +534,19 @@ class Converter {
         content.push(...backReferences);
       }
       listItems.push(
-        element("li", { id: `${CLOBBER_PREFIX}${CLOBBER_PREFIX}fn-${safeId}` }, wrap(content, true), definition.position),
+        element(
+          "li",
+          { id: `${CLOBBER_PREFIX}${CLOBBER_PREFIX}fn-${safeId}` },
+          wrap(content, true),
+          definition.position,
+        ),
       );
     }
     if (listItems.length === 0) return undefined;
     return element("section", { dataFootnotes: "", className: ["footnotes"] }, [
-      element("h2", { className: ["sr-only"], id: `${CLOBBER_PREFIX}footnote-label` }, [text("Footnotes")]),
+      element("h2", { className: ["sr-only"], id: `${CLOBBER_PREFIX}footnote-label` }, [
+        text("Footnotes"),
+      ]),
       NEWLINE(),
       element("ol", {}, wrap(listItems, true)),
       NEWLINE(),
@@ -518,7 +563,16 @@ function listItemLoose(node: ListItem): boolean {
   return node.spread ?? node.children.length > 1;
 }
 
-const STANDALONE_IMAGE_BLOCKS = new Set(["p", "div", "li", "td", "th", "figure", "center", "blockquote"]);
+const STANDALONE_IMAGE_BLOCKS = new Set([
+  "p",
+  "div",
+  "li",
+  "td",
+  "th",
+  "figure",
+  "center",
+  "blockquote",
+]);
 
 function meaningful(node: Element | HastRoot): ElementContent[] {
   return (node.children as ElementContent[]).filter(
@@ -532,7 +586,9 @@ function soleImage(node: Element | HastRoot): Element | undefined {
   const only = children[0]!;
   if (only.type !== "element") return undefined;
   if (only.tagName === "img") return only;
-  return only.tagName === "a" || only.tagName === "strong" || only.tagName === "em" ? soleImage(only) : undefined;
+  return only.tagName === "a" || only.tagName === "strong" || only.tagName === "em"
+    ? soleImage(only)
+    : undefined;
 }
 
 export function markStandaloneImages(node: Element | HastRoot) {

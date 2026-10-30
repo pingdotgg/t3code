@@ -10,7 +10,12 @@ const isLineEndingOrSpace = (c: number) => c === 9 || c === 10 || c === 13 || c 
 const UNICODE_WHITESPACE = /\s/u;
 const UNICODE_PUNCTUATION = /[\p{P}\p{S}]/u;
 const isUnicodeWhitespace = (c: number) =>
-  c === 9 || c === 10 || c === 12 || c === 13 || c === 32 || (c > 127 && UNICODE_WHITESPACE.test(String.fromCharCode(c)));
+  c === 9 ||
+  c === 10 ||
+  c === 12 ||
+  c === 13 ||
+  c === 32 ||
+  (c > 127 && UNICODE_WHITESPACE.test(String.fromCharCode(c)));
 const isUnicodePunctuation = (c: number) =>
   c >= 0 &&
   ((c >= 33 && c <= 47) ||
@@ -24,7 +29,14 @@ export const isGfmAtext = (c: number) =>
 
 /** micromark's previous-character checks; -1 is the start of the text. */
 export const previousWww = (c: number) =>
-  c === -1 || c === 40 || c === 42 || c === 95 || c === 91 || c === 93 || c === 126 || isLineEndingOrSpace(c);
+  c === -1 ||
+  c === 40 ||
+  c === 42 ||
+  c === 95 ||
+  c === 91 ||
+  c === 93 ||
+  c === 126 ||
+  isLineEndingOrSpace(c);
 export const previousProtocol = (c: number) => !isAsciiAlpha(c);
 export const previousEmail = (c: number) => !(c === 47 || isGfmAtext(c));
 
@@ -35,7 +47,20 @@ function trailOk(s: string, at: number): boolean {
   let i = at;
   while (true) {
     const c = code(s, i);
-    if (c === 33 || c === 34 || c === 39 || c === 41 || c === 42 || c === 44 || c === 46 || c === 58 || c === 59 || c === 63 || c === 95 || c === 126) {
+    if (
+      c === 33 ||
+      c === 34 ||
+      c === 39 ||
+      c === 41 ||
+      c === 42 ||
+      c === 44 ||
+      c === 46 ||
+      c === 58 ||
+      c === 59 ||
+      c === 63 ||
+      c === 95 ||
+      c === 126
+    ) {
       i++;
       continue;
     }
@@ -50,7 +75,8 @@ function trailOk(s: string, at: number): boolean {
     if (c === 93) {
       i++;
       const n = code(s, i);
-      if (n === -1 || n === 40 || n === 91 || isLineEndingOrSpace(n) || isUnicodeWhitespace(n)) return true;
+      if (n === -1 || n === 40 || n === 91 || isLineEndingOrSpace(n) || isUnicodeWhitespace(n))
+        return true;
       continue;
     }
     return c === 60 || c === -1 || isLineEndingOrSpace(c) || isUnicodeWhitespace(c);
@@ -75,7 +101,13 @@ function scanDomain(s: string, at: number): number {
       i++;
       continue;
     }
-    if (c === -1 || isLineEndingOrSpace(c) || isUnicodeWhitespace(c) || (c !== 45 && isUnicodePunctuation(c))) break;
+    if (
+      c === -1 ||
+      isLineEndingOrSpace(c) ||
+      isUnicodeWhitespace(c) ||
+      (c !== 45 && isUnicodePunctuation(c))
+    )
+      break;
     seen = true;
     i++;
   }
@@ -100,7 +132,23 @@ function scanPath(s: string, at: number): number {
       i++;
       continue;
     }
-    if (c === 33 || c === 34 || c === 38 || c === 39 || c === 41 || c === 42 || c === 44 || c === 46 || c === 58 || c === 59 || c === 60 || c === 63 || c === 93 || c === 95 || c === 126) {
+    if (
+      c === 33 ||
+      c === 34 ||
+      c === 38 ||
+      c === 39 ||
+      c === 41 ||
+      c === 42 ||
+      c === 44 ||
+      c === 46 ||
+      c === 58 ||
+      c === 59 ||
+      c === 60 ||
+      c === 63 ||
+      c === 93 ||
+      c === 95 ||
+      c === 126
+    ) {
       if (trailOk(s, i)) return i;
       if (c === 41) close++;
       i++;
@@ -133,7 +181,14 @@ export function matchProtocol(s: string, at: number): number {
   if (code(s, i + 1) !== 47 || code(s, i + 2) !== 47) return -1;
   i += 3;
   const c = code(s, i);
-  if (c === -1 || isAsciiControl(c) || isLineEndingOrSpace(c) || isUnicodeWhitespace(c) || isUnicodePunctuation(c)) return -1;
+  if (
+    c === -1 ||
+    isAsciiControl(c) ||
+    isLineEndingOrSpace(c) ||
+    isUnicodeWhitespace(c) ||
+    isUnicodePunctuation(c)
+  )
+    return -1;
   const domainEnd = scanDomain(s, i);
   if (domainEnd < 0) return -1;
   return scanPath(s, domainEnd);
@@ -166,8 +221,6 @@ export function matchEmail(s: string, at: number): number {
   }
   return data && dot && isAsciiAlpha(code(s, i - 1)) ? i : -1;
 }
-
-// --- The mdast pass over decoded text --------------------------------------------------------
 
 const URL_PATTERN = /(https?:\/\/|www(?=\.))([-.\w]+)([^ \t\r\n]*)/gi;
 const EMAIL_PATTERN = /(?<=^|\s|\p{P}|\p{S})([-.\w+]+)@([-\w]+(?:\.[-\w]+)+)/gu;

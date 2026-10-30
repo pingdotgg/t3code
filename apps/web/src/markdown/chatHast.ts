@@ -8,10 +8,7 @@ import {
 import { THREAD_LINK_PROTOCOL } from "@t3tools/shared/threadLinks";
 
 import { rehypeHeadingIds } from "../components/chat/markdownFragments";
-import {
-  blockTextDirections,
-  rehypeTextDirection,
-} from "../components/chat/markdownTextDirection";
+import { blockTextDirections, rehypeTextDirection } from "../components/chat/markdownTextDirection";
 import { assembleRawHtml } from "./rawHtml";
 import { markStandaloneImages, toChatHast } from "./toHast";
 
@@ -32,7 +29,8 @@ function imageSourceMeta(node: HastRoot | Element) {
     if (child.type !== "element") continue;
     if (child.tagName === "img") {
       const { src, title } = child.properties;
-      if (typeof src === "string" && isWindowsDrivePathHref(src)) child.properties.dataLocalSrc = src;
+      if (typeof src === "string" && isWindowsDrivePathHref(src))
+        child.properties.dataLocalSrc = src;
       if (typeof title === "string") child.properties.dataMarkdownTitle = title;
     }
     imageSourceMeta(child);
