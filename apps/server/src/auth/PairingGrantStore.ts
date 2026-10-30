@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Digest is effectful; desktop credential checks hash synchronously.
+import * as NodeCrypto from "node:crypto";
 import {
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
@@ -256,6 +258,9 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const config = yield* ServerConfig.ServerConfig;
   const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
+  const desktopTokenHash = config.desktopBootstrapToken
+    ? NodeCrypto.createHash("sha256").update(config.desktopBootstrapToken).digest()
+    : undefined;
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
   const generatePairingToken = Effect.gen(function* () {
     let credential = "";
@@ -417,7 +422,11 @@ const make = Effect.gen(function* () {
           ? yield* isValidDesktopBootstrapToken(secret, credential, now.epochMilliseconds).pipe(
               Effect.provideService(Mac.Mac, mac),
             )
-          : Boolean(config.desktopBootstrapToken) && credential === config.desktopBootstrapToken;
+          : desktopTokenHash !== undefined &&
+            Mac.timingSafeEqual(
+              desktopTokenHash,
+              NodeCrypto.createHash("sha256").update(credential).digest(),
+            );
       if (isDesktopCredential) {
         if (
           (input?.requestedScopes !== undefined &&
