@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -29,6 +30,9 @@ const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
   token: () => Effect.succeedNone,
   invalidate: () => Effect.void,
 });
+const mockedAppToken = vi.fn<(host: string) => Effect.Effect<Option.Option<string>>>(
+  () => Effect.succeedNone,
+);
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -111,7 +115,12 @@ type ApiAnswer = Effect.Effect<GitHubRest.GitHubRestResponse, GitHubRequestPolic
 const mockedExecute = vi.fn<(call: ApiCall) => ApiAnswer>();
 const defaultCredential = (host: string) =>
   Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:token` });
-const mockedCredential = vi.fn(defaultCredential);
+const mockedCredential =
+  vi.fn<
+    (
+      host: string,
+    ) => Effect.Effect<GitHubRequestPolicy.GitHubHeldCredential, GitHubRequestPolicy.GitHubApiError>
+  >(defaultCredential);
 const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
   Effect.succeed(output('{"data":{}}')),
 );
@@ -180,14 +189,23 @@ const layer = it.layer(
     Layer.provideMerge(GitHubAppAccess.layer),
     Layer.provideMerge(mockApi),
     Layer.provideMerge(GitHubRequestPolicy.layer),
-    Layer.provideMerge(appSignedOut),
+    Layer.provideMerge(
+      Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+        enabled: false,
+        token: (host) => mockedAppToken(host),
+        invalidate: () => Effect.void,
+      }),
+    ),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
     Layer.provideMerge(mockHttp),
     Layer.provideMerge(
       Layer.succeed(GitHubCredentials.GitHubCredentials, {
         get: (host) =>
-          Effect.map(mockedCredential(host), (held) => ({ source: "gh" as const, ...held, host })),
+          mockedCredential(host).pipe(
+            Effect.map((held) => ({ source: "gh" as const, ...held, host })),
+            Effect.mapError(() => new GitHubCredentials.GitHubCliMissingError({ host })),
+          ),
         saved: () => Effect.succeedNone,
         fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
         invalidate: () => Effect.void,
@@ -617,6 +635,7 @@ afterEach(() => {
   mockedExecute.mockReset();
   mockedStackMemberships.mockReset();
   mockedCredential.mockReset();
+  mockedAppToken.mockReset();
   mockedCredential.mockImplementation(defaultCredential);
 });
 
@@ -1276,17 +1295,33 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  /** Lists a repository GitHub will not return, answering each credential lookup with `next`. */
+  /**
+   * Lists a repository GitHub will not return, answering credential lookups in turn (the last
+   * answer repeats; `undefined` is no credential), and returns the error with the tokens sent.
+   */
   const listUnreadableRepository = (
-    next: () => {
-      readonly token: string;
-      readonly source: GitHubCredentials.GitHubCredentialSource;
-    },
+    ...lookups: ReadonlyArray<
+      | { readonly token: string; readonly source: GitHubCredentials.GitHubCredentialSource }
+      | undefined
+    >
   ) => {
+    mockedExecute.mockClear();
+    let lookup = 0;
     mockedCredential.mockImplementation((host) =>
-      Effect.sync(() => {
-        const { token, source } = next();
-        return { token: Redacted.make(token), fingerprint: `${host}:${token}`, source };
+      Effect.suspend(() => {
+        const held = lookups[Math.min(lookup++, lookups.length - 1)];
+        return held === undefined
+          ? Effect.fail(
+              new GitHubRequestPolicy.GitHubApiAuthenticationError({
+                host,
+                operation: "credential",
+              }),
+            )
+          : Effect.succeed({
+              token: Redacted.make(held.token),
+              fingerprint: `${host}:${held.token}`,
+              source: held.source,
+            });
       }),
     );
     route(
@@ -1319,32 +1354,39 @@ layer("GitHubPullRequestApi.layer", (it) => {
           }),
         ),
       ),
+      Effect.map((error) => ({
+        error,
+        sentWith: mockedExecute.mock.calls.map(([call]) =>
+          call.kind === "graphql" ? call.authorization : undefined,
+        ),
+      })),
     );
   };
 
   it.effect("names the credential GitHub would not return a repository to", () =>
     Effect.gen(function* () {
       // The saved token is replaced mid-read; every request still goes out with the one named.
-      let token = "first";
-      const saved = yield* listUnreadableRepository(() => {
-        const current = token;
-        token = "replaced";
-        return { token: current, source: "settings" };
-      });
-      expect(saved.accessHint).toContain("saved GitHub token");
-      const sentWith = mockedExecute.mock.calls.map(([call]) =>
-        call.kind === "graphql" ? call.authorization : undefined,
+      const saved = yield* listUnreadableRepository(
+        { token: "first", source: "settings" },
+        { token: "replaced", source: "settings" },
       );
-      assert.isAbove(sentWith.length, 1);
-      for (const authorization of sentWith) expect(authorization).toContain("first");
+      expect(saved.error.accessHint).toContain("saved GitHub token");
+      assert.isAbove(saved.sentWith.length, 1);
+      for (const authorization of saved.sentWith) expect(authorization).toContain("first");
 
-      // The policy hands what the app cannot see to the gh login.
-      let lookups = 0;
-      const fallback = yield* listUnreadableRepository(() => ({
-        token: "token",
-        source: lookups++ === 0 ? "app" : "gh",
-      }));
-      expect(fallback.accessHint).toContain("gh login");
+      // The policy hands what the app cannot see to the gh login, which GitHub refuses too.
+      mockedAppToken.mockReturnValue(Effect.succeedSome("app"));
+      const app = { token: "app", source: "app" } as const;
+      const gh = { token: "personal", source: "gh" } as const;
+      const retried = yield* listUnreadableRepository(app, gh);
+      expect(retried.error.accessHint).toContain("gh login");
+      expect(retried.sentWith).toEqual(["Bearer app", "Bearer app", "Bearer personal"]);
+
+      // With no gh login when the app is refused, the app made the last request; a login that
+      // turns up afterwards is not named.
+      const appOnly = yield* listUnreadableRepository(app, undefined, gh);
+      assert.isUndefined(appOnly.error.accessHint);
+      expect(appOnly.sentWith).toEqual(["Bearer app", "Bearer app"]);
     }),
   );
 

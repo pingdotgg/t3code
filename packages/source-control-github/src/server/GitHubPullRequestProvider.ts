@@ -132,7 +132,7 @@ function gitHubProviderFailure(
 const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, string> = {
   settings:
     "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control.",
-  env: "The server's GitHub token (GH_TOKEN) can't see it. Give it access, or unset it.",
+  env: "The server's environment token can't see it. Give it access, or unset it.",
   gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source Control.",
 };
 

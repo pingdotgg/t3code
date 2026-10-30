@@ -46,7 +46,6 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubAppAccess from "./GitHubAppAccess.ts";
-import type { GitHubCredentialSource } from "./GitHubCredentials.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
@@ -1858,51 +1857,23 @@ export const make = Effect.gen(function* () {
             ),
         ),
       );
-      // GitHub answers a private repository the token cannot see as missing, so the reader is
-      // told which credential that was: a saved token quietly overrides GH_TOKEN and gh. The
-      // listing is pinned to the credential it names, so a token changed mid-read is not blamed.
+      // GitHub answers a private repository the token cannot see as missing, and its error names
+      // the credential that request carried. A personal credential is pinned for the whole
+      // read, so a token changed mid-read does not split it; the app keeps the policy's fallback.
       const host = normalizeHost(input.host);
-      const named = (
-        error: GitHubRequestPolicy.GitHubApiNotFoundError,
-        credential: GitHubCredentialSource,
-      ) =>
-        new GitHubRequestPolicy.GitHubApiNotFoundError({
-          host: error.host,
-          operation: error.operation,
-          credential,
-        });
       return api.credential(host).pipe(
-        Effect.flatMap(({ token, fingerprint, source }) => {
-          if (source === undefined) return listed;
-          if (source === "app") {
-            // The policy hands what the app cannot see to GH_TOKEN or gh. A token saved in
-            // Settings mid-read may or may not have been the one asked, so it is not named.
-            return listed.pipe(
-              Effect.catchTags({
-                GitHubApiNotFoundError: (error) =>
-                  api.credential(host, { personal: true }).pipe(
-                    Effect.map((personal) =>
-                      personal.source === "env" || personal.source === "gh"
-                        ? named(error, personal.source)
-                        : error,
-                    ),
-                    Effect.orElseSucceed(() => error),
-                    Effect.flatMap(Effect.fail),
-                  ),
-              }),
-            );
-          }
-          return listed.pipe(
-            Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
-              host,
-              token,
-              credentialFingerprint: fingerprint,
-            }),
-            Effect.catchTags({
-              GitHubApiNotFoundError: (error) => Effect.fail(named(error, source)),
-            }),
-          );
-        }),
+        Effect.flatMap(({ token, fingerprint, source }) =>
+          source === undefined || source === "app"
+            ? listed
+            : listed.pipe(
+                Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+                  host,
+                  token,
+                  credentialFingerprint: fingerprint,
+                  source,
+                }),
+              ),
+        ),
       );
     }),
 
