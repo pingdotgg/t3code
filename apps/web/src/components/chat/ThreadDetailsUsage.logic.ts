@@ -59,6 +59,8 @@ function onlyHubAccount(
   provider: ServerProvider,
   sources: UsageLimitSourceSnapshots,
 ): HubAccount | null {
+  // A hub that failed to read may hold accounts for this driver too.
+  if (sources.some((source) => source.error !== undefined)) return null;
   const candidates = sources.flatMap((source) =>
     source.accounts
       .filter((account) => canServeInstance(provider, account))
