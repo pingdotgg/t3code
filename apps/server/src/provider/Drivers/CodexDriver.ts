@@ -22,6 +22,7 @@ import { ProviderDriverError } from "../Errors.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkCodexProviderStatus,
+  CODEX_APP_SERVER_PROBE_TIMEOUT_MS,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
   withCodexAppServerClient,
@@ -280,7 +281,7 @@ export const CodexDriver: ProviderDriver<
               environment: processEnv,
             }).pipe(
               Effect.scoped,
-              Effect.timeout("20 seconds"),
+              Effect.timeout(CODEX_APP_SERVER_PROBE_TIMEOUT_MS),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             ),
           ]).pipe(

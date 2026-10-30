@@ -72,8 +72,10 @@ const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
 const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
-// Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
-const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
+// Old machines can take ~25s to start app-server and answer initialize.
+export const CODEX_APP_SERVER_PROBE_TIMEOUT_MS = 60_000;
+// Account/models/skills requests after initialize can exceed the shared 10s probe budget.
+const CODEX_DISCOVERY_BUDGET_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 
 const CODEX_PRESENTATION = {
@@ -518,6 +520,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 }) {
   const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
   const { client, initialize } = yield* withCodexAppServerClient(input);
+  const initializedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
 
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
   const version = versionMatch ? versionMatch[1] : undefined;
@@ -533,7 +536,11 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   }
 
   // Optional discovery must finish before the outer timeout can discard the account result.
-  const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
+  const deadlineMs =
+    Math.min(
+      spawnedAtMs + CODEX_APP_SERVER_PROBE_TIMEOUT_MS,
+      initializedAtMs + CODEX_DISCOVERY_BUDGET_MS,
+    ) - CODEX_DISCOVERY_MARGIN_MS;
   const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
@@ -731,7 +738,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ...(managedAuth ? { skipNativeUsage: true } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
-    Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),
+    Effect.timeoutOption(Duration.millis(CODEX_APP_SERVER_PROBE_TIMEOUT_MS)),
     Effect.scoped,
     Effect.result,
   );

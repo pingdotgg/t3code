@@ -427,6 +427,35 @@ it.layer(
         assert.strictEqual(status.auth.status, "unknown");
       }),
     );
+
+    it.effect("returns ready when app-server answers slowly but correctly", () =>
+      Effect.gen(function* () {
+        const fiber = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.sleep("25 seconds").pipe(Effect.as(makeCodexProbeSnapshot())),
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("25 seconds");
+        const status = yield* Fiber.join(fiber);
+
+        assert.strictEqual(status.message, undefined);
+        assert.strictEqual(status.status, "ready");
+      }),
+    );
+
+    it.effect("times out when app-server never answers", () =>
+      Effect.gen(function* () {
+        const fiber = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.never.pipe(Effect.as(makeCodexProbeSnapshot())),
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("60 seconds");
+        const status = yield* Fiber.join(fiber);
+
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(
+          status.message,
+          "Timed out while checking Codex app-server provider status.",
+        );
+      }),
+    );
   });
 
   describe("ProviderRegistry.layer", () => {
