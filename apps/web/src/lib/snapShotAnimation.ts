@@ -3,6 +3,7 @@ import type { ScopedThreadRef, SnapShotSource } from "@t3tools/contracts";
 
 import type { DraftId } from "../composerDraftStore";
 import { getDesktopSnapShotBridge } from "./desktopSnapShot";
+import { toVisualViewportRect } from "./visualViewport";
 
 type SnapShotTarget = DraftId | ScopedThreadRef;
 
@@ -117,12 +118,7 @@ export function setSnapShotAnimationDestination(
   const request = bridge
     .setSnapShotAnimationDestination({
       id,
-      viewportFrame: {
-        x: frame.x,
-        y: frame.y,
-        width: frame.width,
-        height: frame.height,
-      },
+      viewportFrame: toVisualViewportRect(frame),
       backgroundColor: style.backgroundColor,
       borderColor: style.borderTopColor,
       borderWidth: Number.isFinite(borderWidth) ? borderWidth : 0,
