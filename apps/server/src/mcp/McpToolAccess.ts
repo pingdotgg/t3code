@@ -23,7 +23,7 @@ import {
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
+import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import {
   assertFullAccess,
   assertLiveCaller,
@@ -224,15 +224,12 @@ export interface StartedModes {
 }
 
 /**
- * Starts threads with the modes `modes` requests, which may not be broader
- * than the caller's. `linked` says what a linked caller gets: threads stamped
+ * Starts threads in the caller's interaction mode and the runtime mode
+ * `modes` requests, which may not be broader than the caller's. `linked` says what a linked caller gets: threads stamped
  * with its `linkOrigin`, or a refusal where the tool cannot carry one.
  */
 export const startsThreads = <P, A, E, R>(
-  modes: (params: P) => {
-    readonly runtimeMode?: RuntimeMode | undefined;
-    readonly interactionMode?: ProviderInteractionMode | undefined;
-  },
+  modes: (params: P) => { readonly runtimeMode?: RuntimeMode | undefined },
   handle: (params: P, modes: StartedModes) => Effect.Effect<A, E, R>,
   linked: "stamped" | { readonly refused: string },
 ) => {
@@ -240,10 +237,7 @@ export const startsThreads = <P, A, E, R>(
     const requested = modes(params);
     return {
       runtimeMode: yield* resolveRuntimeMode(caller.limits.runtimeMode, requested.runtimeMode),
-      interactionMode: yield* resolveInteractionMode(
-        caller.limits.interactionMode,
-        requested.interactionMode,
-      ),
+      interactionMode: caller.limits.interactionMode,
       linkOrigin: callerLinkOrigin(caller),
     } satisfies StartedModes;
   });

@@ -10,7 +10,6 @@ import {
   OrchestratorMcpFailure,
   PreviewTabId,
   ProviderInstanceId,
-  ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -1094,10 +1093,7 @@ it.effect(
         const StartsToolkit = Toolkit.make(
           Tool.make("starts", {
             description: "Reports the modes a started thread would run with.",
-            parameters: Schema.Struct({
-              runtimeMode: Schema.optional(RuntimeMode),
-              interactionMode: Schema.optional(ProviderInteractionMode),
-            }),
+            parameters: Schema.Struct({ runtimeMode: Schema.optional(RuntimeMode) }),
             success: Schema.Struct({ modes: Schema.String }),
             failure: OrchestratorMcpFailure,
             failureMode: "return",
@@ -1206,8 +1202,9 @@ it.effect(
         expect(yield* start("approval-required/plan", { runtimeMode: "auto" })).toBe(
           "runtime_mode_escalation_denied",
         );
+        // An interaction mode is not an argument: one sent anyway is dropped.
         expect(yield* start("auto-accept-edits/plan", { interactionMode: "default" })).toBe(
-          "interaction_mode_escalation_denied",
+          "auto-accept-edits/plan",
         );
         // A broader header changes nothing: the approved ceiling still holds.
         expect(yield* start("full-access/default")).toBe("auto/default");

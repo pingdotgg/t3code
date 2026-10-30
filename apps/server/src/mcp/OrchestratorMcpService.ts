@@ -2258,10 +2258,6 @@ const make = Effect.gen(function* () {
         input.runtimeMode,
         target,
       );
-      const interactionMode = yield* resolveInteractionMode(
-        parent.thread.interactionMode,
-        input.interactionMode,
-      );
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
@@ -2308,7 +2304,7 @@ const make = Effect.gen(function* () {
           ...(input.title === undefined ? {} : { title: input.title }),
           modelSelection: target.modelSelection,
           runtimeMode,
-          interactionMode,
+          interactionMode: parent.thread.interactionMode,
           ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
           // Async delegations wake the parent on every child terminal; wait
           // delegations deliver through the blocking tool call, so a wake is
@@ -2673,10 +2669,6 @@ const make = Effect.gen(function* () {
                 request.runtimeMode,
                 target,
               );
-              const interactionMode = yield* resolveInteractionMode(
-                parent.thread.interactionMode,
-                request.interactionMode,
-              );
               yield* assertTargetEnabledForProject(parent, commandId, target);
               const title = threadTitle({
                 parentTitle: parent.thread.title,
@@ -2695,7 +2687,7 @@ const make = Effect.gen(function* () {
                   title,
                   modelSelection: target.modelSelection,
                   runtimeMode,
-                  interactionMode,
+                  interactionMode: parent.thread.interactionMode,
                   branch: parent.thread.branch,
                   worktreePath: parent.thread.worktreePath,
                   ...(parent.thread.linkOrigin === undefined
