@@ -171,7 +171,10 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
           },
         });
         assert.strictEqual(yield* hasCustomTitle(), true);
-        assert.strictEqual(Option.getOrNull(yield* projects.getShell(projectId))?.title, "custom repo");
+        assert.strictEqual(
+          Option.getOrNull(yield* projects.getShell(projectId))?.title,
+          "custom repo",
+        );
       }),
     );
   },
