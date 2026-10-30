@@ -579,6 +579,20 @@ it.effect("a desktop tab that paints nothing moves to headless and its viewer re
         canGoForward: false,
         serverControlled: true,
       });
+      const painting = yield* browser.attachViewer(viewerInput(tabId, true));
+      const fs = yield* FileSystem.FileSystem;
+      const original = `${yield* fs.makeTempDirectoryScoped()}/chromium-download`;
+      yield* fs.writeFileString(original, "a,b");
+      desktopConnections[0]!.context.page.emit("download", {
+        failure: async () => null,
+        delete: async () => {},
+        saveAs: (path: string) => NodeFSP.copyFile(original, path),
+        suggestedFilename: () => "report.csv",
+        url: () => "https://example.com/report.csv",
+      });
+      let offered = yield* Queue.take(painting.output);
+      while (offered._tag !== "download") offered = yield* Queue.take(painting.output);
+      const downloadId = offered.id;
       desktopPaintsNothing = true;
       const attaching = yield* browser
         .attachViewer(viewerInput(tabId, true))
@@ -599,6 +613,12 @@ it.effect("a desktop tab that paints nothing moves to headless and its viewer re
         url,
         expect.objectContaining({ waitUntil: "commit" }),
       );
+      const kept = yield* browser.openDownload({
+        threadId: scope.thread.threadId,
+        tabId,
+        downloadId,
+      });
+      expect(yield* fs.readFileString(Option.getOrThrow(kept).path)).toBe("a,b");
     }),
   ).pipe(Effect.provide(layer)),
 );

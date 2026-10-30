@@ -477,6 +477,8 @@ const make = Effect.gen(function* () {
 
   const closedPendingTabs = new Set<string>();
   const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  /** Downloads a tab keeps while it moves to a new headless page. */
+  const movedDownloads = new Map<string, Array<ServerDownload>>();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
@@ -730,17 +732,28 @@ const make = Effect.gen(function* () {
     else void tab.page.close().catch(constVoid);
     if (tab.isolatedContext) void tab.page.context().close().catch(constVoid);
     void tab.recording?.encoder.close().catch(constVoid);
-    void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
+    if (!movedDownloads.has(key)) {
+      void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
+    }
     reportLiveTabs();
     if (closeSession) {
       runFork(manager.close({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore));
     }
   };
 
-  const moveTabToHeadless = (tab: ServerTab) =>
-    manager
-      .markHeadless({ threadId: ThreadId.make(tab.threadId), tabId: tab.tabId, reload: true })
-      .pipe(Effect.ignore, Effect.andThen(Effect.sync(() => dropTab(tab, false))));
+  const moveTabToHeadless = Effect.fnUntraced(function* (tab: ServerTab) {
+    const key = tabKey(tab.threadId, tab.tabId);
+    yield* manager
+      .markHeadless({ threadId: tab.threadId, tabId: tab.tabId, reload: true })
+      .pipe(Effect.ignore);
+    movedDownloads.set(key, tab.downloads);
+    dropTab(tab, false);
+    yield* findTab(tab.threadId, tab.tabId).pipe(Effect.ignore);
+    // The session closed before the new page opened, so nothing owns the files.
+    if (movedDownloads.delete(key)) {
+      void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
+    }
+  });
 
   const desktopRenders = (snapshot: PreviewSessionSnapshot) =>
     desktopChannel.available && !snapshot.headless
@@ -777,6 +790,8 @@ const make = Effect.gen(function* () {
   const createTab = async (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
+    const keptDownloads = movedDownloads.get(tabKey(snapshot.threadId, snapshot.tabId));
+    movedDownloads.delete(tabKey(snapshot.threadId, snapshot.tabId));
     const desktop =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
@@ -835,7 +850,7 @@ const make = Effect.gen(function* () {
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
       openerTabId: adopted?.openerTabId,
-      downloads: [],
+      downloads: keptDownloads ?? [],
       fileChooser: null,
       dialog: null,
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
