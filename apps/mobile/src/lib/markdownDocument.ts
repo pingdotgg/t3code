@@ -1,4 +1,4 @@
-import type { Root, RootContent } from "mdast";
+import type { Paragraph, Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
@@ -444,7 +444,11 @@ export function markdownForNativeRendering(markdown: string, fileLink: RegExp): 
   return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
 }
 
-/** Native media slots only cover standalone images; nested file embeds must become links. */
+/**
+ * Native media slots only cover an image alone in a paragraph of the document or a block quote,
+ * never inside a list item. A video or audio embed in a quote or the document that shares its
+ * paragraph gets a paragraph of its own; any other nested file embed becomes a link.
+ */
 export function markdownWithFileEmbeds(
   markdown: string,
   label: (href: string, standalone: boolean) => string | null,
@@ -452,7 +456,6 @@ export function markdownWithFileEmbeds(
   const fileHrefs = new Set<string>();
   if (!markdown.includes("![")) return { markdown, fileHrefs };
   const root = parser.parse(markdown);
-  const topLevelBlocks = new Set<MarkdownNode>(root.children);
   const definitions = new Map<string, string>();
   const collect = (node: MarkdownNode) => {
     if (node.type === "definition") {
@@ -462,8 +465,54 @@ export function markdownWithFileEmbeds(
     if ("children" in node) node.children.forEach(collect);
   };
   collect(root);
-  const edits: Array<{ start: number; end: number; content: string }> = [];
-  const visit = (node: MarkdownNode, standalone = false, insideLink = false) => {
+  const edits: MarkdownEdit[] = [];
+  let lastSplit: { paragraph: Paragraph; end: number } | undefined;
+  // Text that opens a block once a paragraph break puts it first; it keeps the filename link.
+  const blockStart =
+    /^(?:#{1,6}|[-+*>]|\d{1,9}[.)])(?:[ \t]|$)|^(?:[-*_][ \t]*){3,}$|^(?:`{3,}|~{3,})|^\[(?:\\.|[^\]\\])*\]:/;
+  // Paragraph breaks around an embed, keeping the `>` markers of the quotes around it.
+  const breaksAround = (
+    paragraph: Paragraph,
+    start: number,
+    end: number,
+  ): MarkdownEdit[] | null => {
+    const first = paragraph.position?.start.offset;
+    const last = paragraph.position?.end.offset;
+    if (first === undefined || last === undefined) return null;
+    const prefix = markdown.slice(markdown.lastIndexOf("\n", first - 1) + 1, first);
+    if (!/^[ \t>]*$/.test(prefix) || markdown.slice(first, last).includes("||")) return null;
+    const next = /^[ \t]*(?:\r?\n[ \t>]*)?([^\r\n]*)/.exec(markdown.slice(end, last))![1]!;
+    if (blockStart.test(next)) return null;
+    const blank = prefix.trimEnd();
+    const breaks: MarkdownEdit[] = [];
+    const afterPrevious =
+      lastSplit?.paragraph === paragraph && /^\s*$/.test(markdown.slice(lastSplit.end, start));
+    if (start > first && !afterPrevious) {
+      const lineStart = markdown.lastIndexOf("\n", start - 1) + 1;
+      breaks.push(
+        /^[ \t>]*$/.test(markdown.slice(lineStart, start))
+          ? { start: lineStart, end: lineStart, content: `${blank}\n` }
+          : { start, end: start, content: `\n${blank}\n${prefix}` },
+      );
+    }
+    if (end < last) {
+      const restOfLineBlank = /^[ \t]*(?:\r?\n|$)/.test(markdown.slice(end));
+      breaks.push({
+        start: end,
+        end,
+        content: restOfLineBlank ? `\n${blank}` : `\n${blank}\n${prefix}`,
+      });
+    }
+    lastSplit = { paragraph, end };
+    return breaks;
+  };
+  // `slotParent` is the root, quote or paragraph above `node` when only quotes lie between.
+  const visit = (
+    node: MarkdownNode,
+    standalone = false,
+    insideLink = false,
+    slotParent: MarkdownNode | null = null,
+  ) => {
     if (node.type === "image" || node.type === "imageReference") {
       const href =
         node.type === "image" ? node.url : definitions.get(node.identifier.toUpperCase());
@@ -471,20 +520,34 @@ export function markdownWithFileEmbeds(
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       if (href !== undefined && name !== null && start !== undefined && end !== undefined) {
-        const text = name.replace(/[\\[\]`*_~|&<>]/g, "\\$&");
-        const url = href.replace(/[\\&]/g, "\\$&").replace(/</g, "%3C").replace(/>/g, "%3E");
-        edits.push({ start, end, content: insideLink ? text : `[${text}](<${url}>)` });
-        fileHrefs.add(href);
+        const breaks =
+          slotParent?.type === "paragraph" && !standalone && label(href, true) === null
+            ? breaksAround(slotParent, start, end)
+            : null;
+        if (breaks) edits.push(...breaks);
+        else {
+          const text = name.replace(/[\\[\]`*_~|&<>]/g, "\\$&");
+          const url = href.replace(/[\\&]/g, "\\$&").replace(/</g, "%3C").replace(/>/g, "%3E");
+          edits.push({ start, end, content: insideLink ? text : `[${text}](<${url}>)` });
+          fileHrefs.add(href);
+        }
       }
     }
-    if ("children" in node)
+    if ("children" in node) {
+      const slotChild =
+        node.type === "root" ||
+        (slotParent !== null && (node.type === "blockquote" || node.type === "paragraph"))
+          ? node
+          : null;
       node.children.forEach((child) =>
         visit(
           child,
-          node.type === "paragraph" && node.children.length === 1 && topLevelBlocks.has(node),
+          node.type === "paragraph" && node.children.length === 1 && slotParent !== null,
           insideLink || node.type === "link" || node.type === "linkReference",
+          slotChild,
         ),
       );
+    }
   };
   visit(root);
   const parts: string[] = [];
