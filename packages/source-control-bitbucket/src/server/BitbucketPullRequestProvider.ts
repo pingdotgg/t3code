@@ -1,5 +1,8 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -32,6 +35,9 @@ const CAPABILITIES: PullRequestCapabilities = {
   // Bitbucket PR properties are shared, not per-reader viewed marks.
   viewedFiles: "environment",
 };
+
+const COMMIT_READ_CAPACITY = 256;
+const COMMIT_READ_TTL = Duration.minutes(15);
 
 const UNAVAILABLE_REQUIREMENT = {
   missing: "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
@@ -145,6 +151,27 @@ export const make = Effect.gen(function* () {
     });
   };
 
+  // Null marks a conflicts read that failed and was recovered, so it is not held.
+  const readCommitStats = (target: { readonly repository: string; readonly number: number }) =>
+    Effect.all([api.getDiffStat(target), recoverRead(api.getMergeability(target), null)], {
+      concurrency: 2,
+    });
+
+  // Diffstat and conflicts follow from the source and destination commits, so sync rereads them
+  // when either moves. The expiry catches a destination branch that moved without the pull
+  // request's destination commit following; a refresh or a finished turn drops them sooner.
+  const commitStats = yield* Cache.makeWith(
+    (key: string) => {
+      const [repository, number] = JSON.parse(key) as [string, number, string, string];
+      return readCommitStats({ repository, number });
+    },
+    {
+      capacity: COMMIT_READ_CAPACITY,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value[1] !== null ? COMMIT_READ_TTL : Duration.zero,
+    },
+  );
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
@@ -234,6 +261,64 @@ export const make = Effect.gen(function* () {
         ),
       );
     },
+
+    getChangeRequestSummary: (input) => {
+      const target = { repository: input.repository, number: input.number };
+      return api.getPullRequest(target).pipe(
+        Effect.flatMap((pullRequest) =>
+          (pullRequest.headSha === null || pullRequest.baseSha === null
+            ? readCommitStats(target)
+            : Cache.get(
+                commitStats,
+                JSON.stringify([
+                  input.repository,
+                  input.number,
+                  pullRequest.headSha,
+                  pullRequest.baseSha,
+                ]),
+              )
+          ).pipe(
+            Effect.map(([diffStat, mergeability]) => ({
+              number: pullRequest.number,
+              title: pullRequest.title,
+              url: pullRequest.url,
+              author: pullRequest.author,
+              headBranch: pullRequest.headBranch,
+              baseBranch: pullRequest.baseBranch,
+              state: pullRequest.state,
+              isDraft: pullRequest.isDraft,
+              mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
+              closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+              updatedAt: pullRequest.updatedAt,
+              additions: diffStat.additions,
+              deletions: diffStat.deletions,
+              changedFiles: diffStat.changedFiles,
+              mergeability: mergeability ?? "unknown",
+            })),
+          ),
+        ),
+        Effect.mapError(fail("getChangeRequestSummary")),
+      );
+    },
+
+    forgetChangeRequestReads: (scope) =>
+      scope === undefined
+        ? Cache.invalidateAll(commitStats)
+        : Cache.keys(commitStats).pipe(
+            Effect.flatMap((keys) =>
+              Effect.forEach(
+                Array.from(keys).filter((key) => {
+                  const [repository, number] = JSON.parse(key) as [string, number];
+                  return (
+                    repository.toLowerCase() === scope.repository.toLowerCase() &&
+                    (scope.number === undefined || number === scope.number)
+                  );
+                }),
+                (key) => Cache.invalidate(commitStats, key),
+                { discard: true },
+              ),
+            ),
+          ),
 
     getChangeRequestActivity: (input) => {
       const target = { repository: input.repository, number: input.number };

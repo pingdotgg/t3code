@@ -163,6 +163,7 @@ export interface BitbucketPullRequest {
   readonly headSha: string | null;
   readonly headRepositoryNameWithOwner: string | null;
   readonly baseBranch: string;
+  readonly baseSha: string | null;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   /** Listings omit conflict state; detail reads use the conflicts endpoint. */
@@ -254,6 +255,7 @@ function toPullRequest(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): Bi
     headSha: trimmed(raw.source.commit?.hash),
     headRepositoryNameWithOwner: raw.source.repository?.full_name ?? null,
     baseBranch: raw.destination.branch.name,
+    baseSha: trimmed(raw.destination.commit?.hash),
     state: toState(raw),
     isDraft: raw.draft ?? false,
     mergeability: "unknown",
