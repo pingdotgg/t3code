@@ -114,8 +114,29 @@ function renderContent(
  * without one become static HTML, which the browser builds without React reconciling each node.
  */
 export function renderHastWithIslands(tree: Root, options: MarkdownIslandOptions): ReactNode {
-  return tree.children.map((child, index) => renderContent(child, index, options));
+  // The same elements again let React skip the block; islands still follow their context.
+  let signature = options.variant;
+  const visit = (node: Root | Element) => {
+    for (const child of node.children) {
+      if (child.type !== "element") continue;
+      signature += options.isIsland(child) ? "1" : "0";
+      visit(child);
+    }
+  };
+  visit(tree);
+  const cached = renderedTrees.get(tree);
+  if (cached?.signature === signature && cached.components === options.components) {
+    return cached.node;
+  }
+  const node = tree.children.map((child, index) => renderContent(child, index, options));
+  renderedTrees.set(tree, { signature, components: options.components, node });
+  return node;
 }
+
+const renderedTrees = new WeakMap<
+  Root,
+  { signature: string; components: Partial<Components>; node: ReactNode }
+>();
 
 export function withProperties(node: Element, properties: Properties): Element {
   return { ...node, properties: { ...node.properties, ...properties } };

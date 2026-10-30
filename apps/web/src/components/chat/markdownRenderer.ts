@@ -1,4 +1,5 @@
 import type { Element, Nodes, Root } from "hast";
+import type { Root as MdastRoot } from "mdast";
 import { toJsxRuntime, type Components } from "hast-util-to-jsx-runtime";
 import { urlAttributes } from "html-url-attributes";
 import type { ReactElement } from "react";
@@ -19,6 +20,8 @@ export type MarkdownUrlTransform = (url: string, key: string, node: Element) => 
 interface MarkdownRendererOptions {
   readonly remarkPlugins: PluggableList;
   readonly rehypePlugins: PluggableList;
+  /** Builds what `rehypePlugins` would, or null to run them. */
+  readonly directHast?: ((tree: MdastRoot) => Root | null) | undefined;
   readonly components: Partial<Components>;
   readonly urlTransform: MarkdownUrlTransform;
 }
@@ -57,15 +60,19 @@ export function createMarkdownRenderer({
   rehypePlugins,
   components,
   urlTransform,
+  directHast,
 }: MarkdownRendererOptions) {
-  const processor = unified()
+  const remark = unified()
     .use(remarkParse)
     .use(remarkParseWithoutUnusedSyntax)
     .use(FAST_PARSE ? [remarkFastParse] : [])
     .use(remarkPlugins)
-    .use(remarkRehype, { allowDangerousHtml: true })
-    .use(rehypePlugins)
     .freeze();
+  const rehype = unified().use(remarkRehype, { allowDangerousHtml: true }).use(rehypePlugins).freeze();
+  const toHast = (file: VFile): Root => {
+    const mdast = remark.runSync(remark.parse(file), file) as MdastRoot;
+    return (FAST_PARSE && directHast?.(mdast)) || (rehype.runSync(mdast as never, file) as Root);
+  };
   const keyPrefix = `${nextRendererId++}\u0000`;
 
   // Literal raw HTML that survived the rehype plugins, and URL attributes, as react-markdown treats them.
@@ -101,7 +108,7 @@ export function createMarkdownRenderer({
       return cached;
     }
     const file = new VFile(text);
-    const tree = processor.runSync(processor.parse(file), file) as Root;
+    const tree = toHast(file);
     prepare(tree);
     const entry: Rendered = { tree };
     if (cache) remember(key, entry);

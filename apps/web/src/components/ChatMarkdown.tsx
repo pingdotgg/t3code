@@ -190,6 +190,8 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
+import { LRUCache } from "../lib/lruCache";
+import { chatRenderHast } from "../markdown/chatHast";
 import {
   type MarkdownIslandOptions,
   renderHastWithIslands,
@@ -451,11 +453,16 @@ const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId
   }).pipe(Atom.withLabel("markdown-server-config-fields")),
 );
 
-function fileLinkSourcesKey(
+interface BlockFileLinkSources {
+  readonly hrefs: ReadonlyArray<string>;
+  readonly spans: ReadonlyArray<string>;
+}
+
+function blockFileLinkSources(
   text: string,
   cwd: string | undefined,
   imageBaseDir: string | undefined,
-): string {
+): BlockFileLinkSources {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
     .map(normalizeMarkdownLinkHrefKey)
@@ -463,7 +470,30 @@ function fileLinkSourcesKey(
   const spans = extractInlineCodeSpans(text).filter((span) =>
     resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd),
   );
-  return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+  return { hrefs, spans };
+}
+
+// Streamed replies rescan only their open last block; links and code spans never cross blocks.
+const blockFileLinkSourcesCache = new LRUCache<BlockFileLinkSources>(2_000, 4 * 1024 * 1024);
+
+function fileLinkSourcesKey(
+  text: string,
+  cwd: string | undefined,
+  imageBaseDir: string | undefined,
+): string {
+  const hrefs = new Set<string>();
+  const spans = new Set<string>();
+  for (const block of splitMarkdownBlocks(text) ?? [text]) {
+    const key = `${cwd ?? ""}\u0000${imageBaseDir ?? ""}\u0000${block}`;
+    let sources = blockFileLinkSourcesCache.get(key);
+    if (!sources) {
+      sources = blockFileLinkSources(block, cwd, imageBaseDir);
+      blockFileLinkSourcesCache.set(key, sources, key.length * 2);
+    }
+    for (const href of sources.hrefs) hrefs.add(href);
+    for (const span of sources.spans) spans.add(span);
+  }
+  return JSON.stringify([[...hrefs], [...spans]]);
 }
 
 function resolveFileLinkSources(
@@ -1650,6 +1680,9 @@ const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
   mathBreaks: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
 } satisfies Record<string, PluggableList>;
 
+const directHastFor = (rehypePlugins: PluggableList) =>
+  rehypePlugins === CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS ? chatRenderHast : undefined;
+
 const markdownRenderers = new WeakMap<
   PluggableList,
   WeakMap<PluggableList, ReturnType<typeof createMarkdownRenderer>>
@@ -1663,6 +1696,7 @@ function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: Pluggable
     renderer = createMarkdownRenderer({
       remarkPlugins,
       rehypePlugins,
+      directHast: directHastFor(rehypePlugins),
       components: CHAT_MARKDOWN_COMPONENTS,
       urlTransform: markdownUrlTransform,
     });
@@ -1810,6 +1844,7 @@ const MarkdownSource = memo(function MarkdownSource({
     : createMarkdownRenderer({
         remarkPlugins,
         rehypePlugins,
+        directHast: directHastFor(rehypePlugins),
         components: CHAT_MARKDOWN_COMPONENTS,
         urlTransform: markdownUrlTransform,
       });

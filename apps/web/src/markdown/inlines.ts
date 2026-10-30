@@ -288,27 +288,9 @@ export class InlineParser {
   }
 
   isSpecial(c: number): boolean {
-    switch (c) {
-      case LF:
-      case CR:
-      case BACKSLASH:
-      case BACKTICK:
-      case STAR:
-      case UNDERSCORE:
-      case TILDE:
-      case LBRACKET:
-      case RBRACKET:
-      case BANG:
-      case LT:
-      case AMP:
-        return true;
-      case DOLLAR:
-        return this.options.math;
-      case COLON:
-        return this.options.directives;
-      default:
-        return false;
-    }
+    if (c >= 128) return false;
+    const kind = SPECIAL[c]!;
+    return kind === 1 || (kind === 2 && this.options.math) || (kind === 3 && this.options.directives);
   }
 
   parseSpecial(c: number): boolean {
@@ -1151,6 +1133,12 @@ function stripPadding(value: string): string {
   const end = value.endsWith("\r\n") ? value.length - 2 : value.length - 1;
   return start >= end ? "" : value.slice(start, end);
 }
+
+// 1 always starts a construct, 2 with math, 3 with directives.
+const SPECIAL = new Uint8Array(128);
+for (const c of [LF, CR, BACKSLASH, BACKTICK, STAR, UNDERSCORE, TILDE, LBRACKET, RBRACKET, BANG, LT, AMP]) SPECIAL[c] = 1;
+SPECIAL[DOLLAR] = 2;
+SPECIAL[COLON] = 3;
 
 const TEXT_DIRECTIVE_NAMES = ["codex-file-citation", "codex-followup"];
 

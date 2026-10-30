@@ -57,11 +57,16 @@ function isolateInlineCode(node: HastNode): void {
  */
 export function rehypeTextDirection() {
   return (tree: HastNode) => {
-    for (const block of tree.children ?? []) {
-      if (block.type !== "element" || block.tagName === "pre") continue;
-      const dir = textDirection(proseText(block));
-      if (dir) block.properties = { ...block.properties, dir };
-    }
+    blockTextDirections(tree);
     isolateInlineCode(tree);
   };
+}
+
+/** The top-level half of rehypeTextDirection, for trees whose inline code is already isolated. */
+export function blockTextDirections(tree: HastNode) {
+  for (const block of tree.children ?? []) {
+    if (block.type !== "element" || block.tagName === "pre") continue;
+    const dir = textDirection(proseText(block));
+    if (dir) block.properties = { ...block.properties, dir };
+  }
 }

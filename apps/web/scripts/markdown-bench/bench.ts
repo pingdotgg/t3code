@@ -25,6 +25,7 @@ import { rehypeTextDirection } from "../../src/components/chat/markdownTextDirec
 import { splitMarkdownBlocks } from "../../src/components/chat/markdownStreamBlocks";
 import { parseMarkdown } from "../../src/markdown/parseMarkdown";
 import { remarkFastParse } from "../../src/markdown/remarkFastParse";
+import { chatRenderHast } from "../../src/markdown/chatHast";
 
 const dir = process.env.MD_BENCH_DIR ?? NodePath.join(process.env.HOME ?? "", "bench-work/md-bench");
 const candidates = NodePath.join(dir, "candidates/node_modules");
@@ -70,6 +71,14 @@ const elements = (p: typeof fastProcessor) => (text: string) => {
   return toJsxRuntime(p.runSync(p.parse(file), file) as Root, { Fragment, jsx, jsxs, ignoreInvalidStyle: true, passKeys: true });
 };
 const fastElement = elements(fastProcessor);
+const fastRemark = unified().use(remarkParse).use(remarkParseWithoutUnusedSyntax).use(remarkFastParse).use(plainRemarkPlugins).freeze();
+const directHast = (text: string) => {
+  const file = new VFile(text);
+  const mdast = fastRemark.runSync(fastRemark.parse(file), file);
+  return chatRenderHast(mdast as never) ?? (fastProcessor.runSync(mdast as never, file) as Root);
+};
+const directElement = (text: string) =>
+  toJsxRuntime(directHast(text), { Fragment, jsx, jsxs, ignoreInvalidStyle: true, passKeys: true });
 const plainElement = elements(plainProcessor);
 
 const t3Hast = (text: string) => {
@@ -158,6 +167,9 @@ for (const [name, corpus] of Object.entries(corpora)) {
     bench("fast: parse only (mdast)", () => void corpus.forEach((t) => parseMarkdown(t)), options);
     bench("t3 no math: to React elements", () => void corpus.forEach(plainElement), options);
     bench("fast: to React elements (same plugins)", () => void corpus.forEach(fastElement), options);
+    bench("fast + remark transforms (mdast)", () => void corpus.forEach((t) => fastRemark.runSync(fastRemark.parse(t))), options);
+    bench("fast + direct hast", () => void corpus.forEach(directHast), options);
+    bench("fast + direct hast: to React elements", () => void corpus.forEach(directElement), options);
     bench("t3: to hast (parse + rehype + sanitize)", () => void corpus.forEach(t3Hast), options);
     bench("t3: to React elements", () => void corpus.forEach(t3Element), options);
     bench("t3: elements + renderToStaticMarkup", () => void corpus.forEach((t) => renderToStaticMarkup(t3Element(t))), options);
