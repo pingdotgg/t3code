@@ -115,6 +115,23 @@ describe("project collections", () => {
     expect(
       scope(saved, catalog(projects, overridden), overridden).catalog.map((row) => row.id),
     ).toEqual([ProjectId.make("package")]);
+    for (const mode of ["separate", "repository_path"] as const) {
+      const mixed = {
+        ...settings(),
+        sidebarProjectGroupingOverrides: { "local:/repo/pkg": mode },
+      };
+      const mixedRows = catalog(projects, mixed);
+      const members = editProjectCollectionMembers({
+        members: [],
+        catalog: mixedRows,
+        settings: mixed,
+        selectedProjectKeys: new Set([mixedRows[1]!.projectKey]),
+        removedMemberKeys: new Set(),
+      });
+      expect(scope({ ...saved, members }, mixedRows, mixed).catalog.map((row) => row.id)).toEqual([
+        ProjectId.make("package"),
+      ]);
+    }
   });
 
   it("learns delayed identity, survives removing the original environment, and never erases aliases", () => {
@@ -130,6 +147,15 @@ describe("project collections", () => {
       project("remote", "/repo", { environmentId: EnvironmentId.make("remote") }),
     ]);
     expect(scope(learned[0]!, remote).catalog).toHaveLength(1);
+    const duplicateRows = catalog([
+      project("old", "/repo"),
+      project("new", "/repo/", { repositoryIdentity: null, updatedAt: "2026-01-02T00:00:00Z" }),
+    ]);
+    const duplicateCollection = learnProjectCollectionAliases(
+      [capture(duplicateRows)],
+      duplicateRows,
+    );
+    expect(scope(duplicateCollection[0]!, remote).catalog).toHaveLength(1);
     expect(
       scope(
         learned[0]!,
@@ -186,6 +212,9 @@ describe("project collections", () => {
       catalog([project("scratch", "/scratch", { repositoryIdentity: null })]),
     );
     expect(scope(beforeConfig, rows).catalog).toContain(rows[0]);
+    const recognized = learnProjectCollectionAliases([beforeConfig], rows);
+    expect(recognized[0]?.members).toEqual([{ kind: "scratch" }]);
+    expect(scope(recognized[0]!, remote).catalog.map((row) => row.isScratch)).toEqual([true]);
     expect(saved.members).toEqual([{ kind: "scratch" }]);
     expect(collectionMemberMatchesRow({ kind: "scratch" }, rows[1]!, settings())).toBe(false);
   });

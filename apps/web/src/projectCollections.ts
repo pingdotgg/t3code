@@ -111,10 +111,13 @@ function captureProject(
   project: SidebarProjectGroupMember,
 ): Extract<CollectionMember, { kind: "project" }> {
   const alias = (mode: "repository" | "repository_path") => {
-    const key = deriveLogicalProjectKeyFromSettings(project, {
-      sidebarProjectGroupingMode: mode,
-      sidebarProjectGroupingOverrides: {},
-    });
+    const key = deriveLogicalProjectKeyFromSettings(
+      { ...project, repositoryIdentity: project.groupingRepositoryIdentity },
+      {
+        sidebarProjectGroupingMode: mode,
+        sidebarProjectGroupingOverrides: {},
+      },
+    );
     return key === project.physicalProjectKey ? null : key;
   };
   return {
@@ -132,9 +135,13 @@ export function collectionMemberMatchesRow(
   settings: ProjectGroupingSettings,
 ): boolean {
   if (member.kind === "scratch") return row.isScratch === true;
+  const memberMode =
+    settings.sidebarProjectGroupingOverrides[member.physicalKey] ??
+    settings.sidebarProjectGroupingMode;
   return row.memberProjects.some((project) => {
     if (project.physicalProjectKey === member.physicalKey) return true;
     const mode = resolveProjectGroupingMode(project, settings);
+    if (mode !== memberMode) return false;
     return (
       (mode === "repository"
         ? member.repositoryKey
@@ -202,7 +209,9 @@ export function learnProjectCollectionAliases(
 ): readonly ProjectCollection[] {
   const projects = new Map(
     catalog.flatMap((row) =>
-      row.memberProjects.map((project) => [project.physicalProjectKey, project] as const),
+      row.memberProjects.map(
+        (project) => [project.physicalProjectKey, { project, isScratch: row.isScratch }] as const,
+      ),
     ),
   );
   let changed = false;
@@ -210,9 +219,13 @@ export function learnProjectCollectionAliases(
     let collectionChanged = false;
     const members = collection.members.map((member) => {
       if (member.kind === "scratch") return member;
-      const project = projects.get(member.physicalKey);
-      if (!project) return member;
-      const captured = captureProject(project);
+      const current = projects.get(member.physicalKey);
+      if (!current) return member;
+      if (current.isScratch) {
+        collectionChanged = true;
+        return { kind: "scratch" } satisfies CollectionMember;
+      }
+      const captured = captureProject(current.project);
       const repositoryKey = captured.repositoryKey ?? member.repositoryKey;
       const repositoryPathKey = captured.repositoryPathKey ?? member.repositoryPathKey;
       if (repositoryKey === member.repositoryKey && repositoryPathKey === member.repositoryPathKey)
@@ -222,7 +235,12 @@ export function learnProjectCollectionAliases(
     });
     if (!collectionChanged) return collection;
     changed = true;
-    return { ...collection, members };
+    return {
+      ...collection,
+      members: [
+        ...new Map(members.map((member) => [collectionMemberKey(member), member])).values(),
+      ],
+    };
   });
   return changed ? next : collections;
 }

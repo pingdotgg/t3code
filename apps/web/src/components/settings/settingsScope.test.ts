@@ -21,6 +21,7 @@ function member(id: string, environmentId: EnvironmentId): SidebarProjectGroupMe
     title: "T3 Code",
     workspaceRoot: `/repos/${id}`,
     physicalProjectKey: `${environmentId}:/repos/${id}`,
+    groupingRepositoryIdentity: null,
     environmentLabel:
       environments.find((environment) => environment.environmentId === environmentId)?.label ??
       null,

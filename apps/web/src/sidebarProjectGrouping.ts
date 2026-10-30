@@ -11,6 +11,7 @@ export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
 
 export interface SidebarProjectGroupMember extends Project {
   physicalProjectKey: string;
+  groupingRepositoryIdentity: Project["repositoryIdentity"];
   environmentLabel: string | null;
 }
 
@@ -130,9 +131,10 @@ export function buildSidebarProjectSnapshots(input: {
     preferredEnvironmentId: input.primaryEnvironmentId,
   }).map((group): SidebarProjectSnapshot => {
     const members = group.members.map(
-      ({ physicalProjectKey, project }): SidebarProjectGroupMember => ({
+      ({ physicalProjectKey, project, repositoryIdentity }): SidebarProjectGroupMember => ({
         ...project,
         physicalProjectKey,
+        groupingRepositoryIdentity: repositoryIdentity,
         environmentLabel: input.resolveEnvironmentLabel(project.environmentId),
       }),
     );

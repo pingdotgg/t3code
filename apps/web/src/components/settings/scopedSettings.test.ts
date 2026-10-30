@@ -64,6 +64,7 @@ const member = {
   title: "Project",
   workspaceRoot: "/repo",
   physicalProjectKey: `${server.environmentId}:/repo`,
+  groupingRepositoryIdentity: null,
   environmentLabel: server.label,
   defaultModelSelection: null,
   scripts: [],

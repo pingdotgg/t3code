@@ -376,6 +376,7 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
+    expect(groups[0]?.members[0]?.repositoryIdentity).toEqual(freshIdentified.repositoryIdentity);
   });
 });
 

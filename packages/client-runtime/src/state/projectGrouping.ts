@@ -234,6 +234,7 @@ export function deriveProjectGroupLabel(input: {
 export interface ProjectGroupMember<TProject extends EnvironmentProject = EnvironmentProject> {
   readonly physicalProjectKey: string;
   readonly project: TProject;
+  readonly repositoryIdentity: TProject["repositoryIdentity"];
 }
 
 export interface ProjectGroup<TProject extends EnvironmentProject = EnvironmentProject> {
@@ -313,7 +314,11 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       groupScratchProjects: input.groupScratchProjects ?? false,
     });
     logicalKeyByPhysicalKey.set(physicalProjectKey, logicalKey);
-    const member = { physicalProjectKey, project: winner };
+    const member = {
+      physicalProjectKey,
+      project: winner,
+      repositoryIdentity: identitySource.repositoryIdentity,
+    };
     const existing = groupedMembers.get(logicalKey);
     if (existing) {
       existing.push(member);
