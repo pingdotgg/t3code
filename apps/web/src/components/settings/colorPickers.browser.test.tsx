@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { useState, type ReactNode } from "react";
 
@@ -124,6 +124,89 @@ async function renderAccentPicker(value: string) {
 }
 
 describe("provider accent color picker", () => {
+  it("leaves the optional color unset when the preview is dismissed", async () => {
+    const onCommit = vi.fn();
+    await using _screen = await renderPicker(
+      <ProviderAccentColorPicker
+        displayName="Example provider"
+        value={undefined}
+        onCommit={onCommit}
+      />,
+    );
+
+    await open("Add accent color for Example provider");
+    expect(byLabel<HTMLInputElement>("Custom hex accent color").value).toBe("#2563eb");
+    expect(onCommit).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("adds the displayed default without adjusting a color control", async () => {
+    const onCommit = vi.fn();
+    await using screen = await renderPicker(
+      <ProviderAccentColorPicker
+        displayName="Example provider"
+        value={undefined}
+        onCommit={onCommit}
+      />,
+    );
+
+    await open("Add accent color for Example provider");
+    await userEvent.click(page.getByRole("button", { name: "Add color", exact: true }));
+
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith("#2563eb");
+    await expect
+      .element(screen.getByRole("button", { name: "Change accent color for Example provider" }))
+      .toBeVisible();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label="Custom hex accent color"]')).toBeNull(),
+    );
+  });
+
+  it("lets keyboard users add the displayed default", async () => {
+    const onCommit = vi.fn();
+    await using screen = await renderPicker(
+      <ProviderAccentColorPicker
+        displayName="Example provider"
+        value={undefined}
+        onCommit={onCommit}
+      />,
+    );
+
+    await open("Add accent color for Example provider");
+    await act(async () => byLabel("Accent color saturation").focus());
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.keyboard("{Enter}");
+
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith("#2563eb");
+    await expect
+      .element(screen.getByRole("button", { name: "Change accent color for Example provider" }))
+      .toBeVisible();
+  });
+
+  it("keeps live color editing and allows clearing back to unset", async () => {
+    const onCommit = vi.fn();
+    await using screen = await renderPicker(
+      <ProviderAccentColorPicker
+        displayName="Example provider"
+        value="#ff0000"
+        onCommit={onCommit}
+      />,
+    );
+
+    await open("Change accent color for Example provider");
+    await press(HUE, "ArrowRight", true);
+    expect(onCommit).toHaveBeenLastCalledWith("#ff2a00");
+    await userEvent.click(page.getByRole("button", { name: "Clear color", exact: true }));
+    expect(onCommit).toHaveBeenLastCalledWith("");
+    await expect
+      .element(screen.getByRole("button", { name: "Add accent color for Example provider" }))
+      .toBeVisible();
+  });
+
   it("commits a drag that is still in progress when the popover closes", async () => {
     await using screen = await renderAccentPicker("#ff0000");
 
@@ -145,6 +228,9 @@ describe("provider accent color picker", () => {
     await userEvent.fill(byLabel("Custom hex accent color"), "#ff0000");
 
     expect(screen.onCommit).toHaveBeenLastCalledWith("#ff0000");
+    await userEvent.fill(byLabel("Custom hex accent color"), "#00FF00");
+    await screen.echo("#00FF00");
+    expect(byLabel<HTMLInputElement>("Custom hex accent color").value).toBe("#00FF00");
   });
 
   it("shows the saved color again when it is reverted outside the picker", async () => {
@@ -155,6 +241,12 @@ describe("provider accent color picker", () => {
     await screen.echo("#00ff00");
     await screen.echo("#ff0000");
 
-    expect(byLabel("Change accent color for Codex").style.backgroundColor).toBe("rgb(255, 0, 0)");
+    expect(byLabel<HTMLInputElement>("Custom hex accent color").value).toBe("#ff0000");
+    await screen.echo("");
+    expect(byLabel<HTMLInputElement>("Custom hex accent color").value).toBe("#2563eb");
+    await userEvent.click(page.getByRole("button", { name: "Add color", exact: true }));
+    expect(screen.onCommit).toHaveBeenLastCalledWith("#2563eb");
+
+    expect(byLabel("Change accent color for Codex").style.backgroundColor).toBe("rgb(37, 99, 235)");
   });
 });
