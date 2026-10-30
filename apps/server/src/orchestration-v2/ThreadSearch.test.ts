@@ -209,6 +209,52 @@ it.effect.each([true, false])(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("ThreadSearch excludes legacy placeholders still in the index", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const search = yield* ThreadSearch.ThreadSearch;
+    const sql = yield* SqlClient.SqlClient;
+    const project = ProjectId.make("project:legacy-attachments");
+    const threadId = ThreadId.make("thread:legacy-attachments");
+    yield* createProject(project);
+    // Simulate the pre-upgrade trigger, which indexed attachment placeholders.
+    yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+    yield* sql`
+      CREATE TRIGGER orchestration_v2_message_search_insert
+      AFTER INSERT ON orchestration_v2_projection_messages
+      BEGIN
+        INSERT INTO orchestration_v2_message_search (rowid, text)
+        VALUES (new.rowid, json_extract(new.payload_json, '$.text'));
+      END
+    `;
+    yield* Effect.forEach(
+      [
+        thread(threadId, project),
+        message(threadId, "ordinary", "user", "Review the attached files in context"),
+        message(threadId, "attachment", "user", ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
+        message(
+          threadId,
+          "ultrathink",
+          "user",
+          `uLtRaThInK:\r\n\t\u00a0${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+        ),
+      ],
+      projections.apply,
+      { discard: true },
+    );
+    assert.lengthOf(
+      yield* sql`SELECT rowid FROM orchestration_v2_message_search WHERE orchestration_v2_message_search MATCH '"context"'`,
+      3,
+    );
+    assert.deepEqual((yield* search.search({ query: "conversation context" })).matches, []);
+    assert.deepEqual((yield* search.search({ query: "ultrathink" })).matches, []);
+    assert.deepEqual(
+      (yield* search.search({ query: "context" })).matches.map((match) => match.messageId),
+      [MessageId.make("ordinary")],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.layer(layerTest)("ThreadSearch", (it) => {
   it.effect("reads the newest hits without sorting all of them", () =>
     Effect.gen(function* () {

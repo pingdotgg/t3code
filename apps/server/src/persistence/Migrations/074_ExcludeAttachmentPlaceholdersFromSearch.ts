@@ -1,11 +1,7 @@
-import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import {
-  createMessageSearchTriggers,
-  nonPlaceholderMessageCondition,
-} from "../../orchestration-v2/messageSearchIndex.ts";
+import { createMessageSearchTriggers } from "../../orchestration-v2/messageSearchIndex.ts";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -14,20 +10,9 @@ export default Effect.gen(function* () {
   `;
   if (index.length === 0) return;
 
+  // Legacy placeholders stay indexed until rebuild; FTS deletes can overflow last_insert_rowid at commit.
   yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
   yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
   yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
   yield* createMessageSearchTriggers(sql);
-
-  // FTS narrows cleanup to matching text; don't scan or rebuild the full message history.
-  // Deleting from FTS writes its shadow tables, whose rowids can exceed JS number range.
-  yield* sql`
-    DELETE FROM orchestration_v2_message_search WHERE rowid IN (
-      SELECT orchestration_v2_message_search.rowid FROM orchestration_v2_message_search
-      INNER JOIN orchestration_v2_projection_messages AS messages
-        ON messages.rowid = orchestration_v2_message_search.rowid
-      WHERE orchestration_v2_message_search MATCH ${`"${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT.replaceAll('"', '""')}"`}
-        AND NOT (${nonPlaceholderMessageCondition(sql)})
-    )
-  `.pipe(Effect.provideService(SqlClient.SafeIntegers, true));
 });

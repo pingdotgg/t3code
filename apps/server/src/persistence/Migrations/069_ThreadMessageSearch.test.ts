@@ -56,13 +56,13 @@ layer("069_ThreadMessageSearch", (it) => {
   );
 });
 
-it.effect.each(["existing", "inserted", "updated", "backfilled", "rebuilt"])(
+it.effect.each(["inserted", "updated", "backfilled", "rebuilt"])(
   "keeps normal messages indexed and excludes %s placeholders",
   (path) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: path === "backfilled" ? 68 : 73 });
-      if (path === "inserted" || path === "updated") {
+      if (path !== "backfilled") {
         // Pre-upgrade triggers indexed user text even when it was an attachment placeholder.
         yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
         yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
@@ -83,7 +83,7 @@ it.effect.each(["existing", "inserted", "updated", "backfilled", "rebuilt"])(
             VALUES (new.rowid, json_extract(new.payload_json, '$.text'));
           END
         `;
-        yield* runMigrations();
+        if (path !== "rebuilt") yield* runMigrations();
       }
       const placeholders = [
         ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -123,15 +123,6 @@ it.effect.each(["existing", "inserted", "updated", "backfilled", "rebuilt"])(
             WHERE message_id = ${String(index)}
           `;
         }
-      }
-      if (path === "existing") {
-        // Simulate the contentless index written by the old triggers before upgrading.
-        yield* sql`
-          INSERT INTO orchestration_v2_message_search (rowid, text)
-          SELECT rowid, json_extract(payload_json, '$.text')
-          FROM orchestration_v2_projection_messages
-          WHERE rowid NOT IN (SELECT rowid FROM orchestration_v2_message_search)
-        `.pipe(Effect.provideService(SqlClient.SafeIntegers, true));
       }
       yield* runMigrations({ toMigrationInclusive: path === "backfilled" ? 69 : undefined });
       if (path === "rebuilt") yield* rebuildMessageSearch(sql);
