@@ -72,15 +72,6 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
     return providerAuth({ status: "authenticated", account, host });
   }
 
-  // glab before 1.79.0 rejects --all with a nonzero exit that resembles a signed-out CLI.
-  if (input.exitCode !== 0 && output.includes("Unknown flag: --all")) {
-    return providerAuth({
-      status: "unknown",
-      detail:
-        "GitLab CLI is too old to report sign-in status. Update `glab` to 1.79.0 or newer (for example `brew upgrade glab`) and rescan.",
-    });
-  }
-
   if (input.exitCode !== 0) {
     return providerAuth({
       status: "unauthenticated",
@@ -155,7 +146,10 @@ export const discovery = {
   label: "GitLab",
   executable: "glab",
   versionArgs: ["--version"],
+  // Without --all, glab 1.79+ checks only the current host unless that is gitlab.com.
+  // glab 1.78 and older reject --all but list every host by default.
   authArgs: ["auth", "status", "--all"],
+  authFallbackArgs: ["auth", "status"],
   // glab host matching requires the remote's exact spelling.
   remoteRefinementArgs: ({ provider, remoteUrl }) => {
     const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];

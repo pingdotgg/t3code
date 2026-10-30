@@ -39,6 +39,8 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
+  /** Asked once when `authArgs` reports no sign-in or fails, e.g. on a CLI too old for its flags. */
+  readonly authFallbackArgs?: ReadonlyArray<string>;
   readonly remoteRefinementArgs?: (
     context: SourceControlProvider.SourceControlProviderContext,
   ) => ReadonlyArray<string>;
@@ -260,6 +262,34 @@ export function probeSourceControlProvider(input: {
   }
 
   const spec = input.spec;
+  const runAuth = (args: ReadonlyArray<string>) =>
+    input.process
+      .run({
+        operation: "source-control.discovery.auth",
+        command: spec.executable,
+        args,
+        cwd: input.cwd,
+        allowNonZeroExit: true,
+        timeoutMs: probeTimeoutMs(spec),
+        maxOutputBytes: 8_000,
+        appendTruncationMarker: true,
+      })
+      .pipe(
+        Effect.map(spec.parseAuth),
+        Effect.catch((cause) =>
+          Effect.succeed(unknownAuth(Option.getOrUndefined(detailFromCause(cause)))),
+        ),
+      );
+  const fallbackArgs = spec.authFallbackArgs;
+  const auth =
+    fallbackArgs === undefined
+      ? runAuth(spec.authArgs)
+      : runAuth(spec.authArgs).pipe(
+          Effect.filterOrElse(
+            (result) => result.status === "authenticated",
+            () => runAuth(fallbackArgs),
+          ),
+        );
 
   // The auth check does not depend on the version output, so both spawn at once.
   return Effect.all(
@@ -269,23 +299,7 @@ export function probeSourceControlProvider(input: {
         process: input.process,
         cwd: input.cwd,
       }),
-      input.process
-        .run({
-          operation: "source-control.discovery.auth",
-          command: spec.executable,
-          args: spec.authArgs,
-          cwd: input.cwd,
-          allowNonZeroExit: true,
-          timeoutMs: probeTimeoutMs(spec),
-          maxOutputBytes: 8_000,
-          appendTruncationMarker: true,
-        })
-        .pipe(
-          Effect.map(spec.parseAuth),
-          Effect.catch((cause) =>
-            Effect.succeed(unknownAuth(Option.getOrUndefined(detailFromCause(cause)))),
-          ),
-        ),
+      auth,
     ],
     { concurrency: "unbounded" },
   ).pipe(
