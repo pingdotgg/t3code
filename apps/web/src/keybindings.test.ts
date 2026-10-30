@@ -1,6 +1,7 @@
 import { assert, describe, it } from "vite-plus/test";
 import {
   compileResolvedKeybindingsConfig,
+  DEFAULT_KEYBINDINGS,
   DEFAULT_RESOLVED_KEYBINDINGS,
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
@@ -14,6 +15,7 @@ import {
 import {
   effectiveShortcutsForCommand,
   formatShortcutLabel,
+  isListFocusTarget,
   isRichTextBoldShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
@@ -623,6 +625,72 @@ describe("resolveChatShortcutCommand", () => {
       );
     },
   );
+});
+
+function elementWith(attributes: Record<string, string>) {
+  return { getAttribute: (name: string) => attributes[name] ?? null };
+}
+
+describe("isListFocusTarget", () => {
+  it("accepts comboboxes and text boxes whose suggestion list is open", () => {
+    assert.isTrue(isListFocusTarget(elementWith({ role: "combobox" })));
+    assert.isTrue(
+      isListFocusTarget(elementWith({ "aria-autocomplete": "list", "aria-expanded": "true" })),
+    );
+    assert.isFalse(
+      isListFocusTarget(elementWith({ "aria-autocomplete": "list", "aria-expanded": "false" })),
+    );
+    assert.isFalse(isListFocusTarget(elementWith({ role: "textbox" })));
+    assert.isFalse(isListFocusTarget(null));
+  });
+});
+
+describe("list navigation commands", () => {
+  const list = elementWith({ role: "combobox" });
+  const ctrlN = (target?: unknown) => ({ ...event({ key: "n", ctrlKey: true }), target });
+  const rebound = compileResolvedKeybindingsConfig([
+    ...DEFAULT_KEYBINDINGS,
+    { key: "ctrl+n", command: "list.next", when: "listFocus" },
+  ]);
+
+  it("resolves the default arrows only inside a list", () => {
+    const down = { ...event({ key: "ArrowDown" }), target: list };
+    assert.strictEqual(
+      resolveShortcutCommand(down, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "MacIntel" }),
+      "list.next",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "ArrowDown" }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+  });
+
+  it("lets a rebound key win over its other command only inside a list", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(ctrlN(list), rebound, { platform: "Linux" }),
+      "list.next",
+    );
+    assert.strictEqual(resolveShortcutCommand(ctrlN(), rebound, { platform: "Linux" }), "chat.new");
+  });
+
+  it("ignores a list rule with no when clause outside a list", () => {
+    const keybindings = compileResolvedKeybindingsConfig([
+      ...DEFAULT_KEYBINDINGS,
+      { key: "ctrl+n", command: "list.next" },
+    ]);
+    assert.strictEqual(
+      resolveShortcutCommand(ctrlN(), keybindings, { platform: "Linux" }),
+      "chat.new",
+    );
+  });
+
+  it("derives list focus from the target, not from caller context", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(ctrlN(), rebound, { platform: "Linux", context: { listFocus: true } }),
+      "chat.new",
+    );
+  });
 });
 
 describe("resolveShortcutCommand", () => {

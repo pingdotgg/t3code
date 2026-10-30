@@ -170,17 +170,34 @@ function matchesCommandShortcut(
   return resolveShortcutCommand(event, keybindings, options) === command;
 }
 
+/**
+ * True for a focused element that drives a popup list: a combobox, or a text
+ * box whose suggestion list is open.
+ */
+export function isListFocusTarget(target: unknown): boolean {
+  if (typeof (target as Element | null)?.getAttribute !== "function") return false;
+  const element = target as Element;
+  return (
+    element.getAttribute("role") === "combobox" ||
+    (element.getAttribute("aria-autocomplete") === "list" &&
+      element.getAttribute("aria-expanded") === "true")
+  );
+}
+
 export function resolveShortcutCommand(
-  event: ShortcutEventLike,
+  event: ShortcutEventLike & { readonly target?: unknown },
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
   const platform = resolvePlatform(options);
-  const context = resolveContext(options);
+  /** Every listener sees list focus, so a key bound to a list command inside a list never resolves to its other command. */
+  const context = { ...resolveContext(options), listFocus: isListFocusTarget(event.target) };
 
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
+    /** List commands act only inside a list, whatever their `when` says. */
+    if (binding.command.startsWith("list.") && !context.listFocus) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
     if (!matchesKeybindingShortcut(event, shortcutForContext(binding, context), platform)) continue;
     return binding.command;

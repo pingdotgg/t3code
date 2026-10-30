@@ -220,6 +220,39 @@ function registerPullRequestsEscapeCommand(router: AnyRouter): () => void {
   );
 }
 
+function replayAsArrowKey(arrowKey: "ArrowDown" | "ArrowUp") {
+  return (event: KeyboardEvent) => {
+    if (event.key === arrowKey || !event.target) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    event.target.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: arrowKey,
+        code: arrowKey,
+        repeat: event.repeat,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  };
+}
+
+/**
+ * Replays keys bound to `list.next` / `list.previous` as the arrow keys every
+ * list widget already handles. Captured so the original key never reaches
+ * handlers that read it as another command.
+ */
+export function registerListNavigationCommands(): () => void {
+  return registerCommands(
+    { "list.next": replayAsArrowKey("ArrowDown"), "list.previous": replayAsArrowKey("ArrowUp") },
+    {
+      capture: true,
+      /** Replayed keys are untrusted; skipping them stops a swapped-arrows config from looping. */
+      when: (event) => event.isTrusted && !event.isComposing,
+    },
+  );
+}
+
 const MODIFIER_KEYS = new Set(["Alt", "Control", "Meta", "Shift"]);
 
 // A held key undoes once. Module state: undoing an archive navigates, and the
@@ -302,6 +335,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
     registerNavigationHistoryCommands(router),
     registerWorkspaceFocusCommands(router),
     registerPullRequestsEscapeCommand(router),
+    registerListNavigationCommands(),
     registerMenuAction("open-settings", () => {
       if (!/^\/settings(\/|$)/.test(router.state.location.pathname))
         void router.navigate({ to: "/settings" });
