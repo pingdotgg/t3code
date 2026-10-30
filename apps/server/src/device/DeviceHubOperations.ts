@@ -14,7 +14,7 @@ import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
-// Allow the proposed upstream 30 s simctl timeout to report its cause first.
+// Let the hub's 30 s simctl timeout report its cause first.
 const LIST_TIMEOUT_SECONDS = 40;
 // simctl could not list simulators at all, so the hub's empty iOS list says nothing.
 const SIMULATOR_LIST_FAILED =
