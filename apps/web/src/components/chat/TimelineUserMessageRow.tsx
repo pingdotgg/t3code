@@ -274,7 +274,13 @@ export function FoldedMessageHeader(props: {
   );
 }
 
-function UserMessageProjectedStatus({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function UserMessageProjectedStatus({
+  row,
+  className,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+  className?: string | undefined;
+}) {
   const status = row.projectedItem?.item.status;
   if (
     status === undefined ||
@@ -284,7 +290,7 @@ function UserMessageProjectedStatus({ row }: { row: Extract<TimelineRow, { kind:
   )
     return null;
   return (
-    <div className="me-1 flex items-center gap-1.5">
+    <div className={cn("me-1 flex items-center justify-end gap-1.5", className)}>
       <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-3xs font-medium text-destructive">
         {status}
       </span>
@@ -465,10 +471,20 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     );
   };
 
+  // Another of your messages follows directly: time and actions move beside the bubble so the
+  // two stack tight. Touch has no hover, so it keeps them inline.
+  const stacked = row.groupedWithNext === true;
+
   return (
     <div
-      className="group flex flex-col items-end gap-1"
+      className={cn(
+        "group flex items-end",
+        stacked
+          ? "flex-row flex-wrap justify-end gap-x-2 gap-y-1 pointer-coarse:flex-col pointer-coarse:flex-nowrap pointer-coarse:gap-1"
+          : "flex-col gap-1",
+      )}
       data-user-message-attribution={folded ? "agent" : undefined}
+      data-user-message-grouped={stacked || row.groupedWithPrevious ? "" : undefined}
     >
       {userMessage.attribution === "t3code" ? (
         <p
@@ -484,13 +500,18 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <GuestMessageName name={userMessage.guestName} />
         </div>
       ) : null}
-      {row.message.inputIntent === "steer" ||
-      row.message.inputIntent === "promoted_queued_to_steer" ? (
-        <UserMessageIntentMarker intent={row.message.inputIntent} />
+      {(row.message.inputIntent === "steer" ||
+        row.message.inputIntent === "promoted_queued_to_steer") &&
+      !row.continuesSteer ? (
+        <div className={cn(stacked && "flex basis-full justify-end")}>
+          <UserMessageIntentMarker intent={row.message.inputIntent} />
+        </div>
       ) : null}
       <div
         className={cn(
           "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
+          stacked && "order-1 rounded-br-md",
+          row.groupedWithPrevious && "rounded-tr-md",
           BUBBLE_CHIP_CLASS_NAME,
           userMessage.attribution === "guest"
             ? guestBubbleClassName(false)
@@ -710,9 +731,16 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </div>
         ) : null}
       </div>
-      <UserMessageProjectedStatus row={row} />
+      <UserMessageProjectedStatus row={row} className={cn(stacked && "order-2 basis-full")} />
       {!folded || expanded ? (
-        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+        <div
+          className={cn(
+            "flex items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100",
+            stacked
+              ? "pb-1 pointer-coarse:order-3 pointer-coarse:w-full pointer-coarse:max-w-[80%] pointer-coarse:pb-0"
+              : "w-full max-w-[80%]",
+          )}
+        >
           <div className="flex shrink-0 items-center gap-2">
             {folded && senderThreadId ? (
               <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
