@@ -42,8 +42,7 @@ const isChildRunLive = (
       thread.status === "running" ||
       thread.status === "waiting";
 
-/** The request a subagent thread raises on its parent's behalf. Provider-native
-    subagents ask on their parent, so they are skipped. */
+/** Provider-native subagents ask on their parent; the coordinator answers child questions. */
 export function subagentPendingRequest(
   thread: Pick<
     OrchestrationV2ThreadShell,
@@ -54,13 +53,14 @@ export function subagentPendingRequest(
   if (
     kind === undefined ||
     kind === "auth_refresh" ||
+    kind === "user_input" ||
     thread.lineage.relationshipToParent !== "subagent" ||
     isProviderNativeSubagentThread(thread) ||
     !isChildRunLive(thread)
   ) {
     return null;
   }
-  return kind === "user_input" ? "user_input" : "approval";
+  return "approval";
 }
 
 export interface AgentAwarenessState {

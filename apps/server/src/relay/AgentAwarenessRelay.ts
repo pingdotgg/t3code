@@ -894,13 +894,13 @@ export const make = Effect.gen(function* () {
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const projectSnapshot = yield* projects.snapshot;
-    // Subagents never publish awareness, and they are most threads.
-    const topLevelThreadIds = (yield* threads.listActiveShellIndex()).flatMap((thread) =>
-      thread.lineage.relationshipToParent === "subagent" ? [] : [thread.id],
+    // Hydrate only live children; their requests can make a top-level thread wait.
+    const awarenessThreadIds = (yield* threads.listActiveShellIndex()).flatMap((thread) =>
+      thread.lineage.relationshipToParent === "subagent" && !thread.mayBeLive ? [] : [thread.id],
     );
     const shellSnapshot = yield* threads.getShellSnapshot({
       location: "active",
-      threadIds: topLevelThreadIds,
+      threadIds: awarenessThreadIds,
     });
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,

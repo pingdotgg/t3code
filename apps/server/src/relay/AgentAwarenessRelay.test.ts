@@ -178,6 +178,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
+    readonly startupThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
   } = {},
@@ -220,14 +221,24 @@ const makeTestRelay = Effect.fnUntraced(function* (
       Effect.sync(() => shellReads.push(threadId)).pipe(
         Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
       ),
-    getShellSnapshot: () =>
+    getShellSnapshot: (input) =>
       Effect.sync(() => {
         catchUp.shellSnapshotReads += 1;
-        return { schemaVersion: 2, snapshotSequence: 1, threads: [], archivedThreads: [] };
+        return {
+          schemaVersion: 2,
+          snapshotSequence: 1,
+          threads: (options.startupThreads ?? []).filter((thread) =>
+            input?.threadIds?.includes(thread.id),
+          ),
+          archivedThreads: [],
+        };
       }),
     listActiveSubagentThreadIds: unused,
     countThreads: unused,
-    listActiveShellIndex: () => Effect.succeed([]),
+    listActiveShellIndex: () =>
+      Effect.succeed(
+        (options.startupThreads ?? []).map((thread) => ({ ...thread, mayBeLive: true })),
+      ),
     listOlderSettledThreads: unused,
     readShellSnapshot: unused,
     ensureLegacyTranscript: unused,
@@ -329,6 +340,42 @@ const makeTestRelay = Effect.fnUntraced(function* (
 });
 
 describe("AgentAwarenessRelay", () => {
+  it.effect("publishes an approval already waiting at startup", () =>
+    Effect.gen(function* () {
+      const parent = shell({ status: "idle" });
+      const child = waitingChild();
+      const { relay, publications } = yield* makeTestRelay({
+        startupThreads: [parent, child],
+        readShell: (id) => Effect.succeed(id === child.id ? child : parent),
+      });
+      yield* relay.start();
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.equal(publications.length, 1);
+      assert.equal(publications[0]?.state?.threadId, THREAD_ID);
+      assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves coordinator-handled child questions out of phone activity", () =>
+    Effect.gen(function* () {
+      const child = waitingChild({
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("child-question"),
+          kind: "user_input",
+          createdAt: DateTime.makeUnsafe(NOW),
+        },
+      });
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (id) => Effect.succeed(id === child.id ? child : shell()),
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 1);
+      assert.equal(publications[0]?.state?.phase, "running");
+    }),
+  );
+
   it.effect("publishes the parent as needing approval while its subagent waits", () =>
     Effect.gen(function* () {
       const shells = yield* Ref.make(
