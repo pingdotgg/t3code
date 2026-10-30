@@ -2025,7 +2025,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["update-index", "--split-index"]);
           yield* git(cwd, ["mv", "README.md", "renamed.md"]);
           yield* writeTextFile(cwd, "tracked.txt", "after\n");
-          yield* writeTextFile(cwd, ":(exclude)new.txt", "literal\n");
+          yield* writeTextFile(
+            cwd,
+            (yield* HostProcess.Platform) === "win32" ? "[literal]new.txt" : ":(exclude)new.txt",
+            "literal\n",
+          );
           yield* writeTextFile(cwd, "nested/new.txt", "new\n");
           yield* writeTextFile(cwd, "extra.txt", "extra\n");
           const indexBefore = yield* git(cwd, ["hash-object", ".git/index"]);
@@ -2044,7 +2048,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const files = [
             { path: "tracked.txt", previousPath: null },
             { path: "renamed.md", previousPath: "README.md" },
-            { path: ":(exclude)new.txt", previousPath: null },
+            {
+              path:
+                (yield* HostProcess.Platform) === "win32"
+                  ? "[literal]new.txt"
+                  : ":(exclude)new.txt",
+              previousPath: null,
+            },
             { path: "nested/new.txt", previousPath: null },
             { path: "extra.txt", previousPath: null },
           ].slice(0, fileCount);
