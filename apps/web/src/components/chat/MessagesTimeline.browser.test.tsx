@@ -608,7 +608,9 @@ describe("MessagesTimeline citations", () => {
       },
     });
     await selectAssistantText();
-    expect(document.body.textContent).not.toContain("Follow up");
+    await expect
+      .element(page.getByRole("button", { name: "Follow up in a fork of this response" }))
+      .not.toBeInTheDocument();
   });
 
   it("lands a citation present at mount under StrictMode", async () => {
