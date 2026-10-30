@@ -6,6 +6,7 @@ import {
 } from "@t3tools/source-control-core/server/driver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { HttpClient } from "effect/http";
 
 import { definition } from "../shared/definition.ts";
 
@@ -23,7 +24,7 @@ import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(GitHubAppAccess.layer),
   Layer.provideMerge(GitHubRest.layerWithDependencies),
-  Layer.provide(GitHubHttpClient.layer),
+  Layer.provideMerge(GitHubHttpClient.layer),
 );
 
 const makeSignIn = Effect.gen(function* () {
@@ -74,17 +75,25 @@ export const makeIsRepositoryStarred = Effect.gen(function* () {
   );
 });
 
-const makeInstance = Effect.all({
-  sourceControl: GitHubSourceControlProvider.make,
-  discovery: GitHubSourceControlProvider.makeDiscovery,
-  pullRequests: GitHubPullRequestProvider.make,
-  fetchMedia: GitHubMediaFetch.make,
-  signIn: makeSignIn,
-  isRepositoryStarred: makeIsRepositoryStarred,
+const makeInstance = Effect.gen(function* () {
+  const mediaHttpClient = yield* HttpClient.HttpClient;
+  return yield* withOwnServices(
+    Effect.all({
+      sourceControl: GitHubSourceControlProvider.make,
+      discovery: GitHubSourceControlProvider.makeDiscovery,
+      pullRequests: GitHubPullRequestProvider.make,
+      fetchMedia: GitHubMediaFetch.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, mediaHttpClient),
+      ),
+      signIn: makeSignIn,
+      isRepositoryStarred: makeIsRepositoryStarred,
+    }),
+    services,
+  );
 });
 
 export const driver = defineSourceControlDriver({
   kind: definition.kind,
   definition,
-  make: withOwnServices(makeInstance, services),
+  make: makeInstance,
 });
