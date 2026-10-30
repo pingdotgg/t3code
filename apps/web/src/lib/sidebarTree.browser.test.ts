@@ -79,6 +79,29 @@ describe("sidebar keyboard navigation", () => {
     expect(group.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("expands a row that opens on click through its own toggle", () => {
+    using tree = setup();
+    const parent = tree.row("pipeline");
+    parent.setAttribute("aria-expanded", "false");
+    const open = vi.fn();
+    parent.addEventListener("click", open);
+    const toggle = document.createElement("button");
+    toggle.dataset.sidebarToggleFor = "pipeline";
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const expanded = parent.getAttribute("aria-expanded") === "true";
+      parent.setAttribute("aria-expanded", String(!expanded));
+    });
+    parent.append(toggle);
+    tree.install();
+    parent.focus();
+    press(parent, "ArrowRight");
+    expect(parent.getAttribute("aria-expanded")).toBe("true");
+    press(parent, "ArrowLeft");
+    expect(parent.getAttribute("aria-expanded")).toBe("false");
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("opens the row menu on Shift+F10 release without moving focus", () => {
     using tree = setup();
     tree.row("first");

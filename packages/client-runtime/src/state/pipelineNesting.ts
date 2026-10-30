@@ -220,3 +220,88 @@ export function mergePipelineParentStatus<S extends string>(
 ): S | PipelineStepStatus {
   return stepStatus !== null && (own === "ready" || own === "waiting") ? stepStatus : own;
 }
+
+/** A segment's colour in a pipeline's collapsed progress bar. */
+export type PipelineProgressStatus =
+  | "completed"
+  | "running"
+  | "attention"
+  | "failed"
+  | "stopped"
+  | "skipped"
+  | "pending";
+
+export interface PipelineProgressSegment<T> {
+  readonly stepId: string;
+  readonly label: string;
+  readonly status: PipelineProgressStatus;
+  /** The step's latest thread, null for a step that has not started. */
+  readonly thread: T | null;
+}
+
+const ATTENTION_THREAD_STATUSES: ReadonlySet<string> = new Set(["approval", "input", "request"]);
+
+function finishedRunStepStatus(threadStatus: string): PipelineProgressStatus {
+  if (ATTENTION_THREAD_STATUSES.has(threadStatus)) return "attention";
+  if (threadStatus === "working") return "running";
+  if (threadStatus === "failed" || threadStatus === "limited") return "failed";
+  return "completed";
+}
+
+/**
+ * One segment per step of a pipeline, in run order. A live run lists every
+ * defined step, started or not. A run that is over has left the live stream,
+ * so its steps come from their threads, one per step with its latest attempt.
+ * A step thread waiting on the user shows as `attention` either way.
+ */
+export function pipelineProgressSegments<T extends PipelineNestable & { readonly title: string }>(
+  run: PipelineRunSummary | undefined,
+  steps: readonly T[],
+  threadStatus: (step: T) => string,
+): readonly PipelineProgressSegment<T>[] {
+  // Steps arrive oldest first, so the last thread per step is its latest attempt.
+  const latestByStepId = new Map<string, T>();
+  for (const step of steps) {
+    if (step.pipeline?.stepId != null) latestByStepId.set(step.pipeline.stepId, step);
+  }
+  if (run === undefined) {
+    return [...latestByStepId].map(([stepId, thread]) => ({
+      stepId,
+      label: nestedPipelineStepLabel(thread.title),
+      status: finishedRunStepStatus(threadStatus(thread)),
+      thread,
+    }));
+  }
+  return run.steps.map((entry, index) => {
+    const thread =
+      steps.find((step) => step.id === entry.childThreadId) ??
+      latestByStepId.get(entry.stepId) ??
+      null;
+    // A paused run waits on the user at its current step: Continue before it, or its handoff.
+    const awaitsUser =
+      (run.status === "paused" && index === run.currentStepIndex) ||
+      (thread !== null && ATTENTION_THREAD_STATUSES.has(threadStatus(thread)));
+    const status: PipelineProgressStatus =
+      entry.status === "stopped" || entry.status === "cancelled" ? "stopped" : entry.status;
+    return {
+      stepId: entry.stepId,
+      label:
+        entry.name === ""
+          ? thread
+            ? nestedPipelineStepLabel(thread.title)
+            : entry.stepId
+          : entry.name,
+      status: (status === "running" || status === "pending") && awaitsUser ? "attention" : status,
+      thread,
+    };
+  });
+}
+
+/** Steps that are done for a progress count: completed or skipped. */
+export function countFinishedPipelineSegments(
+  segments: ReadonlyArray<{ readonly status: PipelineProgressStatus }>,
+): number {
+  return segments.filter(
+    (segment) => segment.status === "completed" || segment.status === "skipped",
+  ).length;
+}

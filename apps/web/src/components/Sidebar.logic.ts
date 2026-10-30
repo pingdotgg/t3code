@@ -3,6 +3,9 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   aggregatePipelineStepStatus,
+  pipelineProgressSegments,
+  type PipelineNestable,
+  type PipelineProgressStatus,
   type PipelineStepStatus,
 } from "@t3tools/client-runtime/state/pipeline-nesting";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
@@ -994,6 +997,32 @@ export function resolveSidebarPipelineStepStatus(
   run?: Pick<PipelineRunSummary, "status"> | null,
 ): PipelineStepStatus | null {
   return aggregatePipelineStepStatus(steps.map(resolveSidebarThreadStatus), run);
+}
+
+/** One segment of a pipeline parent's progress bar, flat so row props compare by value. */
+export interface SidebarPipelineProgressSegment {
+  readonly stepId: string;
+  readonly label: string;
+  readonly status: PipelineProgressStatus;
+  /** The step's latest thread, in the parent's environment; null until the step starts. */
+  readonly threadId: ThreadId | null;
+}
+
+/** The segments of a pipeline parent's collapsed progress bar; undefined when it has none. */
+export function resolveSidebarPipelineProgress<
+  T extends SidebarThreadStatusInput & PipelineNestable & { readonly title: string },
+>(
+  run: PipelineRunSummary | undefined,
+  steps: readonly T[],
+): ReadonlyArray<SidebarPipelineProgressSegment> | undefined {
+  const segments = pipelineProgressSegments(run, steps, resolveSidebarThreadStatus);
+  if (segments.length === 0) return undefined;
+  return segments.map((segment) => ({
+    stepId: segment.stepId,
+    label: segment.label,
+    status: segment.status,
+    threadId: segment.thread?.id ?? null,
+  }));
 }
 
 /**

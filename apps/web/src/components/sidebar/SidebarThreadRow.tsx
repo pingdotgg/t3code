@@ -27,7 +27,9 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  type PipelineProgressStatus,
   type PipelineStepStatus,
+  countFinishedPipelineSegments,
   mergePipelineParentStatus,
 } from "@t3tools/client-runtime/state/pipeline-nesting";
 import {
@@ -35,6 +37,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -43,6 +46,7 @@ import {
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
   CheckIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -90,6 +94,7 @@ import {
   hasUnseenCompletion,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
+  type SidebarPipelineProgressSegment,
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
   shouldRecedeSidebarThread,
@@ -530,6 +535,127 @@ function PipelineStepConnector(props: { last: boolean }) {
   );
 }
 
+const PIPELINE_PROGRESS_SEGMENT_CLASS: Record<PipelineProgressStatus, string> = {
+  completed: "bg-success",
+  running: "bg-info",
+  attention: "bg-indigo-500 dark:bg-indigo-400",
+  failed: "bg-destructive",
+  stopped:
+    "bg-[repeating-linear-gradient(135deg,currentColor_0_2px,transparent_2px_4px)] text-muted-foreground/70",
+  skipped: "bg-muted-foreground/35",
+  pending: "bg-muted-foreground/15",
+};
+
+const PIPELINE_PROGRESS_STATUS_LABEL: Record<PipelineProgressStatus, string> = {
+  completed: "Done",
+  running: "Running",
+  attention: "Needs you",
+  failed: "Failed",
+  stopped: "Stopped",
+  skipped: "Skipped",
+  pending: "Pending",
+};
+
+/**
+ * A pipeline parent's progress: one segment per step, coloured by its status.
+ * The chevron shows or hides the step rows; a started step's segment opens it.
+ */
+function SidebarPipelineProgress(props: {
+  threadKey: string;
+  segments: ReadonlyArray<SidebarPipelineProgressSegment>;
+  expanded: boolean;
+  /** Whether any step has a row to show. */
+  expandable: boolean;
+  onToggle: () => void;
+  onOpenStep: (threadId: ThreadId) => void;
+  className?: string;
+}) {
+  const { segments } = props;
+  const finished = countFinishedPipelineSegments(segments);
+  const summary = `${finished} of ${segments.length} steps done`;
+  const handleToggleClick = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    props.onToggle();
+  };
+  return (
+    <div className={cn("flex h-4 min-w-0 items-center gap-1.5", props.className)}>
+      {props.expandable ? (
+        <button
+          type="button"
+          data-sidebar-action-for={props.threadKey}
+          data-sidebar-toggle-for={props.threadKey}
+          aria-expanded={props.expanded}
+          aria-label={props.expanded ? "Hide pipeline steps" : "Show pipeline steps"}
+          onClick={handleToggleClick}
+          className="-ms-0.5 inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <ChevronRightIcon
+            aria-hidden
+            className={cn("size-3.5 transition-transform", props.expanded && "rotate-90")}
+          />
+        </button>
+      ) : null}
+      <Tooltip>
+        <TooltipTrigger
+          render={<div role="img" aria-label={summary} className="flex min-w-0 flex-1 gap-0.5" />}
+        >
+          {segments.map((segment) => {
+            const threadId = segment.threadId;
+            return (
+              <span
+                key={segment.stepId}
+                aria-hidden
+                className={cn("flex min-w-0 flex-1 py-1.5", threadId !== null && "cursor-pointer")}
+                onClick={
+                  threadId === null
+                    ? undefined
+                    : (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        props.onOpenStep(threadId);
+                      }
+                }
+              >
+                <span
+                  className={cn(
+                    "h-1 w-full rounded-full",
+                    PIPELINE_PROGRESS_SEGMENT_CLASS[segment.status],
+                  )}
+                />
+              </span>
+            );
+          })}
+        </TooltipTrigger>
+        <TooltipPopup side="right">
+          <ol className="flex flex-col gap-0.5 text-xs">
+            {segments.map((segment, index) => (
+              <li key={segment.stepId} className="flex items-center gap-2">
+                <span
+                  aria-hidden
+                  className={cn(
+                    "h-1 w-3 shrink-0 rounded-full",
+                    PIPELINE_PROGRESS_SEGMENT_CLASS[segment.status],
+                  )}
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  {index + 1}. {segment.label}
+                </span>
+                <span className="text-muted-foreground">
+                  {PIPELINE_PROGRESS_STATUS_LABEL[segment.status]}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </TooltipPopup>
+      </Tooltip>
+      <span aria-hidden className="shrink-0 text-2xs text-secondary-label tabular-nums">
+        {finished}/{segments.length}
+      </span>
+    </div>
+  );
+}
+
 /**
  * A pipeline step's row. Steps move with their parent, so they are not sortable;
  * like sortable rows they follow the live shell for their own status.
@@ -609,6 +735,11 @@ type SidebarThreadRowProps = {
    * not elements, so the row's memo can compare them.
    */
   pipelineSteps?: ReadonlyArray<PipelineStepRowProps> | undefined;
+  /** A pipeline parent's progress bar, one segment per step. Props, like `pipelineSteps`. */
+  pipelineProgress?: ReadonlyArray<SidebarPipelineProgressSegment> | undefined;
+  /** Whether a pipeline parent shows its step rows; collapsed it shows only the open step. */
+  pipelineExpanded?: boolean | undefined;
+  onPipelineExpandedChange?: ((threadKey: string, expanded: boolean) => void) | undefined;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -662,33 +793,50 @@ type SidebarThreadRowProps = {
 
 export type PipelineStepRowProps = Omit<
   SidebarThreadRowProps,
-  "sortable" | "variant" | "pipelineSteps" | "stepStatus"
+  | "sortable"
+  | "variant"
+  | "pipelineSteps"
+  | "stepStatus"
+  | "pipelineProgress"
+  | "pipelineExpanded"
+  | "onPipelineExpandedChange"
 >;
 
-const PIPELINE_STEP_HEIGHT_PX = 32;
+// The progress bar's line under a card's content, or under a one-line row.
+const PIPELINE_PROGRESS_HEIGHT_PX = 20;
 
-function shallowEqualProps(left: object, right: object, skip?: string): boolean {
+function shallowEqualProps(left: object, right: object, skip?: ReadonlySet<string>): boolean {
   const leftRecord = left as Record<string, unknown>;
   const rightRecord = right as Record<string, unknown>;
   const keys = Object.keys(leftRecord);
   if (keys.length !== Object.keys(rightRecord).length) return false;
   for (const key of keys) {
-    if (key !== skip && !Object.is(leftRecord[key], rightRecord[key])) return false;
+    if (!skip?.has(key) && !Object.is(leftRecord[key], rightRecord[key])) return false;
   }
   return true;
 }
 
-// A parent's step props are rebuilt with the sidebar's rows; compare them by value like any row's props.
+function shallowEqualPropsList(
+  before: ReadonlyArray<object> | undefined,
+  after: ReadonlyArray<object> | undefined,
+): boolean {
+  if (before === after) return true;
+  if (before === undefined || after === undefined || before.length !== after.length) return false;
+  return before.every((entry, index) => shallowEqualProps(entry, after[index]!));
+}
+
+const PIPELINE_LIST_PROPS: ReadonlySet<string> = new Set(["pipelineSteps", "pipelineProgress"]);
+
+// A parent's step and progress props are rebuilt with the sidebar's rows; compare them by value like any row's props.
 function sidebarThreadRowPropsEqual(
   previous: SidebarThreadRowProps,
   next: SidebarThreadRowProps,
 ): boolean {
-  if (!shallowEqualProps(previous, next, "pipelineSteps")) return false;
-  const before = previous.pipelineSteps;
-  const after = next.pipelineSteps;
-  if (before === after) return true;
-  if (before === undefined || after === undefined || before.length !== after.length) return false;
-  return before.every((step, index) => shallowEqualProps(step, after[index]!));
+  return (
+    shallowEqualProps(previous, next, PIPELINE_LIST_PROPS) &&
+    shallowEqualPropsList(previous.pipelineSteps, next.pipelineSteps) &&
+    shallowEqualPropsList(previous.pipelineProgress, next.pipelineProgress)
+  );
 }
 
 // Mounted only while renaming, so each rename starts uncommitted.
@@ -764,17 +912,37 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     pipelineStepProps === undefined ? null : (
       <SidebarPipelineSteps id={stepGroupId} steps={pipelineStepProps} />
     );
-  // The steps always show, so the parent is expanded and the tree never collapses it.
-  const stepGroupProps =
-    pipelineStepProps === undefined
-      ? {}
-      : {
-          "aria-expanded": true,
-          "aria-owns": stepGroupId,
-          "data-sidebar-fixed-expanded": "",
-        };
-  const stepGroupHeightPx =
-    pipelineStepProps === undefined ? 0 : pipelineStepProps.length * PIPELINE_STEP_HEIGHT_PX;
+  const pipelineProgressSegments = props.pipelineProgress;
+  const pipelineExpanded = props.pipelineExpanded === true;
+  // Only started steps have rows, so a run with none yet has nothing to expand.
+  const pipelineExpandable =
+    pipelineProgressSegments?.some((segment) => segment.threadId !== null) ?? false;
+  const stepGroupProps = {
+    ...(pipelineExpandable ? { "aria-expanded": pipelineExpanded } : {}),
+    ...(pipelineStepProps === undefined ? {} : { "aria-owns": stepGroupId }),
+  };
+  // Nested content-visibility:auto rows can leave the whole list unpainted, so a parent showing
+  // its steps renders normally; a collapsed one only grows by its progress bar.
+  const pipelineRowStyle = (rowHeightPx: number) =>
+    pipelineStepProps !== undefined
+      ? { contentVisibility: "visible" as const }
+      : pipelineProgressSegments !== undefined
+        ? { containIntrinsicSize: `auto ${rowHeightPx + PIPELINE_PROGRESS_HEIGHT_PX}px` }
+        : undefined;
+  const pipelineProgress = (className: string) =>
+    pipelineProgressSegments === undefined ? null : (
+      <SidebarPipelineProgress
+        threadKey={threadKey}
+        segments={pipelineProgressSegments}
+        expanded={pipelineExpanded}
+        expandable={pipelineExpandable}
+        onToggle={() => props.onPipelineExpandedChange?.(threadKey, !pipelineExpanded)}
+        onOpenStep={(stepThreadId) =>
+          props.onThreadActivate(scopeThreadRef(thread.environmentId, stepThreadId))
+        }
+        className={className}
+      />
+    );
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
@@ -1337,13 +1505,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           isStep && "relative [contain-intrinsic-size:auto_--spacing(8)]",
           sortable?.isDragging && "relative z-20",
         )}
-        style={
-          stepGroupHeightPx === 0
-            ? undefined
-            : {
-                containIntrinsicSize: `auto ${(metaLine !== null && multiline ? 54 : 36) + stepGroupHeightPx}px`,
-              }
-        }
+        style={pipelineRowStyle(metaLine !== null && multiline ? 54 : 36)}
       >
         {isStep ? <PipelineStepConnector last={props.isLastStep === true} /> : null}
         <Tooltip disabled={sortable?.isDragging}>
@@ -1528,6 +1690,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        {pipelineProgress("pe-2.5 ps-9 pb-1")}
         {pipelineStepGroup}
       </li>
     );
@@ -1543,13 +1706,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         metaLineEmpty && "[contain-intrinsic-size:auto_58px]",
         sortable?.isDragging && "relative z-20",
       )}
-      style={
-        stepGroupHeightPx === 0
-          ? undefined
-          : {
-              containIntrinsicSize: `auto ${(metaLineEmpty ? 58 : 78) + stepGroupHeightPx}px`,
-            }
-      }
+      style={pipelineRowStyle(metaLineEmpty ? 58 : 78)}
     >
       <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
         <TooltipTrigger
@@ -1577,6 +1734,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <div
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
+              pipelineProgressSegments !== undefined && "h-[6.125rem]",
               metaLineEmpty && "h-auto",
             )}
           >
@@ -1735,6 +1893,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {titleLineIcons}
             </div>
             {metaLine}
+            {pipelineProgress("mt-1")}
           </div>
         </TooltipTrigger>
         {detailsTooltip}

@@ -14,6 +14,7 @@ import {
   nestedPipelineStepLabel,
   nestPipelineSteps,
   pipelineParentsOfSteps,
+  pipelineProgressSegments,
   pipelineStepLabel,
   pipelineStepsOfParents,
 } from "./pipelineNesting.ts";
@@ -233,5 +234,83 @@ describe("isPipelineGroupActive", () => {
         live ? liveRuns : undefined,
       ),
     ).toBe(expected);
+  });
+});
+
+describe("pipelineProgressSegments", () => {
+  const titled = (id: string, stepId: string, createdAt: string, title: string) => ({
+    ...step(id, "r1", stepId, createdAt),
+    title,
+  });
+  const summarize = (
+    segments: ReadonlyArray<{ label: string; status: string; thread: { id: string } | null }>,
+  ) => segments.map((segment) => `${segment.label}:${segment.status}:${segment.thread?.id ?? "-"}`);
+
+  it("shows every defined step of a live run, started or not", () => {
+    const run = {
+      id: PipelineRunId.make("r1"),
+      status: "running",
+      currentStepIndex: 1,
+      steps: [
+        { stepId: "plan", name: "Plan", status: "completed", childThreadId: ThreadId.make("s1") },
+        { stepId: "build", name: "Build", status: "running", childThreadId: ThreadId.make("s2") },
+        { stepId: "qa", name: "QA", status: "pending", childThreadId: null },
+      ],
+    } as unknown as PipelineRunSummary;
+    const steps = [
+      titled("s1", "plan", "2026-01-01T00:01:00Z", "P · Plan"),
+      titled("s2", "build", "2026-01-01T00:02:00Z", "P · Build"),
+    ];
+    expect(summarize(pipelineProgressSegments(run, steps, () => "working"))).toEqual([
+      "Plan:completed:s1",
+      "Build:running:s2",
+      "QA:pending:-",
+    ]);
+    // A running step waiting on the user needs attention.
+    expect(
+      summarize(pipelineProgressSegments(run, steps, (s) => (s.id === "s2" ? "input" : "ready"))),
+    ).toContain("Build:attention:s2");
+  });
+
+  it("marks the step a paused run waits on", () => {
+    const run = {
+      id: PipelineRunId.make("r1"),
+      status: "paused",
+      currentStepIndex: 1,
+      steps: [
+        { stepId: "plan", name: "Plan", status: "completed", childThreadId: null },
+        { stepId: "build", name: "Build", status: "pending", childThreadId: null },
+        { stepId: "qa", name: "QA", status: "cancelled", childThreadId: null },
+      ],
+    } as unknown as PipelineRunSummary;
+    expect(summarize(pipelineProgressSegments(run, [], () => "ready"))).toEqual([
+      "Plan:completed:-",
+      "Build:attention:-",
+      "QA:stopped:-",
+    ]);
+    // Paused for a handoff, the current step is still running.
+    const awaitingHandoff = {
+      ...run,
+      currentStepIndex: 0,
+      steps: run.steps.map((entry, index) =>
+        index === 0 ? { ...entry, status: "running" } : entry,
+      ),
+    } as PipelineRunSummary;
+    expect(summarize(pipelineProgressSegments(awaitingHandoff, [], () => "ready"))[0]).toBe(
+      "Plan:attention:-",
+    );
+  });
+
+  it("builds a finished run from its threads, one segment per step at its latest attempt", () => {
+    const steps = [
+      titled("s1", "plan", "2026-01-01T00:01:00Z", "P · Plan"),
+      titled("s2", "build", "2026-01-01T00:02:00Z", "P · Build"),
+      titled("s3", "build", "2026-01-01T00:03:00Z", "P · Build (attempt 2)"),
+    ];
+    const status = (s: { id: string }) => (s.id === "s2" ? "failed" : "ready");
+    expect(summarize(pipelineProgressSegments(undefined, steps, status))).toEqual([
+      "Plan:completed:s1",
+      "Build (attempt 2):completed:s3",
+    ]);
   });
 });

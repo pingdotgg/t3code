@@ -1,6 +1,4 @@
 const ROW = "[data-sidebar-row]";
-// A parent whose children always show: ArrowLeft leaves it instead of activating it.
-const FIXED_EXPANDED = "data-sidebar-fixed-expanded";
 
 /** Ref callback for a sidebar list; installs its keyboard navigation and returns its cleanup. */
 export function attachSidebarTree(element: HTMLElement | null) {
@@ -26,6 +24,15 @@ export function installSidebarTree(root: HTMLElement) {
   };
   const visibleRows = () =>
     Array.from(root.querySelectorAll<HTMLElement>(ROW)).filter(isVisibleRow);
+
+  // A row whose click opens it (a pipeline's parent) expands through its own toggle instead.
+  const toggle = (row: HTMLElement) => {
+    const id = row.dataset.sidebarRow;
+    const control = id
+      ? root.querySelector<HTMLElement>(`[data-sidebar-toggle-for="${CSS.escape(id)}"]`)
+      : null;
+    (control ?? row).click();
+  };
 
   const ownerRow = (element: HTMLElement) => {
     const row = element.closest<HTMLElement>(ROW);
@@ -125,16 +132,15 @@ export function installSidebarTree(root: HTMLElement) {
         target = rows.at(-1);
         break;
       case "ArrowRight":
-        if (row.getAttribute("aria-expanded") === "false") row.click();
+        if (row.getAttribute("aria-expanded") === "false") toggle(row);
         else
           target = rows.find(
             (candidate) => candidate.dataset.sidebarParent === row.dataset.sidebarRow,
           );
         break;
       case "ArrowLeft":
-        if (row.getAttribute("aria-expanded") === "true" && !row.hasAttribute(FIXED_EXPANDED)) {
-          row.click();
-        } else
+        if (row.getAttribute("aria-expanded") === "true") toggle(row);
+        else
           target = rows.find(
             (candidate) => candidate.dataset.sidebarRow === row.dataset.sidebarParent,
           );
