@@ -12,11 +12,13 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
 import { firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
+import { markRequiredForgejoChecks } from "./forgejoRequiredChecks.ts";
 
 const processOutput = TestSourceControlHost.processOutput;
 
@@ -139,6 +141,47 @@ it.effect.each([
     ),
   ),
 );
+
+it("matches many-wildcard required patterns against long check names without backtracking", () => {
+  const checks = ["a".repeat(200), `${"a".repeat(199)}b`, "x?y\nz"].map((name) => ({
+    name,
+    status: "success" as const,
+    description: null,
+    url: null,
+  }));
+  const marked = markRequiredForgejoChecks(checks, {
+    enable_status_check: true,
+    status_check_contexts: [`${"*a".repeat(12)}b`, "x*?y?z"],
+  });
+  assert.deepStrictEqual(
+    marked.map((check) => [check.name.slice(-3), check.required]),
+    [
+      ["aaa", undefined],
+      ["aab", true],
+      ["y\nz", true],
+    ],
+  );
+});
+
+it("treats a required pattern's `*` as a wildcard even when the check name has one", () => {
+  const checks = ["*build", "ci/*lint"].map((name) => ({
+    name,
+    status: "success" as const,
+    description: null,
+    url: null,
+  }));
+  const marked = markRequiredForgejoChecks(checks, {
+    enable_status_check: true,
+    status_check_contexts: ["*build", "ci/*"],
+  });
+  assert.deepStrictEqual(
+    marked.map((check) => [check.name, check.required]),
+    [
+      ["*build", true],
+      ["ci/*lint", true],
+    ],
+  );
+});
 
 const forgejoMergeProvider = (repository: Effect.Effect<string, ForgejoCli.ForgejoCliError>) => {
   const writes: Array<ForgejoCli.ForgejoApiInput> = [];
@@ -1253,6 +1296,7 @@ it.effect("routes mounted Forgejo repositories without repeating the mount in AP
 it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
   const commands: string[] = [];
   const requests: string[] = [];
+  let repositoryCwd = "";
   return Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
     for (const remoteUrl of [
@@ -1350,7 +1394,8 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
         process: {
           run: (input) => {
             commands.push(input.command);
-            if (input.command === "git")
+            if (input.command === "git") {
+              repositoryCwd = input.cwd;
               return Effect.succeed(
                 input.cwd === "/no-remotes"
                   ? processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) })
@@ -1360,10 +1405,11 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
                         : "origin\thttp://forgejo.local:3000/maria/project.git (fetch)\nother\thttp://forgejo.local:3000/maria/other.git (fetch)\nunrelated\thttp://other.local:3000/maria/project.git (fetch)",
                     ),
               );
+            }
             assert.strictEqual(input.command, "fj");
             assert.deepStrictEqual(input.args, [
               "--host",
-              input.cwd === "/no-remotes"
+              repositoryCwd === "/no-remotes"
                 ? "https://forgejo.local:3000"
                 : "http://forgejo.local:3000",
               "whoami",
@@ -1477,11 +1523,13 @@ it.effect("loads later fj review pages when the server caps pages below the requ
             }
             assert.strictEqual(input.command, "fj");
             assert.deepStrictEqual(input.args, ["--host", "https://forgejo.test", "whoami"]);
+            assert.strictEqual(input.cwd, "/home/maria");
             return Effect.succeed(processOutput(""));
           },
         },
       }),
     ),
+    Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
   );
 });
 
@@ -1638,6 +1686,7 @@ it.effect(
                         processOutput("http://forgejo.local:3000/maria/project.git\n"),
                       );
                     if (input.command === "fj") {
+                      assert.strictEqual(input.cwd, "/home/maria");
                       if (scenario === "missing")
                         return Effect.fail(
                           new VcsProcessSpawnError({
@@ -1685,6 +1734,7 @@ it.effect(
               }),
             ),
           ),
+          Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
         );
       }
     }),

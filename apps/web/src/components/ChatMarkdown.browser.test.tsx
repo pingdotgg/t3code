@@ -10,6 +10,7 @@ import "../index.css";
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { HostImageUrlContext } from "./chat/hostImageUrl";
 
 const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
@@ -120,6 +121,22 @@ it("shows unavailable audio when a workspace embed has no thread", async () => {
   expect(screen.container.textContent).toContain("Audio unavailable");
   expect(screen.container.textContent).not.toContain("Loading audio");
   expect(screen.container.querySelector("audio")).toBeNull();
+});
+
+it("loads a host image through the page's own route when there is no environment", async () => {
+  setup();
+  const pixel =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+  const hostImageUrl = vi.fn((_path: string) => pixel);
+  await using screen = await render(
+    <HostImageUrlContext value={hostImageUrl}>
+      <ChatMarkdown cwd={undefined} text="![Shot](</work/my shot.png>)" />
+    </HostImageUrlContext>,
+  );
+  await expect.element(screen.getByAltText("Shot")).toHaveAttribute("src", pixel);
+  expect(new Set(hostImageUrl.mock.calls.map(([path]) => path))).toEqual(
+    new Set(["/work/my shot.png"]),
+  );
 });
 
 describe("ChatMarkdown favicon privacy", () => {
@@ -308,6 +325,22 @@ describe("ChatMarkdown headings", () => {
       "user-content-install",
       "user-content-install-2",
     ]);
+  });
+});
+
+describe("ChatMarkdown inline code selection", () => {
+  it("selects the whole inline code span on double-click, but only a word in fenced code", async () => {
+    setup();
+    await using screen = await renderText(
+      "Run `migration-gate --dry-run` first.\n\n```txt\nfenced-block word\n```",
+    );
+    await userEvent.dblClick(screen.getByText("migration-gate --dry-run"));
+    expect(window.getSelection()?.toString()).toBe("migration-gate --dry-run");
+
+    window.getSelection()?.removeAllRanges();
+    const fenced = screen.container.querySelector("pre code")!;
+    await userEvent.dblClick(fenced, { position: { x: 4, y: 4 } });
+    expect(window.getSelection()?.toString()).toBe("fenced");
   });
 });
 

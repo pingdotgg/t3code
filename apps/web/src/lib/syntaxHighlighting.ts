@@ -21,7 +21,7 @@ export function getSyntaxHighlighterPromise(language: string): Promise<DiffsHigh
   if (cached) return cached;
 
   const promise = getSharedHighlighter({
-    // Every palette, so toggling the New design never needs a new highlighter.
+    // Both palettes, so switching appearance never needs a new highlighter.
     themes: Object.values(DIFF_THEME_NAMES),
     langs: [language as SupportedLanguages],
     preferredHighlighter: PREFERRED_HIGHLIGHTER,

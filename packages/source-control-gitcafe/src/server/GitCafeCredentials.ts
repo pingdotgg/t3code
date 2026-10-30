@@ -1,3 +1,4 @@
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -66,7 +67,6 @@ export class GitCafeCredentials extends Context.Service<
   }
 >()("@t3tools/source-control-gitcafe/server/GitCafeCredentials") {}
 
-const normalizeHost = (host: string) => host.trim().toLowerCase();
 const DEFAULT_HOST = "git.cafe";
 
 /** Restrict CAFE_TOKEN to CAFE_HOST (default git.cafe), including for staging remotes. */

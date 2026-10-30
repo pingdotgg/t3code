@@ -12,9 +12,9 @@ import "~/index.css";
 
 import { MessagesTimeline } from "~/components/chat/MessagesTimeline";
 import {
-  ComposerPromptEditor,
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
   type ComposerPromptEditorHandle,
-} from "~/components/ComposerPromptEditor";
+} from "~/components/ComposerPromptEditorTiptap";
 import { commitsSoFar, startCounting, stopCounting } from "./renderCounter";
 import { render } from "./render";
 
@@ -91,7 +91,6 @@ function timelineFor() {
     <MessagesTimeline
       timelineEntries={entries}
       isWorking={false}
-      activeTurnInProgress={false}
       listRef={listRef}
       latestRun={null}
       turnDiffSummaries={[]}
@@ -100,7 +99,6 @@ function timelineFor() {
       onOpenTurnDiff={() => {}}
       onOpenThread={() => {}}
       onForkFromRun={async () => {}}
-      onRollbackCheckpoint={() => {}}
       supportsConversationRollback={false}
       onRevertToTurnCount={() => {}}
       isRevertingCheckpoint={false}
