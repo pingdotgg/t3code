@@ -90,6 +90,37 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       }),
   );
 
+  it.effect("protect refuses root before creating any T3 directories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      const baseDir = `${parent}/t3`;
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(BootService.BootService, makeTestService(status).service),
+      );
+
+      const output = yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "protect",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => lines.join("\n")),
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.UserId, 0),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+      expect(output).toContain("without sudo");
+      expect(yield* fs.exists(baseDir)).toBe(false);
+    }),
+  );
+
   // regression: #13239 a stale nvm-installed CLI reported "already using" its own version
   it.effect.each(["install", "update"] as const)(
     "%s names the CLI that found nothing to change",
