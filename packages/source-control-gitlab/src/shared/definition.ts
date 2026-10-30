@@ -9,6 +9,7 @@ import {
   parseCommitPath,
   projectChangeRequestHost,
 } from "@t3tools/source-control-core/shared/definition";
+import { gitLabMediaUrl, resolveGitLabUploadLinks } from "./gitLabMedia.ts";
 import { icon } from "./icon.ts";
 
 const CHECKOUT_COMMAND = /^glab\s+mr\s+checkout\s+(.+)$/i;
@@ -77,4 +78,6 @@ export const definition = defineSourceControl({
     isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
+  resolveRelativeLinks: resolveGitLabUploadLinks,
+  mediaUrl: gitLabMediaUrl,
 });

@@ -10,7 +10,10 @@ import {
 } from "./PullRequestMedia";
 import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useMemo, useState } from "react";
-import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  changeRequestLinkResolver,
+  changeRequestReferenceAutolinker,
+} from "@t3tools/client-runtime/pull-request-markdown";
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 import { linkReferenceAutolinks } from "./pullRequestAutolinks";
 
@@ -31,6 +34,7 @@ import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText"
 const AutolinksContext = createContext<((text: string) => ReadonlyArray<ReferenceAutolink>) | null>(
   null,
 );
+const RelativeLinksContext = createContext<((markdown: string) => string) | null>(null);
 
 export function PullRequestMarkdownRepository(props: {
   /** The change request the markdown belongs to, whose host decides what its text links. */
@@ -44,6 +48,10 @@ export function PullRequestMarkdownRepository(props: {
     provider === undefined || url === undefined
       ? null
       : changeRequestReferenceAutolinker({ provider, url });
+  const resolveLinks =
+    provider === undefined || url === undefined
+      ? null
+      : changeRequestLinkResolver({ provider, url });
   const target = pullRequestTarget(props.params);
   const project = useProject({
     environmentId: target.environmentId,
@@ -53,7 +61,9 @@ export function PullRequestMarkdownRepository(props: {
   const media = cwd ? { environmentId: target.environmentId, cwd } : null;
   return (
     <AutolinksContext value={autolinks}>
-      <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+      <RelativeLinksContext value={resolveLinks}>
+        <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+      </RelativeLinksContext>
     </AutolinksContext>
   );
 }
@@ -89,7 +99,19 @@ export function PullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
 }) {
-  const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
+  const resolveLinks = useContext(RelativeLinksContext);
+  const markdown = useMemo(
+    () => resolveLinks?.(props.markdown) ?? props.markdown,
+    [resolveLinks, props.markdown],
+  );
+  const imageGroupMarkdown = useMemo(
+    () =>
+      props.imageGroupMarkdown === undefined
+        ? markdown
+        : (resolveLinks?.(props.imageGroupMarkdown) ?? props.imageGroupMarkdown),
+    [resolveLinks, props.imageGroupMarkdown, markdown],
+  );
+  const segments = useMemo(() => splitPullRequestBody(markdown), [markdown]);
   return (
     <View style={{ gap: 12 }}>
       {segments.map((segment) =>
@@ -97,7 +119,7 @@ export function PullRequestMarkdown(props: {
           <PullRequestMarkdownContent
             key={segment.id}
             markdown={segment.text}
-            imageGroupMarkdown={props.imageGroupMarkdown ?? props.markdown}
+            imageGroupMarkdown={imageGroupMarkdown}
           />
         ) : (
           <PullRequestMedia key={segment.id} url={segment.url} kind={segment.media} />

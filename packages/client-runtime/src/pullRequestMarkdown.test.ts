@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { changeRequestReferenceAutolinker, splitPullRequestBody } from "./pullRequestMarkdown.ts";
+import {
+  changeRequestLinkResolver,
+  changeRequestReferenceAutolinker,
+  splitPullRequestBody,
+} from "./pullRequestMarkdown.ts";
 
 describe("pull request body segmentation", () => {
   // GitHub writes a dropped image into the body as an `<img>` tag, so a bare attachment link on
@@ -138,5 +142,25 @@ describe("change request reference autolinks", () => {
   it("links nothing on a host whose grammar is not applied", () => {
     expect(urls("gitlab", "https://gitlab.com/group/project/-/merge_requests/7", "#5")).toBeNull();
     expect(urls("forgejo", "https://codeberg.org/acme/web/pulls/7", "#5")).toBeNull();
+  });
+});
+
+describe("change request relative links", () => {
+  const upload = "/uploads/66dbcd21ec5d24ed6ea225176098d52b/shot.png";
+
+  it("resolves a GitLab upload against the merge request's project", () => {
+    const resolve = changeRequestLinkResolver({
+      provider: "gitlab",
+      url: "https://gitlab.example.com/group/Sub/app/-/merge_requests/7",
+    });
+    expect(resolve?.(`![shot](${upload})`)).toBe(
+      `![shot](https://gitlab.example.com/group/Sub/app${upload})`,
+    );
+  });
+
+  it("leaves bodies alone on a host that writes no relative links", () => {
+    expect(
+      changeRequestLinkResolver({ provider: "github", url: "https://github.com/acme/web/pull/7" }),
+    ).toBeNull();
   });
 });
