@@ -91,7 +91,8 @@ export function PullRequestMarkdown({
   return (
     <div
       className={cn(
-        "space-y-3 [&_[data-markdown-details]]:border-0 [&_[data-markdown-details-summary]]:text-foreground/80 [&_[data-markdown-details-summary]>svg]:text-muted-foreground/60",
+        // Offscreen comments skip layout and paint; a huge pull request holds thousands.
+        "space-y-3 [content-visibility:auto] [contain-intrinsic-size:auto_96px] [&_[data-markdown-details]]:border-0 [&_[data-markdown-details-summary]]:text-foreground/80 [&_[data-markdown-details-summary]>svg]:text-muted-foreground/60",
         className,
       )}
       data-image-gallery
