@@ -484,8 +484,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <GuestMessageName name={userMessage.guestName} />
         </div>
       ) : null}
-      {row.message.inputIntent === "steer" ||
-      row.message.inputIntent === "promoted_queued_to_steer" ? (
+      {(row.message.inputIntent === "steer" ||
+        row.message.inputIntent === "promoted_queued_to_steer") &&
+      !row.continuesSteer ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
       <div
