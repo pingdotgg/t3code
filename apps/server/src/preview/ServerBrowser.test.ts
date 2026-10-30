@@ -977,6 +977,133 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect.each([
+  {
+    name: "hover burst before a click",
+    inputs: [
+      ...Array.from({ length: 120 }, (_, x) => ({
+        type: "mouse",
+        action: "move",
+        x,
+        buttons: 0,
+        button: "none",
+      })),
+      { type: "mouse", action: "down", x: 119, buttons: 1, button: "left" },
+      { type: "mouse", action: "up", x: 119, buttons: 0, button: "left" },
+    ],
+    expected: [
+      { type: "mouseMoved", x: -1 },
+      { type: "mouseMoved", x: 119 },
+      { type: "mousePressed", x: 119 },
+      { type: "mouseReleased", x: 119 },
+    ],
+  },
+  {
+    name: "modifier changes and drag points",
+    inputs: [
+      { type: "mouse", action: "move", x: 1, buttons: 0, button: "none" },
+      { type: "mouse", action: "move", x: 2, buttons: 0, button: "none", modifiers: 2 },
+      { type: "mouse", action: "move", x: 3, buttons: 0, button: "none", modifiers: 2 },
+      { type: "mouse", action: "down", x: 3, buttons: 1, button: "left" },
+      { type: "mouse", action: "move", x: 4, buttons: 1, button: "left" },
+      { type: "mouse", action: "move", x: 5, buttons: 1, button: "left" },
+      { type: "mouse", action: "up", x: 5, buttons: 0, button: "left" },
+    ],
+    expected: [
+      { type: "mouseMoved", x: -1 },
+      { type: "mouseMoved", x: 1, modifiers: 0 },
+      { type: "mouseMoved", x: 3, modifiers: 2 },
+      { type: "mousePressed", x: 3 },
+      { type: "mouseMoved", x: 4 },
+      { type: "mouseMoved", x: 5 },
+      { type: "mouseReleased", x: 5 },
+    ],
+  },
+  {
+    name: "wheel and keyboard boundaries",
+    inputs: [
+      { type: "mouse", action: "move", x: 1, buttons: 0, button: "none" },
+      { type: "wheel", x: 1, deltaY: 20 },
+      { type: "wheel", x: 1, deltaY: 30 },
+      { type: "mouse", action: "move", x: 2, buttons: 0, button: "none" },
+      { type: "key", action: "down", key: "a", code: "KeyA", text: "a" },
+      { type: "mouse", action: "move", x: 3, buttons: 0, button: "none" },
+    ],
+    expected: [
+      { type: "mouseMoved", x: -1 },
+      { type: "mouseMoved", x: 1 },
+      { type: "mouseWheel", deltaY: 20 },
+      { type: "mouseWheel", deltaY: 30 },
+      { type: "mouseMoved", x: 2 },
+      { type: "keyDown", key: "a" },
+      { type: "mouseMoved", x: 3 },
+    ],
+  },
+  {
+    name: "text, navigation and resize boundaries",
+    inputs: [
+      { type: "mouse", action: "move", x: 1, buttons: 0, button: "none" },
+      { type: "text", text: "typed" },
+      { type: "mouse", action: "move", x: 2, buttons: 0, button: "none" },
+      { type: "navigate", url: "http://localhost:5173/next" },
+      { type: "mouse", action: "move", x: 3, buttons: 0, button: "none" },
+      { type: "resize", width: 640, height: 480 },
+      { type: "mouse", action: "move", x: 4, buttons: 0, button: "none" },
+    ],
+    expected: [
+      { type: "mouseMoved", x: -1 },
+      { type: "mouseMoved", x: 1 },
+      { text: "typed" },
+      { type: "mouseMoved", x: 2 },
+      { type: "mouseMoved", x: 3 },
+      { type: "mouseMoved", x: 4 },
+    ],
+  },
+  {
+    name: "ambiguous button fields",
+    inputs: [
+      { type: "mouse", action: "move", x: 1, button: "none" },
+      { type: "mouse", action: "move", x: 2, button: "none" },
+      { type: "mouse", action: "move", x: 3, buttons: 0 },
+      { type: "mouse", action: "move", x: 4, buttons: 0 },
+    ],
+    expected: [-1, 1, 2, 3, 4].map((x) => ({ type: "mouseMoved", x })),
+  },
+])("orders streamed input correctly for $name", (testCase) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const session = contexts[0]!.sessions.at(-1)!;
+      const send = session.send.getMockImplementation()!;
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => finish.resolve()));
+      session.send.mockClear();
+      session.send.mockImplementationOnce(async (method, input) => {
+        started.resolve();
+        await finish.promise;
+        return send(method, input);
+      });
+      const running = yield* viewer
+        .input({ type: "mouse", action: "move", x: -1, button: "none", buttons: 0 })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Effect.promise(() => started.promise);
+      const waiting = yield* Effect.forEach(testCase.inputs, (input) =>
+        viewer.input(input).pipe(Effect.forkScoped({ startImmediately: true })),
+      );
+      finish.resolve();
+      yield* Effect.forEach([running, ...waiting], Fiber.join);
+      const dispatched = session.send.mock.calls.flatMap(([method, input]) =>
+        method.startsWith("Input.") ? [input] : [],
+      );
+      expect(dispatched).toHaveLength(testCase.expected.length);
+      expect(dispatched).toMatchObject(testCase.expected);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("only the controlling viewer's copy and cut keys reach its clipboard", () =>
   Effect.scoped(
     Effect.gen(function* () {

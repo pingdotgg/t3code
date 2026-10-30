@@ -71,7 +71,15 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
 
       expect(yield* rootCommand(desktop)).toBe(`sudo '${shim}' browser setup`);
 
+      // An unrelated `t3` on PATH, such as an older npm global, is another install's CLI.
       expect(yield* rootCommand({ ...desktop, path: yield* pathWithT3 })).toBe(
+        `sudo '${shim}' browser setup`,
+      );
+
+      // The link the app installs onto PATH leads to its own launcher, so plain `t3` is right.
+      const linked = yield* fs.makeTempDirectoryScoped();
+      yield* fs.symlink(shim, path.join(linked, "t3"));
+      expect(yield* rootCommand({ ...desktop, path: linked })).toBe(
         'sudo env "PATH=$PATH" t3 browser setup',
       );
 
