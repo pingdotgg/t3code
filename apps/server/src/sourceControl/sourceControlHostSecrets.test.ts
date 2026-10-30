@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { SecretProviderId, UsageLimitSourceId } from "@t3tools/contracts";
+import { DeviceHostId, SecretProviderId, UsageLimitSourceId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -127,7 +127,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
     current = "rotated";
     yield* invalidateSettingsSecrets(
       resolver,
-      Effect.succeed({ sourceControlHosts: hosts, usageLimitSources: {} }),
+      Effect.succeed({ sourceControlHosts: hosts, usageLimitSources: {}, easDeviceHosts: [] }),
     );
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
@@ -142,7 +142,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
   }),
 );
 
-it.effect("invalidates the management keys of usage limit sources with the host tokens", () =>
+it.effect("invalidates the references of every settings field that holds a secret", () =>
   Effect.gen(function* () {
     const invalidated: Array<ReadonlyArray<string> | undefined> = [];
     const resolver = SecretResolver.SecretResolver.of({
@@ -154,6 +154,26 @@ it.effect("invalidates the management keys of usage limit sources with the host 
       resolver,
       Effect.succeed({
         sourceControlHosts: hosts,
+        easDeviceHosts: [
+          {
+            kind: "eas" as const,
+            id: DeviceHostId.make("ref"),
+            label: "Ref",
+            maxSessionMinutes: 30,
+            idleMinutes: 10,
+            maxConcurrentSessions: 2,
+            accessToken: source("expo#token"),
+          },
+          {
+            kind: "eas" as const,
+            id: DeviceHostId.make("lit"),
+            label: "Lit",
+            maxSessionMinutes: 30,
+            idleMinutes: 10,
+            maxConcurrentSessions: 2,
+            accessToken: "literal-token",
+          },
+        ],
         usageLimitSources: {
           [UsageLimitSourceId.make("referenced")]: {
             kind: "cliproxy",
@@ -171,7 +191,7 @@ it.effect("invalidates the management keys of usage limit sources with the host 
       }),
     );
     assert.deepEqual(invalidated, [
-      ["github#token", "missing#token", "bitbucket#token", "cliproxy#key"],
+      ["github#token", "missing#token", "bitbucket#token", "cliproxy#key", "expo#token"],
     ]);
   }),
 );
