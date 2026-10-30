@@ -1122,6 +1122,18 @@ it.effect("a task named only by environment inherits the parent's model, within 
         clientRequestId: "broader",
       });
       expect(broader.isError).toBe(true);
+
+      // Only the user picks a cyber access program; the parent here has none.
+      const cyber = yield* a.call("delegate_task", {
+        task: "Run the suite on the box.",
+        target: {
+          environmentId: box.environmentId,
+          options: { cyberAccessProgram: "daybreakRed" },
+        },
+        clientRequestId: "cyber",
+      });
+      expect(cyber.isError).toBe(true);
+      expect(JSON.stringify(cyber.content)).toContain("Cyber access program daybreakRed");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

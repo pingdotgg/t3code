@@ -547,6 +547,20 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
       code: "runtime_mode_escalation_denied",
     });
 
+    const cyber = yield* call(
+      "t3_thread_configure",
+      {
+        threadId: "other-project-thread",
+        modelSelection: {
+          instanceId: "codex",
+          model: "gpt-6-sol",
+          options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+        },
+      },
+      clientScope("auto"),
+    );
+    expect(declaredFailure(cyber)).toMatchObject({ code: "invalid_request" });
+
     const forked = yield* call(
       "t3_thread_transfer",
       { action: "fork", sourcePoint: { type: "latest_stable" } },

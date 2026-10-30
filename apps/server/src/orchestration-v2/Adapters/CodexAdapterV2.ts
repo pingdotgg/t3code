@@ -703,20 +703,11 @@ const decodeTurnReasoningEffort = Schema.decodeUnknownEffect(
 );
 const isTurnCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 
-const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
-  Schema.fieldsAssign({
-    collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
-    additionalContext: Schema.optionalKey(
-      Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),
-    ),
-    // Experimental: the generated struct lacks this field; Codex still enforces authorization.
-    cyberAccessProgram: Schema.optionalKey(CodexSchema.V2TurnStartParams__CyberAccessProgram),
-  }),
-);
 type CodexTurnStartParamsWithCollaborationMode =
-  typeof CodexTurnStartParamsWithCollaborationMode.Type;
+  typeof CodexClient.V2TurnStartParamsWithCollaborationMode.Type;
+// The client encodes with this schema, so decoding with it keeps only what reaches Codex.
 const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
-  CodexTurnStartParamsWithCollaborationMode,
+  CodexClient.V2TurnStartParamsWithCollaborationMode,
 );
 const isProviderAdapterRuntimeRequestResponseError = Schema.is(
   ProviderAdapter.ProviderAdapterRuntimeRequestResponseError,
