@@ -225,8 +225,9 @@ export interface StartedModes {
 
 /**
  * Starts threads in the caller's interaction mode and the runtime mode
- * `modes` requests, which may not be broader than the caller's. `linked` says what a linked caller gets: threads stamped
- * with its `linkOrigin`, or a refusal where the tool cannot carry one.
+ * `modes` requests, which may not be broader than the caller's. `linked` says
+ * what a linked caller gets: threads stamped with its `linkOrigin`, or a
+ * refusal where the tool cannot carry one.
  */
 export const startsThreads = <P, A, E, R>(
   modes: (params: P) => { readonly runtimeMode?: RuntimeMode | undefined },

@@ -502,7 +502,7 @@ results use the latest assistant content from the final work turn.
 - A child runtime mode may stay equal to or become narrower than the parent
   mode. It may not escalate privileges.
 - A child always runs in its caller's interaction mode. Agents cannot choose
-  one: the user may have plan mode hidden and could not leave it.
+  one: the server does not know whether the user's client shows plan mode.
 - Thread tools take any thread in the environment as a target. For a thread
   caller, list and search cover one project: its own unless `projectId` is given.
 - A tool that changes another thread needs the calling thread's live run, and
