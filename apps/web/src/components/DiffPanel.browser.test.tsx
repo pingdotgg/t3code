@@ -206,7 +206,9 @@ it.each([
     await expect.element(screen.getByText("No net changes in this selection.")).toBeVisible();
     await expect.element(screen.getByText(errorMessage, { exact: true })).not.toBeInTheDocument();
     const key = scopedThreadKey(context.threadRef);
-    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({ kind: "branch", baseRef });
-    expect(useDiffPanelStore.getState().branchBaseRefByThreadKey[key]).toBe(baseRef);
+    await vi.waitFor(() => {
+      expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({ kind: "branch", baseRef });
+      expect(useDiffPanelStore.getState().branchBaseRefByThreadKey[key]).toBe(baseRef);
+    });
   },
 );
