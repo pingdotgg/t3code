@@ -184,7 +184,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           className={cn(messageActionPillClassName, "h-8 sm:h-7", compact ? "px-3" : "px-4")}
           {...pointerFocusProps}
           disabled={
-            !canOperateThread ||
+            isSendDisabled ||
             isEnvironmentUnavailable ||
             pendingAction.isResponding ||
             (pendingAction.isLastQuestion ? !pendingAction.isComplete : !pendingAction.canAdvance)

@@ -2,7 +2,7 @@
 
 Transcription edits a composer draft. It does not submit an agent turn. Audio is
 temporary client input, and only normal message submission sends the resulting
-text. The current implementation transcribes locally on supported iOS devices;
+text. The current implementation transcribes locally on supported iOS and macOS devices;
 environment-backed transcription is not implemented.
 
 The [shared controller](../../packages/client-runtime/src/voice-input/controller.ts)

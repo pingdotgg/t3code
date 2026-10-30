@@ -127,6 +127,10 @@
       "types": "./src/providerUpdateRequiredModels.ts",
       "default": "./src/providerUpdateRequiredModels.ts"
     },
+    "./voice-input/commit": {
+      "types": "./src/voice-input/transcriptCommit.ts",
+      "default": "./src/voice-input/transcriptCommit.ts"
+    },
     "./voice-input": {
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"
