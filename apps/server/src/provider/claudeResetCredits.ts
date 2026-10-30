@@ -3,6 +3,8 @@ import type {
   ServerProviderResetCredits,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Crypto from "effect/Crypto";
+import * as Hex from "effect/encoding/Hex";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -22,7 +24,11 @@ const Credentials = Schema.Struct({
 });
 const Config = Schema.Struct({
   oauthAccount: Schema.optional(
-    Schema.Struct({ organizationUuid: Schema.optional(Schema.String) }),
+    Schema.Struct({
+      organizationUuid: Schema.optional(Schema.String),
+      accountUuid: Schema.optional(Schema.String),
+      emailAddress: Schema.optional(Schema.String),
+    }),
   ),
 });
 const Grant = Schema.Struct({
@@ -81,11 +87,10 @@ class ClaudeResetCreditError extends Schema.TaggedError<ClaudeResetCreditError>(
 
 const isClaudeResetCreditError = Schema.is(ClaudeResetCreditError);
 
-/** Retry unanswered or unconfirmed claims with the same request ID. */
+/** Login failures cannot settle an earlier unconfirmed claim. */
 export const isSettledClaudeResetCreditFailure = (error: unknown) =>
   isClaudeResetCreditError(error) &&
-  error.reason !== "requestFailed" &&
-  error.reason !== "unconfirmed";
+  (error.reason === "rateLimited" || error.reason === "coolingDown");
 
 const isFutureTimestamp = (value: string, nowMs: number) => {
   if (!COMPLETE_TIMESTAMP.test(value)) return false;
@@ -150,10 +155,17 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
-export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string) {
-    const token = yield* readAccessToken(configDir);
-    if (!token) return undefined;
+export class ClaudeResetCreditReadError extends Schema.TaggedError<ClaudeResetCreditReadError>()(
+  "ClaudeResetCreditReadError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Claude could not read reset credits.";
+  }
+}
+
+export const fetchClaudeResetCredits = Effect.fn("fetchClaudeResetCredits")(
+  function* (token: string, version: string) {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
       HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
@@ -163,12 +175,40 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
     const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return claudeResetCreditsToContract(
-      body.cedar_ember,
-      DateTime.toEpochMillis(yield* DateTime.now),
-    );
+    return body.cedar_ember;
   },
   Effect.timeout("10 seconds"),
+  Effect.mapError((cause) => new ClaudeResetCreditReadError({ cause })),
+);
+
+const accountKey = Effect.fn("claudeResetCredits.accountKey")(function* (
+  configDir: string,
+  token: string,
+  account: typeof Config.Type.oauthAccount,
+) {
+  const organization = account?.organizationUuid?.trim();
+  const uuid = account?.accountUuid?.trim();
+  const email = account?.emailAddress?.trim().toLowerCase();
+  if (organization && (uuid || email)) {
+    return ["claude", organization, uuid ? "uuid" : "email", uuid || email!]
+      .map(encodeURIComponent)
+      .join(":");
+  }
+  // Older logins cannot prove account continuity across token rotation or homes.
+  const crypto = yield* Crypto.Crypto;
+  const fingerprint = Hex.encode(yield* crypto.digest("SHA-256", new TextEncoder().encode(token)));
+  return ["claude", "login", configDir, organization ?? "", uuid ?? "", email ?? "", fingerprint]
+    .map(encodeURIComponent)
+    .join(":");
+});
+
+export const readClaudeResetCreditAccount = Effect.fn("readClaudeResetCreditAccount")(
+  function* (configDir: string, accountConfigPath: string) {
+    const token = yield* readAccessToken(configDir);
+    if (!token) return undefined;
+    const config = yield* readJson(Config, accountConfigPath);
+    return { token, key: yield* accountKey(configDir, token, config.oauthAccount) };
+  },
   Effect.orElseSucceed(() => undefined),
 );
 
@@ -201,6 +241,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   readonly version: string;
   readonly grantId: string;
   readonly requestId: string;
+  readonly expectedAccountKey?: string;
 }) {
   if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
     return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
@@ -213,6 +254,14 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   );
   const organization = config.oauthAccount?.organizationUuid?.trim();
   if (!token || !organization) {
+    return yield* new ClaudeResetCreditError({ reason: "signedOut" });
+  }
+  if (
+    input.expectedAccountKey !== undefined &&
+    (yield* accountKey(input.configDir, token, config.oauthAccount).pipe(
+      Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "loginUnreadable", cause })),
+    )) !== input.expectedAccountKey
+  ) {
     return yield* new ClaudeResetCreditError({ reason: "signedOut" });
   }
   const client = yield* HttpClient.HttpClient;

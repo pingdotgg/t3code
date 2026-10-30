@@ -9,6 +9,7 @@ import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ClaudeResetCredits from "./claudeResetCredits.ts";
+import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 
 const NOW = Date.parse("2026-09-22T12:00:00.000Z");
 const grant = (overrides: Record<string, unknown>) => ({
@@ -87,10 +88,9 @@ describe("claudeResetCreditsToContract", () => {
   });
 });
 
-effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
+effectIt.layer(NodeServices.layer)("fetchClaudeResetCredits", (it) => {
   it.effect("reads the grants with the CLI's request", () =>
     Effect.gen(function* () {
-      const { configDir } = yield* writeLogin;
       const client = HttpClient.make((request) => {
         expect(request.method).toBe("GET");
         expect(request.url).toBe("https://api.anthropic.com/api/oauth/usage");
@@ -107,26 +107,35 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
           ),
         );
       });
-      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
+      const block = yield* ClaudeResetCredits.fetchClaudeResetCredits("oauth-token", "2.1.0").pipe(
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(ClaudeResetCredits.claudeResetCreditsToContract(block, NOW)).toEqual({
+        availableCount: 1,
+        nextCreditId: "grant_a",
+      });
     }),
   );
 
-  it.effect("reads nothing from keychain logins or failed requests", () =>
+  it.effect("skips keychain logins and reports failed requests", () =>
     Effect.gen(function* () {
-      const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const login = yield* writeLogin;
+      const darwin = yield* ClaudeResetCredits.readClaudeResetCreditAccount(
+        login.configDir,
+        login.accountConfigPath,
+      ).pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
       );
-      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HttpClient.HttpClient, respond(429, {})),
-      );
-      expect([darwin, limited]).toEqual([undefined, undefined]);
+      const limited = yield* ClaudeResetCredits.fetchClaudeResetCredits(
+        "oauth-token",
+        "2.1.0",
+      ).pipe(Effect.provideService(HttpClient.HttpClient, respond(429, {})), Effect.result);
+      expect(darwin).toBeUndefined();
+      expect(limited).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ClaudeResetCreditReadError" },
+      });
     }),
   );
 });
@@ -183,18 +192,18 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
       ] as const) {
         expect(yield* consume(respond(200, { result }))).toMatchObject({ success: outcome });
       }
-      for (const client of [
-        respond(200, { result: "cooldown" }),
-        respond(429, {}),
-        respond(401, {}),
-      ]) {
+      for (const client of [respond(200, { result: "cooldown" }), respond(429, {})]) {
         const result = yield* consume(client);
         expect(result).toMatchObject({ _tag: "Failure" });
         if (result._tag === "Failure") {
           expect(ClaudeResetCredits.isSettledClaudeResetCreditFailure(result.failure)).toBe(true);
         }
       }
-      for (const client of [respond(500, {}), respond(200, { result: "unavailable" })]) {
+      for (const client of [
+        respond(401, {}),
+        respond(500, {}),
+        respond(200, { result: "unavailable" }),
+      ]) {
         const unanswered = yield* consume(client);
         expect(unanswered).toMatchObject({ _tag: "Failure" });
         if (unanswered._tag === "Failure") {
@@ -204,6 +213,54 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
         }
       }
     }),
+  );
+
+  it.effect("keeps an unconfirmed claim when account validation prevents a retry", () =>
+    Effect.gen(function* () {
+      const coordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const login = yield* writeLogin;
+      const requests: Array<string> = [];
+      const client = HttpClient.make((request) =>
+        Effect.sync(() => {
+          requests.push(
+            request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+          );
+          return HttpClientResponse.fromWeb(request, Response.json({ result: "unavailable" }));
+        }),
+      );
+      yield* coordinator.readClaudeCredits(
+        "account-a",
+        Effect.succeedSome({
+          eligible: true,
+          next_grant_id: "grant_a",
+          grants: [grant({})],
+        }),
+      );
+      const claim = (expectedAccountKey?: string) =>
+        coordinator
+          .redeemClaudeCredit(
+            "account-a",
+            (grantId, requestId) =>
+              ClaudeResetCredits.consumeClaudeResetCredit({
+                ...login,
+                version: "2.1.0",
+                grantId,
+                requestId,
+                ...(expectedAccountKey === undefined ? {} : { expectedAccountKey }),
+              }),
+            ClaudeResetCredits.isSettledClaudeResetCreditFailure,
+          )
+          .pipe(Effect.provideService(HttpClient.HttpClient, client), Effect.result);
+      expect((yield* claim())._tag).toBe("Failure");
+      expect((yield* claim("different-account"))._tag).toBe("Failure");
+      expect(requests).toHaveLength(1);
+      expect((yield* claim())._tag).toBe("Failure");
+      expect(requests).toHaveLength(2);
+      expect(requests[1]).toBe(requests[0]);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provide(ResetCreditCoordinator.layerTest),
+    ),
   );
 
   it.effect("refuses malformed ids without sending anything", () =>

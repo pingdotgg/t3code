@@ -5,6 +5,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -122,6 +123,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     config,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const crypto = yield* Crypto.Crypto;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     // The server cwd is $HOME in packaged desktop builds, and `claude`
@@ -255,7 +257,44 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.map((result) => result.capabilities),
     );
 
-    const checkProvider = catalogService.refreshInBackground.pipe(
+    const readResetAccount = ClaudeResetCredits.readClaudeResetCreditAccount(
+      configDir,
+      accountConfigPath,
+    ).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(Crypto.Crypto, crypto),
+    );
+    const readResetCredits = Effect.fn("ClaudeDriver.readResetCredits")(function* (
+      version: string,
+    ) {
+      const account = yield* readResetAccount;
+      if (!account) return undefined;
+      const credits = yield* resetCreditCoordinator.readClaudeCredits(
+        account.key,
+        Effect.gen(function* () {
+          const current = yield* readResetAccount;
+          if (current?.key !== account.key) return Option.none();
+          return yield* ClaudeResetCredits.fetchClaudeResetCredits(current.token, version).pipe(
+            Effect.asSome,
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+          );
+        }),
+      );
+      // Login files may have changed while this check waited for another instance.
+      return (yield* readResetAccount)?.key === account.key ? credits : undefined;
+    });
+
+    const lastResetAccountKey = yield* Ref.make<string | undefined>(undefined);
+    const detectResetAccountChange = Effect.gen(function* () {
+      const key = (yield* readResetAccount)?.key;
+      if ((yield* Ref.getAndSet(lastResetAccountKey, key)) !== key) {
+        yield* Ref.set(lastGoodCapabilities, undefined);
+        yield* Cache.invalidateAll(capabilitiesProbeCache);
+      }
+    });
+    const checkProvider = detectResetAccountChange.pipe(
+      Effect.andThen(catalogService.refreshInBackground),
       Effect.andThen(
         modelCatalog.pipe(
           Effect.flatMap((catalog) =>
@@ -266,12 +305,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               stateDir,
               catalog,
               scopedLimitNames,
-              (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
-                  Effect.provideService(HttpClient.HttpClient, httpClient),
-                  Effect.provideService(FileSystem.FileSystem, fileSystem),
-                  Effect.provideService(Path.Path, path),
-                ),
+              readResetCredits,
             ),
           ),
           Effect.tap((provider) =>
@@ -323,26 +357,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
 
-    // Same rules as Codex: serialised on the config directory that holds the
-    // login, one request id kept until Claude answers (a cooldown or rate
-    // limit is an answer), then a re-probe.
+    // Release the account lock before refreshing; snapshot refresh takes its own lock.
     const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = Effect.fn(
       "ClaudeDriver.consumeResetCredit",
     )(
       function* () {
         const current = yield* snapshot.getSnapshot;
-        const grantId = current.usageLimits?.resetCredits?.nextCreditId;
-        if (!grantId || !current.version) return "noCredit" as const;
+        if (!current.version) return "noCredit" as const;
+        const account = yield* readResetAccount;
+        if (!account) return "noCredit" as const;
         const version = current.version;
-        return yield* resetCreditCoordinator.redeem(
-          configDir,
-          (requestId) =>
+        return yield* resetCreditCoordinator.redeemClaudeCredit(
+          account.key,
+          (grantId, requestId) =>
             ClaudeResetCredits.consumeClaudeResetCredit({
               configDir,
               accountConfigPath,
               version,
               grantId,
               requestId,
+              expectedAccountKey: account.key,
             }),
           ClaudeResetCredits.isSettledClaudeResetCreditFailure,
         );
@@ -350,6 +384,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(Crypto.Crypto, crypto),
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({
