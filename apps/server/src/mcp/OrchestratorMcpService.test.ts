@@ -1629,6 +1629,114 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("children of a default-mode thread start in default mode even when plan is asked", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Ref.make<ReadonlyArray<{ readonly type: string }>>([]);
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Plan the change.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      let delegated = false;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(delegated ? [task] : [])
+                : ({
+                    ...childProjection,
+                    thread: {
+                      ...childProjection.thread,
+                      modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+                    },
+                  } as OrchestrationV2ThreadProjection),
+            ),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  delegated ||= command.type === "delegated_task.request";
+                }),
+              ),
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ServerSettings.layerTest(),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const delegation = {
+          task: "Plan the change.",
+          mode: "async",
+          interactionMode: "plan",
+          clientRequestId: "delegate-plan-from-default",
+        } as const;
+        yield* service.delegateTask(scope, delegation);
+        const creation = {
+          threads: [{ prompt: "Plan the change.", interactionMode: "plan" }],
+          clientRequestId: "create-plan-from-default",
+        } as const;
+        yield* service.createThreads(scope, creation);
+
+        const started = (yield* Ref.get(dispatched)).flatMap((command) =>
+          command.type === "delegated_task.request" || command.type === "thread.create"
+            ? [command as { readonly type: string; readonly interactionMode: string }]
+            : [],
+        );
+        assert.deepEqual(
+          started.map(({ type, interactionMode }) => ({ type, interactionMode })),
+          [
+            { type: "delegated_task.request", interactionMode: "default" },
+            { type: "thread.create", interactionMode: "default" },
+          ],
+          "a default-mode thread's children must not start in plan mode",
+        );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect(
     "retrying an accepted driver-only delegation replays even after the project disables every candidate",
     () =>

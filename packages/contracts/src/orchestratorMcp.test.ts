@@ -21,7 +21,6 @@ describe("orchestrator MCP contracts", () => {
       timeoutMs: 5_000,
       clientRequestId: "delegate-1",
       runtimeMode: "inherit",
-      interactionMode: "inherit",
     });
     const result = decodeDelegateTaskResult({
       taskId: "node-task-1",

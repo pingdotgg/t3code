@@ -282,6 +282,32 @@ it.effect("a launch retried with the same clientRequestId replays the first one"
   }),
 );
 
+it.effect(
+  "a launch from a default-mode caller starts in default mode even when plan is asked",
+  () =>
+    Effect.gen(function* () {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "full-access",
+        launched,
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const params = { title: "Plan", projectId, interactionMode: "plan" } as const;
+      yield* toolkit
+        .handle("t3_thread_launch", params)
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+      expect(launched).toHaveLength(1);
+      expect(launched[0]?.interactionMode).toBe("default");
+    }),
+);
+
 it.effect("a launch key of any length or content gives a short id and never a defect", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
