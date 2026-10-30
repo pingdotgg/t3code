@@ -1219,10 +1219,16 @@ it.effect(
           result: { value: { width, height } },
         });
         const resized = () => cdp.emitAsync("Page.frameResized");
-        // An alert open on attach blocks the first read, which gives up with no size to send.
+        // The read on attach never answers and gives up with no size to send.
         const blocked = yield* Queue.take(reads);
         yield* TestClock.adjust("1 second");
-        // While it stays open nothing reads again; the host closing it clears it.
+        // The next page load measures again.
+        desktopSizeAnswer = null;
+        yield* Effect.promise(() => cdp.emitAsync("Page.loadEventFired"));
+        expect(viewportSizes(yield* Queue.takeAll(viewer.output))).toEqual(["1920x1080"]);
+        // While a dialog is open nothing reads. The host closing it clears it, and since
+        // closing resizes nothing, the close itself remeasures.
+        deferReads();
         context.page.emit("dialog", {
           type: () => "alert",
           message: () => "",
@@ -1230,10 +1236,12 @@ it.effect(
         });
         yield* Effect.promise(resized);
         expect(yield* Queue.size(reads)).toBe(0);
-        // Closing it resizes nothing, so the close itself remeasures.
         desktopSizeAnswer = null;
         yield* Effect.promise(() => cdp.emitAsync("Page.javascriptDialogClosed"));
-        expect(viewportSizes(yield* Queue.takeAll(viewer.output))).toEqual(["1920x1080"]);
+        expect(viewportSizes(yield* Queue.takeAll(viewer.output))).toEqual([
+          "1920x1080",
+          "1920x1080",
+        ]);
         // The late answer, a read a navigation breaks and a hidden webview keep the last size.
         blocked.resolve(answer(100, 100));
         deferReads();

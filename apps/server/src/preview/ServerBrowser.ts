@@ -858,6 +858,8 @@ const make = Effect.gen(function* () {
         if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
       };
       cdp.on("Page.frameResized", remeasure);
+      // A read a navigation broke has a fresh page to measure.
+      cdp.on("Page.loadEventFired", remeasure);
       // Closing a dialog resizes nothing, and the host can close it without us.
       cdp.on("Page.javascriptDialogClosed", () => {
         tab.dialog = null;
