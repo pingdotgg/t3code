@@ -14,7 +14,7 @@ Threads run supervised, so each stops at its edit approval until the rig visits 
 
 ## Huge pull requests
 
-`--pr owner/name#123` links a recorded pull request to the first thread and keeps its panel open beside the stream: the rig expands diffs and scrolls the code tab, and switches to the timeline now and then, while it visits the other threads to approve.
+`--pr owner/name#123` links a recorded pull request to the first thread and keeps its panel open beside the stream: the rig expands diffs and scrolls the code tab, and switches to the timeline now and then, while it visits the other threads to approve. `--pr-tab timeline` keeps the timeline open instead.
 
 Record a pull request once per machine with `vp run stress:record-pr owner/name#123` (needs `gh` signed in). It fetches the base and head commits into a bare clone and opens the pull request on a recording server, which saves every read the panel makes, from the pull request page and from a thread's panel. Recordings live in `~/.cache/t3code-stress/fixtures` and are shared by every checkout.
 

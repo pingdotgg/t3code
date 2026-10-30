@@ -49,6 +49,7 @@ const { values: options } = NodeUtil.parseArgs({
     duration: { type: "string", default: "60" },
     "turns-per-thread": { type: "string", default: "4" },
     pr: { type: "string" },
+    "pr-tab": { type: "string", default: "code" },
     out: { type: "string" },
     "skip-build": { type: "boolean", default: false },
     headed: { type: "boolean", default: false },
@@ -92,7 +93,7 @@ async function act(page: Page, step: number) {
   await approvePending(page);
   const tabs = page.locator('nav[aria-label="Pull request tabs"]');
   if (!(await tabs.isVisible())) await openPullRequestPanel(page, pullRequestTitle);
-  const tab = step % 6 === 5 ? "Timeline" : "Code";
+  const tab = options["pr-tab"] === "timeline" ? "Timeline" : step % 6 === 5 ? "Timeline" : "Code";
   await selectPullRequestTab(page, tab);
   if (tab === "Code") await expandDiffs(page, 4);
   // Scroll the panel, which sits on the right half of the window.
@@ -173,7 +174,7 @@ async function main() {
         `https://github.com/${pullRequest.repository}/pull/${pullRequest.number}`,
       );
       await openPullRequestPanel(page, pullRequestTitle);
-      await selectPullRequestTab(page, "Code");
+      await selectPullRequestTab(page, options["pr-tab"] === "timeline" ? "Timeline" : "Code");
     }
     await page.waitForTimeout(3000);
 
