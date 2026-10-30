@@ -221,6 +221,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       driverKind={selection.entry.driverKind}
                       displayName={selection.entry.displayName}
                       accentColor={selection.entry.accentColor}
+                      acpRegistryAgentId={selection.entry.acpRegistryAgentId}
+                      acpRegistryIconUrl={selection.entry.acpRegistryIconUrl}
                       className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
                       iconClassName="size-4"
                     />
