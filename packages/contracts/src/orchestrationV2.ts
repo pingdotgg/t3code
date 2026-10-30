@@ -832,6 +832,12 @@ const DedupedBodyMarker = Schema.optionalKey(Schema.Literal(true));
  * of in a child thread here: that environment and the ordinary thread it runs
  * as there. Such a task has no `childThreadId`.
  */
+// executedModel is null when the environment there reported none, as older versions never do.
+const OrchestrationV2RemoteTaskResultModel = Schema.Struct({
+  model: Schema.String,
+  executedModel: Schema.NullOr(Schema.String),
+});
+
 export const OrchestrationV2RemoteTaskChild = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -850,6 +856,8 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
    * one owed, so each reaches the thread there once however often it is sent.
    */
   stopCount: Schema.optional(NonNegativeInt),
+  /** The result's run there: the model it asked for and the one its provider reported running. */
+  resultModel: Schema.optional(OrchestrationV2RemoteTaskResultModel),
 });
 export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
 
@@ -3415,6 +3423,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     stoppedThere: Schema.optional(Schema.Literals(["ran-out", "stopped"])),
     /** The stop generation this report acknowledges; absent for the original unnumbered stop. */
     stopCount: Schema.optional(NonNegativeInt),
+    /** Kept on `remoteChild` with the result this report completes the task with. */
+    resultModel: Schema.optional(OrchestrationV2RemoteTaskResultModel),
   }),
   /**
    * Owes a stop to the thread there of a remote task that already has its result, as Stop on
