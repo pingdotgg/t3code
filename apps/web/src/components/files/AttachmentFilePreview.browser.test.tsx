@@ -2345,6 +2345,72 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
+it("keeps a workspace PDF open across URL renewals and reloads it when the file changes", async () => {
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(true);
+  const original = URL.createObjectURL(new Blob(["%PDF-1.4"], { type: "application/pdf" }));
+  const edited = URL.createObjectURL(new Blob(["%PDF-1.4 edited"], { type: "application/pdf" }));
+  const preview = (mutation: string) => (
+    <WorkspaceBrowserPreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/repo/planning.pdf"
+      title="Planning PDF"
+      workspaceMutationId={mutation}
+    />
+  );
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: `${original}#initial`,
+    expiresAt: 0,
+    fileRevision: "one",
+  });
+  try {
+    await using screen = await render(preview("first"));
+    const opened = screen.container.querySelector("iframe");
+    expect(opened?.src.startsWith(original)).toBe(true);
+
+    // An agent command renews the signed URL but leaves the file alone.
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: `${original}#renewed`,
+      expiresAt: 0,
+      fileRevision: "one",
+    });
+    await screen.rerender(preview("second"));
+    expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "second");
+    expect(screen.container.querySelector("iframe")).toBe(opened);
+
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: edited,
+      expiresAt: 0,
+      fileRevision: "two",
+    });
+    await screen.rerender(preview("third"));
+    const reloaded = screen.container.querySelector("iframe");
+    expect(reloaded).not.toBe(opened);
+    expect(reloaded?.src.startsWith(edited)).toBe(true);
+
+    // Servers without revisions hold the preview back until a fresh grant arrives.
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: `${edited}#stale`,
+      expiresAt: 0,
+      waiting: true,
+    });
+    await screen.rerender(preview("fourth"));
+    expect(screen.container.querySelector("iframe")).toBeNull();
+    assetUrlState.mockReturnValue({ _tag: "Success", url: original, expiresAt: 0 });
+    await screen.rerender(preview("fourth"));
+    expect(screen.container.querySelector("iframe")?.src.startsWith(original)).toBe(true);
+  } finally {
+    URL.revokeObjectURL(original);
+    URL.revokeObjectURL(edited);
+  }
+});
 it("unwraps one text attachment without turning off the word wrap setting", async () => {
   const file = new Blob(["a long line"], { type: "text/plain" });
   await using screen = await render(
