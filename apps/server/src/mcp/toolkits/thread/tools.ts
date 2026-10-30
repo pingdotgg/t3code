@@ -61,6 +61,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   ],
 })
   .annotate(Tool.Title, "Organize a thread")
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Destructive, true);
 
 const commandTool = {
