@@ -239,7 +239,11 @@ function pullRequestMarkdownContext(
   detail: Pick<PullRequestDetail, "provider" | "url"> | null,
   threadRef: ScopedThreadRef | null,
 ) {
-  return { autolinks: changeRequestReferenceAutolinker(detail), threadRef };
+  return {
+    autolinks: changeRequestReferenceAutolinker(detail),
+    lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
+    threadRef,
+  };
 }
 
 function pullRequestStackReference(

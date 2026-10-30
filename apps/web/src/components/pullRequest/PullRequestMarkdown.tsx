@@ -23,6 +23,7 @@ import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestM
 
 export const PullRequestMarkdownContext = createContext<{
   autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
+  lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
@@ -59,12 +60,14 @@ export function PullRequestMarkdown({
   cwd,
   environmentId,
   threadRef,
+  lineBreaks,
   className,
 }: {
   text: string;
   cwd: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | null;
+  lineBreaks?: boolean;
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
@@ -93,6 +96,7 @@ export function PullRequestMarkdown({
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
+              lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
               sourceControlMedia
             />
           );
