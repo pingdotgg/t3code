@@ -232,6 +232,16 @@ diff --git a/dev/lib/math-tex-text.js b/dev/lib/math-tex-text.js
        effects.consume(code)
        effects.exit('mathTextSequence')
        effects.exit('mathText')
+@@ -180,5 +184,8 @@
+  */
+ function previous(code) {
+   // If there is a previous code, there will always be a tail.
+-  return code !== codes.backslash
++  return (
++    code !== codes.backslash ||
++    this.events[this.events.length - 1][1].type === types.characterEscape
++  )
+ }
 diff --git a/dev/lib/math-text.js b/dev/lib/math-text.js
 --- a/dev/lib/math-text.js
 +++ b/dev/lib/math-text.js

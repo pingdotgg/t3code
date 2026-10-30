@@ -193,6 +193,15 @@ describe("chat math parsing", () => {
     expect(formulas("Pay \\$$x$ now.")).toEqual([["inline", "x"]]);
   });
 
+  it("starts a formula right after an escaped backslash", () => {
+    const markdown = "Path \\\\\\(x^2\\) and \\\\\\[y\\].";
+    expect(formulas(markdown)).toEqual([
+      ["inline", "x^2"],
+      ["display", "y"],
+    ]);
+    expect(text(markdown)).toBe("Path \\ and \\.");
+  });
+
   it.each([
     ["$a`$HOME`", "$HOME"],
     ["\\(a`\\)`", "\\)"],
