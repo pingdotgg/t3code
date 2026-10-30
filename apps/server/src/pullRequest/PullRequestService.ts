@@ -1359,19 +1359,24 @@ export const make = Effect.gen(function* () {
                     : null,
               };
             }),
-            Effect.orElseSucceed((): RepositoryBatch => ({
-              key,
-              entries: [],
-              errors: [
-                {
-                  projectId: project.project.id,
-                  projectTitle: project.project.title,
-                  message: `${project.repository} could not be read.`,
-                },
-              ],
-              truncated: false,
-              nextCursor: null,
-            })),
+            Effect.catch((error): Effect.Effect<RepositoryBatch> =>
+              Effect.succeed({
+                key,
+                entries: [],
+                errors: [
+                  {
+                    projectId: project.project.id,
+                    projectTitle: project.project.title,
+                    message:
+                      error.accessHint === undefined
+                        ? `${project.repository} could not be read.`
+                        : `${project.repository} could not be read. ${error.accessHint}`,
+                  },
+                ],
+                truncated: false,
+                nextCursor: null,
+              }),
+            ),
           );
       }
     };
