@@ -1412,6 +1412,8 @@ export const ServerSettings = Schema.Struct({
   speechPostProcessingModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Environment-owned opt-in for managed agent access to Cua Driver. */
+  enableCua: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1870,6 +1872,7 @@ export const ServerSettingsPatch = Schema.Struct({
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechPostProcessingModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  enableCua: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
