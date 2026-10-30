@@ -48,6 +48,18 @@ it.each([
     expected: 'Created.\n\n~~~js\nconsole.log("done");\n~~~\n\n![](</tmp/a.png>)',
   },
   {
+    name: "an unclosed trailing HTML comment is closed first",
+    text: "<!--\n![](</tmp/a.png>)",
+    saved: ["/tmp/a.png"],
+    expected: "<!--\n![](</tmp/a.png>)\n-->\n\n![](</tmp/a.png>)",
+  },
+  {
+    name: "an unclosed trailing raw HTML block is closed first",
+    text: "<pre>\nlog",
+    saved: ["/tmp/a.png"],
+    expected: "<pre>\nlog\n</pre>\n\n![](</tmp/a.png>)",
+  },
+  {
     name: "Windows, UNC and reserved characters keep their path",
     text: "",
     saved: [
