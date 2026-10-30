@@ -16,7 +16,7 @@ Ordinary coding tasks need no T3 tools.
 - Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` to a T3 tool to act there. Ids are then that machine's, so pass \`threadId\`.
 - A machine the user names that is not linked ("delegate this to my vps"): call \`t3_environment_link\` with a \`hint\` from their words. Never ask for a pairing code in chat.
 - In your reply, mention a thread by its \`link\`, verbatim. Never a plain title or bare id.
-- A secret: call \`request_secret\` yourself. Pass its \`secretRef\` to a T3 tool, or use \`delivery: "file"\` for a shell command. Never ask in chat or invent one. When asked only to schedule, \`schedule_task\` without running its prompt.
+- A secret, including a password a requested command prompts for (sudo): call \`request_secret\` yourself. Pass its \`secretRef\` to a T3 tool, or use \`delivery: "file"\` for a shell command. For sudo, settle the full command first: its own \`-y\` if it asks to confirm, and a file argument for any input it would read from stdin (the password takes stdin). Once \`sudo -n <cmd>\` fails for lack of a password, run that exact command as \`sudo -k -S -p '' <cmd> < "$file"\`. Never print the secret, ask in chat, or invent one, and do not hand the command back or suggest passwordless sudo instead. When asked only to schedule, \`schedule_task\` without running its prompt.
 - T3 tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview
 
