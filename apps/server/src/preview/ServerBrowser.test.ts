@@ -618,6 +618,9 @@ it.effect("a desktop tab that paints nothing moves to headless and its viewer re
         tabId,
         downloadId,
       });
+      // Cleanup is not awaited and has no milestone, so only real time can show it never ran.
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- proving a delete did not land
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 100)));
       expect(yield* fs.readFileString(Option.getOrThrow(kept).path)).toBe("a,b");
     }),
   ).pipe(Effect.provide(layer)),
