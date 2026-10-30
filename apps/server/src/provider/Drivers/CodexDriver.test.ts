@@ -608,6 +608,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const shimDir = NodePath.join(tempDir, fixture.dataRoot, "shims");
         const npmPrefix = NodePath.join(tempDir, "mise", "installs", "node", "24.13.0");
         const npmBin = NodePath.join(npmPrefix, "bin");
+        const npmPath = NodePath.join(npmBin, "npm");
         const npmEntry = NodePath.join(
           npmPrefix,
           "lib",
@@ -617,7 +618,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
           "bin",
           "codex.js",
         );
-        for (const file of [brewPath, misePath, npmEntry]) {
+        for (const file of [brewPath, misePath, npmPath, npmEntry]) {
           yield* fs.makeDirectory(NodePath.dirname(file), { recursive: true });
           yield* fs.writeFileString(file, "#!/bin/sh\n");
           yield* fs.chmod(file, 0o755);
@@ -632,12 +633,20 @@ it.layer(layerTest)("CodexDriver", (it) => {
         ].join(NodePath.delimiter);
         const probes: Array<ReadonlyArray<string>> = [];
         const metadataSpawner = ChildProcessSpawner.make((command) => {
-          if (!ChildProcess.isStandardCommand(command) || command.command !== brewPath) {
+          const isNpmOutdated =
+            ChildProcess.isStandardCommand(command) &&
+            command.command === npmPath &&
+            command.args[0] === "outdated";
+          if (
+            !ChildProcess.isStandardCommand(command) ||
+            (command.command !== brewPath && !isNpmOutdated)
+          ) {
             return Effect.die("Provider resolution must not execute a provider or updater");
           }
-          probes.push(command.args);
-          const stdout =
-            command.args[0] === "--prefix"
+          if (!isNpmOutdated) probes.push(command.args);
+          const stdout = isNpmOutdated
+            ? JSON.stringify({ "@openai/codex": { latest: "0.153.4" } })
+            : command.args[0] === "--prefix"
               ? brewPrefix
               : JSON.stringify({ formulae: [{ versions: { stable: "2026.9.1" } }] });
           return Effect.succeed(
@@ -667,7 +676,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
             homePath: NodePath.join(tempDir, "codex-home"),
           },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, metadataSpawner));
-        const capabilities = yield* instance.snapshot.resolveMaintenance();
+        const capabilities = yield* instance.snapshot
+          .resolveMaintenance()
+          .pipe(Effect.provideService(HostProcess.Environment, { PATH: lookupPath }));
         const latestVersion = yield* resolveLatestProviderVersion(capabilities).pipe(
           Effect.provideServiceEffect(
             ProviderLatestVersions.ProviderLatestVersions,
