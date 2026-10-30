@@ -974,6 +974,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           for (let attempt = 0; httpResult._tag === "missing"; attempt++) {
             if (current.status !== "deleted") {
               yield* setDeleted();
+              yield* Ref.set(awaitingCompletion, true);
               current = yield* SubscriptionRef.get(state);
             }
             yield* Effect.sleep(Math.min(250 * 2 ** attempt, 5_000));

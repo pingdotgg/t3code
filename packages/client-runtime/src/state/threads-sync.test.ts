@@ -2019,28 +2019,37 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("loads a new thread whose first snapshot request ran before it existed", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({ httpSnapshot: { _tag: "missing" } });
-      yield* Queue.take(harness.snapshotLoads);
-      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+  it.effect.each(["same session", "replaced session"] as const)(
+    "loads a new thread whose first snapshot request ran before it existed (%s)",
+    (session) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          httpSnapshot: { _tag: "missing" },
+          completionMarker: true,
+        });
+        yield* Queue.take(harness.snapshotLoads);
+        yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
 
-      yield* harness.replaceSession;
-      yield* Queue.take(harness.snapshotLoads);
-      yield* Ref.set(harness.httpSnapshot, {
-        _tag: "present",
-        snapshot: { snapshotSequence: 11, projection: BASE_PROJECTION },
-      });
-      yield* TestClock.adjust("250 millis");
+        if (session === "replaced session") {
+          yield* harness.replaceSession;
+          yield* Queue.take(harness.snapshotLoads);
+        }
+        yield* Ref.set(harness.httpSnapshot, {
+          _tag: "present",
+          snapshot: { snapshotSequence: 11, projection: BASE_PROJECTION },
+        });
+        yield* TestClock.adjust("250 millis");
 
-      const state = yield* awaitThreadState(
-        harness.observed,
-        (value) => value.status === "live" && Option.isSome(value.data),
-      );
-      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
-      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(11);
-      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
-    }),
+        yield* awaitThreadState(
+          harness.observed,
+          (value) => value.status === "synchronizing" && Option.isSome(value.data),
+        );
+        yield* Queue.offer(harness.inputs, synchronized());
+        const state = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+        expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+        expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(11);
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
+      }),
   );
 
   it.effect("does not recreate a deleted cache from a queued save or finalizer", () =>
