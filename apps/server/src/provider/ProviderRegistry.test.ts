@@ -1,7 +1,4 @@
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as CodexErrors from "effect-codex-app-server/errors";
-import * as Path from "effect/Path";
-import * as FileSystem from "effect/FileSystem";
 import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
@@ -14,7 +11,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -38,6 +37,7 @@ import {
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -340,6 +340,13 @@ const layerTestNodeServices = Layer.mergeAll(
   Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
     getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000001")),
   }),
+  // An empty home, so the developer's own Claude settings never reach provider probes.
+  Layer.effect(
+    HostProcess.HomeDirectory,
+    Effect.gen(function* () {
+      return yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+    }),
+  ).pipe(Layer.provide(NodeServices.layer)),
 );
 
 it.layer(
@@ -2537,6 +2544,68 @@ it.layer(
           }),
         ),
       ),
+    );
+
+    it.effect.each([
+      {
+        settings: { env: { ANTHROPIC_BASE_URL: "https://hub.example.ts.net:8317" } },
+        baseUrl: "https://api.anthropic.com",
+        type: "customEndpoint",
+        label: "Custom API endpoint",
+      },
+      {
+        settings: { env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com" } },
+        baseUrl: "https://proxy.example",
+        type: "apiKey",
+        label: "Claude API Key",
+      },
+      {
+        settings: {},
+        baseUrl: "https://proxy.example",
+        type: "customEndpoint",
+        label: "Custom API endpoint",
+      },
+    ])(
+      "uses the settings endpoint before the process endpoint: $type / $baseUrl",
+      ({ settings, baseUrl, type, label }) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const configDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-settings-",
+          });
+          yield* fileSystem.writeFileString(
+            path.join(configDir, "settings.json"),
+            JSON.stringify(settings),
+          );
+          const stateDir = yield* fileSystem.makeTempDirectoryScoped();
+          yield* fileSystem.makeDirectory(path.join(stateDir, ".claude"));
+          yield* fileSystem.writeFileString(
+            path.join(stateDir, ".claude", "settings.json"),
+            JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://state-dir.example" } }),
+          );
+          const status = yield* checkClaudeProviderStatus(
+            { ...defaultClaudeSettings, homePath: configDir },
+            claudeCapabilities({
+              tokenSource: "ANTHROPIC_AUTH_TOKEN",
+              apiKeySource: "none",
+              apiProvider: "firstParty",
+            }),
+            { ANTHROPIC_BASE_URL: baseUrl },
+            stateDir,
+          );
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.type, type);
+          assert.strictEqual(status.auth.label, label);
+        }).pipe(
+          Effect.provide(
+            layerMockSpawner((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
     );
 
     it.effect.each([
