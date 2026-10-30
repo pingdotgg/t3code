@@ -966,7 +966,55 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   /** Main must derive the partition to ensure its session has UA rewrites and permission handlers. */
   profileId: Schema.optional(BrowserProfileId),
+  /** Routes the partition's loopback traffic to this environment before any guest attaches. */
+  remoteProxy: Schema.optional(Schema.Boolean),
 });
+
+const RemotePreviewPort = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }));
+
+export const DesktopRemotePreviewProxyState = Schema.Literals([
+  "not-configured",
+  "ready",
+  "expired",
+  "revoked",
+]);
+export type DesktopRemotePreviewProxyState = typeof DesktopRemotePreviewProxyState.Type;
+
+export const DesktopRemotePreviewProxyStatusSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  state: DesktopRemotePreviewProxyState,
+  ports: Schema.Array(RemotePreviewPort),
+  /** Loopback ports pages asked for that this environment has not approved. */
+  deniedPorts: Schema.Array(RemotePreviewPort),
+  expiresAt: Schema.NullOr(Schema.Number),
+  externalAccess: Schema.NullOr(Schema.Struct({ expiresAt: Schema.Number })),
+});
+export type DesktopRemotePreviewProxyStatus = typeof DesktopRemotePreviewProxyStatusSchema.Type;
+
+export const DesktopRemotePreviewProxyConfigureInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String.check(Schema.isMaxLength(256)),
+  httpBaseUrl: Schema.String.check(Schema.isMaxLength(4096)),
+  grant: Schema.String.check(Schema.isMaxLength(4096)),
+  expiresAt: Schema.Number,
+  ports: Schema.Array(RemotePreviewPort).check(Schema.isMaxLength(16)),
+});
+export type DesktopRemotePreviewProxyConfigureInput =
+  typeof DesktopRemotePreviewProxyConfigureInputSchema.Type;
+
+export const DesktopRemotePreviewProxyEnvironmentInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+});
+
+export const DesktopRemotePreviewExternalAccessSchema = Schema.Struct({
+  /** A standard HTTP proxy (with CONNECT) on this computer, for any Chromium or Playwright. */
+  proxyServer: Schema.String,
+  username: Schema.String,
+  password: Schema.String,
+  expiresAt: Schema.Number,
+});
+export type DesktopRemotePreviewExternalAccess =
+  typeof DesktopRemotePreviewExternalAccessSchema.Type;
 
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
@@ -1158,6 +1206,7 @@ export interface DesktopPreviewBridge {
   getPreviewConfig: (
     environmentId: EnvironmentId,
     profileId?: string,
+    options?: { readonly remoteProxy?: boolean },
   ) => Promise<DesktopPreviewWebviewConfig>;
   listBrowserImportSources: () => Promise<ReadonlyArray<BrowserImportSource>>;
   importBrowserCookies: (input: {
@@ -1193,6 +1242,23 @@ export interface DesktopPreviewBridge {
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
   onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;
   onOpenLink: (listener: (event: DesktopPreviewOpenLinkEvent) => void) => () => void;
+  remoteProxy: DesktopRemotePreviewProxyBridge;
+}
+
+/** Desktop-owned access to a remote environment's loopback servers; outlives any webview. */
+export interface DesktopRemotePreviewProxyBridge {
+  configure: (
+    input: DesktopRemotePreviewProxyConfigureInput,
+  ) => Promise<DesktopRemotePreviewProxyStatus>;
+  getStatus: (environmentId: EnvironmentId) => Promise<DesktopRemotePreviewProxyStatus | null>;
+  getStatuses: () => Promise<ReadonlyArray<DesktopRemotePreviewProxyStatus>>;
+  issueExternalAccess: (
+    environmentId: EnvironmentId,
+  ) => Promise<DesktopRemotePreviewExternalAccess>;
+  revokeExternalAccess: (environmentId: EnvironmentId) => Promise<void>;
+  /** Stops all access: revokes the environment grant and closes every tunnel. */
+  revoke: (environmentId: EnvironmentId) => Promise<void>;
+  onStatus: (listener: (status: DesktopRemotePreviewProxyStatus) => void) => () => void;
 }
 
 export type ConfirmDialogVariant = "default" | "destructive";
