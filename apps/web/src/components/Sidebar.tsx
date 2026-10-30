@@ -1258,7 +1258,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
   };
   const threadSearch = useThreadSearch(
-    connectedEnvironmentIds,
+    searchEnvironmentIds,
     threadSearchQuery,
     scopedProjectGroups.length === 0
       ? {}
@@ -1362,9 +1362,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "new-thread":
             startThreadInProjectFolder(group);
             return;
-          case "copy-path":
-            copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
+          case "copy-path": {
+            const [entry] = buildSidebarProjectPickerEntries({
+              groups: [group],
+              preferredProjectRef: null,
+              excludedEnvironmentIds,
+            });
+            if (!entry) return;
+            const path = entry.targetProject.workspaceRoot;
+            copyPathToClipboard(path, { path });
             return;
+          }
           case "pin":
           case "unpin":
             setProjectGroupPinned(group, clicked.value === "pin");
