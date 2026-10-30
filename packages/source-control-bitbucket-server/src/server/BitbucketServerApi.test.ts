@@ -1,5 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - the HTTP fixture verifies fetch redirect behavior.
-import * as NodeHttp from "node:http";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -11,8 +10,17 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as NetAddress from "effect/net/NetAddress";
 import * as TestClock from "effect/testing/TestClock";
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 
 import { GitCommandError, SourceControlProviderKind } from "@t3tools/contracts";
 import * as BitbucketServerApi from "./BitbucketServerApi.ts";
@@ -949,34 +957,28 @@ it.effect("pauses background reads after a 429 while permitting interactive read
 it.live("uses the configured HTTP mount and refuses a same-origin login redirect", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; authorization: string | undefined }> = [];
-    const server = yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        NodeHttp.createServer((request, response) => {
-          requests.push({ url: request.url ?? "", authorization: request.headers.authorization });
-          if (request.url?.includes("/default-branch")) {
-            response.setHeader("Content-Type", "application/json");
-            response.end(JSON.stringify({ displayId: "main" }));
-          } else if (request.url?.includes("/projects?")) {
-            response.setHeader("X-AUSERNAME", "fixture-user");
-            response.end("{}");
-          } else if (request.url?.includes("/redirect")) {
-            response.writeHead(302, { Location: "/login" });
-            response.end();
-          } else {
-            response.end("redirect followed");
-          }
-        }),
-      ),
-      (server) =>
-        Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+    const server = yield* HttpServer.HttpServer;
+    yield* server.serve(
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        requests.push({ url: request.url, authorization: request.headers.authorization });
+        if (request.url.includes("/default-branch"))
+          return HttpServerResponse.jsonUnsafe({ displayId: "main" });
+        if (request.url.includes("/projects?"))
+          return HttpServerResponse.jsonUnsafe(
+            {},
+            {
+              headers: { "X-AUSERNAME": "fixture-user" },
+            },
+          );
+        if (request.url.includes("/redirect"))
+          return HttpServerResponse.redirect("/login", { status: 302 });
+        return HttpServerResponse.text("redirect followed");
+      }),
     );
-    yield* Effect.promise(
-      () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
-    );
-    const address = server.address();
-    assert.isNotNull(address);
-    if (typeof address === "string") return assert.fail("Expected a TCP server address.");
-    const baseUrl = `http://127.0.0.1:${address.port}/bitbucket`;
+    if (!NetAddress.isInetAddress(server.address))
+      return assert.fail("Expected a TCP server address.");
+    const baseUrl = `http://127.0.0.1:${server.address.port}/bitbucket`;
     yield* Effect.gen(function* () {
       const api = yield* BitbucketServerApi.BitbucketServerApi;
       const auth = yield* api.probeAuth;
@@ -1027,5 +1029,5 @@ it.live("uses the configured HTTP mount and refuses a same-origin login redirect
       },
       { url: "/bitbucket/rest/api/1.0/redirect", authorization: "Bearer fixture-token" },
     ]);
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
