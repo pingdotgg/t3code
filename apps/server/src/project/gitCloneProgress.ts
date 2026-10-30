@@ -14,13 +14,23 @@ const STAGE_PREFIXES: ReadonlyArray<readonly [RegExp, ProjectCloneStage]> = [
   [/^Resolving deltas/, "resolving"],
   [/^Updating files/, "checkout"],
   [/^Checking out files/, "checkout"],
+  [/^Filtering content/, "checkout"],
 ];
 
 const PERCENT = /:\s+(\d+)%\s+\((\d+)\/(\d+)\)(?:,\s*(.*?))?\s*(?:,\s*done\.)?\s*$/;
+const LFS_DOWNLOAD = /^Downloading LFS objects:\s+/;
 
 /** Pass each bare-CR progress redraw as a separate line. */
 export function parseGitCloneProgressLine(line: string): GitCloneProgressLine | null {
   const trimmed = line.trim();
+  // A new stage literal would fail decoding on older clients, so `detail` names the transfer.
+  if (LFS_DOWNLOAD.test(trimmed)) {
+    return {
+      stage: "checkout",
+      percent: null,
+      detail: trimmed.replace(LFS_DOWNLOAD, "Downloading LFS objects: "),
+    };
+  }
   const stageEntry = STAGE_PREFIXES.find(([pattern]) => pattern.test(trimmed));
   if (!stageEntry) return null;
   const stage = stageEntry[1];

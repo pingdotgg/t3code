@@ -1,13 +1,14 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   GitCommandError,
@@ -16,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import type { GitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -74,6 +76,7 @@ function layer(input: {
     Layer.provide(
       Layer.mock(GitVcsDriver.GitVcsDriver)({
         execute: () => Effect.succeed(processOutput()),
+        readConfigValue: () => Effect.succeed(null),
         ensureRemote: () => Effect.succeed("origin"),
         pushCurrentBranch: () =>
           Effect.succeed({
@@ -287,6 +290,158 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
     assert.strictEqual(
       error.detail,
       "fatal: early EOF fatal: unable to access 'https://github.com/octocat/t3code.git/': could not resolve host",
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const STOCK_LFS_CONFIG = { "filter.lfs.process": "git-lfs filter-process" };
+
+it.effect.each([
+  ["tracks LFS files", STOCK_LFS_CONFIG, "lfs", undefined, true],
+  ["tracks no LFS files", STOCK_LFS_CONFIG, "plain", undefined, false],
+  ["is empty", STOCK_LFS_CONFIG, "empty", undefined, false],
+  [
+    "skips LFS content through the filter",
+    { "filter.lfs.process": "git-lfs filter-process --skip" },
+    "lfs",
+    undefined,
+    false,
+  ],
+  [
+    "tolerates LFS download errors",
+    { ...STOCK_LFS_CONFIG, "lfs.skipdownloaderrors": "true" },
+    "lfs",
+    undefined,
+    false,
+  ],
+  ["skips LFS content through the environment", STOCK_LFS_CONFIG, "lfs", "1", false],
+] as const)("LFS download after a clone that %s", ([, config, contents, skipSmudge, pulls]) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-lfs-" });
+    const source = path.join(parent, "source");
+    const destinationPath = path.join(parent, "checkout");
+    const runInSource = (...args: ReadonlyArray<string>) =>
+      git.execute({ operation: "test.source", cwd: source, args });
+    yield* fs.makeDirectory(source);
+    yield* runInSource("init");
+    if (contents !== "empty") {
+      if (contents === "lfs") {
+        yield* fs.writeFileString(path.join(source, ".gitattributes"), "*.bin filter=lfs\n");
+      }
+      yield* fs.writeFileString(path.join(source, "model.bin"), "weights\n");
+      yield* runInSource("add", "-A");
+      yield* runInSource("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init");
+    }
+
+    const commands: Array<GitVcsDriver.ExecuteGitInput> = [];
+    if (skipSmudge !== undefined) vi.stubEnv("GIT_LFS_SKIP_SMUDGE", skipSmudge);
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.cloneRepository({ remoteUrl: source, destinationPath });
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+      Effect.provide(
+        layer({
+          git: {
+            readConfigValue: (_cwd, key) =>
+              Effect.succeed((config as Record<string, string>)[key] ?? null),
+            // Only the pull is faked: machines running this suite need not have git-lfs.
+            execute: (input) => {
+              commands.push(input);
+              return input.args[0] === "lfs" ? Effect.succeed(processOutput()) : git.execute(input);
+            },
+          },
+        }),
+      ),
+    );
+
+    assert.isTrue(yield* fs.exists(path.join(destinationPath, ".git")));
+    const clone = commands.find((command) => command.args[0] === "clone");
+    assert.strictEqual(
+      clone?.env?.GIT_LFS_SKIP_SMUDGE,
+      config === STOCK_LFS_CONFIG && skipSmudge === undefined ? "1" : undefined,
+    );
+    const pull = commands.find((command) => command.args[0] === "lfs");
+    assert.deepStrictEqual(pull?.args, pulls ? ["lfs", "pull"] : undefined);
+    assert.strictEqual(pull?.cwd, pulls ? destinationPath : undefined);
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-clone-lfs-config-" })),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+it.effect("reports LFS download progress at git's pace and keeps its error text on failure", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-lfs-progress-" });
+    const progress: Array<GitCloneProgressLine> = [];
+    let pullEnv: NodeJS.ProcessEnv | undefined;
+
+    const error = yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* Effect.flip(
+        service.cloneRepository(
+          { remoteUrl: CLONE_URLS.url, destinationPath: path.join(parent, "t3code") },
+          { onProgress: (line) => Effect.sync(() => void progress.push(line)) },
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            readConfigValue: (_cwd, key) =>
+              Effect.succeed(key === "filter.lfs.process" ? "git-lfs filter-process" : null),
+            execute: (input) =>
+              Effect.gen(function* () {
+                if (input.args[0] !== "lfs") return { ...processOutput(), stdout: "model.bin\n" };
+                pullEnv = input.env;
+                const report = input.progress?.onStdoutLine ?? (() => Effect.void);
+                yield* report("Downloading LFS objects:   0% (0/3), 1 MB | 1.0 MB/s     ");
+                yield* report("Downloading LFS objects:   0% (0/3), 2 MB | 1.0 MB/s     ");
+                yield* TestClock.adjust("1 second");
+                yield* report("Downloading LFS objects:  33% (1/3), 3 MB | 1.0 MB/s     ");
+                yield* (
+                  input.progress?.onStderrLine?.(
+                    "Failed to fetch some objects from 'https://user:s3cret@github.com/octocat/t3code.git/info/lfs'",
+                  ) ?? Effect.void
+                );
+                return yield* new GitCommandError({
+                  operation: input.operation,
+                  command: "git",
+                  cwd: input.cwd,
+                  detail: "Git command exited with a non-zero status.",
+                  exitCode: 2,
+                });
+              }),
+          },
+        }),
+      ),
+    );
+
+    assert.strictEqual(pullEnv?.GIT_LFS_FORCE_PROGRESS, "1");
+    assert.deepStrictEqual(progress, [
+      {
+        stage: "checkout",
+        percent: null,
+        detail: "Downloading LFS objects: 0% (0/3), 1 MB | 1.0 MB/s",
+      },
+      {
+        stage: "checkout",
+        percent: null,
+        detail: "Downloading LFS objects: 33% (1/3), 3 MB | 1.0 MB/s",
+      },
+    ]);
+    assert.strictEqual(
+      error.detail,
+      "Failed to fetch some objects from 'https://github.com/octocat/t3code.git/info/lfs'",
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
