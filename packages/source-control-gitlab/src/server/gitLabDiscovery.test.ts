@@ -6,7 +6,6 @@ import {
   probeSourceControlProvider,
   refineUnknownRemoteProvider,
 } from "@t3tools/source-control-core/server/discovery";
-import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -54,20 +53,31 @@ ${defaultHostOnly}`;
   }),
 );
 
-const signedInListing = `gitlab.gnome.org
-  x gitlab.gnome.org: API call failed: GET https://gitlab.gnome.org/api/v4/user: 401 {message: 401 Unauthorized}
-gitlab.com
-  ✓ Logged in to gitlab.com as gitlab-user (/home/user/.config/glab-cli/config.yml)
-`;
+it.effect("skips --all when the current glab host is signed in", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const item = yield* probeSourceControlProvider({
+      spec: GitLabSourceControlProvider.discovery,
+      cwd: "/repo",
+      process: {
+        run: ({ args }) => {
+          asked.push(args);
+          return Effect.succeed(
+            args[0] === "--version"
+              ? processOutput("glab 1.124.0\n")
+              : processOutput(`gitlab.example.test
+  ✓ Logged in to gitlab.example.test as gitlab-user
+`),
+          );
+        },
+      },
+    });
+    assert.strictEqual(item.auth.status, "authenticated");
+    assert.isFalse(asked.some((args) => args.includes("--all")));
+  }),
+);
 
-it.effect.each([
-  {
-    name: "1.73 to 1.78",
-    stderr: "ERROR\n\n  Unknown flag: --all.\n\nUsage\n\n  glab auth status [--flags]\n",
-  },
-  { name: "1.60 to 1.72", stderr: "ERROR: unknown flag: --all\n" },
-  { name: "1.36 to 1.53", stderr: "unknown flag: --all\n" },
-])("falls back to plain auth status when glab $name rejects --all", ({ stderr }) =>
+it.effect("keeps glab's own sign-out detail when glab predates --all", () =>
   Effect.gen(function* () {
     const item = yield* probeSourceControlProvider({
       spec: GitLabSourceControlProvider.discovery,
@@ -78,44 +88,22 @@ it.effect.each([
             args[0] === "--version"
               ? processOutput("glab 1.53.0\n")
               : args.includes("--all")
-                ? processOutput("", { stderr, exitCode: ChildProcessSpawner.ExitCode(1) })
-                : processOutput(signedInListing, { exitCode: ChildProcessSpawner.ExitCode(1) }),
+                ? processOutput("", {
+                    stderr: "unknown flag: --all\n",
+                    exitCode: ChildProcessSpawner.ExitCode(1),
+                  })
+                : processOutput("", {
+                    stderr: "No GitLab instances have been authenticated with glab.\n",
+                    exitCode: ChildProcessSpawner.ExitCode(1),
+                  }),
           ),
       },
     });
-    assert.strictEqual(item.auth.status, "authenticated");
-    assert.deepStrictEqual(item.auth.account, Option.some("gitlab-user"));
-  }),
-);
-
-it.effect("falls back to plain auth status when glab times out checking every host", () =>
-  Effect.gen(function* () {
-    const item = yield* probeSourceControlProvider({
-      spec: GitLabSourceControlProvider.discovery,
-      cwd: "/repo",
-      process: {
-        run: ({ operation, command, cwd, args, timeoutMs }) =>
-          args[0] === "--version"
-            ? Effect.succeed(processOutput("glab 1.124.0\n"))
-            : args.includes("--all")
-              ? Effect.fail(
-                  new VcsProcessTimeoutError({
-                    operation,
-                    command,
-                    cwd,
-                    timeoutMs: timeoutMs ?? 0,
-                  }),
-                )
-              : Effect.succeed(
-                  processOutput(`gitlab.example.test
-  ✓ Logged in to gitlab.example.test as gitlab-user
-`),
-                ),
-      },
-    });
-    assert.strictEqual(item.auth.status, "authenticated");
-    assert.deepStrictEqual(item.auth.account, Option.some("gitlab-user"));
-    assert.deepStrictEqual(item.auth.host, Option.some("gitlab.example.test"));
+    assert.strictEqual(item.auth.status, "unauthenticated");
+    assert.deepStrictEqual(
+      item.auth.detail,
+      Option.some("No GitLab instances have been authenticated with glab."),
+    );
   }),
 );
 

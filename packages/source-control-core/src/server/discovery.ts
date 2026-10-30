@@ -39,8 +39,8 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
-  /** Asked once when `authArgs` reports no sign-in or fails, e.g. on a CLI too old for its flags. */
-  readonly authFallbackArgs?: ReadonlyArray<string>;
+  /** Asked once when `authArgs` reports signed out; its answer counts only when it finds a sign-in. */
+  readonly authRetryArgs?: ReadonlyArray<string>;
   readonly remoteRefinementArgs?: (
     context: SourceControlProvider.SourceControlProviderContext,
   ) => ReadonlyArray<string>;
@@ -280,14 +280,17 @@ export function probeSourceControlProvider(input: {
           Effect.succeed(unknownAuth(Option.getOrUndefined(detailFromCause(cause)))),
         ),
       );
-  const fallbackArgs = spec.authFallbackArgs;
+  const retryArgs = spec.authRetryArgs;
   const auth =
-    fallbackArgs === undefined
+    retryArgs === undefined
       ? runAuth(spec.authArgs)
       : runAuth(spec.authArgs).pipe(
           Effect.filterOrElse(
-            (result) => result.status === "authenticated",
-            () => runAuth(fallbackArgs),
+            (result) => result.status !== "unauthenticated",
+            (signedOut) =>
+              runAuth(retryArgs).pipe(
+                Effect.map((retry) => (retry.status === "authenticated" ? retry : signedOut)),
+              ),
           ),
         );
 

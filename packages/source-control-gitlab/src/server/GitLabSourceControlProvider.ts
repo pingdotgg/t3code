@@ -146,10 +146,11 @@ export const discovery = {
   label: "GitLab",
   executable: "glab",
   versionArgs: ["--version"],
-  // Without --all, glab 1.79+ checks only the current host unless that is gitlab.com.
-  // glab 1.78 and older reject --all but list every host by default.
-  authArgs: ["auth", "status", "--all"],
-  authFallbackArgs: ["auth", "status"],
+  // Without --all, glab 1.79+ checks only the current host unless that is gitlab.com; older
+  // glab lists every host and rejects --all. --all waits on every host, so ask it only after
+  // the current host reports signed out.
+  authArgs: ["auth", "status"],
+  authRetryArgs: ["auth", "status", "--all"],
   // glab host matching requires the remote's exact spelling.
   remoteRefinementArgs: ({ provider, remoteUrl }) => {
     const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
