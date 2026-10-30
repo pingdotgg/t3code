@@ -199,7 +199,7 @@ const make = Effect.gen(function* () {
     let refreshing = false;
     if (
       (recentFailure === undefined || nowMs - recentFailure.atMs >= CURSOR_ACCOUNT_TTL_MS) &&
-      !isCursorCacheFresh(caches.get(credentialKey), nowMs)
+      !isCursorCacheFresh(caches.get(credentialKey), nowMs, retentionStartMs)
     ) {
       const refresh = yield* startRefresh(credential, credentialKey, retentionStartMs);
       if (awaitRefresh) yield* Deferred.await(refresh);

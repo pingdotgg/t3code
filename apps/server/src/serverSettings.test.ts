@@ -1957,7 +1957,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("leaves an unreadable settings.json untouched instead of folding over it", () =>
+  it.effect.each([
+    { label: "malformed JSON", broken: '{"defaultAutoPull": tru' },
+    { label: "invalid retention", broken: '{"usageHistoryRetentionDays": 0}' },
+    {
+      label: "invalid unrelated setting",
+      broken: '{"defaultAutoPull": "true", "usageHistoryRetentionDays": "unlimited"}',
+    },
+  ])("leaves settings.json with $label untouched and disables destructive defaults", ({ broken }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1972,12 +1979,12 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
         )
       `;
-      const broken = '{"defaultAutoPull": tru';
       yield* fileSystem.writeFileString(serverConfig.settingsPath, broken);
 
       const settings = yield* serverSettings.getSettings;
       assert.isFalse(settings.projectSettingsFolded);
       assert.isFalse(settings.continueThreadsAfterServerUpdate);
+      assert.equal(settings.usageHistoryRetentionDays, "unlimited");
       assert.deepEqual(settings.projectSettingsOverrides, {});
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);

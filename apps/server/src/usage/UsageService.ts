@@ -69,8 +69,6 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-const CACHE_RETENTION_DAYS = 92;
-
 const TRANSCRIPT_READ_CONCURRENCY = 4;
 
 const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
@@ -704,7 +702,10 @@ export const make = Effect.gen(function* () {
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
-    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const retentionCutoffMs =
+      settings.usageHistoryRetentionDays === "unlimited"
+        ? 0
+        : Math.max(0, startedAtMs - settings.usageHistoryRetentionDays * 24 * 60 * 60 * 1000);
 
     const [, scannedDirs] = yield* Effect.all(
       [
@@ -867,8 +868,25 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const pruned = pruneScanCache(fileCache, retentionCutoffMs);
-    if (pruned > 0) cacheDirty = true;
+    yield* settingsService
+      .withSettingsSnapshot((currentSettings) =>
+        Effect.sync(() => {
+          if (settings.usageHistoryRetentionDays === currentSettings.usageHistoryRetentionDays) {
+            const pruned = pruneScanCache(fileCache, retentionCutoffMs);
+            if (pruned > 0) cacheDirty = true;
+          }
+        }),
+      )
+      .pipe(
+        Effect.catchCause(
+          (cause) =>
+            new UsageReadError({
+              reason: "scanFailed",
+              detail: "Server settings could not be read.",
+              cause: Cause.squash(cause),
+            }),
+        ),
+      );
 
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;
