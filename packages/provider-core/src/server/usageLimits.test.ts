@@ -82,7 +82,7 @@ describe("applyUsageLimitsUpdate", () => {
     });
   });
 
-  it("revokes a probe's credit grant, even without a window change, and nothing else", () => {
+  it("records a credit block, even without a window change or a grant to revoke", () => {
     const previous = { ...published, continuesOnCredits: true };
     const checkedAtNext = "2026-09-03T12:00:05.000Z";
     const revoke = (
@@ -101,7 +101,15 @@ describe("applyUsageLimitsUpdate", () => {
     };
     expect(revoke(previous)).toEqual(revoked);
     expect(revoke(previous, [weekly])).toEqual(revoked);
-    expect(revoke(published)).toBe(published);
+    // A probe in flight when the block lands must not grant over it.
+    const blocked = revoke(published);
+    expect(blocked).toEqual(revoked);
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: blocked,
+        probed: { ...published, continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(false);
     const alreadyRevoked = { ...published, continuesOnCredits: false };
     expect(revoke(alreadyRevoked)).toBe(alreadyRevoked);
   });

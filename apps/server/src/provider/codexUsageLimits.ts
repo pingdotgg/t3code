@@ -150,6 +150,7 @@ export function codexRateLimitsToLimits(input: {
       ...snapshot,
       spendControlReached: snapshot.spendControlReached ?? input.snapshot.spendControlReached,
       rateLimitReachedType: snapshot.rateLimitReachedType ?? input.snapshot.rateLimitReachedType,
+      individualLimit: snapshot.individualLimit ?? input.snapshot.individualLimit,
     });
   return {
     ...makeUsageLimits({
