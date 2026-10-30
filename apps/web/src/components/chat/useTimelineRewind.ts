@@ -5,6 +5,7 @@ import type { SessionPhase } from "../../types";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   AuthOrchestrationOperateScope,
+  type AssistantCitation,
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
@@ -23,6 +24,7 @@ import { type ChatMessage } from "../../types";
 import { newThreadId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useComposerDraftStore } from "../../composerDraftStore";
+import { formatAssistantCitationForComposer } from "../../composer-logic";
 import { threadEnvironment } from "../../state/threads";
 import { waitForThreadShell } from "../../state/entities";
 import { openRevertConfirm } from "./ChatOverlayHosts";
@@ -174,6 +176,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   const onForkFromRun = async (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
+    readonly citation?: AssistantCitation;
   }) => {
     if (!activeThread || activeEnvironmentUnavailable) return;
     const targetThreadId = newThreadId();
@@ -204,6 +207,15 @@ export function useTimelineRewind(input: TimelineRewindInput) {
         "The fork was created, but its thread data did not reach this client. Reconnect and try opening it from the sidebar.",
       );
       return;
+    }
+    if (input.citation) {
+      // The fork tags its copy of the cited response with its own thread id.
+      useComposerDraftStore
+        .getState()
+        .setPrompt(
+          targetThreadRef,
+          formatAssistantCitationForComposer({ ...input.citation, threadId: targetThreadId }),
+        );
     }
     await navigate({
       to: "/$environmentId/$threadId",

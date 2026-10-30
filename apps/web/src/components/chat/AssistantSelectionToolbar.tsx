@@ -2,9 +2,13 @@ import {
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   MessageId,
   type AssistantCitation,
+  type OrchestrationV2ProjectedTurnItem,
+  type RunId,
   type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
-import { QuoteIcon } from "lucide-react";
+import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
+import { GitForkIcon, QuoteIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -17,24 +21,41 @@ import {
   resolveSelectionActionPosition,
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
+import { useV2ItemSupport } from "~/state/v2ItemSupport";
+import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
+
+type ForkFromRun = (input: {
+  readonly sourceThreadId: ThreadId;
+  readonly runId: RunId;
+  readonly citation?: AssistantCitation;
+}) => Promise<void>;
 
 export function AssistantSelectionToolbar({
   viewport,
   threadRef,
   onCite,
+  findProjectedItem,
+  onForkFromRun,
 }: {
   viewport: HTMLElement | null;
   threadRef: ScopedThreadRef;
   onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  findProjectedItem?: (messageId: MessageId) => OrchestrationV2ProjectedTurnItem | undefined;
+  onForkFromRun?: ForkFromRun | undefined;
 }) {
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
     position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
-  const toolbarRef = useRef<HTMLButtonElement>(null);
+  const [forking, setForking] = useState(false);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
+  const tooLong =
+    selection !== null && selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
+  const projectedItem =
+    selection === null || tooLong ? undefined : findProjectedItem?.(selection.citation.messageId);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps its position inside the window before paint
   useLayoutEffect(() => {
@@ -43,7 +64,8 @@ export function AssistantSelectionToolbar({
     const rect = toolbar.getBoundingClientRect();
     toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
     toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
-  }, [selection]);
+    // No deps: Follow up can appear or vanish without a new selection, changing the width.
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to document selectionchange and keydown to track text selections in the viewport
   useEffect(() => {
@@ -158,10 +180,11 @@ export function AssistantSelectionToolbar({
       ) {
         return;
       }
-      if (toolbar.disabled) return;
+      const action = toolbar.querySelector<HTMLButtonElement>("button:not(:disabled)");
+      if (!action) return;
       event.preventDefault();
       event.stopPropagation();
-      toolbar.focus({ preventScroll: true });
+      action.focus({ preventScroll: true });
     };
     document.addEventListener("keydown", focusActions, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
@@ -174,7 +197,6 @@ export function AssistantSelectionToolbar({
   }, [threadRef, viewport]);
 
   if (!selection) return null;
-  const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
   const dismiss = () => {
     actionsRef.current?.cancel();
     setSelection(null);
@@ -186,17 +208,11 @@ export function AssistantSelectionToolbar({
     return true;
   };
   return createPortal(
-    <Button
+    <div
       ref={toolbarRef}
-      type="button"
-      size="xs"
-      variant="glass"
-      disabled={tooLong}
-      aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
-      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+      className="fixed z-50 flex max-w-[calc(100vw-1rem)] gap-1"
       style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
-      onClick={cite}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {
@@ -205,9 +221,78 @@ export function AssistantSelectionToolbar({
         }
       }}
     >
-      <QuoteIcon aria-hidden="true" className="size-3.5" />
-      {tooLong ? "Shorten selection" : "Cite"}
-    </Button>,
+      <Button
+        type="button"
+        size="xs"
+        variant="glass"
+        disabled={tooLong}
+        aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
+        onClick={cite}
+      >
+        <QuoteIcon aria-hidden="true" className="size-3.5" />
+        {tooLong ? "Shorten selection" : "Cite"}
+      </Button>
+      {projectedItem && onForkFromRun ? (
+        <FollowUpButton
+          environmentId={threadRef.environmentId}
+          projectedItem={projectedItem}
+          busy={forking}
+          onFollowUp={(runId) => {
+            setForking(true);
+            void onForkFromRun({
+              sourceThreadId: projectedItem.sourceThreadId,
+              runId,
+              citation: selection.citation,
+            }).finally(() => {
+              setForking(false);
+              window.getSelection()?.removeAllRanges();
+              dismiss();
+            });
+          }}
+        />
+      ) : null}
+    </div>,
     document.body,
+  );
+}
+
+function FollowUpButton({
+  environmentId,
+  projectedItem,
+  busy,
+  onFollowUp,
+}: {
+  environmentId: ScopedThreadRef["environmentId"];
+  projectedItem: OrchestrationV2ProjectedTurnItem;
+  busy: boolean;
+  onFollowUp: (runId: RunId) => void;
+}) {
+  const support = useV2ItemSupport({
+    environmentId,
+    sourceThreadId: projectedItem.sourceThreadId,
+    sourceItemId: projectedItem.sourceItemId,
+  });
+  const runId = projectedItem.item.runId;
+  if (
+    runId === null ||
+    !canForkProjectedAssistantItem({
+      projectedItem,
+      capabilities: support.providerSession?.capabilities,
+    })
+  ) {
+    return null;
+  }
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant="glass"
+      disabled={busy}
+      aria-label="Follow up in a fork of this response"
+      onClick={() => onFollowUp(runId)}
+    >
+      <GitForkIcon aria-hidden="true" className={cn("size-3.5", busy && "animate-pulse")} />
+      Follow up
+    </Button>
   );
 }

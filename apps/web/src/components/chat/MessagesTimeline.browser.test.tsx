@@ -532,7 +532,85 @@ const CITATION_REQUEST = {
   },
 } satisfies NonNullable<TimelineProps["citationRequest"]>;
 
+function forkableAnswer(): Entry {
+  const runId = RunId.make("run-answer");
+  const entry = message("the selected answer", { role: "assistant", runId }, "answer");
+  const itemId = TurnItemId.make("item-answer");
+  const now = DateTime.makeUnsafe(CREATED_AT);
+  if (entry.kind !== "message") throw new Error("Expected a message entry");
+  return {
+    ...entry,
+    projectedItem: {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: ThreadId.make("thread-source"),
+      sourceItemId: itemId,
+      item: {
+        id: itemId,
+        threadId: ThreadId.make("thread-source"),
+        runId,
+        nodeId: "node-answer" as never,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "assistant_message",
+        messageId: MessageId.make("answer"),
+        text: "the selected answer",
+        streaming: false,
+      },
+    },
+  };
+}
+
+async function selectAssistantText() {
+  const source = document.querySelector("[data-assistant-citation-source]");
+  if (!source) throw new Error("Missing assistant citation source");
+  window.getSelection()?.selectAllChildren(source);
+  await expect
+    .element(page.getByRole("button", { name: "Cite selection in composer" }))
+    .toBeVisible();
+}
+
 describe("MessagesTimeline citations", () => {
+  it("follows up on a selection by forking its response with the selection cited", async () => {
+    const onForkFromRun = vi.fn(async () => {});
+    await using _screen = await renderTimeline([forkableAnswer()], {
+      onCiteAssistantText: () => true,
+      onForkFromRun,
+    });
+    await selectAssistantText();
+    await page.getByRole("button", { name: "Follow up in a fork of this response" }).click();
+    expect(onForkFromRun).toHaveBeenCalledWith({
+      sourceThreadId: ThreadId.make("thread-source"),
+      runId: RunId.make("run-answer"),
+      citation: expect.objectContaining({
+        messageId: MessageId.make("answer"),
+        text: "the selected answer",
+      }),
+    });
+  });
+
+  it("offers no follow-up on a finished message while its run is still active", async () => {
+    await using _screen = await renderTimeline([forkableAnswer()], {
+      onCiteAssistantText: () => true,
+      latestRun: {
+        runId: RunId.make("run-answer"),
+        status: "running",
+        startedAt: CREATED_AT,
+        completedAt: null,
+      },
+    });
+    await selectAssistantText();
+    expect(document.body.textContent).not.toContain("Follow up");
+  });
+
   it("lands a citation present at mount under StrictMode", async () => {
     await using _screen = await renderElement(
       <StrictMode>

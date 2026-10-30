@@ -120,6 +120,11 @@ On web and desktop, select text within one assistant response and choose
 **Cite in composer**. You can add a comment about the quote and write instructions
 around it.
 
+To explore the quote without adding to the current conversation, choose
+**Follow up** instead. It forks the thread from that response and opens the fork
+with the quote already in its composer. Follow up is available once the response's
+turn has finished.
+
 Select the quote in a draft or sent message to return to its source. If the source
 is unavailable or has changed, the saved quote remains readable.
 

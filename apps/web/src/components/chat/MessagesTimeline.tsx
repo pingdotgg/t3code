@@ -262,6 +262,8 @@ interface MessagesTimelineProps {
   onForkFromRun?: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
+    /** Pre-fills the fork's composer with this citation. */
+    readonly citation?: AssistantCitation;
   }) => Promise<void>;
   supportsConversationRollback: boolean;
   threadStartCheckpointReady?: boolean;
@@ -1304,6 +1306,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 viewport={timelineViewportElement}
                 threadRef={citationThreadRef}
                 onCite={onCiteAssistantText}
+                findProjectedItem={(messageId) => {
+                  const row = rows.find(
+                    (candidate) =>
+                      candidate.kind === "message" && candidate.message.id === messageId,
+                  );
+                  // The server refuses to fork a run that is still active.
+                  return row?.kind === "message" && !row.assistantCopyStreaming
+                    ? row.projectedItem
+                    : undefined;
+                }}
+                onForkFromRun={onForkFromRun}
               />
             ) : null}
             <LegendList<MessagesTimelineRow>
