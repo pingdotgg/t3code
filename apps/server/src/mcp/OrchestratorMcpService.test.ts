@@ -3054,10 +3054,13 @@ describe("OrchestratorMcpService provider resolution", () => {
           status: "running",
           result: null,
         };
+        let hasContinuation = false;
         const restartedAttemptId = RunAttemptId.make("attempt:mcp-restarted-child");
+        const continuationAttemptId = RunAttemptId.make("attempt:mcp-child-continuation");
         // Claude ran the restarted attempt on Sonnet; a later turn of another attempt reported Haiku.
         const providerTurns = [
           { runAttemptId: restartedAttemptId, ordinal: 1, model: "claude-sonnet-4-6" },
+          { runAttemptId: continuationAttemptId, ordinal: 2, model: "claude-haiku-4-5" },
           {
             runAttemptId: RunAttemptId.make("attempt:mcp-other-run"),
             ordinal: 2,
@@ -3083,7 +3086,20 @@ describe("OrchestratorMcpService provider resolution", () => {
                               status: "running",
                               modelSelection: runSelection,
                               activeAttemptId: restartedAttemptId,
+                              delegatedTaskId: taskId,
                             },
+                            ...(hasContinuation
+                              ? [
+                                  {
+                                    id: RunId.make("run:mcp-child-continuation"),
+                                    ordinal: 2,
+                                    status: "running",
+                                    modelSelection: runSelection,
+                                    activeAttemptId: continuationAttemptId,
+                                    delegatedTaskId: taskId,
+                                  },
+                                ]
+                              : []),
                           ]
                         : [],
                       providerTurns: fields?.some((field) => field === "providerTurns")
@@ -3104,6 +3120,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           for (const [selection, executedModel] of [
             [runSelection, "claude-sonnet-4-6"],
+            [runSelection, "claude-haiku-4-5"],
             [threadSelection, null],
           ] as const) {
             const result = yield* service.taskStatus(scope, taskId);
@@ -3111,7 +3128,8 @@ describe("OrchestratorMcpService provider resolution", () => {
             assert.equal(result.model, selection.model);
             assert.deepEqual(result.options, selection.options);
             assert.equal(result.executedModel, executedModel);
-            hasRun = false;
+            if (hasContinuation) hasRun = false;
+            hasContinuation = true;
           }
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
       }),
