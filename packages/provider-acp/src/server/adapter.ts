@@ -8257,6 +8257,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       const stopped = yield* Deferred.await(context.completed).pipe(
                         Effect.timeoutOption(ACP_STOP_CONFIRM_TIMEOUT_MS),
                       );
+                      if (Option.isNone(stopped) && turnInput.endOnTimeout === true) {
+                        // The agent may still be writing to this session; the next turn gets a fresh one.
+                        yield* Ref.set(runtimeRestartRequired, true);
+                        // Under the permit, so no request is admitted between the sweep and finalization.
+                        yield* runtimeCallbackPermit.withPermit(
+                          Effect.gen(function* () {
+                            yield* quarantineStoppedRun();
+                            // The agent may have asked for approval while ignoring the cancel.
+                            yield* cancelPendingRuntimeRequests();
+                            if (!context.finalized) {
+                              yield* finalizeTurn(context, "interrupted");
+                            }
+                          }),
+                        );
+                        return;
+                      }
                       // The turn stays open: the agent may still be working, and the user
                       // decides whether to Force stop it.
                       if (Option.isNone(stopped)) {

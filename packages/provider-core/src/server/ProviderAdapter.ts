@@ -467,6 +467,8 @@ export interface ProviderAdapterV2InterruptInput {
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly providerTurnId: ProviderTurnId;
   readonly requestRuntimeRestart?: boolean;
+  /** A caller replacing the turn needs it ended even when the agent never confirms the stop. */
+  readonly endOnTimeout?: boolean;
 }
 
 export interface ProviderAdapterV2RuntimeRequestResponseInput {
