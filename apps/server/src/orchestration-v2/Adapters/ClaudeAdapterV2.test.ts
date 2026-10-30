@@ -2732,11 +2732,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly text?: string;
     readonly parentToolUseId?: string | null;
     readonly apiErrorParams?: unknown;
+    readonly model?: string;
   }) =>
     claudeSdkFrame({
       type: "assistant",
       message: {
-        model: "claude-sonnet-4-6",
+        model: input.model ?? "claude-sonnet-4-6",
         id: `msg_${input.uuid}`,
         type: "message",
         role: "assistant",
@@ -7172,6 +7173,81 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
+  );
+
+  it.effect("records the root model Claude reports for each turn, not the requested one", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const turnInput = {
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attachments: [],
+        modelSelection: {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "claude-opus-4-6",
+        },
+      };
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          ...turnInput,
+          attemptId: RunAttemptId.make("attempt-claude-restricted-model-1"),
+          text: "Review this.",
+        }),
+      );
+      // An organization policy that disallows the requested model shows up only as init's model.
+      yield* harness.offerAndWait(claudeSdkFrame({ ...wakeTurnInit, model: "claude-sonnet-4-6" }));
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000661",
+          error: undefined,
+          parentToolUseId: "toolu_restricted_model_subagent",
+          model: "claude-haiku-4-5-20251001",
+        }),
+        turnOneResult,
+      ]);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.equal(lastProviderTurn(harness.events).model, "claude-sonnet-4-6");
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          ...turnInput,
+          attemptId: RunAttemptId.make("attempt-claude-restricted-model-2"),
+          providerTurnOrdinal: 2,
+          text: "Continue.",
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000662",
+          error: undefined,
+          model: "claude-haiku-4-5-20251001",
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000663", result: "Done." }),
+      ]);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.equal(lastProviderTurn(harness.events).model, "claude-haiku-4-5");
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          ...turnInput,
+          attemptId: RunAttemptId.make("attempt-claude-restricted-model-3"),
+          providerTurnOrdinal: 3,
+          text: "Once more.",
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000664", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.isUndefined(lastProviderTurn(harness.events).model);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   it.effect("preserves typed Claude plans and todos through generic tool completion", () =>
