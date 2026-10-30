@@ -758,6 +758,12 @@ it.effect.each([
   },
   {
     diagnostic:
+      "[apple-utils] `xcrun simctl boot iphone` did not respond within 120 s; CoreSimulatorService may need restarting",
+    reason: "timeout",
+    message: "did not become ready in time",
+  },
+  {
+    diagnostic:
       "The emulator process exited with code 1.\nTry manually: emulator -avd Pixel_API_35",
     reason: "launch_failed",
     message: "could not start",

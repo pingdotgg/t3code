@@ -208,7 +208,7 @@ export const makeDeviceHubOperations = (options: {
           diagnostics,
         )
           ? "disk_space"
-          : /timed? out|timeout/i.test(diagnostics)
+          : /timed? out|timeout|did not respond within/i.test(diagnostics)
             ? "timeout"
             : "launch_failed",
         ...(diagnostics ? { diagnostics: boundDiagnostics(diagnostics) } : {}),
