@@ -91,12 +91,7 @@ const readClaudeSubagentResumeTranscript = Effect.fn("readClaudeSubagentResumeTr
     );
   },
 );
-/**
- * The same session with the math.ts subagent's first run removed: the root
- * turn settles while the subagent still works, and the server restarts
- * before it reports, so recovery cancels it. The resumed turn then carries
- * the restart note, as T3 sends it.
- */
+/** Remove the subagent's first run so restart cancels it after root settlement; resume carries the restart note. */
 const readClaudeCancelledSubagentResumeTranscript = Effect.fn(
   "readClaudeCancelledSubagentResumeTranscript",
 )(function* () {
@@ -248,7 +243,8 @@ const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
         runtimePolicyOverride: { cwd: tempDir },
       },
       harness,
-      options,
+      // A real restart requeues effects, like checkpoint capture, the first runtime left running.
+      { ...options, recoverOnStartup: true },
     ),
   );
 
@@ -278,9 +274,7 @@ describe("orchestrator replay recovery", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          // Checkpoint against a throwaway git workspace: with no override the
-          // scope cwd falls back to process.cwd(), and a cold full-repo
-          // baseline capture on CI outlives the scenario wait budget.
+          // Use a throwaway checkpoint workspace; cold full-repo capture exceeds CI wait budgets.
           const workspace = yield* checkpointWorkspace("provider_thread_resume");
           const transcript = yield* readCodexTranscript(workspace);
           const fs = yield* FileSystem.FileSystem;
@@ -343,7 +337,7 @@ describe("orchestrator replay recovery", () => {
               runtimePolicyOverride: { cwd: workspace },
             },
             harness,
-            options,
+            { ...options, recoverOnStartup: true },
           );
 
           assertBaseProjection({
@@ -443,7 +437,7 @@ describe("orchestrator replay recovery", () => {
               runtimePolicyOverride: { cwd: workspace },
             },
             harness,
-            options,
+            { ...options, recoverOnStartup: true },
           ),
         );
         yield* assertComplete;
@@ -567,8 +561,6 @@ describe("orchestrator replay recovery", () => {
         assert.equal(settled.subagents[0]?.status, "running");
         assert.equal(childRootStatus(childThreadOf(before, settled.thread.id)), "running");
 
-        // The server restarts with the subagent still working. No automatic
-        // continuation: the user's next message resumes it.
         const result = yield* Effect.scoped(
           runOrchestratorV2ProviderReplayScenario(
             {
@@ -596,7 +588,6 @@ describe("orchestrator replay recovery", () => {
         assert.equal(projection.subagents[0]?.status, "completed");
         const child = childThreadOf(result, projection.thread.id);
         assert.equal(child?.thread.id, projection.subagents[0]?.childThreadId);
-        // Recovery cancelled the child's work; the resume reopened and ended it.
         assert.equal(childRootStatus(child), "completed");
         const conversation = (child?.turnItems ?? [])
           .toSorted((left, right) => left.ordinal - right.ordinal)

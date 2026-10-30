@@ -146,6 +146,34 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("asks GitLab for the labels, author and draft state it can filter on", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(1, 1))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.listMergeRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+        filters: {
+          labels: [["bug"], ["size:S", "size:XS"], ["a,b"], ["None"]],
+          excludedLabels: ["wontfix", "stale", "any"],
+          author: "@me",
+          draft: "only",
+        },
+      });
+
+      const params = new URLSearchParams((argsOfCall(0)[1] ?? "").split("?")[1]);
+      expect(params.get("labels")).toBe("bug");
+      expect(params.get("not[labels]")).toBe("wontfix,stale");
+      expect(params.get("author_username")).toBe("bilal");
+      expect(params.get("wip")).toBe("yes");
+    }),
+  );
+
   it.effect("carries on from the number of rows already delivered", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(3, 1))));
@@ -161,8 +189,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
         cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 10 },
       });
 
-      // GitLab's timestamp filter has no tie-breaker, so an offset is what advances through a
-      // boundary shared by more rows than one page can hold.
       const path = argsOfCall(0)[1] ?? "";
       expect(path).not.toContain("updated_before=");
       expect(path).toContain("order_by=updated_at");
@@ -856,8 +882,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
           head_sha: "head",
           start_sha: "start",
           position_type: "text",
-          // A renamed file is the only case the two differ, and GitLab cannot place a
-          // position that names the same path on both sides of the rename.
           old_path: "src/a.ts",
           new_path: "src/b.ts",
           old_line: 4,
@@ -978,8 +1002,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
         requested: true,
       });
 
-      // GitLab replaces the whole set, so the reviewer already on the merge request has to be
-      // sent back with the new one or the request would take them off it.
       expect(argsOfCall(1)).toContain("PUT");
       expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [5, 9] });
     }),

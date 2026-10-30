@@ -17,7 +17,7 @@ fi
 if [ -n "$JAVA_HOME" ]; then export PATH="$JAVA_HOME/bin:$PATH"; fi
 `;
 
-/** Node runs this on the host. All paths it returns belong to that host. */
+/** Runs on the host and returns host-local paths. */
 export const remoteDeviceScript = (
   owner: string,
   mode: "probe" | "start" | "agent-start" | "stop-agent" | "stop",

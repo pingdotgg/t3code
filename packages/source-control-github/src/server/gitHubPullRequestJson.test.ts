@@ -7,7 +7,6 @@ import {
   buildReviewerRequest,
   pullRequestLookup,
   toPullRequestWatchFingerprint,
-  decodePullRequestDetailJson,
   decodePullRequestFilesJson,
   decodePullRequestStacksJson,
   LenientPullRequestList,
@@ -34,10 +33,6 @@ import {
 } from "./pullRequestReads.graphql.ts";
 import { ReviewThreadComments, ReviewThreads } from "./pullRequestReviews.graphql.ts";
 
-/**
- * A GitHub answer (`{ data }` as JSON) through a generated operation's result schema and then its
- * mapping, the way the client decodes and the API maps. A mapping's null (nothing found) fails.
- */
 const through =
   <S extends Schema.Codec<unknown, unknown>, A>(schema: S, map: (result: S["Type"]) => A | null) =>
   (raw: string): Result.Result<A, unknown> => {
@@ -49,14 +44,12 @@ const through =
     return mapped === null ? Result.fail("not found") : Result.succeed(mapped);
   };
 
-/** An account as a selection with `__typename` answers it: GitHub always sends the type. */
 const user = (login: string, fields: Record<string, unknown> = {}) => ({
   __typename: "User",
   login,
   ...fields,
 });
 
-/** A listing row with every field the row selection asks for, as GitHub always answers it. */
 const row = (fields: Record<string, unknown>) => ({
   number: 1,
   title: "Add the pull requests page",
@@ -94,11 +87,6 @@ const decodePullRequestActivityJson = through(
   toPullRequestActivityPage,
 );
 const decodePullRequestCoreJson = through(PullRequestCore.result, toPullRequestCore);
-/**
- * Fills in what every review read answers with, so each fixture below says only what it is about:
- * a page with no more after it, an actor typed as a person, no reactions, no edits.
- */
-// Fixtures are loose JSON on purpose: each one writes only the fields its test is about.
 type Json = Record<string, any>;
 const LAST_PAGE = { hasNextPage: false, endCursor: null };
 const nodesIn = (connection: Json | null | undefined): ReadonlyArray<Json> =>
@@ -139,9 +127,6 @@ const reviewCommit = ({ commit: { authors, ...commit } }: Json) => ({
   commit: {
     messageHeadline: "",
     committedDate: "",
-    additions: 0,
-    deletions: 0,
-    parents: { totalCount: 1 },
     ...commit,
     authors: {
       nodes: nodesIn(authors).map((author) => ({
@@ -317,7 +302,6 @@ describe("pull request list decoding", () => {
 });
 
 describe("pull request detail decoding", () => {
-  /** A check run or commit status as the core read's `CheckContext` fragment answers it. */
   const check = (fields: Record<string, unknown>) =>
     fields["__typename"] === "StatusContext"
       ? {
@@ -339,14 +323,12 @@ describe("pull request detail decoding", () => {
           checkSuite: { workflowRun: null },
           ...fields,
         };
-  /** A check run owned by a workflow, which is how the core read names the workflow. */
   const inWorkflow = ({ workflowName, ...fields }: Record<string, unknown>) =>
     check({
       ...fields,
       checkSuite: { workflowRun: { workflow: { name: workflowName } } },
     });
 
-  /** The core read's answer for pull request 7, with `rollup` as its head commit's checks. */
   const coreJson = (
     rollup: ReadonlyArray<Record<string, unknown>>,
     pullRequest: Record<string, unknown> = {},
@@ -380,6 +362,7 @@ describe("pull request detail decoding", () => {
             baseRefName: "main",
             headRefOid: "abc123",
             isCrossRepository: false,
+            maintainerCanModify: true,
             headRepositoryOwner: null,
             headRepository: null,
             headRef: null,
@@ -412,7 +395,30 @@ describe("pull request detail decoding", () => {
     pullRequest?: Record<string, unknown>,
   ) => expectSuccess(decodePullRequestCoreJson(coreJson(rollup, pullRequest)));
 
-  /** The conversation the activity read carries, in the flat shape the tests below write. */
+  it.each([
+    [{}, true],
+    [{ viewerDidAuthor: false }, false],
+    [{ isCrossRepository: false }, false],
+    [{ state: "CLOSED" }, false],
+    [{ headRepositoryOwner: { __typename: "Organization", login: "team" } }, false],
+    [{ headRepository: null }, false],
+  ])(
+    "reads maintainer edits and lets only the author of an open personal fork change them: %j",
+    (overrides, allowed) => {
+      const detail = detailOf([], {
+        maintainerCanModify: false,
+        isCrossRepository: true,
+        viewerDidAuthor: true,
+        headRepositoryOwner: { __typename: "User", login: "octocat" },
+        headRepository: { nameWithOwner: "octocat/t3code", viewerPermission: "ADMIN" },
+        headRef: { id: "REF_7" },
+        ...overrides,
+      });
+      expect(detail.maintainerCanModify).toBe(false);
+      expect(detail.canEditMaintainerEdits).toBe(allowed);
+    },
+  );
+
   const detailJson = JSON.stringify({
     comments: [{ id: "c1", body: "second", createdAt: "2026-07-04T00:00:00Z" }],
     reviews: [
@@ -465,6 +471,8 @@ describe("pull request detail decoding", () => {
               nodes: ((raw["commits"] ?? []) as ReadonlyArray<Record<string, unknown>>).map(
                 ({ authors, ...commit }) => ({
                   commit: {
+                    id: "commit-id",
+                    parents: { totalCount: 1 },
                     ...commit,
                     authors: {
                       nodes: ((authors ?? []) as ReadonlyArray<Record<string, unknown>>).map(
@@ -502,33 +510,15 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
-  it("reads an auto-merge request and strategy, its null as off and its absence as neither", () => {
+  it("reads an auto-merge request and strategy, and its null as off", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
       autoMergeMethod: "squash",
     });
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
-    // A detail read that never asked about auto-merge does not claim it is unarmed.
-    expect(
-      expectSuccess(
-        decodePullRequestDetailJson(
-          JSON.stringify({
-            number: 7,
-            title: "Detail",
-            url: "https://github.com/pingdotgg/t3code/pull/7",
-            headRefName: "feat/detail",
-            baseRefName: "main",
-            createdAt: "2026-07-01T00:00:00Z",
-            updatedAt: "2026-07-05T00:00:00Z",
-          }),
-        ),
-      ).autoMergeEnabled,
-    ).toBeUndefined();
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {
-    // What `statusCheckRollup` reports while a workflow is being re-run: the same check twice,
-    // the finished run and the one that replaced it, with no id to tell them apart.
     const detail = detailOf([
       inWorkflow({
         name: "Prepare PR size config",
@@ -555,8 +545,6 @@ describe("pull request detail decoding", () => {
   });
 
   it("keeps a check pending while another run of it on the same commit is still going", () => {
-    // A workflow on both `push` and `pull_request` runs the same check twice on one commit. The
-    // `pull_request` run finished after the `push` run started, and the `push` run is still going.
     const finished = {
       name: "check",
       workflowName: "Checks",
@@ -658,25 +646,27 @@ describe("review thread decoding", () => {
       },
     });
 
-  it("omits misleading line counts from merge commits", () => {
+  it("selects stats only for non-merge activity commits", () => {
     const result = expectSuccess(
-      decodeReviewThreadsJson(
+      decodePullRequestActivityJson(
         JSON.stringify({
           data: {
             repository: {
               pullRequest: {
-                reviewThreads: { totalCount: 0, nodes: [] },
+                author: null,
+                comments: { nodes: [], pageInfo: LAST_PAGE },
+                reviews: { nodes: [], pageInfo: LAST_PAGE },
                 commits: {
-                  nodes: [
-                    {
-                      commit: {
-                        oid: "merge123",
-                        additions: 36_858,
-                        deletions: 12_928,
-                        parents: { totalCount: 2 },
-                      },
+                  nodes: [1, 2].map((parents) => ({
+                    commit: {
+                      id: "commit-" + parents,
+                      oid: "sha-" + parents,
+                      messageHeadline: "Commit",
+                      committedDate: "2026-07-05T00:00:00Z",
+                      parents: { totalCount: parents },
+                      authors: { nodes: [] },
                     },
-                  ],
+                  })),
                 },
               },
             },
@@ -684,8 +674,8 @@ describe("review thread decoding", () => {
         }),
       ),
     );
-
-    expect([...result.commitStats]).toEqual([]);
+    expect(result.nonMergeCommitIds).toEqual(["commit-1"]);
+    expect(result.commits?.map((commit) => commit.oid)).toEqual(["sha-1", "sha-2"]);
   });
 
   it("decodes the newest commits off the same connection, oldest to newest", () => {
@@ -782,8 +772,7 @@ describe("review thread decoding", () => {
   });
 
   it("keeps the conversation when a reviewer has neither a login nor a team slug", () => {
-    // GraphQL answers with an empty object for a union member the query has no fragment for,
-    // such as a mannequin. Failing on it would take the whole response down, comments included.
+    // Unselected GraphQL union members return no selected fields.
     const result = expectSuccess(
       decodeReviewThreadsJson(
         reviewJson({
@@ -977,8 +966,6 @@ describe("repository access decoding", () => {
   });
 
   it("withholds write where gh names no permission, which is not a standing it gave", () => {
-    // The one place an unknown answer is not granted: a Merge button a reader cannot use wastes
-    // the press, where a missing one still leaves the pull request open on its host.
     expect(toCanWrite(undefined)).toBe(false);
   });
 
@@ -1025,9 +1012,6 @@ describe("viewer permission decoding", () => {
   });
 
   it("reads silence as permission, but not as authorship", () => {
-    // A node the viewer cannot see comes back null. Updating is a permission, so an unknown
-    // answer grants it and lets the host refuse; authorship is a fact about who wrote the change,
-    // and claiming it for someone who did not is how an author's own rules get handed out.
     expect(
       expectSuccess(
         decodeViewerPermissionsJson(viewerJson({ viewerPermission: "READ", pullRequest: null })),
@@ -1398,6 +1382,38 @@ describe("review submission payload", () => {
         { path: "src/b.ts", line: 3, side: "LEFT", body: "why remove?" },
       ],
     });
+  });
+
+  it("sends a range from its first line, and a one-line range as one line", () => {
+    const payload = buildReviewSubmission({
+      verdict: "comment",
+      body: "",
+      comments: [
+        {
+          path: "src/a.ts",
+          startPosition: { kind: "context", oldLine: 4, newLine: 5, side: "right" },
+          position: { kind: "added", newLine: 9 },
+          body: "this block",
+        },
+        {
+          path: "src/b.ts",
+          startPosition: { kind: "added", newLine: 2 },
+          position: { kind: "added", newLine: 2 },
+          body: "this line",
+        },
+      ],
+    });
+    expect(payload.comments).toEqual([
+      {
+        path: "src/a.ts",
+        start_line: 5,
+        start_side: "RIGHT",
+        line: 9,
+        side: "RIGHT",
+        body: "this block",
+      },
+      { path: "src/b.ts", line: 2, side: "RIGHT", body: "this line" },
+    ]);
   });
 });
 

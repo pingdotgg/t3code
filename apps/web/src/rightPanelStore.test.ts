@@ -750,7 +750,6 @@ describe("rightPanelStore", () => {
       }),
     ]);
 
-    // The workspace root is the files explorer, still holding the way back down.
     store.navigateFolder(refA, "file:apps", "", "apps/web/src");
     expect(state().surfaces.map((surface) => surface.id)).toEqual(["file:README.md", "files"]);
     expect(state().surfaces[1]).toEqual({
@@ -759,7 +758,6 @@ describe("rightPanelStore", () => {
       folderTrail: "apps/web/src",
     });
 
-    // Reaching the end of the trail leaves no trail behind.
     store.navigateFolder(refA, "files", "apps/web/src", "apps/web/src");
     expect(state().activeSurfaceId).toBe("file:apps/web/src");
     expect(state().surfaces[1]).toEqual({
@@ -803,7 +801,6 @@ describe("rightPanelStore", () => {
       expect.objectContaining({ id: "file:src", folderTrail: "src/app.ts" }),
     ]);
 
-    // The trail's end is the file: its tab comes back as it was, the folder tab goes.
     store.navigateFolder(refA, "file:src", "src/app.ts", "src/app.ts");
     expect(state().activeSurfaceId).toBe("file:src/app.ts");
     expect(state().surfaces).toEqual([
@@ -1182,6 +1179,24 @@ describe("rightPanelStore", () => {
       activeSurfaceId: "browser:hidden-tab",
       surfaces: [{ id: "browser:hidden-tab", kind: "preview", resourceId: "hidden-tab" }],
     });
+  });
+
+  it("hides the panel when browser reconciliation removes its last session tab", () => {
+    const store = useRightPanelStore.getState();
+    store.openBrowser(refA, "tab-a");
+    store.reconcileBrowserSurfaces(refA, []);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+
+    store.openBrowser(refA, "tab-b");
+    store.open(refA, "diff");
+    store.reconcileBrowserSurfaces(refA, []);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({ isOpen: true, activeSurfaceId: "diff" });
   });
 
   it("moves a surface to a new index and keeps it there through browser reconciliation", () => {

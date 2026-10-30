@@ -9,6 +9,8 @@ import {
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2DelegatedFrom,
+  type OrchestrationV2LinkOrigin,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
   type ProviderDriverKind,
@@ -49,6 +51,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
@@ -96,6 +99,10 @@ export interface ThreadLaunchInput {
   };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /** The linked environment this launch is for, if one asked for it. */
+  readonly linkOrigin?: OrchestrationV2LinkOrigin;
+  /** The parent there, when that environment's agent delegated this as a task. */
+  readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
 }
 
 type PreparationInput = Pick<
@@ -114,7 +121,9 @@ export interface ThreadLaunchPreparationInput {
 export interface ThreadLaunchResult {
   readonly threadId: ThreadId;
   readonly projection: OrchestrationV2ThreadProjection;
+  /** The launch's last write (the initial message, else the thread claim) was accepted before this call. */
   readonly resumed: boolean;
+  readonly sequence?: number;
 }
 
 export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
@@ -166,10 +175,7 @@ export class ThreadLaunchService extends Context.Service<
       ThreadLaunchResult,
       ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
-    /**
-     * `launch` accepts such a launch and reports the failure inside the
-     * thread; a caller that needs it before a thread exists checks first.
-     */
+    /** Check before creation for early errors; launch otherwise accepts and reports base failures inside the thread. */
     readonly checkWorktreeBase: (
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
     ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
@@ -272,8 +278,7 @@ const make = Effect.gen(function* () {
         (yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef })) !== null
       )
         return undefined;
-      // `git worktree add` also starts from a remote-tracking branch of that
-      // name; any ref carrying it is reason enough to let Git decide.
+      // git worktree add accepts remote-tracking branches; let Git decide when any matching ref exists.
       if (yield* git.hasRefNamed({ cwd, refName: baseRef })) return undefined;
       return (yield* git.hasCommit({ cwd, refName: "HEAD" })) ? project : undefined;
     }).pipe(Effect.orElseSucceed(() => undefined));
@@ -308,8 +313,7 @@ const make = Effect.gen(function* () {
     let setupTerminalId: string | null = null;
     let workspaceRecorded = false;
     let runReleased = false;
-    // The background branch rename records the worktree again when it lands,
-    // so cleanup stops it before forgetting a removed worktree.
+    // Stop background renames before forgetting worktrees; completed renames record them again.
     let branchRename: Fiber.Fiber<unknown> | null = null;
     if (input.workspaceStrategy.type === "worktree") {
       yield* setupTracker.begin({
@@ -455,8 +459,7 @@ const make = Effect.gen(function* () {
         yield* setupTracker.stageStatus(threadId, "checkout", "done");
       }
 
-      // A reused worktree is already recorded, and rewriting it could undo
-      // the first attempt's branch rename.
+      // Do not rewrite reused worktrees; that could undo the original branch rename.
       if (reused === undefined) {
         yield* threads
           .dispatch({
@@ -508,16 +511,12 @@ const make = Effect.gen(function* () {
                     }),
                   ),
                 );
-              // Updating the parent first makes later subagents inherit the new name.
-              // Re-read after each pass for children of subagents updated in that pass.
+              // Update parents first so children inherit names; reread each pass for newly updated descendants.
               const visited = new Set([threadId]);
               while (true) {
-                const snapshot = yield* threads.getShellSnapshot();
+                const snapshot = yield* threads.getShellSnapshot({ worktreePath: worktreeCwd });
                 const sharing = [...snapshot.threads, ...snapshot.archivedThreads].filter(
-                  (thread) =>
-                    !visited.has(thread.id) &&
-                    thread.worktreePath === worktreeCwd &&
-                    thread.branch === oldBranch,
+                  (thread) => !visited.has(thread.id) && thread.branch === oldBranch,
                 );
                 if (sharing.length === 0) break;
                 for (const thread of sharing) {
@@ -678,9 +677,7 @@ const make = Effect.gen(function* () {
           ) {
             if (branchRename !== null) yield* Fiber.interrupt(branchRename);
             const removedPath = createdWorktreePath;
-            // The thread forgets the worktree only once it is gone; a failed
-            // removal leaves the directory for the user to clean up rather than
-            // reusing a checkout that may be half written.
+            // Forget worktrees only after removal succeeds; failed removals must not reuse partially written checkouts.
             yield* git
               .removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })
               .pipe(
@@ -843,10 +840,7 @@ const make = Effect.gen(function* () {
         instanceId: input.modelSelection.instanceId,
       });
       return yield* Effect.gen(function* () {
-        // A retried launch has no client-supplied id to replay against, so
-        // recover the thread id its accepted create was recorded under before
-        // allocating another one; a fresh id would only collide with the
-        // recorded receipt.
+        // Recover ids from accepted launch receipts before allocating; retries have no client id and new ids collide with receipts.
         const reusableLaunchReceipt =
           input.threadId === undefined &&
           Option.isSome(launchReceipt) &&
@@ -922,6 +916,10 @@ const make = Effect.gen(function* () {
                 ...(input.importedNativeThread === undefined
                   ? {}
                   : { importedNativeThread: input.importedNativeThread }),
+                ...(input.linkOrigin === undefined ? {} : { linkOrigin: input.linkOrigin }),
+                ...(input.delegatedFrom === undefined
+                  ? {}
+                  : { delegatedFrom: input.delegatedFrom }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
               });
@@ -940,8 +938,8 @@ const make = Effect.gen(function* () {
         if (project.id !== input.projectId) {
           return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
         }
-
         let runId: RunId | null = null;
+        let messageSequence: number | undefined;
         let messageWasAlreadyAccepted = false;
         if (input.initialMessage !== undefined) {
           const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
@@ -973,7 +971,22 @@ const make = Effect.gen(function* () {
               createdBy: input.createdBy,
               creationSource: input.creationSource,
             })
-            .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId)));
+            .pipe(
+              // An agent's launch can land on a thread that a replay, or a concurrent
+              // launch with the same key, created with broader modes. The orchestrator
+              // refuses the message under the thread's lock; the user's own clients
+              // launch into their own drafts, whatever modes those hold.
+              input.createdBy === "agent"
+                ? Effect.provideService(DispatchModeLimit, {
+                    runtimeMode: input.runtimeMode,
+                    interactionMode: input.interactionMode,
+                  })
+                : (effect) => effect,
+              Effect.mapError(mapError(input, "dispatch-message", threadId)),
+            );
+          // A concurrent retry can read no receipt and still replay the dispatch.
+          messageWasAlreadyAccepted ||= dispatched.replayed === true;
+          messageSequence = dispatched.sequence;
           const runCreated = dispatched.storedEvents.find(
             (stored) => stored.event.type === "run.created",
           );
@@ -1034,7 +1047,13 @@ const make = Effect.gen(function* () {
         return {
           threadId,
           projection,
-          resumed: Option.isSome(launchReceipt) || messageWasAlreadyAccepted,
+          // An attempt that failed after claiming the thread recorded nothing, so
+          // only a repeat of the final write counts as resumed.
+          resumed:
+            input.initialMessage === undefined
+              ? Option.isSome(launchReceipt) || claimed.replayed === true
+              : messageWasAlreadyAccepted,
+          ...(messageSequence === undefined ? {} : { sequence: messageSequence }),
         };
       });
     },
@@ -1044,12 +1063,14 @@ const make = Effect.gen(function* () {
     "ThreadLaunchService.prepareRun",
   )(function* (input) {
     const scheduled = yield* Effect.gen(function* () {
-      const projection = yield* threads.getThreadProjection(input.threadId);
-      const run = projection.runs.find((candidate) => candidate.id === input.runId);
+      const { thread, runs } = yield* threads.getThreadRecords(input.threadId, ["runs"], {
+        runIds: [input.runId],
+      });
+      const run = runs.find((candidate) => candidate.id === input.runId);
       const workspacePreparation = run?.workspacePreparation;
       if (run?.status !== "preparing" || workspacePreparation === undefined) return;
       if (!(yield* reservePreparation(input.commandId))) return;
-      yield* scheduleRunPreparation(input, projection, run, workspacePreparation).pipe(
+      yield* scheduleRunPreparation(input, thread, run, workspacePreparation).pipe(
         Effect.onError(() => releasePreparation(input.commandId)),
       );
     }).pipe(Effect.exit);
@@ -1071,30 +1092,33 @@ const make = Effect.gen(function* () {
     return dispatched;
   });
 
-  const scheduleRunPreparation = (
+  const scheduleRunPreparation = Effect.fn("ThreadLaunchService.scheduleRunPreparation")(function* (
     input: ThreadLaunchPreparationInput,
-    projection: OrchestrationV2ThreadProjection,
+    thread: OrchestrationV2ThreadProjection["thread"],
     run: OrchestrationV2ThreadProjection["runs"][number],
     workspacePreparation: ThreadLaunchWorkspaceStrategy,
-  ) => {
-    const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  ) {
+    const { messages } = yield* threads.getThreadRecords(input.threadId, ["messages"], {
+      messageIds: [run.userMessageId],
+    });
+    const message = messages.find((candidate) => candidate.id === run.userMessageId);
     const reuse =
       workspacePreparation.type === "worktree" &&
-      projection.thread.worktreePath !== null &&
-      projection.thread.branch !== null
+      thread.worktreePath !== null &&
+      thread.branch !== null
         ? {
             strategy: {
               type: "existing_worktree" as const,
-              worktreePath: projection.thread.worktreePath,
-              branch: projection.thread.branch,
+              worktreePath: thread.worktreePath,
+              branch: thread.branch,
             },
             reusedWorktree: { baseRef: workspacePreparation.baseRef },
           }
         : null;
-    return schedulePreparation(
+    return yield* schedulePreparation(
       {
         commandId: input.commandId,
-        projectId: projection.thread.projectId,
+        projectId: thread.projectId,
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
         ...(message === undefined
@@ -1110,7 +1134,7 @@ const make = Effect.gen(function* () {
       input.threadId,
       run.id,
     );
-  };
+  });
 
   return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
 });

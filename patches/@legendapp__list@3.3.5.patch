@@ -269,7 +269,7 @@ index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..ca6e596aa53327a097a388ffd545a4c6
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a306b293f797a8b338adfca3060c0f6db22b..3c67a536d850d8c508336cf0f10c0c898ea67f12 100644
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..d7f59b63cd4982dfc9c347732caa77e0974864df 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -717,6 +717,15 @@ function hasActiveInitialScroll(state) {
@@ -909,7 +909,7 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..3c67a536d850d8c508336cf0f10c0c89
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index 40e87cda8c9bc79a889e5542f29af429a24b24d4..c1b68df0f53d566c98a4820b39079396a09f1208 100644
+index 40e87cda8c9bc79a889e5542f29af429a24b24d4..c2ca39bab6ea1ebaaed25190a01e8cf2e395ece9 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -696,6 +696,15 @@ function hasActiveInitialScroll(state) {
@@ -1619,10 +1619,102 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbdd
      }
    }
 diff --git a/react.js b/react.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..86dbd9a5c7345577e4a8a435041ecb68257ae9f1 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..8c320b0dfb3ea60ef145274b37b1297b7dee26dc 100644
 --- a/react.js
 +++ b/react.js
-@@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -1908,6 +1908,10 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
+   state.scrollTime = currentTime;
+   const scrollDelta = Math.abs(newScroll - prevScroll);
+   const isUserScrollEvent = !!(options == null ? void 0 : options.fromNativeScrollEvent) && scrollDelta > 0.1 && !adjustChanged && scrollingTo === void 0 && !state.pendingNativeMVCPAdjust;
++  if (isUserScrollEvent) {
++    state.userScrollPrevTime = state.userScrollTime;
++    state.userScrollTime = currentTime;
++  }
+   const allowedEdge = isUserScrollEvent ? beginReachedEdgeUserScroll(ctx, newScroll - prevScroll) : void 0;
+   const didResolvePendingNativeMVCPAdjust = resolvePendingNativeMVCPAdjust(ctx, newScroll);
+   const scrollLength = state.scrollLength;
+@@ -3257,6 +3261,7 @@ function syncMountedContainer(ctx, containerIndex, itemIndex, options) {
+   const itemKey = (_a3 = state.idCache[itemIndex]) != null ? _a3 : getId(state, itemIndex);
+   const updateLayout = (_b = options == null ? void 0 : options.updateLayout) != null ? _b : true;
+   let didChangePosition = false;
++  let didChangeIndex = false;
+   let didRefreshData = false;
+   if (updateLayout) {
+     const positionValue = positions[itemIndex];
+@@ -3286,6 +3291,7 @@ function syncMountedContainer(ctx, containerIndex, itemIndex, options) {
+   const prevIndex = peek$(ctx, `containerItemIndex${containerIndex}`);
+   if (prevIndex !== itemIndex) {
+     set$(ctx, `containerItemIndex${containerIndex}`, itemIndex);
++    didChangeIndex = true;
+   }
+   const prevData = peek$(ctx, `containerItemData${containerIndex}`);
+   const updateData = () => {
+@@ -3324,7 +3330,7 @@ function syncMountedContainer(ctx, containerIndex, itemIndex, options) {
+       }
+     }
+   }
+-  return { didChangePosition, didRefreshData };
++  return { didChangeIndex, didChangePosition, didRefreshData };
+ }
+ 
+ // src/core/prepareColumnStartState.ts
+@@ -3542,7 +3548,11 @@ function updateItemPositions(ctx, dataChanged, {
+     }
+     if (shouldOptimize && breakAt === void 0 && !scrollingTo && !dataChanged && currentRowTop > maxVisibleArea) {
+       const itemsPerRow = hasColumns ? numColumns : 1;
+-      breakAt = i + itemsPerRow + 10;
++      // alwaysRender rows stay mounted outside the visible window, so keep their
++      // positions current instead of leaving them where they were last laid out.
++      const pinnedIndices = state.props.alwaysRenderIndicesArr;
++      const lastPinnedIndex = pinnedIndices && pinnedIndices.length > 0 ? pinnedIndices[pinnedIndices.length - 1] : -1;
++      breakAt = Math.max(i + itemsPerRow + 10, lastPinnedIndex);
+     }
+     const id = (_e = idCache[i]) != null ? _e : getId(state, i);
+     let span = 1;
+@@ -4243,6 +4253,7 @@ function calculateItemsInView(ctx, params = {}) {
+     }
+     let totalSize = getContentSize(ctx);
+     let changedContainerIds;
++    let didChangeContainerOrder = false;
+     const topPad = peek$(ctx, "stylePaddingTop") + peek$(ctx, "alignItemsAtEndPadding") + peek$(ctx, "headerSize");
+     const numColumns = peek$(ctx, "numColumns");
+     const speed = (_b = params.scrollVelocity) != null ? _b : getScrollVelocity(state);
+@@ -4545,6 +4556,9 @@ function calculateItemsInView(ctx, params = {}) {
+           const containerIndex = allocation.containerIndex;
+           const id = (_o = idCache[i]) != null ? _o : getId(state, i);
+           const oldKey = peek$(ctx, `containerItemKey${containerIndex}`);
++          if (oldKey !== id || peek$(ctx, `containerItemIndex${containerIndex}`) !== i) {
++            didChangeContainerOrder = true;
++          }
+           if (oldKey && oldKey !== id) {
+             containerItemKeys.delete(oldKey);
+           }
+@@ -4629,10 +4643,12 @@ function calculateItemsInView(ctx, params = {}) {
+       } else {
+         const itemIndex = indexByKey.get(itemKey);
+         if (itemIndex !== void 0) {
+-          didChangePositions = syncMountedContainer(ctx, i, itemIndex, {
++          const synced = syncMountedContainer(ctx, i, itemIndex, {
+             scrollAdjustPending,
+             updateLayout: true
+-          }).didChangePosition || didChangePositions;
++          });
++          didChangePositions = synced.didChangePosition || didChangePositions;
++          didChangeContainerOrder = synced.didChangeIndex || didChangeContainerOrder;
+         }
+       }
+     }
+@@ -4642,6 +4658,9 @@ function calculateItemsInView(ctx, params = {}) {
+     if (didChangePositions) {
+       set$(ctx, "lastPositionUpdate", Date.now());
+     }
++    if (didChangeContainerOrder) {
++      set$(ctx, "containerOrderUpdate", (peek$(ctx, "containerOrderUpdate") || 0) + 1);
++    }
+     if (suppressInitialScrollSideEffects) {
+       evaluateBootstrapInitialScroll(ctx);
+       return;
+@@ -4702,7 +4721,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
        contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
        isReady = !hasUnknownTailSize;
@@ -1632,7 +1724,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..86dbd9a5c7345577e4a8a435041ecb68
      } else if (anchorIndex >= 0) {
        isReady = false;
      }
-@@ -4722,6 +4723,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -4722,6 +4742,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
      }
      (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
@@ -1645,7 +1737,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..86dbd9a5c7345577e4a8a435041ecb68
    }
    return nextSize;
  }
-@@ -4956,7 +4963,8 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -4956,7 +4982,8 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const itemKey = peek$(ctx, `containerItemKey${containerId}`);
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element) {
@@ -1655,7 +1747,39 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..86dbd9a5c7345577e4a8a435041ecb68
        setContainerLayoutBaseline(element, rect);
        measurements.push({
          containerId,
-@@ -5651,6 +5659,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -4978,12 +5005,26 @@ var ContainerLayoutCoordinator = typedMemo(function ContainerLayoutCoordinatorCo
+ }) {
+   const ctx = useStateContext();
+   const [containerLayoutEpoch] = useArr$(["containerLayoutEpoch"]);
++  const layoutPasses = React3__namespace.useRef(0);
+   React3__namespace.useLayoutEffect(() => {
+-    {
+-      const targetContainerIds = getContainerLayoutEffectScope(ctx);
+-      if (targetContainerIds !== void 0) {
+-        measureContainersInLayoutEffect(ctx, targetContainerIds);
+-      }
++    const targetContainerIds = getContainerLayoutEffectScope(ctx);
++    if (targetContainerIds === void 0) return;
++    if (layoutPasses.current === 0) {
++      queueMicrotask(() => { layoutPasses.current = 0; });
++    }
++    // Correcting large estimates can mount one row per commit. Bound the
++    // synchronous chain below React's nested-update limit, then keep measuring
++    // the latest pending rows on the next frame. Idle lists schedule no work.
++    if (layoutPasses.current++ < 8) {
++      measureContainersInLayoutEffect(ctx, targetContainerIds);
++    } else {
++      ctx.pendingContainerIds = targetContainerIds;
++      ctx.state.scheduledWork.frame(() => {
++        const pendingIds = getContainerLayoutEffectScope(ctx);
++        if (pendingIds !== void 0) {
++          measureContainersInLayoutEffect(ctx, pendingIds);
++        }
++      }, "containerLayout");
+     }
+   }, [ctx, containerLayoutEpoch]);
+   return children;
+@@ -5651,6 +5692,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1674,7 +1798,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..86dbd9a5c7345577e4a8a435041ecb68
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5690,9 +5710,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5690,9 +5743,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1686,7 +1810,89 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..86dbd9a5c7345577e4a8a435041ecb68
        }
      }
    }
-@@ -6446,8 +6466,8 @@ function ScrollAdjust() {
+@@ -5734,37 +5787,55 @@ function findLIS(arr) {
+ }
+ 
+ // src/hooks/useDOMOrder.ts
++var DOM_ORDER_SETTLE_MS = 150;
++function isUserScrolling(state) {
++  const { userScrollPrevTime, userScrollTime } = state;
++  return userScrollTime !== void 0 && userScrollPrevTime !== void 0 && userScrollTime - userScrollPrevTime < DOM_ORDER_SETTLE_MS && Date.now() - userScrollTime < DOM_ORDER_SETTLE_MS;
++}
+ function useDOMOrder(ref) {
+   const ctx = useStateContext();
+-  const debounceRef = React3.useRef(void 0);
+-  React3.useEffect(() => {
+-    const unsubscribe = listen$(ctx, "lastPositionUpdate", () => {
+-      if (debounceRef.current !== void 0) {
+-        clearTimeout(debounceRef.current);
+-      }
+-      debounceRef.current = setTimeout(() => {
+-        const parent = ref.current;
+-        if (parent) {
+-          const indexByElement = /* @__PURE__ */ new Map();
+-          for (const [containerId, viewRef] of ctx.viewRefs) {
+-            const element = viewRef.current;
+-            const index = peek$(ctx, `containerItemIndex${containerId}`);
+-            if (element && index !== void 0) {
+-              indexByElement.set(element, index);
+-            }
+-          }
+-          sortDOMElements(parent, indexByElement);
++  const [containerOrderUpdate] = useArr$(["containerOrderUpdate"]);
++  const settleRef = React3.useRef(void 0);
++  React3.useLayoutEffect(() => {
++    const sort = () => {
++      settleRef.current = void 0;
++      const parent = ref.current;
++      if (!parent) {
++        return;
++      }
++      const indexByElement = /* @__PURE__ */ new Map();
++      for (const [containerId, viewRef] of ctx.viewRefs) {
++        const element = viewRef.current;
++        const index = peek$(ctx, `containerItemIndex${containerId}`);
++        if (element && index !== void 0) {
++          indexByElement.set(element, index);
+         }
+-        debounceRef.current = void 0;
+-      }, 500);
+-    });
+-    return () => {
+-      unsubscribe();
+-      if (debounceRef.current !== void 0) {
+-        clearTimeout(debounceRef.current);
+       }
++      sortDOMElements(parent, indexByElement);
+     };
+-  }, [ctx]);
++    if (settleRef.current !== void 0) {
++      clearTimeout(settleRef.current);
++    }
++    // Before paint: NVDA's browse mode keeps the first DOM order it reads. Each move
++    // lays its row out again, so during a continuous scroll, sort once it settles.
++    if (!isUserScrolling(ctx.state)) {
++      sort();
++      return;
++    }
++    const settle = () => {
++      if (isUserScrolling(ctx.state)) {
++        settleRef.current = setTimeout(settle, DOM_ORDER_SETTLE_MS);
++      } else {
++        sort();
++      }
++    };
++    settleRef.current = setTimeout(settle, DOM_ORDER_SETTLE_MS);
++  }, [ctx, containerOrderUpdate]);
++  React3.useEffect(() => () => {
++    if (settleRef.current !== void 0) {
++      clearTimeout(settleRef.current);
++    }
++  }, []);
+ }
+ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
+   const [completedTransitionEpoch, setCompletedTransitionEpoch] = React3.useState(transitionEpoch);
+@@ -6446,8 +6517,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1697,10 +1903,102 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..86dbd9a5c7345577e4a8a435041ecb68
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
 diff --git a/react.mjs b/react.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..cff49dc5c769cab264b8527a268851295c44aa33 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..252a9d5b23e271c089d30c357a78dff754f1c899 100644
 --- a/react.mjs
 +++ b/react.mjs
-@@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -1887,6 +1887,10 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
+   state.scrollTime = currentTime;
+   const scrollDelta = Math.abs(newScroll - prevScroll);
+   const isUserScrollEvent = !!(options == null ? void 0 : options.fromNativeScrollEvent) && scrollDelta > 0.1 && !adjustChanged && scrollingTo === void 0 && !state.pendingNativeMVCPAdjust;
++  if (isUserScrollEvent) {
++    state.userScrollPrevTime = state.userScrollTime;
++    state.userScrollTime = currentTime;
++  }
+   const allowedEdge = isUserScrollEvent ? beginReachedEdgeUserScroll(ctx, newScroll - prevScroll) : void 0;
+   const didResolvePendingNativeMVCPAdjust = resolvePendingNativeMVCPAdjust(ctx, newScroll);
+   const scrollLength = state.scrollLength;
+@@ -3236,6 +3240,7 @@ function syncMountedContainer(ctx, containerIndex, itemIndex, options) {
+   const itemKey = (_a3 = state.idCache[itemIndex]) != null ? _a3 : getId(state, itemIndex);
+   const updateLayout = (_b = options == null ? void 0 : options.updateLayout) != null ? _b : true;
+   let didChangePosition = false;
++  let didChangeIndex = false;
+   let didRefreshData = false;
+   if (updateLayout) {
+     const positionValue = positions[itemIndex];
+@@ -3265,6 +3270,7 @@ function syncMountedContainer(ctx, containerIndex, itemIndex, options) {
+   const prevIndex = peek$(ctx, `containerItemIndex${containerIndex}`);
+   if (prevIndex !== itemIndex) {
+     set$(ctx, `containerItemIndex${containerIndex}`, itemIndex);
++    didChangeIndex = true;
+   }
+   const prevData = peek$(ctx, `containerItemData${containerIndex}`);
+   const updateData = () => {
+@@ -3303,7 +3309,7 @@ function syncMountedContainer(ctx, containerIndex, itemIndex, options) {
+       }
+     }
+   }
+-  return { didChangePosition, didRefreshData };
++  return { didChangeIndex, didChangePosition, didRefreshData };
+ }
+ 
+ // src/core/prepareColumnStartState.ts
+@@ -3521,7 +3527,11 @@ function updateItemPositions(ctx, dataChanged, {
+     }
+     if (shouldOptimize && breakAt === void 0 && !scrollingTo && !dataChanged && currentRowTop > maxVisibleArea) {
+       const itemsPerRow = hasColumns ? numColumns : 1;
+-      breakAt = i + itemsPerRow + 10;
++      // alwaysRender rows stay mounted outside the visible window, so keep their
++      // positions current instead of leaving them where they were last laid out.
++      const pinnedIndices = state.props.alwaysRenderIndicesArr;
++      const lastPinnedIndex = pinnedIndices && pinnedIndices.length > 0 ? pinnedIndices[pinnedIndices.length - 1] : -1;
++      breakAt = Math.max(i + itemsPerRow + 10, lastPinnedIndex);
+     }
+     const id = (_e = idCache[i]) != null ? _e : getId(state, i);
+     let span = 1;
+@@ -4222,6 +4232,7 @@ function calculateItemsInView(ctx, params = {}) {
+     }
+     let totalSize = getContentSize(ctx);
+     let changedContainerIds;
++    let didChangeContainerOrder = false;
+     const topPad = peek$(ctx, "stylePaddingTop") + peek$(ctx, "alignItemsAtEndPadding") + peek$(ctx, "headerSize");
+     const numColumns = peek$(ctx, "numColumns");
+     const speed = (_b = params.scrollVelocity) != null ? _b : getScrollVelocity(state);
+@@ -4524,6 +4535,9 @@ function calculateItemsInView(ctx, params = {}) {
+           const containerIndex = allocation.containerIndex;
+           const id = (_o = idCache[i]) != null ? _o : getId(state, i);
+           const oldKey = peek$(ctx, `containerItemKey${containerIndex}`);
++          if (oldKey !== id || peek$(ctx, `containerItemIndex${containerIndex}`) !== i) {
++            didChangeContainerOrder = true;
++          }
+           if (oldKey && oldKey !== id) {
+             containerItemKeys.delete(oldKey);
+           }
+@@ -4608,10 +4622,12 @@ function calculateItemsInView(ctx, params = {}) {
+       } else {
+         const itemIndex = indexByKey.get(itemKey);
+         if (itemIndex !== void 0) {
+-          didChangePositions = syncMountedContainer(ctx, i, itemIndex, {
++          const synced = syncMountedContainer(ctx, i, itemIndex, {
+             scrollAdjustPending,
+             updateLayout: true
+-          }).didChangePosition || didChangePositions;
++          });
++          didChangePositions = synced.didChangePosition || didChangePositions;
++          didChangeContainerOrder = synced.didChangeIndex || didChangeContainerOrder;
+         }
+       }
+     }
+@@ -4621,6 +4637,9 @@ function calculateItemsInView(ctx, params = {}) {
+     if (didChangePositions) {
+       set$(ctx, "lastPositionUpdate", Date.now());
+     }
++    if (didChangeContainerOrder) {
++      set$(ctx, "containerOrderUpdate", (peek$(ctx, "containerOrderUpdate") || 0) + 1);
++    }
+     if (suppressInitialScrollSideEffects) {
+       evaluateBootstrapInitialScroll(ctx);
+       return;
+@@ -4681,7 +4700,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
        contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
        isReady = !hasUnknownTailSize;
@@ -1710,7 +2008,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cff49dc5c769cab264b8527a26885129
      } else if (anchorIndex >= 0) {
        isReady = false;
      }
-@@ -4701,6 +4702,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -4701,6 +4721,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
      }
      (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
@@ -1723,7 +2021,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cff49dc5c769cab264b8527a26885129
    }
    return nextSize;
  }
-@@ -4935,7 +4942,8 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -4935,7 +4961,8 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const itemKey = peek$(ctx, `containerItemKey${containerId}`);
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element) {
@@ -1733,7 +2031,39 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cff49dc5c769cab264b8527a26885129
        setContainerLayoutBaseline(element, rect);
        measurements.push({
          containerId,
-@@ -5630,6 +5638,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -4957,12 +4984,26 @@ var ContainerLayoutCoordinator = typedMemo(function ContainerLayoutCoordinatorCo
+ }) {
+   const ctx = useStateContext();
+   const [containerLayoutEpoch] = useArr$(["containerLayoutEpoch"]);
++  const layoutPasses = React3.useRef(0);
+   React3.useLayoutEffect(() => {
+-    {
+-      const targetContainerIds = getContainerLayoutEffectScope(ctx);
+-      if (targetContainerIds !== void 0) {
+-        measureContainersInLayoutEffect(ctx, targetContainerIds);
+-      }
++    const targetContainerIds = getContainerLayoutEffectScope(ctx);
++    if (targetContainerIds === void 0) return;
++    if (layoutPasses.current === 0) {
++      queueMicrotask(() => { layoutPasses.current = 0; });
++    }
++    // Correcting large estimates can mount one row per commit. Bound the
++    // synchronous chain below React's nested-update limit, then keep measuring
++    // the latest pending rows on the next frame. Idle lists schedule no work.
++    if (layoutPasses.current++ < 8) {
++      measureContainersInLayoutEffect(ctx, targetContainerIds);
++    } else {
++      ctx.pendingContainerIds = targetContainerIds;
++      ctx.state.scheduledWork.frame(() => {
++        const pendingIds = getContainerLayoutEffectScope(ctx);
++        if (pendingIds !== void 0) {
++          measureContainersInLayoutEffect(ctx, pendingIds);
++        }
++      }, "containerLayout");
+     }
+   }, [ctx, containerLayoutEpoch]);
+   return children;
+@@ -5630,6 +5671,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1752,7 +2082,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cff49dc5c769cab264b8527a26885129
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5669,9 +5689,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5669,9 +5722,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1764,7 +2094,89 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cff49dc5c769cab264b8527a26885129
        }
      }
    }
-@@ -6425,8 +6445,8 @@ function ScrollAdjust() {
+@@ -5713,37 +5766,55 @@ function findLIS(arr) {
+ }
+ 
+ // src/hooks/useDOMOrder.ts
++var DOM_ORDER_SETTLE_MS = 150;
++function isUserScrolling(state) {
++  const { userScrollPrevTime, userScrollTime } = state;
++  return userScrollTime !== void 0 && userScrollPrevTime !== void 0 && userScrollTime - userScrollPrevTime < DOM_ORDER_SETTLE_MS && Date.now() - userScrollTime < DOM_ORDER_SETTLE_MS;
++}
+ function useDOMOrder(ref) {
+   const ctx = useStateContext();
+-  const debounceRef = useRef(void 0);
+-  useEffect(() => {
+-    const unsubscribe = listen$(ctx, "lastPositionUpdate", () => {
+-      if (debounceRef.current !== void 0) {
+-        clearTimeout(debounceRef.current);
+-      }
+-      debounceRef.current = setTimeout(() => {
+-        const parent = ref.current;
+-        if (parent) {
+-          const indexByElement = /* @__PURE__ */ new Map();
+-          for (const [containerId, viewRef] of ctx.viewRefs) {
+-            const element = viewRef.current;
+-            const index = peek$(ctx, `containerItemIndex${containerId}`);
+-            if (element && index !== void 0) {
+-              indexByElement.set(element, index);
+-            }
+-          }
+-          sortDOMElements(parent, indexByElement);
++  const [containerOrderUpdate] = useArr$(["containerOrderUpdate"]);
++  const settleRef = useRef(void 0);
++  useLayoutEffect(() => {
++    const sort = () => {
++      settleRef.current = void 0;
++      const parent = ref.current;
++      if (!parent) {
++        return;
++      }
++      const indexByElement = /* @__PURE__ */ new Map();
++      for (const [containerId, viewRef] of ctx.viewRefs) {
++        const element = viewRef.current;
++        const index = peek$(ctx, `containerItemIndex${containerId}`);
++        if (element && index !== void 0) {
++          indexByElement.set(element, index);
+         }
+-        debounceRef.current = void 0;
+-      }, 500);
+-    });
+-    return () => {
+-      unsubscribe();
+-      if (debounceRef.current !== void 0) {
+-        clearTimeout(debounceRef.current);
+       }
++      sortDOMElements(parent, indexByElement);
+     };
+-  }, [ctx]);
++    if (settleRef.current !== void 0) {
++      clearTimeout(settleRef.current);
++    }
++    // Before paint: NVDA's browse mode keeps the first DOM order it reads. Each move
++    // lays its row out again, so during a continuous scroll, sort once it settles.
++    if (!isUserScrolling(ctx.state)) {
++      sort();
++      return;
++    }
++    const settle = () => {
++      if (isUserScrolling(ctx.state)) {
++        settleRef.current = setTimeout(settle, DOM_ORDER_SETTLE_MS);
++      } else {
++        sort();
++      }
++    };
++    settleRef.current = setTimeout(settle, DOM_ORDER_SETTLE_MS);
++  }, [ctx, containerOrderUpdate]);
++  useEffect(() => () => {
++    if (settleRef.current !== void 0) {
++      clearTimeout(settleRef.current);
++    }
++  }, []);
+ }
+ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
+   const [completedTransitionEpoch, setCompletedTransitionEpoch] = useState(transitionEpoch);
+@@ -6425,8 +6496,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;

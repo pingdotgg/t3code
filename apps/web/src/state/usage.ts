@@ -10,7 +10,6 @@ import {
 } from "@t3tools/contracts";
 import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 
@@ -42,7 +41,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
       const access = resolveUsageAccess({
         connectionPhase: presentation.connection.phase,
-        session: Option.getOrNull(AsyncResult.value(sessionResult)),
+        session: AsyncResult.getOrElse(sessionResult, () => null),
         hasSessionError: sessionResult._tag === "Failure",
       });
       if (!access.canReadDiagnostics) {
@@ -57,7 +56,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         continue;
       }
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
-      const summary = Option.getOrNull(AsyncResult.value(result));
+      const summary = AsyncResult.getOrElse(result, () => null);
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
@@ -165,8 +164,7 @@ export function useUsage(
   });
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
-  // The render-time sync below compares merged by identity, so the derivation is
-  // held in state keyed on its inputs rather than rebuilt every render.
+  // Identity-based render sync needs a derivation retained by inputs across renders.
   const [derived, setDerived] = useState(() =>
     deriveSelection(environments, selectedEnvironmentIds, hiddenProviders),
   );

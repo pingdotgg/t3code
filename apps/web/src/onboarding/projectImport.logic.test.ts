@@ -192,28 +192,6 @@ describe("resolveOnboardingProjectId", () => {
       ),
     ).toBeNull();
   });
-
-  it("finds the current root owner when the scan has no project ID", () => {
-    const recreatedProjectId = ProjectId.make("recreated-project");
-    expect(
-      resolveOnboardingProjectId(
-        [
-          {
-            id: localProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/projects/other",
-          },
-          {
-            id: recreatedProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/projects/repo",
-          },
-        ],
-        localEnvironmentId,
-        candidate("/projects/repo"),
-      ),
-    ).toBe(recreatedProjectId);
-  });
 });
 
 describe("resolveOnboardingLandingProject", () => {

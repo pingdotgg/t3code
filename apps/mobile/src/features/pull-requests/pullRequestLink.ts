@@ -1,13 +1,17 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { Platform, Share } from "react-native";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 
 interface PullRequestLink {
   readonly url: string;
   readonly title: string;
+  readonly provider: string;
 }
 
 export function copyPullRequestLink(pr: PullRequestLink) {
-  copyTextWithHaptic(pr.url, { target: "pull request link" });
+  copyTextWithHaptic(pr.url, {
+    target: `${sourceControlClients.get(pr.provider).changeRequest.singular} link`,
+  });
 }
 
 export function sharePullRequestLink(pr: PullRequestLink) {

@@ -32,7 +32,7 @@ import {
   WEBHOOK_FILTER_OPS,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { AppState, Platform, Pressable, TextInput as RNTextInput, View } from "react-native";
@@ -78,7 +78,11 @@ import {
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
-import { scheduledTaskEditorSessionAtom } from "./scheduled-task-editor-state";
+import {
+  discardScheduledTaskEditor,
+  markScheduledTaskEditorSaved,
+  scheduledTaskEditorSessionAtom,
+} from "./scheduled-task-editor-state";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
   formatNextScheduledTaskRun,
@@ -182,7 +186,11 @@ function SelectRow(props: {
   const value = (
     <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
       {props.valueIcon}
-      <Text className="shrink text-right text-base text-foreground-muted" numberOfLines={1}>
+      <Text
+        textRole="footnote"
+        className="shrink text-right text-foreground-muted"
+        numberOfLines={1}
+      >
         {props.value}
       </Text>
     </View>
@@ -196,7 +204,9 @@ function SelectRow(props: {
             : "min-h-14 flex-row items-center gap-3 px-4 py-3"
         }
       >
-        <Text className="text-lg text-foreground">{props.label}</Text>
+        <Text textRole="body" className="text-foreground">
+          {props.label}
+        </Text>
         {value}
       </View>
     );
@@ -215,7 +225,9 @@ function SelectRow(props: {
             : "min-h-14 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
         }
       >
-        <Text className="text-lg text-foreground">{props.label}</Text>
+        <Text textRole="body" className="text-foreground">
+          {props.label}
+        </Text>
         {value}
         <SymbolView
           name="chevron.down"
@@ -292,7 +304,9 @@ function WebhookFilterRows(props: {
           onPress={() => props.onChange([...props.filters, emptyWebhookFilterDraft()])}
           className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
         >
-          <Text className="min-w-0 flex-1 text-lg text-foreground">Add filter</Text>
+          <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+            Add filter
+          </Text>
           <SymbolView name="plus" size={16} tintColorClassName="accent-icon" />
         </Pressable>
       ) : null}
@@ -326,8 +340,14 @@ function PickerRow(props: {
           : "min-h-14 flex-row items-center gap-3 px-4 py-3 active:opacity-70 disabled:opacity-50"
       }
     >
-      <Text className="text-lg text-foreground">{props.label}</Text>
-      <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted" numberOfLines={1}>
+      <Text textRole="body" className="text-foreground">
+        {props.label}
+      </Text>
+      <Text
+        textRole="footnote"
+        className="min-w-0 flex-1 text-right text-foreground-muted"
+        numberOfLines={1}
+      >
         {props.value}
       </Text>
       <SymbolView
@@ -385,7 +405,7 @@ export function SettingsScheduledTasksRouteScreen() {
         ]}
       />
       <SettingsScreen
-        title="Scheduled Tasks"
+        title="Scheduled tasks"
         trailing={
           <View className="flex-row items-center">
             <AndroidSettingsEnvironmentFilter />
@@ -449,15 +469,9 @@ export function SettingsScheduledTasksRouteScreen() {
   );
 }
 
+// The "New task" action and takeScheduledTaskNewLink clear the editor before
+// this screen opens, so it starts from the default target.
 export function SettingsScheduledTaskNewRouteScreen() {
-  const { resetEditor } = useScheduledTaskEditor();
-  const { availableTargets } = useSettingsEnvironmentFilter();
-  const initialized = useRef(false);
-  useLayoutEffect(() => {
-    if (initialized.current || availableTargets.length === 0) return;
-    initialized.current = true;
-    resetEditor();
-  }, [availableTargets.length, resetEditor]);
   return <SettingsScheduledTaskEditorScreen title="New scheduled task" />;
 }
 
@@ -466,20 +480,14 @@ export function SettingsScheduledTaskEditRouteScreen() {
 }
 
 function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
-  const {
-    editor,
-    voiceOwnerKey,
-    readEditor,
-    setEditor,
-    startEditor,
-    hasChanges,
-    draftForEnvironment,
-  } = useScheduledTaskEditor();
+  const { editor, voiceOwnerKey, readEditor, setEditor, hasChanges, draftForEnvironment } =
+    useScheduledTaskEditor();
   const { availableTargets } = useSettingsEnvironmentFilter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  // Set once the save lands, so the removal guard lets the editor close.
+  const saved = useRef(false);
   const ownerKey = editor ? `${voiceOwnerKey}:${editor.environmentId}` : null;
   const prompt = editor?.draft.prompt ?? "";
   const [selectionState, setSelectionState] = useState<{
@@ -518,8 +526,12 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
     },
     disabled: saving,
   });
-  const preventRemove = !saved && (hasChanges || saving);
+  const preventRemove = hasChanges || saving;
   usePreventRemove(preventRemove, ({ data }) => {
+    if (saved.current) {
+      navigation.dispatch(data.action);
+      return;
+    }
     if (saving) {
       Dialog.alert("Saving task", "Wait for the task to finish saving before leaving.");
       return;
@@ -531,19 +543,12 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
         style: "destructive",
         onPress: () => {
           if (voiceInput.isBusy) voiceInput.cancel();
-          startEditor(null);
+          discardScheduledTaskEditor();
           navigation.dispatch(data.action);
         },
       },
     ]);
   });
-  useEffect(() => {
-    if (!saved) return;
-    const frame = requestAnimationFrame(() => {
-      if (navigation.isFocused()) navigation.goBack();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [navigation, saved]);
   return (
     <SettingsScreen title={title}>
       {Platform.OS === "ios" ? (
@@ -551,8 +556,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
           options={{
             headerBackVisible: false,
             gestureEnabled: !preventRemove,
-            // The system back button begins its native pop before the removal
-            // guard runs. Dispatch from a bar action so the guard runs first.
+            // Native Back pops before removal guards; a bar action lets the guard run first.
             unstable_headerLeftItems: () => [
               withNativeGlassHeaderItem({
                 type: "button",
@@ -600,7 +604,11 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
             setDraft={(draft) => {
               if (!saving) setEditor({ ...editor, draft });
             }}
-            onSaved={() => setSaved(true)}
+            onSaved={() => {
+              saved.current = true;
+              markScheduledTaskEditorSaved();
+              if (navigation.isFocused()) navigation.goBack();
+            }}
             onChangeEnvironment={(target) => {
               if (target.environmentId === editor.environmentId) return;
               setEditor({
@@ -693,8 +701,7 @@ function TaskForm({
       environmentUnavailable
     )
       return;
-    // Signatures are edited on desktop and web; send the task's current one,
-    // not the copy taken when this form opened, so a newer edit survives.
+    // Preserve signatures edited on other clients by sending the task's current value.
     const liveTask = tasks.data?.tasks.find((task) => task.id === draft.task?.id);
     const schedule = scheduleFromDraft(
       draft.schedule.mode === "webhook" && liveTask?.schedule.type === "webhook"
@@ -944,6 +951,7 @@ function TaskForm({
         <SettingsSection title="Schedule">
           <View className="px-4 py-3">
             <SegmentedControl
+              variant="card"
               options={[
                 { value: "fixed_time", label: "At a time" },
                 { value: "interval", label: "Interval" },
@@ -971,8 +979,13 @@ function TaskForm({
                 onPress={() => setTimePickerOpen((open) => !open)}
                 className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
               >
-                <Text className="text-lg text-foreground">Time</Text>
-                <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
+                <Text textRole="body" className="text-foreground">
+                  Time
+                </Text>
+                <Text
+                  textRole="footnote"
+                  className="min-w-0 flex-1 text-right text-foreground-muted"
+                >
                   {formatTime(draft.schedule.timeOfDay)}
                 </Text>
                 <SymbolView
@@ -1039,8 +1052,7 @@ function TaskForm({
             <>
               <WebhookScheduleDetails
                 environmentId={environmentId}
-                // The live row, so a rotated URL shows up without reopening the form.
-                // Once the list has loaded, a missing task is gone; don't keep showing its URL.
+                // Use the live row for rotated URLs; hide the URL once a loaded list no longer contains the task.
                 task={
                   tasks.data
                     ? (tasks.data.tasks.find((task) => task.id === draft.task?.id) ?? null)
@@ -1129,7 +1141,9 @@ function TaskForm({
             </>
           )}
           <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
-            <Text className="min-w-0 flex-1 text-lg text-foreground">Enabled</Text>
+            <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+              Enabled
+            </Text>
             <ThemedSwitch
               accessibilityLabel="Task enabled"
               value={draft.enabled}
@@ -1195,7 +1209,7 @@ function WebhookScheduleDetails({
             onPress={() => void tryCopyTextWithHaptic(resolved.address)}
             className="gap-1 active:opacity-70"
           >
-            <Text className="text-lg text-foreground">
+            <Text textRole="body" className="text-foreground">
               {resolved.copyable ? "Webhook URL" : "Webhook path"}
             </Text>
             <Text className="text-sm text-foreground-muted" numberOfLines={2} selectable>
@@ -1320,8 +1334,8 @@ function EnvironmentTasks({
             key={task.id}
             className={
               index === 0
-                ? "flex-row items-start gap-1 px-4 py-4"
-                : "flex-row items-start gap-1 border-t border-border-subtle px-4 py-4"
+                ? "flex-row items-start gap-1 px-4 py-3"
+                : "flex-row items-start gap-1 border-t border-border-subtle px-4 py-3"
             }
           >
             <Pressable
@@ -1332,7 +1346,7 @@ function EnvironmentTasks({
               }}
               className="min-w-0 flex-1 gap-1 active:opacity-70"
             >
-              <Text className="text-lg font-t3-medium text-foreground" numberOfLines={1}>
+              <Text textRole="body" className="text-foreground" numberOfLines={1}>
                 {task.title}
               </Text>
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>

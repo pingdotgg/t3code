@@ -2,7 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   decodeScanCache,
-  encodeScanCache,
   makeScanCacheWriter,
   type CachedFile,
   type ScanCache,
@@ -154,7 +153,7 @@ describe("scan cache round trip", () => {
       ],
     });
     const restored = decodeScanCache(
-      JSON.parse(JSON.stringify(encodeScanCache(cached))),
+      JSON.parse(makeScanCacheWriter()(cached, {})),
       TEST_FORMAT_MAP,
     );
 
@@ -162,13 +161,14 @@ describe("scan cache round trip", () => {
     expect(restored).toEqual(original);
   });
 
-  it.each([5, 6, 7])(
+  it.each([5, 6, 7, 8])(
     "retains v%s history and compatible positions but invalidates obsolete state",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
       original.set("/gone-codex.jsonl", {
         ...original.get("/gone.jsonl")!,
         provider: "codex",
+        malformedRecords: 1,
         records: [record({ provider: "codex", speed: "fast", dedupeKey: null })],
         position: position({
           state: {
@@ -191,7 +191,12 @@ describe("scan cache round trip", () => {
         malformedRecords: 3,
         position: position({ state: { sessionId: "session-a" } }),
       });
-      const encoded = encodeScanCache(original);
+      const cleanCodex = {
+        ...original.get("/gone-codex.jsonl")!,
+        malformedRecords: 0,
+      };
+      original.set("/clean-codex.jsonl", cleanCodex);
+      const encoded = JSON.parse(makeScanCacheWriter()(original, {}));
       const entry = encoded.files["/gone.jsonl"]!;
       const legacy = {
         ...encoded,
@@ -213,12 +218,25 @@ describe("scan cache round trip", () => {
       };
 
       const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
-      expect(restored.get("/gone.jsonl")).toEqual(original.get("/gone.jsonl"));
+      expect(restored.get("/gone.jsonl")).toEqual({
+        ...original.get("/gone.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
       expect(restored.get("/gone-codex.jsonl")).toEqual({
         ...original.get("/gone-codex.jsonl"),
         size: -1,
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
       });
+      expect(restored.get("/clean-codex.jsonl")).toEqual(
+        version >= 8
+          ? cleanCodex
+          : {
+              ...cleanCodex,
+              size: -1,
+              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+            },
+      );
       expect(restored.get("/gone-pi.jsonl")).toEqual(
         version >= 6
           ? original.get("/gone-pi.jsonl")
@@ -230,6 +248,18 @@ describe("scan cache round trip", () => {
       );
     },
   );
+
+  it("re-parses a Claude transcript cached before advisor usage was counted", () => {
+    const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
+    const v9 = { ...JSON.parse(makeScanCacheWriter()(original, {})), version: 9 };
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v9)), TEST_FORMAT_MAP);
+    expect(restored.get("/claude.jsonl")).toEqual({
+      ...original.get("/claude.jsonl"),
+      size: -1,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+  });
 
   it("rewrites only changed entries and still restores the whole cache", () => {
     const write = makeScanCacheWriter();
@@ -261,7 +291,9 @@ describe("scan cache round trip", () => {
   });
 
   it("skips malformed file entries but keeps good ones", () => {
-    const encoded = encodeScanCache(cacheWith([["/good.jsonl", 100, [record()]]]));
+    const encoded = JSON.parse(
+      makeScanCacheWriter()(cacheWith([["/good.jsonl", 100, [record()]]]), {}),
+    );
     const withJunk = {
       ...encoded,
       files: { ...encoded.files, "/bad.jsonl": { s: "nope", m: 1, p: "claude", r: [] } },
@@ -272,8 +304,11 @@ describe("scan cache round trip", () => {
   });
 
   it("drops the whole entry when any row is corrupt, forcing a cold re-parse", () => {
-    const encoded = encodeScanCache(
-      cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" })]]]),
+    const encoded = JSON.parse(
+      makeScanCacheWriter()(
+        cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" })]]]),
+        {},
+      ),
     );
     const rows = encoded.files["/a.jsonl"]!.r;
     const poisoned = {

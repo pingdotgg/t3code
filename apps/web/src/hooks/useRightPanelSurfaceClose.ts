@@ -8,6 +8,7 @@ import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
+import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
 import { readLocalApi } from "../localApi";
 import { setActivePreviewTab, useThreadPreviewState } from "../previewStateStore";
 import {
@@ -22,11 +23,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useStableCallback } from "./useStableCallback";
 
-/**
- * Closes right panel surfaces for a thread. A surface's live resources go with
- * it: a browser's preview session and a terminal tab's sessions. Closing a
- * browser an agent is driving, or a terminal tab, asks first.
- */
+/** Closing releases preview and terminal sessions. Agent-driven browsers and terminal tabs require confirmation. */
 export function useRightPanelSurfaceClose(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly terminalLabelsById: ReadonlyMap<string, string>;
@@ -45,9 +42,7 @@ export function useRightPanelSurfaceClose(input: {
   );
 
   const releaseSurfaceResources = (ref: ScopedThreadRef, surface: RightPanelSurface) => {
-    // Without preview access only the local surface goes away. The
-    // server record is in-memory bookkeeping, not a live view, and stays
-    // listed until a client with the scope closes it or the server restarts.
+    // Without preview access, server state remains until an authorized close or restart.
     if (canOperatePreview && surface.kind === "preview" && surface.resourceId) {
       void closePreviewSession({
         closePreview,
@@ -93,8 +88,10 @@ export function useRightPanelSurfaceClose(input: {
       (left, right) => Number(left.id === activeId) - Number(right.id === activeId),
     );
     for (const surface of ordered) {
-      releaseSurfaceResources(threadRef, surface);
+      // Releasing a browser drops its session, which prunes the tab automatically; close it
+      // first so the close stays a user action that hides the panel after the last tab.
       store.closeSurface(threadRef, surface.id);
+      releaseSurfaceResources(threadRef, surface);
     }
     const nextActiveSurface = selectActiveRightPanelSurface(
       useRightPanelStore.getState().byThreadKey,
@@ -103,6 +100,7 @@ export function useRightPanelSurfaceClose(input: {
     if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
       setActivePreviewTab(threadRef, nextActiveSurface.resourceId);
     }
+    focusPanelTerminalAfterClose(threadRef, activeId);
   };
   const labelFor = (terminalId: string) =>
     terminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);

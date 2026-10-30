@@ -1,3 +1,7 @@
+import {
+  capitalizeTerm,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
@@ -37,7 +41,7 @@ import {
   type PullRequestTimelineEvent,
   type PullRequestTimelineThread,
 } from "./pullRequestDetail.logic";
-import { canEditPullRequestComment } from "./pullRequestEditing.logic";
+import { canEditPullRequestComment } from "@t3tools/client-runtime/pull-request-editing";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
@@ -166,7 +170,7 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
     <Button
       size="icon-xs"
       variant="ghost-muted"
-      className="-mr-1 -mt-1 shrink-0"
+      className="-mr-1 shrink-0"
       aria-label="Open activity on host"
       onClick={() => onOpen(url)}
     >
@@ -197,8 +201,6 @@ function ConversationCard({
   });
 
   const save = async (body: string) => {
-    // A review's own summary is not a kind any host rewrites, which is why `editable` is never
-    // one; the check is here because the comment's own type still allows it.
     if (editable === null || saving || editable.kind === "review") return;
     setSaving(true);
     const result = await updateComment({
@@ -217,7 +219,7 @@ function ConversationCard({
   return (
     <article className="group py-2">
       <div className="px-2">
-        <div className="flex min-w-0 flex-wrap items-start gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
               <ActorName actor={event.actor} />
@@ -237,11 +239,7 @@ function ConversationCard({
             </PullRequestMetaLine>
           </div>
           {editable !== null && !editing ? (
-            <PullRequestEditButton
-              className="-mt-1"
-              aria-label="Edit comment"
-              onClick={() => setEditing(true)}
-            />
+            <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
           ) : null}
           {reactions.canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar
@@ -350,9 +348,7 @@ function ConversationGroup({
               <div className="mt-1 space-y-1">
                 {events.map((event) => (
                   <ConversationCard
-                    // Named with the pull request too: a remark's id is the host's own, and two
-                    // pull requests can hand out the same one — which would leave one card's open
-                    // editor standing over the other's remark.
+                    // Host comment ids can collide across pull requests.
                     key={`${reactions.reference.projectId}#${reactions.reference.number}:${event.id}`}
                     event={event}
                     editable={editable.get(event.id) ?? null}
@@ -393,7 +389,7 @@ function ReviewThreadEvent({
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
-        className="top-6"
+        className="top-4"
         fallback={<MessageSquareIcon className="size-3.5" />}
         muted={!expanded}
       />
@@ -509,21 +505,22 @@ function CommitEvent({
   );
 }
 
-function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
+function LifecycleEvent({ event, term }: { event: PullRequestTimelineEvent; term: string }) {
+  const title = capitalizeTerm(term);
   const presentation =
     event.kind === "opened"
       ? {
           icon: <PullRequestGlyph.pullRequest className="size-3.5" />,
-          label: "Pull request opened",
+          label: `${title} opened`,
         }
       : event.kind === "merged"
         ? {
             icon: <PullRequestGlyph.merged className="size-3.5" />,
-            label: "Pull request merged",
+            label: `${title} merged`,
           }
         : {
             icon: <PullRequestGlyph.closed className="size-3.5" />,
-            label: "Pull request closed",
+            label: `${title} closed`,
           };
 
   return (
@@ -564,7 +561,7 @@ function ReviewVerdictEvent({
         className="top-6"
         fallback={<PullRequestReviewOutcomeIcon outcome={outcome} />}
       />
-      <div className="flex min-w-0 flex-wrap items-start gap-2 py-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 py-1.5">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
             <ActorName actor={event.actor} />
@@ -647,6 +644,7 @@ export function PullRequestTimelineTab({
   onRefresh: () => void;
 }) {
   const events = buildPullRequestTimeline(detail);
+  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     canReact: detail.capabilities.reactions === true,
@@ -717,7 +715,7 @@ export function PullRequestTimelineTab({
                 />
               );
             }
-            return <LifecycleEvent key={event.id} event={event} />;
+            return <LifecycleEvent key={event.id} event={event} term={term} />;
           })}
         </div>
 

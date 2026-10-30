@@ -1,6 +1,6 @@
 # Live background-work verification
 
-Run from the repository root with Node 24 and installed dependencies. This uses
+Run from the repository root with installed dependencies (`vp` provides the pinned Node). This uses
 real provider CLI credentials and consumes model usage:
 
 ```sh

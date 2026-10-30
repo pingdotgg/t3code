@@ -182,6 +182,123 @@ describe("parseCodexLine", () => {
     }
   });
 
+  it.each(["continuation", "fork", "subagent"])(
+    "bills only the latest request when a %s has no initial counter baseline",
+    (source) => {
+      const state = initialCodexScanState();
+      parseCodexLine(
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-08-01T05:17:41.000Z",
+          payload: {
+            id: "child",
+            model_provider: "openai",
+            ...(source === "fork" ? { forked_from_id: "parent" } : {}),
+            ...(source === "subagent"
+              ? { source: { subagent: { thread_spawn: { parent_thread_id: "parent" } } } }
+              : { source: "vscode" }),
+          },
+        }),
+        state,
+      );
+      parseCodexLine(turnContext, state);
+      const request = {
+        ...counters(100, 20),
+        cached_input_tokens: 30,
+        cache_write_input_tokens: 10,
+        reasoning_output_tokens: 5,
+      };
+      const cumulative = {
+        ...counters(500, 60),
+        cached_input_tokens: 200,
+        cache_write_input_tokens: 20,
+        reasoning_output_tokens: 15,
+      };
+      const first = counted(request, cumulative);
+      expect(parseCodexLine(first, state)).toMatchObject({
+        sessionId: "child",
+        totals: {
+          uncachedInputTokens: 60,
+          cachedInputTokens: 30,
+          cacheCreationTokens: 10,
+          outputTokens: 20,
+          reasoningTokens: 5,
+        },
+      });
+      expect(parseCodexLine(first, state)).toBeNull();
+      expect(parseCodexLine(counted(counters(10, 2), cumulative), state)).toBeNull();
+      expect(
+        parseCodexLine(
+          counted(counters(10, 2), {
+            ...cumulative,
+            input_tokens: 510,
+            output_tokens: 62,
+            total_tokens: 572,
+          }),
+          state,
+        )?.totals.outputTokens,
+      ).toBe(2);
+      expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+    },
+  );
+
+  it.each([
+    {
+      ...counters(90, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 10),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 5,
+    },
+    {
+      ...counters(200, 40),
+      cached_input_tokens: 20,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 5,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 3,
+    },
+    {
+      ...counters(110, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 30),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 20,
+    },
+  ])("rejects an initial snapshot with an impossible inherited baseline: %j", (cumulative) => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = {
+      ...counters(100, 20),
+      cached_input_tokens: 30,
+      cache_write_input_tokens: 10,
+      reasoning_output_tokens: 5,
+    };
+    expect(parseCodexLine(counted(request, cumulative), state)).toBeNull();
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+    expect(state.lastCumulativeUsage).toEqual(cumulative);
+  });
+
   it.each(["request", "cumulative"])("skips malformed %s counters and recovers", (malformed) => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);
@@ -327,7 +444,7 @@ describe("parseCodexLine", () => {
 
   // A forked/subagent rollout opens with the parent's history copied in and
   // every line re-stamped to the fork instant, then the ancestors' session
-  // metas. Counting those again multiplied usage ~1.85x on real data (#5758).
+  // metas. Counting those again multiplied usage ~1.85x on real data.
   describe("forked rollouts", () => {
     const meta = (overrides: {
       id: string;

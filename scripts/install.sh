@@ -53,14 +53,14 @@ step "Finding your release..."
 # Exit 44 on a 404 so callers can tell "no such asset" from a network failure.
 fetch() {
   if command -v curl >/dev/null 2>&1; then
-    status="$(curl -sSL -w '%{http_code}' "$1" -o "$2")" || return 1
+    status="$(curl -sSL -H "Accept: ${3:-*/*}" -w '%{http_code}' "$1" -o "$2")" || return 1
     case "$status" in
       2??) return 0 ;;
       404) return 44 ;;
       *) printf 'GET %s returned HTTP %s\n' "$1" "$status" >&2; return 1 ;;
     esac
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --server-response "$1" -O "$2" 2>"$2.headers" && rm -f "$2.headers" && return 0
+    wget -q --server-response --header="Accept: ${3:-*/*}" "$1" -O "$2" 2>"$2.headers" && rm -f "$2.headers" && return 0
     if grep -q ' 404 ' "$2.headers" 2>/dev/null; then rm -f "$2.headers"; return 44; fi
     cat "$2.headers" >&2; rm -f "$2.headers"; return 1
   else
@@ -145,17 +145,26 @@ fi
 channel="${T3CODE_CHANNEL:-stable}"
 version="${T3CODE_VERSION:-}"
 if [ -z "$version" ]; then
-  # Tags are v<semver>; the channel is the prerelease identifier, or none for
-  # stable. Only tags of the requested train are considered, so a stable
-  # install can never pick up a nightly or preview build by accident.
   case "$channel" in
     stable) tag_pattern='v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)' ;;
     nightly | preview) tag_pattern="v\([0-9][^\"]*-${channel}\.[0-9]*\.[0-9]*\)" ;;
     *) fail "T3CODE_CHANNEL must be stable, nightly, or preview" ;;
   esac
   tmp_index="$(mktemp)"
-  fetch "https://api.github.com/repos/${repo}/releases?per_page=100" "$tmp_index"
-  version="$(sed -n "s/.*\"tag_name\": *\"${tag_pattern}\".*/\1/p" "$tmp_index" | head -n 1)"
+  if [ "$channel" = stable ]; then
+    # release.yml marks only plain stable releases latest. This is a github.com
+    # page, so it is not cut off by a page of newer nightlies or the API quota.
+    fetch "https://github.com/${repo}/releases/latest" "$tmp_index" application/json
+    version="$(sed -n "s/.*\"tag_name\": *\"${tag_pattern}\".*/\1/p" "$tmp_index" | head -n 1)"
+  else
+    page=1
+    while [ -z "$version" ] && [ "$page" -le 10 ]; do
+      fetch "https://api.github.com/repos/${repo}/releases?per_page=100&page=${page}" "$tmp_index"
+      version="$(sed -n "s/.*\"tag_name\": *\"${tag_pattern}\".*/\1/p" "$tmp_index" | head -n 1)"
+      grep -q '"tag_name"' "$tmp_index" || break
+      page=$((page + 1))
+    done
+  fi
   rm -f "$tmp_index"
   [ -n "$version" ] || fail "could not find a ${channel} release; set T3CODE_VERSION"
 fi

@@ -220,8 +220,7 @@ NodeRuntime.runMain(
           : new WatchStoppedError({ cause }),
       );
     }),
-    // Socket failures may contain credential-bearing request headers. Keep the
-    // cause on the error, but print only the fixed message at the CLI boundary.
+    // Socket errors can expose credential headers; retain the cause but print only the fixed message.
     Effect.tapError((error) => Effect.logError(error.message)),
   ),
   { disableErrorReporting: true },

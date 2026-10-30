@@ -19,6 +19,7 @@ import {
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { MuseSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -30,11 +31,12 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
-import type { MuseSdkHost } from "./sdk.ts";
+import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -78,7 +80,7 @@ function pendingPromise<A>() {
   return { promise, resolve, reject };
 }
 
-/** SDK-shaped transport fake: registration deliberately returns void, as the SDK does. */
+// Match the SDK: handler registration returns void.
 const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
   const requests = yield* Queue.unbounded<NativeCall>();
   const calls: NativeCall[] = [];
@@ -87,8 +89,10 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
   let notify: Parameters<MuseSdkHost["connection"]["onNotification"]>[0] = () => {};
   let sequence = 0;
   let sessionId = "";
+  const closing = pendingPromise<void>();
   let closeCount = 0;
   let closeGate: Promise<void> | undefined;
+  let onProcessExit: MuseSdkHostOptions["onProcessExit"];
   let history: MuseItem[] = [];
   const responses = new Map<
     string,
@@ -143,6 +147,7 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
     exited: exited.promise,
     close: async () => {
       closeCount += 1;
+      closing.resolve();
       await closeGate;
       closed.resolve();
       exited.resolve({ code: 0, signal: null });
@@ -152,6 +157,11 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
     host,
     calls,
     closeCount: () => closeCount,
+    closing: closing.promise,
+    observeProcessExit: (callback: MuseSdkHostOptions["onProcessExit"]) => {
+      onProcessExit = callback;
+    },
+    exitProcess: () => Effect.sync(() => onProcessExit?.({ code: 1, signal: null })),
     holdClose: (gate: Promise<void>) => {
       closeGate = gate;
     },
@@ -173,7 +183,6 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params: { sessionId, ...params } });
       }),
-    /** A notification about the host or account rather than a session, as `usage/changed` is. */
     emitHostWide: (method: string, params: Record<string, unknown>) =>
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params });
@@ -204,7 +213,11 @@ const makeHarness = Effect.fnUntraced(function* (
     instanceId,
     settings: museSettings,
     environment: { PATH: "/fake/bin" },
-    createHost: async () => (hostCount++ === 0 ? fake.host : (replacement ?? fake).host),
+    createHost: async (options) => {
+      const selected = hostCount++ === 0 ? fake : (replacement ?? fake);
+      selected.observeProcessExit(options.onProcessExit);
+      return selected.host;
+    },
     ...overrides,
   });
   const runtime = yield* adapter.openSession({
@@ -344,17 +357,14 @@ const startConversation = Effect.fnUntraced(function* (
   return { nativeId: call.commandId!, providerTurn: event.providerTurn };
 });
 
-// `usage/changed` as Muse 1.4.3 sent it after a reply (2026-10-08), with a placeholder tier.
 const SUBSCRIPTION_USAGE = {
   window: { usedPercent: 0, windowDurationMins: 300, resetsAtMs: 1791465557000 },
   weekly: { usedPercent: 5, resetsAtMs: 1791763200000 },
   tier: "tier-1",
   observedAtMs: 1791447762610,
 } satisfies MuseSubscriptionUsage;
-// How Muse ends a turn Meta refuses for quota (from a simulated Meta 429).
 const QUOTA_MESSAGE =
   "API error 429: Subscription quota exhausted. Your usage window resets soon. (rate_limit_error)";
-// How Muse 1.4.6 ended a turn at a real quota stop (2026-10-13), relayed by a credential proxy.
 const RELAYED_QUOTA_MESSAGE =
   "API error 429: All credentials for model muse-wonder-1.0-contributor are cooling down (last error: rate_limit_exceeded: Subscription quota exhausted. Your usage window resets at 2026-10-13T10:45:52Z.) (after 10 provider attempts)";
 
@@ -548,7 +558,7 @@ describe("MuseAdapterV2", () => {
       );
       yield* startConversation(harness, fake);
       const turnStart = fake.calls.find((call) => call.method === "turn/start");
-      // Muse 1.4.3 rejects any other form: "expected a canonical path (resolves to \\?\C:\…)".
+      // Muse 1.4.3 accepts only verbatim canonical roots.
       assert.deepStrictEqual(turnStart?.params.workspaceRoots, ["\\\\?\\C:\\work\\repo"]);
       // The muse.cmd launcher runs under cmd.exe, which cannot start in a verbatim directory.
       assert.strictEqual(hostCwd, "C:\\work\\repo");
@@ -563,7 +573,6 @@ describe("MuseAdapterV2", () => {
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
-      // Meta's report after the last reply that went through: the session window ran out.
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
         window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 103 },
@@ -579,7 +588,6 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(terminal.status, "failed");
       assert.strictEqual(terminal.threadDisposition, "reusable");
       assert.strictEqual(terminal.failure?.class, "usage_limit");
-      // The exhausted session window's reset, not the weekly one.
       assert.strictEqual(terminal.failure?.resetAt, "2026-10-08T13:19:17.000Z");
       assert.isTrue(
         harness.allEvents.some(
@@ -605,7 +613,6 @@ describe("MuseAdapterV2", () => {
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
-      // A fresh host has no report yet; the refusal itself says when the window resets.
       const { nativeId } = yield* startConversation(harness, fake);
       yield* fake.emit("turn/completed", {
         turnId: nativeId,
@@ -624,7 +631,6 @@ describe("MuseAdapterV2", () => {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
       const { nativeId } = yield* startConversation(harness, fake);
-      // The typed quota decides even when the text names no quota.
       yield* fake.emit("turn/completed", {
         turnId: nativeId,
         terminal: "failed",
@@ -646,7 +652,6 @@ describe("MuseAdapterV2", () => {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
       yield* fake.emitHostWide("usage/changed", { window: "not usage" });
-      // A reset no Date can hold would throw once formatted, so that report is skipped too.
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
         window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 103, resetsAtMs: 1e16 },
@@ -751,6 +756,57 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect.each(["normal", "inherited pipe"] as const)(
+    "closes its SDK host exactly once on session teardown with %s shutdown",
+    (shutdown) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const pipeClosed = pendingPromise<void>();
+        if (shutdown === "inherited pipe") fake.holdClose(pipeClosed.promise);
+        let hostExited = false;
+        void fake.host.exited.then(() => {
+          hostExited = true;
+        });
+        const stopped: Array<{ unit: string; hostExited: boolean }> = [];
+        const release = makeHarness(fake).pipe(
+          Effect.scoped,
+          Effect.provideService(AgentScope, {
+            ...AgentScope.defaultValue(),
+            wrap: ({ command, args }) =>
+              Effect.succeed({ command, args, unit: "t3code-muse-test.scope" }),
+            stop: (unit) =>
+              Effect.sync(() => {
+                stopped.push({ unit, hostExited });
+                pipeClosed.resolve();
+              }),
+          }),
+        );
+        if (shutdown === "inherited pipe") {
+          yield* Effect.gen(function* () {
+            const releasing = yield* release.pipe(Effect.forkChild({ startImmediately: true }));
+            yield* Effect.promise(() => fake.closing);
+            yield* TestClock.adjust("12999 millis");
+            assert.strictEqual(fake.closeCount(), 1);
+            assert.deepStrictEqual(stopped, []);
+            yield* TestClock.adjust("1 millis");
+            assert.deepStrictEqual(
+              [...stopped],
+              [{ unit: "t3code-muse-test.scope", hostExited: false }],
+            );
+            yield* Fiber.join(releasing);
+          }).pipe(Effect.ensuring(Effect.sync(() => pipeClosed.resolve())));
+        } else {
+          yield* release;
+        }
+        assert.strictEqual(fake.closeCount(), 1);
+        assert.deepStrictEqual(stopped, [
+          { unit: "t3code-muse-test.scope", hostExited: shutdown === "normal" },
+        ]);
+        yield* Effect.promise(() => fake.host.exited);
+        assert.isTrue(hostExited);
+      }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect(
     "closes a newly opened host when native session registration returns another identity",
     () =>
@@ -766,6 +822,76 @@ describe("MuseAdapterV2", () => {
         assert.strictEqual(fake.closeCount(), 1);
         assert.strictEqual(fake.calls.filter((call) => call.method === "turn/start").length, 0);
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "settles an active turn and reaps its scope on raw exit before inherited stdio closes",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const pipeClosed = pendingPromise<void>();
+        fake.holdClose(pipeClosed.promise);
+        const stopped = yield* Deferred.make<void>();
+        const units: string[] = [];
+        let hostExited = false;
+        let connectionClosed = false;
+        void fake.host.exited.then(() => {
+          hostExited = true;
+        });
+        void fake.host.connection.closed.then(() => {
+          connectionClosed = true;
+        });
+        yield* Effect.gen(function* () {
+          const harness = yield* makeHarness(fake);
+          const { nativeId } = yield* startConversation(harness, fake);
+          yield* fake.emit("approval/requested", approval(nativeId));
+          yield* harness.takeEvent(
+            "runtime_request.updated",
+            (event) => event.runtimeRequest.status === "pending",
+          );
+          yield* fake.exitProcess();
+          yield* Deferred.await(stopped);
+          assert.deepStrictEqual(units, ["t3code-muse-exit.scope"]);
+          const terminal = yield* harness.takeEvent("turn.terminal");
+          assert.strictEqual(terminal.status, "failed");
+          assert.strictEqual(terminal.threadDisposition, "broken");
+          assert.isFalse(hostExited);
+          assert.isFalse(connectionClosed);
+          assert.isTrue(
+            harness.allEvents.some(
+              (event) =>
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "cancelled",
+            ),
+          );
+          pipeClosed.resolve();
+          yield* fake.disconnect();
+          yield* Deferred.await(harness.eventsEnded);
+          const result = yield* harness.runtime
+            .startTurn(yield* turnInput(harness.providerThread, 2))
+            .pipe(Effect.exit);
+          assert.strictEqual(result._tag, "Failure");
+          assert.strictEqual(
+            harness.allEvents.filter((event) => event.type === "turn.terminal").length,
+            1,
+          );
+          assert.strictEqual(fake.calls.filter((call) => call.method === "turn/start").length, 1);
+        }).pipe(
+          Effect.ensuring(Effect.sync(() => pipeClosed.resolve())),
+          Effect.scoped,
+          Effect.provideService(AgentScope, {
+            ...AgentScope.defaultValue(),
+            wrap: ({ command, args }) =>
+              Effect.succeed({ command, args, unit: "t3code-muse-exit.scope" }),
+            stop: (unit) =>
+              Effect.gen(function* () {
+                units.push(unit);
+                yield* Deferred.succeed(stopped, undefined);
+              }),
+          }),
+        );
+        assert.deepStrictEqual(units, ["t3code-muse-exit.scope"]);
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("settles an active turn once when both the connection and host exit unexpectedly", () =>

@@ -8,11 +8,13 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
 
 export function WorkspaceEmptyDetail(props: {
-  readonly tab?: WorkspaceTab;
+  readonly tab?: WorkspaceTab | "settings";
   readonly onStartNewTask?: () => void;
   readonly onAddConnection?: () => void;
 }) {
   const pullRequests = props.tab === "pullRequests";
+  const settings = props.tab === "settings";
+  if (props.tab === "usage") return <View className="flex-1 bg-screen" />;
   return (
     <View
       className={
@@ -47,16 +49,22 @@ export function WorkspaceEmptyDetail(props: {
             type="hierarchical"
           />
           <Text className="text-center text-xl font-t3-bold">
-            {pullRequests ? "Select a pull request" : "Select a thread"}
+            {settings
+              ? "Select a setting"
+              : pullRequests
+                ? "Select a pull request"
+                : "Select a thread"}
           </Text>
           <Text className="text-center text-base text-foreground-muted">
-            {pullRequests
-              ? "Choose a pull request from the sidebar to review it."
-              : Platform.OS === "android"
-                ? "Choose a thread from the sidebar or start a new thread."
-                : "Choose a thread from the sidebar or start a new task."}
+            {settings
+              ? "Choose a page from the sidebar."
+              : pullRequests
+                ? "Choose a pull request from the sidebar to review it."
+                : Platform.OS === "android"
+                  ? "Choose a thread from the sidebar or start a new thread."
+                  : "Choose a thread from the sidebar or start a new task."}
           </Text>
-          {props.onStartNewTask && !pullRequests ? (
+          {props.onStartNewTask && !pullRequests && !settings ? (
             Platform.OS === "android" ? (
               <NewThreadButton extended className="mt-2" onPress={props.onStartNewTask} />
             ) : (
@@ -65,7 +73,7 @@ export function WorkspaceEmptyDetail(props: {
                 className="mt-2 flex-row items-center gap-2 rounded-full bg-primary px-5 py-3 active:opacity-70"
                 onPress={props.onStartNewTask}
               >
-                <Text className="text-base font-t3-bold text-primary-foreground">New Task</Text>
+                <Text className="text-base font-t3-bold text-primary-foreground">New thread</Text>
               </Pressable>
             )
           ) : null}

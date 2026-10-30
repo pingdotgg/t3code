@@ -1,7 +1,16 @@
+import { InlineAudioPreview } from "../files/InlineAudioPreview";
+import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
-import { type MessageId, type ServerProviderSkill, ThreadId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type MessageId,
+  type ScheduledTaskId,
+  type ServerProviderSkill,
+  ThreadId,
+} from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
+import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -22,8 +31,10 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   EyeIcon,
+  type LucideIcon,
+  MessagesSquareIcon,
   Redo2Icon,
-  Undo2Icon,
+  PencilIcon,
 } from "lucide-react";
 import { Link as LinkIconNode } from "lucide";
 import { Button, InlineButton } from "../ui/button";
@@ -39,6 +50,7 @@ import {
   SNAP_SHOT_ATTACHMENT_FRAME_CLASS,
   SnapShotAttachmentDetails,
 } from "./SnapShotAttachmentDetails";
+import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -68,6 +80,13 @@ import {
 } from "./TimelineRowParts";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
 import { resolvePreviewAnnotationImage } from "./TimelineUserMessageRow.logic";
+
+// Drawn inside the media so dark screenshots keep an edge on the dark background.
+const MEDIA_EDGE_CLASS_NAME =
+  "relative after:pointer-events-none after:absolute after:inset-0 after:z-10 after:rounded-[inherit] after:ring-1 after:ring-inset after:ring-black/9 dark:after:ring-white/12";
+
+const BUBBLE_CHIP_CLASS_NAME =
+  "[&_[data-slot=context-chip]]:[--context-chip-ink:var(--context-chip-message,var(--context-chip-accent))]";
 
 function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
   const ctx = use(TimelineRowCtx);
@@ -134,16 +153,10 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const [expanded, setExpanded] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
   const { text, scheduledTaskId } = resolveUserMessagePresentation(row.message);
-  const tasksQuery = useEnvironmentQuery(
-    scheduledTaskId
-      ? serverEnvironment.scheduledTasksLive({
-          environmentId: ctx.activeThreadEnvironmentId,
-          input: {},
-        })
-      : null,
-  );
-  const taskTitle = tasksQuery.data?.tasks.find((task) => task.id === scheduledTaskId)?.title;
-  const summary = taskTitle ?? text.trim().split(/\r?\n/, 1)[0] ?? "";
+  const summary =
+    useScheduledTaskTitle(ctx.activeThreadEnvironmentId, scheduledTaskId) ??
+    text.trim().split(/\r?\n/, 1)[0] ??
+    "";
 
   const revertTurnCount = row.revertTurnCount;
   const promptLink = promptLinkFor(text);
@@ -159,26 +172,18 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       <div
         className={cn(
           "min-w-0 max-w-[80%] rounded-2xl bg-message text-message-foreground",
+          BUBBLE_CHIP_CLASS_NAME,
           expanded && "w-full",
         )}
       >
-        <button
-          type="button"
-          aria-expanded={expanded}
-          data-scroll-anchor-ignore
-          onClick={() => setExpanded((value) => !value)}
-          className="flex w-full min-w-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring"
-        >
-          <CalendarClockIcon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
-          <span className="shrink-0 text-muted-foreground">Automation</span>
-          <span className="min-w-0 flex-1 truncate">{summary}</span>
-          <ChevronDownIcon
-            className={cn(
-              "size-3.5 shrink-0 text-muted-foreground transition-transform",
-              expanded && "rotate-180",
-            )}
-          />
-        </button>
+        <MessageAuthorHeading>Automation</MessageAuthorHeading>
+        <FoldedMessageHeader
+          icon={CalendarClockIcon}
+          label="Automation"
+          summary={summary}
+          expanded={expanded}
+          onToggle={() => setExpanded((value) => !value)}
+        />
         {bodyMounted ? (
           // `beforematch` does not bubble, so the reveal listener sits on the hidden fold itself.
           <div
@@ -230,6 +235,45 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   );
 }
 
+export function useScheduledTaskTitle(
+  environmentId: EnvironmentId,
+  scheduledTaskId: ScheduledTaskId | undefined,
+): string | undefined {
+  const tasksQuery = useEnvironmentQuery(
+    scheduledTaskId ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
+  );
+  return tasksQuery.data?.tasks.find((task) => task.id === scheduledTaskId)?.title;
+}
+
+export function FoldedMessageHeader(props: {
+  icon: LucideIcon;
+  label: string;
+  summary: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const Icon = props.icon;
+  return (
+    <button
+      type="button"
+      aria-expanded={props.expanded}
+      data-scroll-anchor-ignore
+      onClick={props.onToggle}
+      className="flex w-full min-w-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring"
+    >
+      <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
+      <span className="max-w-1/2 shrink-0 truncate text-muted-foreground">{props.label}</span>
+      <span className="min-w-0 flex-1 truncate">{props.summary}</span>
+      <ChevronDownIcon
+        className={cn(
+          "size-3.5 shrink-0 text-muted-foreground transition-transform",
+          props.expanded && "rotate-180",
+        )}
+      />
+    </button>
+  );
+}
+
 function UserMessageProjectedStatus({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const status = row.projectedItem?.item.status;
   if (
@@ -267,12 +311,27 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const userImages = (messageWithPreviews.attachments ?? []).filter(isImageAttachment);
   const userFiles = (row.message.attachments ?? []).filter(isFileAttachment);
   const userVideos = userFiles.filter(isVideoAttachment);
-  const otherUserFiles = userFiles.filter((file) => !isVideoAttachment(file));
+  const userAudio = userFiles.filter(
+    (file) => file.downloadable !== false && filePreviewKind(file) === "audio",
+  );
+  const otherUserFiles = userFiles.filter(
+    (file) => !isVideoAttachment(file) && !userAudio.includes(file),
+  );
   const unknownAttachments = (row.message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
   const userMessage = resolveUserMessagePresentation(row.message);
-  const resolvedContext = resolveUserMessageContext(row.message);
+  // Messages from other agents fold to one line so the user's own messages stay easy to find.
+  const folded = userMessage.attribution === "agent";
+  const [expanded, setExpanded] = useState(false);
+  const revealFoldRef = findRevealRef(() => setExpanded(true));
+  const senderShell = useQuietThreadShell(
+    folded && senderThreadId
+      ? { environmentId: ctx.activeThreadEnvironmentId, threadId: senderThreadId }
+      : null,
+  );
+  const senderLabel = senderShell?.title.trim() || "Agent";
+  const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
   const chippedAttachmentIds = new Set(
@@ -283,6 +342,27 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
+  // Images or videos sent without words show as media, not as a bubble around them.
+  const mediaOnly =
+    !folded &&
+    userMessage.attribution !== "guest" &&
+    resolvedContext.text.trim() === "" &&
+    userAudio.length === 0 &&
+    unchippedFiles.length === 0 &&
+    unknownAttachments.length === 0 &&
+    regularImages.length + userVideos.length > 0;
+  // A lone image keeps its own shape; a 4:3 crop hides most of a wide screenshot.
+  const loneImage =
+    mediaOnly &&
+    userVideos.length === 0 &&
+    regularImages.length === 1 &&
+    regularImages[0]!.source?.kind !== "snap-shot";
+  // Several images sent without words share one rounded shape, split by hairlines.
+  const collage =
+    mediaOnly &&
+    userVideos.length === 0 &&
+    regularImages.length > 1 &&
+    regularImages.every((image) => image.source?.kind !== "snap-shot");
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
     .map((record) => record.contextId);
@@ -291,6 +371,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     (reference) => reference.label,
   );
   const promptLink = promptLinkFor(plainText);
+  const foldSummary =
+    plainText
+      .split(/\r?\n/)
+      .find((line) => line.trim().length > 0)
+      ?.trim() ?? "";
   const contextClipboardFragment =
     resolvedContext.records.length === 0
       ? null
@@ -341,6 +426,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   };
   const renderContextReference = (reference: ChatMarkdownContextReference) => {
     const record = asKnownContextRecord(resolvedContext.recordsById.get(reference.contextId));
+    if (record?.kind === "file" && userAudio.some((file) => file.id === record.attachmentId))
+      return null;
     const annotationImage =
       record?.kind === "preview-annotation"
         ? resolvePreviewAnnotationImage({
@@ -379,7 +466,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   };
 
   return (
-    <div className="group flex flex-col items-end gap-1">
+    <div
+      className="group flex flex-col items-end gap-1"
+      data-user-message-attribution={folded ? "agent" : undefined}
+    >
       {userMessage.attribution === "t3code" ? (
         <p
           className="me-1 text-2xs text-muted-foreground/70"
@@ -387,178 +477,285 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         >
           Sent by T3 Code
         </p>
-      ) : userMessage.attribution === "agent" ? (
-        <p className="me-1 text-2xs text-muted-foreground/70" data-user-message-attribution="agent">
-          {senderThreadId ? (
-            <InlineButton
-              onClick={() => ctx.onOpenThread(senderThreadId)}
-              tone="muted"
-              aria-label="Open sending thread"
-            >
-              Sent by another agent
-            </InlineButton>
-          ) : (
-            "Sent by another agent"
-          )}
-        </p>
+      ) : null}
+      {/* The row's heading already names the guest for screen readers. */}
+      {userMessage.guestName !== undefined ? (
+        <div aria-hidden>
+          <GuestMessageName name={userMessage.guestName} />
+        </div>
       ) : null}
       {row.message.inputIntent === "steer" ||
       row.message.inputIntent === "promoted_queued_to_steer" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
-        <MessageAuthorHeading>You</MessageAuthorHeading>
-        {(regularImages.length > 0 || userVideos.length > 0) && (
-          <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
-            {regularImages.map((image) => (
+      <div
+        className={cn(
+          "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
+          BUBBLE_CHIP_CLASS_NAME,
+          userMessage.attribution === "guest"
+            ? guestBubbleClassName(false)
+            : !mediaOnly && "bg-message",
+          !folded && !mediaOnly && "p-3",
+          folded && expanded && "w-full",
+        )}
+      >
+        {/* Outside the fold so a collapsed message still has a heading to navigate to. */}
+        <MessageAuthorHeading>
+          {folded
+            ? senderLabel
+            : userMessage.guestName === undefined
+              ? "You"
+              : `${userMessage.guestName} (guest)`}
+        </MessageAuthorHeading>
+        {folded ? (
+          <FoldedMessageHeader
+            icon={MessagesSquareIcon}
+            label={senderLabel}
+            summary={foldSummary}
+            expanded={expanded}
+            onToggle={() => setExpanded((value) => !value)}
+          />
+        ) : null}
+        {/* Find reads the DOM, so a folded message stays mounted but hidden while find is open. */}
+        {!folded || expanded || ctx.findActive ? (
+          <div
+            ref={folded ? revealFoldRef : undefined}
+            hidden={folded && !expanded}
+            className={cn(
+              folded && "px-3 pb-3",
+              folded && !ctx.findActive && "max-h-96 overflow-auto",
+            )}
+          >
+            {(regularImages.length > 0 || userVideos.length > 0) && (
               <div
-                key={image.id}
                 className={cn(
-                  "bg-background/70",
-                  image.source?.kind === "snap-shot" && image.previewUrl
-                    ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
-                    : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+                  "grid",
+                  !mediaOnly
+                    ? "mb-2 max-w-[210px] grid-cols-2 gap-2"
+                    : loneImage
+                      ? "max-w-full"
+                      : collage
+                        ? cn(
+                            MEDIA_EDGE_CLASS_NAME,
+                            "w-80 max-w-full gap-px overflow-hidden rounded-2xl bg-black/9 dark:bg-white/12",
+                            regularImages.length === 2
+                              ? "auto-rows-[12rem] grid-cols-2"
+                              : regularImages.length === 3
+                                ? "auto-rows-[calc(6rem-0.5px)] grid-cols-[3fr_2fr]"
+                                : "auto-rows-[6rem] grid-cols-2",
+                          )
+                        : "w-80 max-w-full grid-cols-2 gap-2",
                 )}
               >
-                {image.previewUrl ? (
-                  <button
-                    type="button"
-                    className="block h-full w-full cursor-zoom-in"
-                    aria-label={`Preview ${image.name}`}
-                    onClick={() => {
-                      const preview = buildExpandedImagePreview(regularImages, image.id);
-                      if (!preview) return;
-                      ctx.onImageExpand(preview);
-                    }}
+                {regularImages.map((image, index) => (
+                  <div
+                    key={image.id}
+                    className={cn(
+                      "bg-background/70",
+                      image.source?.kind === "snap-shot" && image.previewUrl
+                        ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
+                        : loneImage
+                          ? cn(MEDIA_EDGE_CLASS_NAME, "overflow-hidden rounded-2xl")
+                          : collage
+                            ? cn(
+                                "overflow-hidden bg-background",
+                                regularImages.length === 3 && index === 0 && "row-span-2",
+                                regularImages.length > 3 &&
+                                  regularImages.length % 2 === 1 &&
+                                  index === regularImages.length - 1 &&
+                                  "col-span-2",
+                              )
+                            : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+                    )}
                   >
-                    <AttachmentImage
-                      name={image.name}
-                      mimeType={image.mimeType}
-                      src={image.previewUrl}
-                      alt={image.name}
-                      decoding="async"
-                      className="block size-full object-cover"
-                    />
-                  </button>
-                ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground/70">
-                    {image.name}
-                  </div>
-                )}
-                {image.previewUrl && image.source?.kind === "snap-shot" ? (
-                  <SnapShotAttachmentDetails source={image.source} />
-                ) : null}
-              </div>
-            ))}
-            {userVideos.map((file) => (
-              <UserVideoAttachment key={file.id} file={file} />
-            ))}
-          </div>
-        )}
-        {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
-          <div className="mb-2 flex flex-col gap-1">
-            {unchippedFiles.map((file) => {
-              const fileIdentity = (
-                <>
-                  <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
-                  <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                </>
-              );
-              if (file.downloadable !== false) {
-                return (
-                  <div key={file.id} className="flex min-w-0 items-center gap-1">
-                    <button
-                      type="button"
-                      aria-label={`Preview ${file.name}`}
-                      onClick={() => ctx.onFileOpen(file)}
-                      className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
-                    >
-                      {fileIdentity}
-                      <EyeIcon className="size-4 shrink-0" />
-                    </button>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            size="icon-xs"
-                            variant="ghost-muted"
-                            aria-label={`Download ${file.name}`}
-                            onClick={() => ctx.onFileDownload(file)}
-                          />
-                        }
+                    {image.previewUrl ? (
+                      <button
+                        type="button"
+                        className="block h-full w-full cursor-zoom-in"
+                        aria-label={`Preview ${image.name}`}
+                        onClick={() => {
+                          const preview = buildExpandedImagePreview(regularImages, image.id);
+                          if (!preview) return;
+                          ctx.onImageExpand(preview);
+                        }}
                       >
-                        <DownloadIcon />
-                      </TooltipTrigger>
-                      <TooltipPopup side="top">Download {file.name}</TooltipPopup>
-                    </Tooltip>
+                        {/* Isolate the thumbnail raster from nearby activity repaints in Chromium. */}
+                        <AttachmentImage
+                          name={image.name}
+                          mimeType={image.mimeType}
+                          src={image.previewUrl}
+                          alt={image.name}
+                          decoding="async"
+                          loading="lazy"
+                          className={cn(
+                            "block transform-gpu",
+                            // A fixed height keeps the row from growing when the image loads.
+                            loneImage
+                              ? "h-48 w-auto min-w-24 max-w-full object-cover"
+                              : "size-full object-cover",
+                          )}
+                        />
+                      </button>
+                    ) : (
+                      <div
+                        className={cn(
+                          "flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground/70",
+                          loneImage && "h-48 w-64 max-w-full",
+                          collage && "h-full",
+                        )}
+                      >
+                        {image.name}
+                      </div>
+                    )}
+                    {image.previewUrl && image.source?.kind === "snap-shot" ? (
+                      <SnapShotAttachmentDetails source={image.source} />
+                    ) : null}
                   </div>
-                );
-              }
-
-              return (
-                <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                  {fileIdentity}
-                </div>
-              );
-            })}
-            {unknownAttachments.map((attachment) => (
-              <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                <PierreEntryIcon
-                  pathValue={attachment.name}
-                  kind="file"
-                  theme={ctx.resolvedTheme}
-                />
-                <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+                ))}
+                {userVideos.map((file) => (
+                  <UserVideoAttachment key={file.id} file={file} />
+                ))}
               </div>
-            ))}
+            )}
+            {userAudio.length > 0 ? (
+              <div className="mb-2 flex max-w-full flex-col gap-1">
+                {userAudio.map((file) => (
+                  <InlineAudioPreview
+                    key={file.id}
+                    name={file.name}
+                    environmentId={ctx.activeThreadEnvironmentId}
+                    resource={{
+                      _tag: "attachment",
+                      attachmentId: file.id,
+                      fileName: file.name,
+                      mimeType: file.mimeType,
+                      disposition: "inline",
+                    }}
+                    onOpen={() => ctx.onFileOpen(file)}
+                  />
+                ))}
+              </div>
+            ) : null}
+            {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
+              <div className="mb-2 flex flex-col gap-1">
+                {unchippedFiles.map((file) => {
+                  const fileIdentity = (
+                    <>
+                      <PierreEntryIcon
+                        pathValue={file.name}
+                        kind="file"
+                        theme={ctx.resolvedTheme}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                    </>
+                  );
+                  if (file.downloadable !== false) {
+                    return (
+                      <div key={file.id} className="flex min-w-0 items-center gap-1">
+                        <button
+                          type="button"
+                          aria-label={`Preview ${file.name}`}
+                          onClick={() => ctx.onFileOpen(file)}
+                          className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
+                        >
+                          {fileIdentity}
+                          <EyeIcon className="size-4 shrink-0" />
+                        </button>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                size="icon-xs"
+                                variant="ghost-muted"
+                                aria-label={`Download ${file.name}`}
+                                onClick={() => ctx.onFileDownload(file)}
+                              />
+                            }
+                          >
+                            <DownloadIcon />
+                          </TooltipTrigger>
+                          <TooltipPopup side="top">Download {file.name}</TooltipPopup>
+                        </Tooltip>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                      {fileIdentity}
+                    </div>
+                  );
+                })}
+                {unknownAttachments.map((attachment) => (
+                  <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                    <PierreEntryIcon
+                      pathValue={attachment.name}
+                      kind="file"
+                      theme={ctx.resolvedTheme}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div onCopyCapture={onBodyCopyCapture}>
+              <CollapsibleUserMessageBody
+                text={resolvedContext.text}
+                renderContextReference={renderContextReference}
+                skills={ctx.skills}
+                markdownCwd={ctx.markdownCwd}
+                collapsible={!folded}
+              />
+            </div>
           </div>
         ) : null}
-        <div onCopyCapture={onBodyCopyCapture}>
-          <CollapsibleUserMessageBody
-            text={resolvedContext.text}
-            renderContextReference={renderContextReference}
-            skills={ctx.skills}
-            markdownCwd={ctx.markdownCwd}
-          />
-        </div>
       </div>
       <UserMessageProjectedStatus row={row} />
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
-        <div className="flex shrink-0 items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-              {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipPopup>
-          </Tooltip>
-          <div className="flex items-center gap-0.5">
-            {typeof revertTurnCount === "number" && (
-              <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-            )}
-            {resolvedContext.text && (
-              <MessageCopyButton
-                text={contextClipboardFragment ? resolvedContext.text : plainText}
-                {...(contextClipboardFragment
-                  ? {
-                      extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
-                    }
-                  : {})}
-                variant="ghost"
-              />
-            )}
-            {promptLink !== null && (
-              <MessageCopyButton
-                text={promptLink}
-                label="Copy prompt link"
-                icon={LinkIconNode}
-                variant="ghost"
-              />
-            )}
+      {!folded || expanded ? (
+        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+          <div className="flex shrink-0 items-center gap-2">
+            {folded && senderThreadId ? (
+              <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
+                Open thread
+              </InlineButton>
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+                {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+              </TooltipPopup>
+            </Tooltip>
+            <div className="flex items-center gap-0.5">
+              {typeof revertTurnCount === "number" && (
+                <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
+              )}
+              {resolvedContext.text && (
+                <MessageCopyButton
+                  text={contextClipboardFragment ? resolvedContext.text : plainText}
+                  {...(contextClipboardFragment
+                    ? {
+                        extraFlavors: {
+                          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment,
+                        },
+                      }
+                    : {})}
+                  variant="ghost"
+                />
+              )}
+              {promptLink !== null && (
+                <MessageCopyButton
+                  text={promptLink}
+                  label="Copy prompt link"
+                  icon={LinkIconNode}
+                  variant="ghost"
+                />
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -614,7 +811,7 @@ function RevertUserMessageButton({
           />
         }
       >
-        <Undo2Icon className="size-3" />
+        <PencilIcon className="size-3" />
       </TooltipTrigger>
       <TooltipPopup side="top">Edit from here</TooltipPopup>
     </Tooltip>
@@ -628,15 +825,16 @@ const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
   text: string;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills: ReadonlyArray<ServerProviderSkill>;
   markdownCwd: string | undefined;
-  footer?: ReactNode;
+  collapsible?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const revealForFind = () => setExpanded(true);
   const revealRef = findRevealRef(revealForFind);
   const hasVisibleBody = props.text.trim().length > 0;
-  const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
+  const canCollapse =
+    props.collapsible !== false && hasVisibleBody && shouldCollapseUserMessage(props.text);
   const isCollapsed = canCollapse && !expanded;
   const showCollapseControl = canCollapse;
 
@@ -669,14 +867,8 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           />
         </div>
       ) : null}
-      {showCollapseControl || props.footer ? (
-        <div
-          className={cn(
-            "mt-1.5 flex items-center gap-2",
-            showCollapseControl && props.footer ? "justify-between" : "justify-end",
-          )}
-          data-user-message-footer="true"
-        >
+      {showCollapseControl ? (
+        <div className="mt-1.5 flex items-center justify-end gap-2" data-user-message-footer="true">
           {showCollapseControl ? (
             <Button
               type="button"
@@ -690,9 +882,6 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
               {expanded ? "Show less" : "Show full message"}
             </Button>
           ) : null}
-          {props.footer ? (
-            <div className="ml-auto flex items-center gap-2">{props.footer}</div>
-          ) : null}
         </div>
       ) : null}
     </div>
@@ -702,7 +891,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills: ReadonlyArray<ServerProviderSkill>;
   markdownCwd: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);

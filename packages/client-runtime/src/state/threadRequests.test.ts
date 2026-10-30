@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   NodeId,
   ProviderSessionId,
   RuntimeRequestId,
@@ -13,8 +14,15 @@ import {
   createQuestionHistoryProjector,
   derivePendingThreadRequests,
   declinePendingApprovals,
+  sendApprovalFeedback,
+  makeThreadRequestsResolvedAnnouncer,
+  onThreadRequestsResolved,
+  pruneResolvedUserInputDrafts,
+  resolvedQuestionDraftKeys,
   seedUserInputDraftAnswers,
+  userInputDraftKey,
   type ApprovalResponder,
+  type ThreadRequestsResolved,
   type ThreadPendingApproval,
 } from "./threadRequests.ts";
 
@@ -71,6 +79,123 @@ describe("declining approvals before sending", () => {
       ),
     ).toBe(true);
     expect(respond).not.toHaveBeenCalled();
+  });
+
+  it("sends feedback only to the displayed request, leaving other approvals pending", async () => {
+    const respond = vi.fn<ApprovalResponder>(async () => AsyncResult.success(undefined));
+    const pending = derivePendingThreadRequests({
+      runtimeRequests: [
+        {
+          ...projection.runtimeRequests[0]!,
+          kind: "command",
+          responseCapability: {
+            type: "live",
+            providerSessionId: ProviderSessionId.make("claude-session"),
+            supportsFeedback: true,
+          },
+        },
+        { ...projection.runtimeRequests[0]!, id: second.requestId, kind: "command" },
+      ],
+      turnItems: [],
+    });
+    expect(await sendApprovalFeedback(pending.approvals[0]!, "  Safer please.  ", respond)).toBe(
+      true,
+    );
+    expect(respond.mock.calls).toEqual([[approval.requestId, "decline", "Safer please."]]);
+  });
+
+  it("keeps feedback unsent when unsupported, stale, empty or rejected", async () => {
+    const respond = vi.fn<ApprovalResponder>(async () => AsyncResult.failure(Cause.fail("failed")));
+    expect(await sendApprovalFeedback(approval, "Safer please.", respond)).toBe(false);
+    expect(
+      await sendApprovalFeedback(
+        { ...approval, supportsFeedback: true, responseCapability: "not_resumable" },
+        "Safer please.",
+        respond,
+      ),
+    ).toBe(false);
+    expect(await sendApprovalFeedback({ ...approval, supportsFeedback: true }, "  ", respond)).toBe(
+      false,
+    );
+    expect(respond).not.toHaveBeenCalled();
+    expect(
+      await sendApprovalFeedback({ ...approval, supportsFeedback: true }, "Safer please.", respond),
+    ).toBe(false);
+  });
+});
+
+describe("pruning resolved user input drafts", () => {
+  const answered = userInputDraftKey("env", "thread", "answered");
+  const pending = userInputDraftKey("env", "thread", "pending");
+  const otherThread = userInputDraftKey("env", "thread-2", "answered");
+  const otherEnvironment = userInputDraftKey("env-2", "thread", "answered");
+  const drafts = {
+    [answered]: 1,
+    [pending]: 2,
+    [otherThread]: 3,
+    [otherEnvironment]: 4,
+  };
+
+  it("drops only the thread's requests that are no longer pending", () => {
+    expect(pruneResolvedUserInputDrafts(drafts, "env", "thread", ["pending"])).toEqual({
+      [pending]: 2,
+      [otherThread]: 3,
+      [otherEnvironment]: 4,
+    });
+  });
+
+  it("returns the same record when nothing resolved", () => {
+    expect(pruneResolvedUserInputDrafts(drafts, "env", "thread", ["answered", "pending"])).toBe(
+      drafts,
+    );
+  });
+});
+
+describe("resolved question draft keys", () => {
+  const prefix = "env:question-thread-";
+  const key = (request: string, question: string) =>
+    `${prefix}${encodeURIComponent(JSON.stringify([request, question]))}`;
+
+  it("returns the thread's keys for requests that are no longer pending", () => {
+    const keys = [
+      key("pending", "first"),
+      key("pending", "second"),
+      key("pending-2", "first"),
+      key("answered", "first"),
+      "env:question-other-thread-x",
+    ];
+    expect(resolvedQuestionDraftKeys(keys, prefix, [RuntimeRequestId.make("pending")])).toEqual([
+      key("pending-2", "first"),
+      key("answered", "first"),
+    ]);
+  });
+});
+
+describe("announcing resolved thread requests", () => {
+  const environmentId = EnvironmentId.make("env");
+  const threadId = v2Projection.thread.id;
+  const first = RuntimeRequestId.make("first");
+  const second = RuntimeRequestId.make("second");
+
+  function record() {
+    const events: ThreadRequestsResolved[] = [];
+    const unsubscribe = onThreadRequestsResolved((event) => events.push(event));
+    return { events, [Symbol.dispose]: unsubscribe };
+  }
+
+  it("announces the first projection, then only when a request leaves pending", () => {
+    using recorder = record();
+    const announce = makeThreadRequestsResolvedAnnouncer(environmentId, threadId);
+
+    announce([first]);
+    announce([first, second]);
+    announce([first, second]);
+    announce([second]);
+
+    expect(recorder.events).toEqual([
+      { environmentId, threadId, pendingRequestIds: [first] },
+      { environmentId, threadId, pendingRequestIds: [second] },
+    ]);
   });
 });
 

@@ -22,8 +22,9 @@ import {
   pullRequestStatsRefreshBatches,
   mergePullRequestDiffStats,
   partitionPullRequestsWithPriority,
-  readPullRequestListSnapshot,
-  writePullRequestListSnapshot,
+  pullRequestAuthorChoices,
+  selectedPullRequestAuthor,
+  pullRequestLabelChoices,
   rankPullRequestMatches,
   rankPullRequestsBlockedOnAuthor,
   rankPullRequestsByMergeReadiness,
@@ -47,7 +48,7 @@ function entry(
 ) {
   return {
     environmentId: "env-1",
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     host: "github.com",
     projectId: "project-1",
     projectTitle: "t3code",
@@ -347,69 +348,6 @@ describe("partitioning with the hosts' own priority reads", () => {
   });
 });
 
-describe("the list snapshot across a reload", () => {
-  const makeStorage = () => {
-    const held = new Map<string, string>();
-    return {
-      getItem: (key: string) => held.get(key) ?? null,
-      setItem: (key: string, value: string) => void held.set(key, value),
-    };
-  };
-  const data = {
-    entries: [entry({ number: 1 })],
-    viewers: { "github.com": "Bilal" },
-    providers: [],
-    errors: [{ projectId: "project-1", message: "boom" }],
-    truncated: true,
-    nextCursors: { "pingdotgg/t3code": "cursor-1" },
-  } as never;
-
-  it("carries neither stale failures nor stale cursors", () => {
-    const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.data.errors).toEqual([]);
-    expect(snapshot?.data.nextCursors).toEqual({});
-  });
-
-  it("caps the accumulated rows but keeps the whole host set", () => {
-    const storage = makeStorage();
-    const manyEntries = Array.from({ length: 120 }, (_, index) => entry({ number: index + 1 }));
-    const viewers = { "github.com": "Bilal", "gitlab.com": "Bilal" };
-    const providers = [
-      {
-        host: "github.com",
-        kind: "github",
-        searchesOnHost: true,
-        projectCount: 1,
-        configured: true,
-        detail: null,
-      },
-      {
-        host: "gitlab.com",
-        kind: "gitlab",
-        searchesOnHost: true,
-        projectCount: 1,
-        configured: true,
-        detail: null,
-      },
-    ];
-    const accumulated = {
-      entries: manyEntries,
-      viewers,
-      providers,
-      errors: [],
-      truncated: true,
-      nextCursors: {},
-    } as never;
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data: accumulated });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.data.entries).toHaveLength(99);
-    expect(snapshot?.data.viewers).toEqual(viewers);
-    expect(snapshot?.data.providers).toEqual(providers);
-  });
-});
-
 describe("remembered pull request list controls", () => {
   const makeStorage = () => {
     const held = new Map<string, string>();
@@ -698,10 +636,11 @@ describe("pull request quick actions", () => {
     ...(actions === undefined ? {} : { actions }),
   });
 
-  it("offers what each host reports, and GitHub's legacy set when a server reports none", () => {
+  it("offers what each host reports, and the host's own set when a server reports none", () => {
     const actionsOf = pullRequestHostActions([
       summary("bitbucket.org", "bitbucket", ["merge", "close"]),
       summary("github.com", "github"),
+      summary("gitlab.com", "gitlab"),
     ]);
     const bitbucket = actionsOf({
       host: "bitbucket.org",
@@ -716,6 +655,11 @@ describe("pull request quick actions", () => {
       "close",
       "ready",
     ]);
+    const gitlab = actionsOf({
+      host: "gitlab.com",
+      provider: SourceControlProviderKind.make("gitlab"),
+    });
+    expect(pullRequestQuickActions({ state: "open", isDraft: false }, gitlab)).toEqual([]);
   });
 });
 
@@ -749,7 +693,7 @@ describe("findProjectForRepository", () => {
       repositoryIdentity: {
         canonicalKey: `dev.azure.com/${path}`,
         locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
-        provider: "azure-devops",
+        provider: SourceControlProviderKind.make("azure-devops"),
         displayName: path,
         owner: "contoso",
         name: path.split("/").at(-1)!,
@@ -785,7 +729,7 @@ describe("findProjectForRepository", () => {
       repositoryIdentity: {
         canonicalKey: `github.com/${repository}`,
         locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         displayName: repository,
       },
     });
@@ -813,5 +757,69 @@ describe("findProjectForRepository", () => {
         selectedEnvironmentId: "env-connecting",
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("filter picker choices", () => {
+  const actor = (login: string, name: string | null = null) => ({ login, name, avatarUrl: null });
+
+  it("offers authors the host found that no loaded row carries, after the loaded ones", () => {
+    const loaded = [
+      { actor: actor("julius", "Julius"), count: 4, mergedCount: 3 },
+      { actor: actor("theo"), count: 1, mergedCount: 0 },
+    ];
+
+    const choices = pullRequestAuthorChoices(
+      loaded,
+      [actor("Julius"), actor("juliana", "Juliana")],
+      "jul",
+    );
+
+    expect(choices.map((choice) => [choice.actor.login, choice.count])).toEqual([
+      ["julius", 4],
+      ["juliana", 0],
+    ]);
+  });
+
+  it("keeps showing an author picked from the host's search once the search clears", () => {
+    const loaded = [{ actor: actor("julius"), count: 4, mergedCount: 3 }];
+    const hosted = [actor("Juliana", "Juliana")];
+
+    expect(selectedPullRequestAuthor(loaded, hosted, "juliana")?.actor).toEqual(
+      actor("Juliana", "Juliana"),
+    );
+    expect(selectedPullRequestAuthor(loaded, [], "juliana")?.actor.login).toBe("juliana");
+    expect(selectedPullRequestAuthor(loaded, hosted, "JULIUS")?.count).toBe(4);
+    expect(selectedPullRequestAuthor(loaded, hosted, undefined)).toBeUndefined();
+  });
+
+  it("puts the host's authors after the first loaded matches rather than after all of them", () => {
+    const loaded = Array.from({ length: 40 }, (_, index) => ({
+      actor: actor(`dev-${index}`),
+      count: 1,
+      mergedCount: 0,
+    }));
+
+    const choices = pullRequestAuthorChoices(loaded, [actor("dev-from-host")], "dev");
+
+    expect(choices.slice(0, 30).map((choice) => choice.actor.login)).toContain("dev-from-host");
+  });
+
+  it("keeps a loaded label's count when only the host's search found it", () => {
+    const loaded = [{ name: "size:XL", color: "d93f0b", count: 7 }];
+
+    const choices = pullRequestLabelChoices(
+      loaded,
+      [
+        { name: "size:XL", color: "d93f0b" },
+        { name: "bug", color: null },
+      ],
+      "xl-ish",
+    );
+
+    expect(choices).toEqual([
+      { name: "size:XL", color: "d93f0b", count: 7 },
+      { name: "bug", color: null, count: 0 },
+    ]);
   });
 });

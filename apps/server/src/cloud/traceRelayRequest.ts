@@ -15,11 +15,7 @@ export const traceRelayRequest = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> => effect.pipe(withRelayClientTracing);
 
-/**
- * Call it only after the session is verified as T3 Connect: an unverified
- * request must not add spans to a trace it names. Authentication therefore
- * runs on the local tracer, and its timing is recorded here afterwards.
- */
+/** Call only after T3 Connect verification to prevent trace injection. Authenticate on the local tracer and record its timing here. */
 export const traceAuthenticatedRelayRequest = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   authentication: { readonly startTime: bigint; readonly endTime: bigint },

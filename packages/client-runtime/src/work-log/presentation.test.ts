@@ -4,14 +4,11 @@ import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/con
 import * as DateTime from "effect/DateTime";
 
 import {
-  commandDetailRepeatsCommand,
-  extractCommandOutputText,
   resolveWorkEntryToolPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
-  workEntryIndicatesToolSuccess,
 } from "./presentation.js";
 
 function commandItem(
@@ -62,7 +59,6 @@ describe("workEntryIndicatesToolFailure", () => {
         structuredPayload,
       };
       expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(failed);
-      expect(workEntryIndicatesToolSuccess(entry)).toBe(!failed);
       expect(JSON.stringify(toolItemForDisplay(structuredPayload))).not.toContain('"output":');
     },
   );
@@ -112,7 +108,6 @@ describe("resolveWorkEntryToolPresentation", () => {
       "Failed to clone a repository",
     );
     expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(true);
-    expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
     const childFailure = {
       ...entry,
       label: "T3-code.task_status",
@@ -120,7 +115,6 @@ describe("resolveWorkEntryToolPresentation", () => {
       toolData: { output: { taskId: "child", status: "failed", summary: "command not found" } },
     };
     expect(workEntryDisplayIndicatesToolFailure(childFailure)).toBe(false);
-    expect(workEntryIndicatesToolSuccess(childFailure)).toBe(true);
   });
   it.each([
     "mcp__t3-code__preview_click",
@@ -165,6 +159,19 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toBe("Failed to click in the preview browser");
   });
 
+  it.each([
+    ["https://github.com/acme/web/pull/7", "PR #7"],
+    ["https://gitlab.com/acme/web/-/merge_requests/7", "MR #7"],
+  ])("names a linked change request with its host's term (%s)", (url, target) => {
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "T3-code.link_pull_request",
+        toolLifecycleStatus: "completed",
+        toolData: { arguments: { url } },
+      })?.displayName,
+    ).toMatch(new RegExp(` ${target}$`));
+  });
+
   it("does not brand unknown tools or another server's matching tool name", () => {
     for (const label of [
       "mcp__github__preview_click",
@@ -180,67 +187,5 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
-  });
-});
-
-describe("command work-log details", () => {
-  it("extracts Claude result blocks and projected output", () => {
-    expect(
-      extractCommandOutputText({
-        result: {
-          content: [
-            { type: "text", text: "first" },
-            { type: "text", text: "second" },
-          ],
-        },
-      }),
-    ).toBe("first\nsecond");
-    expect(extractCommandOutputText({ rawOutput: { content: "projected summary" } })).toBe(
-      "projected summary",
-    );
-  });
-
-  it("treats an ingestion-truncated echo of a long command as a repeat", () => {
-    const command = `git add -A && git commit -m "${"x".repeat(200)}"`;
-    const truncated = `Bash: ${command}`.slice(0, 177) + "...";
-    expect(
-      commandDetailRepeatsCommand({
-        detail: truncated,
-        command,
-        rawCommand: null,
-        toolName: "Bash",
-        data: { toolName: "Bash", command },
-      }),
-    ).toBe(true);
-    expect(
-      commandDetailRepeatsCommand({
-        detail: "Bash: printf hello...",
-        command: "printf goodbye",
-        rawCommand: null,
-        toolName: "Bash",
-        data: { toolName: "Bash", command: "printf goodbye" },
-      }),
-    ).toBe(false);
-  });
-
-  it("treats ACP command echoes as synthetic even without a tool kind", () => {
-    expect(
-      commandDetailRepeatsCommand({
-        detail: "pnpm test",
-        command: "pnpm test",
-        rawCommand: null,
-        toolName: undefined,
-        data: { toolCallId: "tool-1", command: "pnpm test" },
-      }),
-    ).toBe(true);
-    expect(
-      commandDetailRepeatsCommand({
-        detail: "pnpm test",
-        command: "pnpm test",
-        rawCommand: null,
-        toolName: undefined,
-        data: { command: "pnpm test" },
-      }),
-    ).toBe(false);
   });
 });

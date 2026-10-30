@@ -110,10 +110,7 @@ export class SessionControl {
     return this.agentMayAct(agentId) && this.owner === null;
   }
 
-  /**
-   * A read that needs no control and does not queue, so an agent can look at
-   * a page while a human drives it without holding up the human's input.
-   */
+  /** Read without control or queueing so agents can observe without delaying human input. */
   observe<A>(run: () => Promise<A>) {
     this.assertOpen();
     return run();

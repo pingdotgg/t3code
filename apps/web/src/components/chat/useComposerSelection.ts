@@ -12,7 +12,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
-import { deriveThreadRuntime } from "@t3tools/client-runtime/state/thread-execution";
+import type { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -30,7 +30,7 @@ interface ComposerSelectionInput {
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly draftThread: DraftSessionState | null;
   readonly activeThread: EnvironmentThreadShell | undefined;
-  readonly activeRuntime: ReturnType<typeof deriveThreadRuntime>;
+  readonly activeRuntime: ReturnType<typeof deriveThreadStructureRuntime>;
   readonly activeProjectSettings: {
     readonly settings: { readonly newWorktreesStartFromOrigin: boolean };
   };
@@ -131,7 +131,6 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const getModelDisabledReason = makeModelDisabledReason(
     currentModelSelection
       ? {
-          providers: providerStatuses,
           hasStartedSession,
           supportsProviderSwitchingViaHandoff,
           currentModelSelection,
@@ -191,7 +190,6 @@ export function useComposerSelection(input: ComposerSelectionInput) {
         ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
         : { instanceId, model: resolvedModel };
     const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
-      providers: providerStatuses,
       hasStartedSession: activeRuntime !== null,
       supportsProviderSwitchingViaHandoff,
       currentModelSelection: activeThread.modelSelection,

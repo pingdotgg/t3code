@@ -5,6 +5,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -642,6 +643,51 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.notProperty(error, "detail");
       assert.notProperty(error, "cause");
       assert.notInclude(error.message, secret);
+    }),
+  );
+
+  it.effect("fails pending requests when input ends while the process is still running", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        terminationError: Effect.never,
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      yield* Queue.end(input);
+      yield* TestClock.adjust("249 millis");
+      assert.isUndefined(pending.pollUnsafe());
+      yield* TestClock.adjust("1 millis");
+
+      const failure = yield* Fiber.join(pending).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the pending request to fail"),
+        }),
+      );
+      assert.instanceOf(failure, CodexError.CodexAppServerInputStreamEndedError);
+    }),
+  );
+
+  it.effect("reports a process exit that follows input end", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const exitError = new CodexError.CodexAppServerProcessExitedError({ code: 1, pid: 123 });
+      const exited = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        terminationError: Deferred.await(exited),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.end(input);
+      yield* TestClock.adjust("100 millis");
+      yield* Deferred.succeed(exited, exitError);
+
+      assert.strictEqual(yield* Deferred.await(termination), exitError);
     }),
   );
 });

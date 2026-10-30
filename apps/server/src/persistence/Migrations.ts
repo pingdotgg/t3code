@@ -70,6 +70,12 @@ import Migration0064 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.t
 import Migration0065 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
 import Migration0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
 import Migration0067 from "./Migrations/067_WebhookDedupe.ts";
+import Migration0068 from "./Migrations/068_ShellStopRequestIndex.ts";
+import Migration0069 from "./Migrations/069_ThreadMessageSearch.ts";
+import Migration0070 from "./Migrations/070_PeerLinks.ts";
+import Migration0071 from "./Migrations/071_PeerLinkFence.ts";
+import Migration0072 from "./Migrations/072_WaitingLinkRequestIndex.ts";
+import Migration0073 from "./Migrations/073_ActiveTurnItemIndexes.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -140,6 +146,12 @@ const migrationEntries = [
   [65, "CodexUsageNativeTurnIndex", Migration0065],
   [66, "RepairClientSettlementTimestamps", Migration0066],
   [67, "WebhookDedupe", Migration0067],
+  [68, "ShellStopRequestIndex", Migration0068],
+  [69, "ThreadMessageSearch", Migration0069],
+  [70, "PeerLinks", Migration0070],
+  [71, "PeerLinkFence", Migration0071],
+  [72, "WaitingLinkRequestIndex", Migration0072],
+  [73, "ActiveTurnItemIndexes", Migration0073],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -155,12 +167,7 @@ const makeMigrationLoader = (throughId?: number) =>
 
 const FIRST_V2_MIGRATION_ID = 55;
 
-/**
- * Fail before migrating when the migrator would skip one of V2's own
- * migrations. It skips every id up to the highest recorded one, whatever name
- * was recorded, so a database that took a V2 id for another migration would
- * start without V2's schema and fail on first use.
- */
+// Migrators skip ids up to the highest recorded; reject collisions that would skip V2 schema.
 const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function* (
   throughId?: number,
 ) {

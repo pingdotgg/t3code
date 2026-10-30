@@ -12,7 +12,7 @@ it("preserves in-app thread links through the shared Markdown sanitizer", () => 
     .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
   const tree = processor.runSync(
     processor.parse(
-      '[Open thread](t3-thread://v1/environment/thread)\n\n<a href="javascript:alert(1)">Unsafe</a>',
+      '[Open thread](t3-thread://v1/thread)\n\n<t3-thread://v2/environment/thread:a%3A1>\n\n<a href="javascript:alert(1)">Unsafe</a>',
     ),
   );
   expect(tree.children[0]).toMatchObject({
@@ -20,8 +20,18 @@ it("preserves in-app thread links through the shared Markdown sanitizer", () => 
     children: [
       {
         tagName: "a",
-        properties: { href: "t3-thread://v1/environment/thread" },
+        properties: { href: "t3-thread://v1/thread" },
         children: [{ type: "text", value: "Open thread" }],
+      },
+    ],
+  });
+  expect(tree.children[2]).toMatchObject({
+    tagName: "p",
+    children: [
+      {
+        tagName: "a",
+        properties: { href: "t3-thread://v2/environment/thread:a%3A1" },
+        children: [{ type: "text", value: "t3-thread://v2/environment/thread:a%3A1" }],
       },
     ],
   });
@@ -46,7 +56,6 @@ it("keeps backslashes that CommonMark would read as escapes in prose Windows pat
   expect(
     render(String.raw`Saved to C:\Users\me\.t3\_build and (C:\.scratch) and C:/work\.config.`),
   ).toBe(String.raw`Saved to C:\Users\me\.t3\_build and (C:\.scratch) and C:/work\.config.`);
-  // Paths render as written, so one an agent already escaped keeps its doubled backslashes.
   expect(render(String.raw`Escaped C:\\Users\\me`)).toBe(String.raw`Escaped C:\\Users\\me`);
   expect(render(String.raw`See C:\x and \*this\* and Note:\*that\*.`)).toBe(
     String.raw`See C:\x and *this* and Note:*that*.`,

@@ -1,5 +1,9 @@
 import {
   type EnvironmentId,
+  type ModelSelection,
+  type ServerSettings,
+  type ProjectId,
+  resolveProjectProviderInstanceEnabled,
   type UsageLimitsReport,
   type ProviderInstanceId,
   type ProviderConsumeResetCreditInput,
@@ -17,7 +21,93 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+export function exhaustedUsageWindow(
+  provider: ServerProvider | undefined,
+  now: number,
+  model?: string,
+) {
+  const exhausted = (provider?.usageLimits?.windows ?? []).filter(
+    (window) =>
+      (window.usedPercent ?? 0) >= 100 &&
+      (!window.resetsAt ||
+        !Number.isFinite(Date.parse(window.resetsAt)) ||
+        Date.parse(window.resetsAt) > now),
+  );
+  if (model === undefined) return exhausted[0];
+  switch (provider?.driver) {
+    case "cursor": {
+      const api = exhausted.find((window) => window.id === "apiPercentUsed");
+      const auto = exhausted.find((window) => window.id === "autoPercentUsed");
+      return /^(auto|default|grok|composer)/.test(model) ? auto && api : api;
+    }
+    case "antigravity": {
+      const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
+      return exhausted.find((window) => {
+        const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
+        return (
+          pool === undefined ||
+          family === undefined ||
+          pool === family ||
+          (pool === "3p" && (family === "claude" || family === "gpt"))
+        );
+      });
+    }
+    case "opencode":
+      return exhausted.find(
+        (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
+      );
+    default:
+      return exhausted[0];
+  }
+}
+
+export function resolveNewThreadModelSelection(input: {
+  readonly defaultSelection: ModelSelection | null;
+  readonly explicitSelection?: ModelSelection | null;
+  readonly fallbackSelection: ModelSelection | null;
+  readonly providers: readonly ServerProvider[];
+  readonly now: number;
+  readonly settings?: ServerSettings;
+  readonly projectId?: ProjectId | null;
+}) {
+  const selection = input.explicitSelection ?? input.defaultSelection;
+  const unchanged = { selection, fallback: null };
+  if (input.explicitSelection || !selection || !input.fallbackSelection) return unchanged;
+  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+  const window = exhaustedUsageWindow(provider, input.now, selection.model);
+  const fallback = input.providers.find(
+    (entry) => entry.instanceId === input.fallbackSelection?.instanceId,
+  );
+  if (
+    !provider ||
+    !window ||
+    !fallback?.enabled ||
+    !fallback.installed ||
+    fallback.auth.status === "unauthenticated" ||
+    !isProviderAvailable(fallback) ||
+    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
+    (input.settings &&
+      !resolveProjectProviderInstanceEnabled(
+        input.settings,
+        input.projectId ?? null,
+        fallback.instanceId,
+      ))
+  )
+    return unchanged;
+  return {
+    selection: input.fallbackSelection,
+    fallback: { provider, resetsAt: window.resetsAt ?? null },
+  };
+}
+
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";
+export const CHATGPT_USAGE_LIMIT_CODE = "subscription_sharing_usage_limit_exceeded";
+/** A ChatGPT Business admin caps plan use in other apps; only the admin can raise it. */
+export const CHATGPT_WORKSPACE_USAGE_LIMIT_CODE =
+  "subscription_sharing_workplace_individual_usage_limit_exceeded";
+/** OpenAI's partner guidelines fix this wording; the user sends it to their admin themselves. */
+export const CHATGPT_WORKSPACE_ADMIN_REQUEST =
+  "I've reached the limit for using my ChatGPT plan in T3 Code. Could you increase our workspace's usage limits so I can continue?\n\nGo to admin.openai.com → Workspace → Usage limits. Thank you!";
 
 export function usesChatGptSharing(provider: ServerProvider | null | undefined): boolean {
   return provider?.auth.status === "authenticated" && provider.auth.subscriptionSharing === true;
@@ -123,10 +213,7 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
   usageLimits: provider.usageLimits,
 });
 
-/**
- * Pass every enabled login, read or not, so an unreadable workspace still
- * counts as one.
- */
+// Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
@@ -169,11 +256,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
-    // Redeeming through a hub also clears the routing cooldown that hub holds
-    // for the account. Redeeming natively against the same subscription resets
-    // it upstream but leaves the hub refusing to route to the account until
-    // its own cooldown expires, so a hub target wins the redemption outright
-    // while the displayed balance still follows the freshest read.
+    // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
       next.redeem &&
@@ -402,11 +485,7 @@ function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }
 
-/**
- * Codex ids are slots, not allowances: a weekly-only plan reports its weekly
- * window as `primary`, other plans as `secondary`. Its windows pool by kind;
- * other drivers' ids name distinct allowances.
- */
+// Codex ids name slots, so pool by kind; other drivers' ids identify distinct allowances.
 function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWindow): string {
   return driver === "codex" ? window.kind : `${window.kind}:${window.id}`;
 }
@@ -475,9 +554,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
-    // Pace compares spend against the clock, so it is judged only over the
-    // members that have a clock; a window with no reset would otherwise
-    // count as spend with no time elapsed and skew the verdict.
+    // Judge pace only for windows with reset clocks; others add spend without elapsed time.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
       return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];

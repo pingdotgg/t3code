@@ -22,7 +22,7 @@ Choose **Float device over chat** in the toolbar to keep watching and tapping th
 device in a small window while the right panel shows something else; drag the
 window by its handle, resize it from any edge, and use **Open in right panel**
 to bring it back.
-Turn off the device hub in **Settings → Integrations → Devices** to stop the
+Turn off **Use devices** in **Settings → Devices** to stop the
 helper processes; simulators and emulators keep running until you power them
 off.
 
@@ -70,21 +70,23 @@ back from the device after a change.
 
 When an agent opens a device, it floats over the chat in web and desktop clients
 connected to the thread, the same way an agent-driven browser does. Turn off
-**Auto-show floating preview** in **Settings → Integrations → Browser** to open a
+**Auto-show floating preview** in **Settings → Browser** to open a
 right-panel tab instead. In the mobile app, open the agent's thread and tap the
 device button above the composer to watch the live screen and control it.
+On iOS layouts with an inspector, the device opens beside the thread. Maximize
+it to fill the screen; closing the full-screen view returns to the inspector.
 If the thread has several devices open, choose one in the viewer. Closing the
 viewer stops streaming and leaves the device available to the agent. Device
 activity also appears in the thread timeline.
 
 Agents drive the device through the `agent-device` command line. T3
-Code installs and starts it only after **Agent device access** is enabled. iOS
+Code installs and starts it only after **Agents can use devices** is on. iOS
 taps build a small test runner on first use, which takes a couple of minutes
 once per server. Restart an existing agent session after granting access so it
 receives the device CLI environment.
 
-To keep agents away from simulators, turn off **Agent device access** in
-**Settings → Integrations → Devices**. This hides the device tools from agents
+To keep agents away from simulators, turn off **Agents can use devices** in
+**Settings → Devices**. This hides the device tools from agents
 started from then on; your own Device panel is unaffected.
 
 ## Remote connections
@@ -92,17 +94,17 @@ started from then on; your own Device panel is unaffected.
 The device stream goes through the environment server, so it works over the
 local network, Tailscale, and T3 Connect. Live video needs a secure page
 (HTTPS or localhost); on a plain-HTTP remote origin iOS falls back to a slower
-still-image stream and Android cannot show video.
+still-image stream and Android cannot show video, except on EAS Simulator.
 
 ## SSH device hosts
 
-In Settings → Integrations → Devices, choose the environments that should use
-the host and add it under **Device hosts**. Enter an SSH alias or `user@host`, with
+In Settings → Devices, choose the environments that should use
+the host and choose **Add source → Machine over SSH**. Enter an SSH alias or `user@host`, with
 an optional identity file and port. These resolve on the environment server,
 so use the SSH configuration and keys available there. Password prompts are
 not supported.
 
-**Test connection** checks SSH, Node, npm, and platform tools without installing
+**Test connection**, in the host's menu, checks SSH, Node, npm, and platform tools without installing
 anything, with a result for each selected environment. Targets that resolve to
 the environment’s own machine are skipped, since its devices are already local.
 The first device listing installs pinned device tools on the host.
@@ -121,8 +123,45 @@ installation, and connectivity to development servers such as Metro separately.
 A simulator on another machine cannot reach Metro through your environment's
 localhost without forwarding or another reachable address.
 
+## Simlock hosts (alpha)
+
+[Simlock](https://incubator.callstack.com/simlock/) pools iOS simulators and
+Android emulators across machines. If you run a Simlock gateway, T3 can lease
+devices from it. Simlock is new and unreleased, so this integration is an
+alpha: it may change or stop working with a newer Simlock. T3 does not install
+or manage Simlock; set up the gateway and its workers yourself. It needs a
+gateway and workers built from Simlock's `main` at
+[6316e10](https://github.com/callstackincubator/simlock/commit/6316e10) or
+later, the first with a lease holder's screen and input.
+
+Turn on **Settings → Labs → Simlock device hosts (alpha)** and **Use devices**
+in Settings → Devices, then choose **Add source → Simlock pool** with an **agent token**
+(`simlock --gateway token create --role agent`). Give each T3 server its own
+token: Simlock counts every lease made with one token against the same
+requester, and allows one at a time unless the gateway's
+`lease.maxPerRequester` is raised to the host's **Devices at once**. The token
+leases devices and reaches only its own leases, but commands on a leased device
+run on its worker, so treat it like shell access to your workers. T3 sends it
+with every request, so use an HTTPS gateway URL, or plain HTTP only over an
+encrypted network such as Tailscale. The gateway
+and workers need `capabilities.stream.enabled` and `capabilities.input.enabled`
+for the live screen and for input.
+
+The picker lists the models your workers can make. Opening one takes a lease;
+closing it with **Return device to the pool**, or removing the host, returns it
+wiped. The panel keeps a watched device leased up to the host's lease limit.
+You can tap, swipe, type, and press Home, and Back and Recents on Android.
+Rotation, appearance, text size, device tools, and screenshots are not offered
+for Simlock devices; agents can still do them through `device_open`. On iOS 27
+simulators, typing on your keyboard does nothing; tap the on-screen keyboard
+instead. Workers must run the same agent-device
+version as T3 (see Device tool updates), and agent-device accepts app installs
+for a lease only from the folder it was opened from, which `device_open`
+names. A device cannot reach development servers on your machine through
+localhost; use an address its worker can reach.
+
 ## Device tool updates
 
-The connected T3 server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. Settings → Integrations → Check device tool versions reads installed versions without installing tools or starting devices.
+The connected T3 server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. In Settings → Devices, select a version and choose **Check versions** to read installed versions without installing tools or starting devices.
 
 To receive newer tool versions on a remote environment, update that environment's T3 server. Updating only the browser or mobile app does not update the remote server. An offline host keeps its installed files, but an update needs network access before device support can start; T3 does not fall back to an older version. Reconnect the host and use Retry if installation fails. Existing device and agent-access settings are preserved.

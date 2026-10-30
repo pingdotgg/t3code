@@ -6,15 +6,29 @@ import type {
 
 type Route = StackNavigationState<ParamListBase>["routes"][number];
 
-export function projectWorkspaceStack(
+/** Keep the presenting history mounted while modal routes cover the whole workspace. */
+export function projectStackPresentation(
   state: StackNavigationState<ParamListBase>,
   isOverlay: (route: Route) => boolean,
 ) {
   const firstOverlay = state.routes.findIndex(isOverlay);
-  const workspaceRoutes = state.routes.slice(0, firstOverlay < 0 ? undefined : firstOverlay);
+  return {
+    workspace: state.routes.slice(0, firstOverlay < 0 ? undefined : firstOverlay),
+    overlays: firstOverlay < 0 ? [] : state.routes.slice(firstOverlay),
+  };
+}
+
+/** Project one router history into native columns and a modal presentation stack. */
+export function projectWorkspaceStack(
+  state: StackNavigationState<ParamListBase>,
+  isOverlay: (route: Route) => boolean,
+) {
+  const { workspace: workspaceRoutes, overlays } = projectStackPresentation(state, isOverlay);
   const primary = workspaceRoutes.find((route) => route.name === "Home");
-  const detail = workspaceRoutes.filter((route) => route.name !== "Home");
-  const overlays = firstOverlay < 0 ? [] : state.routes.slice(firstOverlay);
+  // The Settings tab's route only selects what Home shows; its pages are the detail.
+  const detail = workspaceRoutes.filter(
+    (route) => route.name !== "Home" && route.name !== "Settings",
+  );
   return { primary, detail, overlays };
 }
 
@@ -50,10 +64,13 @@ export function nativeStackPopAction(
   destinationKey?: string,
 ) {
   const sourceIndex = state.routes.findIndex((route) => route.key === dismissedKey);
-  const destinationIndex =
+  let destinationIndex =
     destinationKey === undefined
       ? sourceIndex - 1
       : state.routes.findIndex((route) => route.key === destinationKey);
+  // Home's screen draws the Settings list, so going back to it from a Settings page stops there.
+  if (destinationIndex >= 0 && state.routes[destinationIndex + 1]?.name === "Settings")
+    destinationIndex += 1;
   if (
     sourceIndex <= 0 ||
     sourceIndex > state.index ||

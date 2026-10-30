@@ -12,14 +12,12 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { CursorSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -36,8 +34,6 @@ import {
 } from "./adapter.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { ConfigurationError } from "./sdk.ts";
-
-const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
@@ -75,7 +71,6 @@ describe("CursorAdapterV2", () => {
         });
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
-          settings: yield* decodeCursorSettings({}),
           environment: { HOME: workspace },
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -88,10 +83,7 @@ describe("CursorAdapterV2", () => {
                 send: (input) =>
                   Effect.gen(function* () {
                     sentWithMcpOverride = Object.hasOwn(input.options ?? {}, "mcpServers");
-                    // Recorded Cursor task calls (see fixtures/subagent) stream a
-                    // partial-tool-call before tool-call-started with the same args.
-                    // The run then ends without tool-call-completed, which a live
-                    // run cannot produce on demand.
+                    // Recorded tasks stream partial args before start, then end without completion; live runs cannot force this.
                     const taskToolCall = {
                       type: "task" as const,
                       args: {
@@ -223,6 +215,15 @@ describe("CursorAdapterV2", () => {
 
   it.effect.each([
     {
+      reason: "the SDK's detailed plan usage limit code",
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        status: "error" as const,
+        error: { message: "You've hit your usage limit", code: "PRO_USER_USAGE_LIMIT" },
+      }),
+      failure: { class: "usage_limit", message: "You've hit your usage limit" },
+    },
+    {
       reason: "the error Cursor's run ended with",
       wait: Effect.succeed({
         id: "native-cursor-run",
@@ -240,7 +241,7 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
-      reason: "the SDK error that broke the run",
+      reason: "the SDK rate limit that broke the run",
       wait: Effect.fail(
         new CursorAgentSdk.CursorAgentSdkRunnerError({
           method: "run.wait",
@@ -251,12 +252,83 @@ describe("CursorAdapterV2", () => {
         }),
       ),
       failure: {
-        class: "transport_error",
+        class: "usage_limit",
         message:
           "Cursor Agent SDK run.wait failed: Too many requests (resource_exhausted, HTTP 429)",
       },
     },
-  ])("fails the turn with $reason", ({ wait, failure }) =>
+    {
+      reason: "a transport dump sent after earlier commentary",
+      updates: [
+        { type: "text-delta", text: "Checking the build first." },
+        { type: "step-completed", stepId: 1, stepDurationMs: 1 },
+        { type: "text-delta", text: "Error: RetriableError: WritableIterable is closed" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "finished" as const,
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: { class: "transport_error", message: "Provider turn failed." },
+    },
+    {
+      reason: "no failure when Cursor's resume after the turn ended made no progress",
+      // Cursor's SDK resumed from an older checkpoint after the answer was
+      // delivered, regenerated the closing, then gave up on the run.
+      updates: [
+        { type: "text-delta", text: "The answer." },
+        { type: "turn-ended" },
+        { type: "text-delta", text: "A regenerated closing." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Agent turn stopped after repeated resume attempts made no progress" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: null,
+    },
+    {
+      reason: "the error a continuation after the turn ended stopped with",
+      updates: [
+        { type: "text-delta", text: "The answer." },
+        { type: "turn-ended" },
+        { type: "text-delta", text: "Following up on the stop hook." },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Agent turn stopped after repeated resume attempts made no progress" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: {
+        class: "provider_error",
+        message: "Agent turn stopped after repeated resume attempts made no progress",
+      },
+    },
+    {
+      reason: "no answer from a resume after the turn ended that made no progress",
+      updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Agent turn stopped after repeated resume attempts made no progress" },
+        result: "A regenerated closing.",
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: null,
+      answers: [],
+    },
+  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
@@ -270,7 +342,6 @@ describe("CursorAdapterV2", () => {
       });
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -280,12 +351,17 @@ describe("CursorAdapterV2", () => {
               agentId: "native-cursor-failure",
               listMessages: Effect.succeed([]),
               close: Effect.void,
-              send: () =>
-                Effect.succeed({
-                  agentId: "native-cursor-failure",
-                  runId: "native-cursor-run",
-                  wait,
-                  cancel: Effect.void,
+              send: (input) =>
+                Effect.gen(function* () {
+                  for (const update of updates) {
+                    yield* input.onDelta!(update).pipe(Effect.orDie);
+                  }
+                  return {
+                    agentId: "native-cursor-failure",
+                    runId: "native-cursor-run",
+                    wait,
+                    cancel: Effect.void,
+                  };
                 }),
             }),
         }),
@@ -344,15 +420,23 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
-      const terminal = yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
       );
-      assert.isTrue(Option.isSome(terminal));
-      if (Option.isSome(terminal)) {
-        assert.equal(terminal.value.status, "failed");
-        assert.equal(terminal.value.failure?.class, failure.class);
-        assert.equal(terminal.value.failure?.message, failure.message);
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, failure === null ? "completed" : "failed");
+      assert.equal(terminal?.failure?.class, failure?.class);
+      assert.equal(terminal?.failure?.message, failure?.message);
+      if (answers !== undefined) {
+        assert.deepEqual(
+          events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "assistant"
+              ? [event.message.text]
+              : [],
+          ),
+          answers,
+        );
       }
     }).pipe(
       Effect.scoped,
@@ -378,7 +462,6 @@ describe("CursorAdapterV2", () => {
       });
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -504,6 +587,158 @@ describe("CursorAdapterV2", () => {
         Stream.runHead,
       );
       assert.equal(sentMessages[1], "/compress");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  it.effect("sends T3 instructions to each Cursor conversation that lacks them", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-device-" });
+      const sentMessages: Array<string> = [];
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-device-thread");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const setDeviceAccess = (device: boolean) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("cursor-device-environment"),
+          threadId,
+          providerSessionId: "cursor-device-session",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer synthetic-cursor-token",
+          browserToolsAvailable: true,
+          capabilities: new Set(device ? ["device"] : []),
+        });
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-device",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.sync(() => {
+                  sentMessages.push(
+                    typeof input.message === "string" ? input.message : input.message.text,
+                  );
+                  const runId = `native-cursor-run-${sentMessages.length}`;
+                  return {
+                    agentId: "native-cursor-device",
+                    runId,
+                    wait: Effect.succeed({
+                      id: runId,
+                      requestId: `native-request-${sentMessages.length}`,
+                      status: "finished" as const,
+                      model: { id: "composer-2.5" },
+                      durationMs: 1,
+                    }),
+                    cancel: Effect.void,
+                  };
+                }),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-device-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const appThread = {
+        id: threadId,
+        projectId: ProjectId.make("cursor-device-project"),
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        title: "Cursor devices",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+      // Starts at run 5: a conversation from before device instructions existed, now resumed.
+      let runOrdinal = 4;
+      const send = Effect.fnUntraced(function* (compact = false) {
+        runOrdinal += 1;
+        const turnInput = {
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make(`cursor-device-run-${runOrdinal}`),
+          runOrdinal,
+          providerTurnOrdinal: runOrdinal,
+          attemptId: RunAttemptId.make(`cursor-device-attempt-${runOrdinal}`),
+          rootNodeId: NodeId.make(`cursor-device-root-${runOrdinal}`),
+          appThread,
+          message: {
+            messageId: MessageId.make(`cursor-device-message-${runOrdinal}`),
+            createdBy: "user" as const,
+            creationSource: "web" as const,
+            text: "Open the app.",
+            attachments: [],
+          },
+        };
+        yield* compact ? runtime.compactThread!(turnInput) : runtime.startTurn(turnInput);
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+        const sent = sentMessages.at(-1)!;
+        return {
+          orchestration: sent.includes("## T3 Code orchestration"),
+          devices: sent.includes("## T3 Code devices"),
+        };
+      });
+      const told = (orchestration: boolean, devices: boolean) => ({ orchestration, devices });
+
+      yield* setDeviceAccess(true);
+      assert.deepEqual(yield* send(), told(false, true));
+      assert.deepEqual(yield* send(), told(false, false));
+      yield* send(true);
+      assert.deepEqual(
+        yield* send(),
+        told(true, true),
+        "compaction drops what the conversation was told",
+      );
+      yield* setDeviceAccess(false);
+      assert.deepEqual(yield* send(), told(false, false));
+      yield* setDeviceAccess(true);
+      assert.deepEqual(yield* send(), told(false, true), "device access turned on later");
+      assert.deepEqual(yield* send(), told(false, false));
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -720,7 +955,6 @@ describe("CursorAdapterV2", () => {
       ];
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -915,6 +1149,227 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("projects subagent directory trees Cursor serialized without empty lists", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-task-ls-" });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-task-ls-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      // The SDK serializes subagent steps with protobuf toJson(), which omits empty repeated fields.
+      const conversationSteps = [
+        {
+          toolCall: {
+            toolCallId: "tool:ls",
+            lsToolCall: {
+              args: { path: workspace },
+              result: {
+                success: {
+                  directoryTreeRoot: {
+                    absPath: workspace,
+                    childrenWereProcessed: true,
+                    childrenDirs: [
+                      {
+                        absPath: path.join(workspace, "src"),
+                        childrenFiles: [{ name: "index.ts" }],
+                        childrenWereProcessed: true,
+                        numFiles: 1,
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          toolCall: {
+            toolCallId: "tool:lints",
+            readLintsToolCall: { args: {}, result: { success: {} } },
+          },
+        },
+        {
+          toolCall: {
+            toolCallId: "tool:lints-clean-file",
+            readLintsToolCall: {
+              args: {},
+              result: { success: { fileDiagnostics: [{ path: "src/clean.ts" }] } },
+            },
+          },
+        },
+        {
+          toolCall: {
+            toolCallId: "tool:mcp",
+            mcpToolCall: {
+              args: { providerIdentifier: "docs", toolName: "lookup", args: { query: "ls" } },
+              result: { success: {} },
+            },
+          },
+        },
+      ];
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-task-ls",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.gen(function* () {
+                  const args = {
+                    description: "Explore",
+                    prompt: "List the workspace.",
+                    subagentType: { kind: "unspecified" as const },
+                    agentId: "cursor-task-agent",
+                    mode: "unspecified" as const,
+                  };
+                  yield* input.onDelta!({
+                    type: "tool-call-started",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    toolCall: { type: "task", args },
+                  });
+                  yield* input.onDelta!({
+                    type: "tool-call-completed",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    toolCall: {
+                      type: "task",
+                      args,
+                      result: {
+                        status: "success",
+                        value: {
+                          conversationSteps,
+                          isBackground: false,
+                          backgroundReason: "unspecified",
+                        },
+                      },
+                    },
+                  });
+                  return {
+                    agentId: "native-cursor-task-ls",
+                    runId: "native-cursor-run",
+                    wait: Effect.succeed({
+                      id: "native-cursor-run",
+                      requestId: "native-request",
+                      status: "finished" as const,
+                      model: { id: "composer-2.5" },
+                      durationMs: 1,
+                    }),
+                    cancel: Effect.void,
+                  };
+                }).pipe(Effect.orDie),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-task-ls-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-task-ls-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-task-ls-attempt"),
+        rootNodeId: NodeId.make("cursor-task-ls-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-task-ls-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Cursor subagent ls",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-task-ls-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "List the workspace with a subagent.",
+          attachments: [],
+        },
+      });
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "completed");
+      const childThreadId = events.findLast((event) => event.type === "subagent.updated")?.subagent
+        .childThreadId;
+      assert.isDefined(childThreadId);
+      assert.deepEqual(
+        events.flatMap((event): ReadonlyArray<unknown> => {
+          if (event.type !== "turn_item.updated" || event.turnItem.threadId !== childThreadId) {
+            return [];
+          }
+          const item = event.turnItem;
+          return item.type === "file_search"
+            ? [{ status: item.status, pattern: item.pattern, results: item.results ?? [] }]
+            : item.type === "dynamic_tool"
+              ? [{ status: item.status, toolName: item.toolName, output: item.output }]
+              : [];
+        }),
+        [
+          {
+            status: "completed",
+            pattern: workspace,
+            results: [{ fileName: path.join(workspace, "src", "index.ts") }],
+          },
+          { status: "completed", pattern: "", results: [] },
+          { status: "completed", pattern: "", results: [] },
+          {
+            status: "completed",
+            toolName: "mcp__docs__lookup",
+            output: { content: [], isError: false },
+          },
+        ],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect("names a custom model Cursor's account catalog rejects", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -943,7 +1398,6 @@ describe("CursorAdapterV2", () => {
             );
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -972,13 +1426,11 @@ describe("CursorAdapterV2", () => {
       const expected =
         'Cursor cannot run the model "deepseek/deepseek-v4.1-flash". Cursor only runs models from your Cursor account. Choose one of those, or use OpenCode for OpenRouter and other API-key models.';
 
-      // A new thread created with the custom model.
       const createFailure = yield* runtime
         .ensureThread({ threadId, modelSelection: customModel, runtimePolicy })
         .pipe(Effect.flip);
       assert.equal(makeProviderFailure({ cause: createFailure }).message, expected);
 
-      // An existing thread switched to the custom model.
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection: catalogModel,

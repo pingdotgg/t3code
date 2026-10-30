@@ -221,6 +221,7 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
         // The CLI runs as the machine's owner. New threads still start at
         // the project's default mode, never at this ceiling by default.
         access: "full-access",
+        peerLink: false,
         client: { deviceType: "bot" },
       }),
       (session) =>
@@ -465,7 +466,7 @@ const launchWorkspaceStrategy = (input: {
     onNone: () =>
       Option.isSome(input.branch)
         ? Effect.fail(new ThreadUsageError({ detail: "--branch needs --worktree <base-ref>." }))
-        : Effect.succeed(undefined),
+        : Effect.void,
     onSome: (baseRef) =>
       Effect.succeed({
         type: "worktree" as const,

@@ -25,7 +25,6 @@ describe("appendTerminalOutput", () => {
   });
 
   it("redraws several lines in place when the cursor moves up", () => {
-    // docker pull / pnpm style: print two bars, move up two lines, redraw both.
     const frames = [
       "layer a: 10%\nlayer b: 10%\n",
       "\u001b[2A\u001b[2Klayer a: 60%\n\u001b[2Klayer b: 40%\n",
@@ -115,7 +114,6 @@ describe("appendTerminalOutput under adversarial output", () => {
 
 describe("terminalOutputResumeText", () => {
   it("lets a viewer that starts from it apply later chunks exactly as the source does", () => {
-    // Mid-redraw: cursor two lines up, a colour on, and half an escape pending.
     const chunks = [
       "a: 1%\nb: 1%\n",
       "\u001b[2A\u001b[2K\u001b[33ma: 5",

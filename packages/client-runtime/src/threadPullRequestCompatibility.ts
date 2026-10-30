@@ -1,39 +1,26 @@
 import type {
   ExecutionEnvironmentCapabilities,
-  ProjectId,
   ThreadId,
   ThreadPullRequestKey,
 } from "@t3tools/contracts";
-import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
+import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
 
-type LinkingCapabilities = Pick<
-  ExecutionEnvironmentCapabilities,
-  "threadPullRequests" | "threadPullRequestLinking"
->;
-
-export function threadPullRequestLinkMode(capabilities: LinkingCapabilities | null | undefined) {
-  return capabilities?.threadPullRequests === true
-    ? "multiple"
-    : capabilities?.threadPullRequestLinking === true
-      ? "single"
-      : "unsupported";
+/** "unsupported" until the environment's server config has loaded. */
+export function threadPullRequestLinkMode(
+  capabilities: ExecutionEnvironmentCapabilities | null | undefined,
+) {
+  return capabilities ? ("multiple" as const) : ("unsupported" as const);
 }
 
 export function planThreadPullRequestMutation({
   capabilities,
   threadId,
   reference,
-  legacyProjectId,
-  legacyRepository,
   linked,
 }: {
-  capabilities: LinkingCapabilities | null | undefined;
+  capabilities: ExecutionEnvironmentCapabilities | null | undefined;
   threadId: ThreadId;
   reference: ThreadPullRequestKey & { readonly url: string };
-  /** Older servers need the exact repository checkout; same-host routing is not available. */
-  legacyProjectId: ProjectId | null;
-  /** Provider selector for legacy APIs, which omit Azure organization and project paths. */
-  legacyRepository?: string | undefined;
   linked: boolean;
 }) {
   const key = normalizeThreadPullRequestKey(reference);
@@ -51,23 +38,6 @@ export function planThreadPullRequestMutation({
               ...key,
             },
           };
-    case "single":
-      if (linked && legacyProjectId === null) return null;
-      return {
-        type: "thread.meta.update" as const,
-        input: {
-          threadId,
-          linkedPullRequest:
-            linked && legacyProjectId !== null
-              ? {
-                  projectId: legacyProjectId,
-                  repository: legacyRepository ?? reference.repository,
-                  number: reference.number,
-                  url: reference.url,
-                }
-              : null,
-        },
-      };
     case "unsupported":
       return null;
   }

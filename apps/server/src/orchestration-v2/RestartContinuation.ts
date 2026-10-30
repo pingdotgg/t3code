@@ -2,6 +2,7 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   latestProviderTurnForAttempt,
   MessageId,
   type OrchestrationV2Run,
@@ -19,6 +20,7 @@ import {
   awaitingProviderThreadId,
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
+  continuationFailedBeforePrompt,
   isAwaitedWork,
   isRestartContinuationSource,
   cancelledBeforeStart,
@@ -81,10 +83,7 @@ function restartContinuationBlocked(
   );
 }
 
-/**
- * App-owned delegations are not counted: their own threads continue and report
- * back.
- */
+/** App-owned delegations continue in their own threads and report back. */
 function hasOpenAwaitedWork(
   projection: Pick<ProjectionRuntimeRecoveryState, "runs" | "turnItems">,
   providerThread: ProjectionRuntimeRecoveryState["providerThreads"][number],
@@ -110,10 +109,7 @@ function hasOpenAwaitedWork(
   );
 }
 
-/**
- * A settled run needs a live session, so stale records from an older crash
- * never wake it.
- */
+/** Settled runs require a live session so stale crash records cannot wake them. */
 export function restartContinuationRun(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
@@ -163,8 +159,7 @@ export function restartContinuationRun(
   const session = projection.providerSessions.find(
     (candidate) => candidate.id === providerThread.providerSessionId,
   );
-  // Most adapters keep a live session "ready" through its turns, so only a
-  // stopped or failed session rules out a live turn.
+  // Adapters remain ready during turns; only stopped or failed sessions rule out liveness.
   if (
     session === undefined ||
     session.providerInstanceId !== run.providerInstanceId ||
@@ -207,7 +202,10 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     if (
       !source ||
-      !isRestartContinuationSource(source, projection.providerTurns) ||
+      !(
+        isRestartContinuationSource(source, projection.providerTurns) ||
+        continuationFailedBeforePrompt(source, projection.providerTurns)
+      ) ||
       restartContinuationBlocked(
         projection,
         source,
@@ -262,6 +260,32 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       )
     )
       return;
+    // A parent's Stop reaches its open delegated tasks through an effect a restart can cut short.
+    const { lineage, forkedFrom } = projection.thread;
+    const taskId =
+      source.delegatedTaskId ?? (forkedFrom?.type === "node" ? forkedFrom.nodeId : undefined);
+    if (
+      lineage.relationshipToParent === "subagent" &&
+      lineage.parentThreadId !== null &&
+      taskId !== undefined
+    ) {
+      const task = (yield* threads.getThreadRecords(lineage.parentThreadId, ["subagents"], {
+        subagentIds: [taskId],
+      })).subagents.find((candidate) => candidate.id === taskId);
+      // A settled task no longer owns later work in its thread.
+      const parentRunId =
+        task !== undefined && task.result === null && isOrchestrationV2WorkActive(task.status)
+          ? task.runId
+          : null;
+      if (
+        parentRunId !== null &&
+        (yield* threads.getThreadRecords(lineage.parentThreadId, ["turnItems"], {
+          turnItemTypes: ["run_interrupt_request"],
+          turnItemRunIds: [parentRunId],
+        })).turnItems.length > 0
+      )
+        return;
+    }
     const sourceMessage = sourceRecords.messages.find(
       (message) => message.id === source.userMessageId,
     );
@@ -303,11 +327,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         restartContinuationOfRunId: input.sourceRunId,
       })
       .pipe(
-        // The project turned this instance off since the restart. No turn
-        // resumes, and the success path below still runs so a delegated
-        // child waiting on this run is recovered immediately instead of
-        // after EffectWorker exhausts its retries on a refusal that will
-        // not change.
+        // Disabled instances cannot resume; still run success cleanup so delegated children recover without futile retries.
         Effect.catchTags({
           ThreadManagementProviderInstanceDisabledError: (error) =>
             Effect.logInfo("orchestration-v2.restart-continuation.instance-disabled", {
@@ -319,8 +339,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         }),
       );
   },
-  // A delegated child this declined to continue still owes its parent a
-  // result. Once a continuation run exists this is a no-op; that run settles it.
+  // Declined child continuations still owe parent results; existing continuation runs settle them instead.
   (effect, input) =>
     effect.pipe(
       Effect.andThen(

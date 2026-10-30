@@ -132,7 +132,6 @@ const logInSpanThrough = (
     return { requests, spans };
   });
 
-/** Logs one warning through the server logger and returns what its console printed. */
 const printThroughConsole = (fields: object) =>
   Effect.gen(function* () {
     const printed: Array<string> = [];
@@ -152,6 +151,34 @@ const printThroughConsole = (fields: object) =>
   });
 
 describe("ServerLoggerLive", () => {
+  it.effect("exports the operator's service instance id instead of a generated one", () =>
+    Effect.gen(function* () {
+      const { requests } = yield* logInSpanThrough({
+        otlpLogsUrl: "https://collector.example.com/v1/logs",
+        otelEnvironment: {
+          ...OtelEnvironment.none,
+          resourceAttributes: { "service.instance.id": "pod-7" },
+        },
+      });
+
+      const body = requests.map((request) => request.body).join("\n");
+      assert.include(body, '"key":"service.instance.id","value":{"stringValue":"pod-7"}');
+    }),
+  );
+
+  it.effect("exports a resource that names whether the desktop app launched the server", () =>
+    Effect.gen(function* () {
+      const { requests } = yield* logInSpanThrough({
+        otlpLogsUrl: "https://collector.example.com/v1/logs",
+        mode: "desktop",
+      });
+
+      const body = requests.map((request) => request.body).join("\n");
+      assert.include(body, '"key":"t3code.server.managed_by","value":{"stringValue":"desktop"}');
+      assert.notInclude(body, "service.mode");
+    }),
+  );
+
   it.effect("prints a cause passed as a log field instead of collapsing it", () =>
     Effect.gen(function* () {
       const output = yield* printThroughConsole({
@@ -234,7 +261,6 @@ describe("ServerLoggerLive", () => {
 
     it.effect("keeps the token out of traces when the browser fails to open", () =>
       Effect.gen(function* () {
-        // A failed launch records its error, which names the target, on its span.
         const failingLaunch = maybeOpenBrowser(pairingUrl).pipe(
           Effect.provide(
             Layer.mergeAll(

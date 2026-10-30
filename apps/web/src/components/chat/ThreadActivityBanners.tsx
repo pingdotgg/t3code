@@ -3,33 +3,50 @@ import type {
   OrchestrationV2ProviderGoal,
   ThreadId,
 } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   presentPendingBackgroundWork,
   presentProviderGoal,
+  type RunStopPresentation,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
-import { GitBranchIcon, MessageCircleIcon, ShieldQuestionIcon, TargetIcon } from "lucide-react";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import * as DateTime from "effect/DateTime";
+import {
+  CircleDashedIcon,
+  CircleStopIcon,
+  GitBranchIcon,
+  MessageCircleIcon,
+  ShieldQuestionIcon,
+  TargetIcon,
+  TerminalIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { Fragment } from "react";
+import { tickTextContent } from "~/lib/tickTextContent";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
+import type { ThreadNowItem } from "./ThreadNow";
 
 /** Subagents waiting on the user, unless the parent is itself waiting on them. */
-export function childInputBannerItem(input: {
+export function childInputNowItem(input: {
   readonly childThreadInputs: ReadonlyArray<EnvironmentThreadShell>;
   readonly parentAwaitingUser: boolean;
   readonly onOpenThread: (threadId: ThreadId) => void;
-}): ComposerBannerStackItem | null {
+}): ThreadNowItem | null {
   const { childThreadInputs, onOpenThread } = input;
   const first = childThreadInputs[0];
   if (!first || input.parentAwaitingUser) return null;
   return {
     id: `child-input:${first.id}`,
-    variant: "info",
-    priority: "activity",
-    icon: first.hasPendingApprovals ? <ShieldQuestionIcon /> : <MessageCircleIcon />,
+    // The only line at the end of the timeline that needs you gets the info color.
+    icon: first.hasPendingApprovals ? (
+      <ShieldQuestionIcon className="text-info-foreground" />
+    ) : (
+      <MessageCircleIcon className="text-info-foreground" />
+    ),
     title: childThreadInputsTitle(childThreadInputs),
     description: childThreadInputs.map((child, index) => (
       <Fragment key={child.id}>
@@ -43,117 +60,168 @@ export function childInputBannerItem(input: {
       </Fragment>
     )),
     actions: (
-      <Button size="xs" variant="ghost" onClick={() => onOpenThread(first.id)}>
+      <InlineButton onClick={() => onOpenThread(first.id)}>
         {first.hasPendingApprovals ? "Open approval" : "Open question"}
-      </Button>
+      </InlineButton>
     ),
   };
 }
 
-export function goalBannerItem(input: {
+/** The thread's goal, for the end of the timeline. */
+export function goalNowItem(input: {
   readonly threadId: ThreadId;
   readonly goal: OrchestrationV2ProviderGoal;
   readonly isWorking: boolean;
   readonly onSendCommand: (text: string, failureMessage: string) => Promise<void>;
-}): ComposerBannerStackItem {
+}): ThreadNowItem {
   const { isWorking, onSendCommand } = input;
   const presentation = presentProviderGoal(input.goal, isWorking);
   return {
     id: `goal:${input.threadId}`,
-    variant: "default",
-    priority: "activity",
     icon: <TargetIcon />,
     title:
       presentation.usage === null
         ? presentation.title
         : `${presentation.title} · ${presentation.usage}`,
     description: presentation.objective,
-    actions: isWorking ? undefined : (
+    // Clear stops goal work; Resume would stop unrelated work, so it waits.
+    actions: (
       <>
-        {presentation.canResume ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
-          >
-            Resume
-          </Button>
+        {presentation.canResume && !isWorking ? (
+          <>
+            <InlineButton
+              onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
+            >
+              Resume
+            </InlineButton>
+            <span aria-hidden>·</span>
+          </>
         ) : null}
-        <Button
-          size="xs"
-          variant="ghost"
+        <InlineButton
+          tone="muted"
           onClick={() => void onSendCommand("/goal clear", "Failed to clear goal.")}
         >
           Clear
-        </Button>
+        </InlineButton>
       </>
     ),
   };
 }
 
-export function backgroundWorkBannerItem(input: {
+/** A Stop the provider has not finished; Force stop once it stops answering. */
+export function runStopNowItem(input: {
+  readonly threadId: ThreadId;
+  readonly stop: RunStopPresentation;
+  readonly canForceStop: boolean;
+  readonly forceStopping: boolean;
+  readonly onForceStop: () => void;
+}): ThreadNowItem {
+  const unresponsive = input.stop.state === "unresponsive";
+  const requestedAtMs = Date.parse(input.stop.requestedAt);
+  return {
+    id: `run-stop:${input.threadId}`,
+    icon: unresponsive ? (
+      <TriangleAlertIcon className="text-warning-foreground" />
+    ) : (
+      <CircleStopIcon />
+    ),
+    title: unresponsive ? "Agent not responding to Stop" : "Stopping",
+    description: unresponsive
+      ? "It may be short on memory. Force stop kills its processes."
+      : undefined,
+    actions: (
+      <>
+        <span
+          ref={tickTextContent(
+            (nowMs) => formatDuration(Math.max(1_000, nowMs - requestedAtMs)),
+            true,
+          )}
+          className="tabular-nums"
+        />
+        {unresponsive && input.canForceStop ? (
+          <InlineButton disabled={input.forceStopping} onClick={input.onForceStop}>
+            {input.forceStopping ? "Force stopping..." : "Force stop"}
+          </InlineButton>
+        ) : null}
+      </>
+    ),
+  };
+}
+
+/** Background commands and subagents, for the end of the timeline. */
+export function backgroundWorkNowItem(input: {
   readonly threadId: ThreadId;
   readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
+  readonly turnItems: ThreadStructure["turnItems"];
   readonly stopDisabled: boolean;
   readonly stopping: boolean;
   readonly onStop: () => Promise<void>;
   readonly onOpenThread: (threadId: ThreadId) => void;
-}): ComposerBannerStackItem | null {
+}): ThreadNowItem | null {
   const { onOpenThread } = input;
   const presentation = presentPendingBackgroundWork(input.tasks);
   if (presentation === null) return null;
+  const rows = presentation.items.map((task) => {
+    // Same key derivePendingBackgroundWork gives turn-item tasks; subagent items carry progress.
+    const item = input.turnItems.findLast(
+      (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId,
+    );
+    const subagent = item?.type === "subagent" ? item : undefined;
+    return {
+      task,
+      activity: subagent?.progress?.replace(/\s+/gu, " ").trim() || null,
+      startedAtMs: item?.startedAt ? DateTime.toEpochMillis(item.startedAt) : null,
+      updatedAtMs: subagent ? DateTime.toEpochMillis(subagent.updatedAt) : 0,
+      childThreadId: task.childThreadId ?? subagent?.childThreadId ?? undefined,
+    };
+  });
+  const [only] = rows.length === 1 ? rows : [];
+  const newest = rows
+    .filter((row) => row.activity)
+    .toSorted((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
+  const isCommand = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
+  const verb = presentation.waiting ? "Waiting on" : "Running";
+  const onlyThreadId = only?.childThreadId;
+  const startedAtMs = only?.startedAtMs ?? null;
   return {
     id: `background-work:${input.threadId}`,
-    variant: "default",
-    priority: "activity",
-    icon: (
-      <span
-        className={cn(
-          "size-1.5 rounded-full bg-foreground",
-          presentation.waiting && "motion-safe:animate-status-pulse",
-        )}
-        aria-hidden="true"
-      />
+    icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
+    title: only ? (
+      <>
+        {verb} <span className={cn(isCommand(only) && "font-mono")}>{only.task.label}</span>
+      </>
+    ) : (
+      presentation.title
     ),
-    title: presentation.title,
-    description:
-      presentation.items.length === 1 && presentation.items[0]?.childThreadId === undefined
-        ? undefined
-        : presentation.items.map((item, index) => {
-            const childThreadId = item.childThreadId;
-            const separator = index < presentation.items.length - 1 ? "," : null;
-            return (
-              <Fragment key={item.taskId}>
-                {index > 0 ? " " : null}
-                {childThreadId === undefined ? (
-                  <>
-                    {item.label}
-                    {separator}
-                  </>
-                ) : (
-                  <span className="whitespace-nowrap">
-                    <InlineButton
-                      tone="muted"
-                      aria-label={`${presentation.items.length === 1 ? "Show" : "Open"} subagent ${item.label}`}
-                      onClick={() => onOpenThread(childThreadId)}
-                    >
-                      {presentation.items.length === 1 ? "Show" : item.label}
-                    </InlineButton>
-                    {separator}
-                  </span>
-                )}
-              </Fragment>
-            );
-          }),
+    description: only ? (
+      only.activity
+    ) : newest ? (
+      `${newest.task.label}: ${newest.activity}`
+    ) : rows.every(isCommand) ? (
+      <span className="font-mono">{rows.map((row) => row.task.label).join(", ")}</span>
+    ) : (
+      rows.map((row) => row.task.label).join(", ")
+    ),
     actions: (
-      <Button
-        size="xs"
-        variant="ghost"
-        disabled={input.stopDisabled}
-        onClick={() => void input.onStop()}
-      >
-        {input.stopping ? "Stopping..." : "Stop"}
-      </Button>
+      <>
+        {startedAtMs === null ? null : (
+          <span
+            ref={tickTextContent(
+              (nowMs) => formatDuration(Math.max(1_000, nowMs - startedAtMs)),
+              true,
+            )}
+            className="tabular-nums"
+          />
+        )}
+        {onlyThreadId === undefined ? null : (
+          <InlineButton tone="muted" onClick={() => onOpenThread(onlyThreadId)}>
+            Open
+          </InlineButton>
+        )}
+        <InlineButton disabled={input.stopDisabled} onClick={() => void input.onStop()}>
+          {input.stopping ? "Stopping..." : "Stop"}
+        </InlineButton>
+      </>
     ),
   };
 }
@@ -174,7 +242,7 @@ export function branchMismatchBannerItem(input: {
     icon: <GitBranchIcon />,
     title: (
       <span className="flex min-w-0 items-baseline gap-1.5">
-        <span className="shrink-0 font-normal text-muted-foreground">Branch changed — was</span>
+        <span className="shrink-0 font-normal text-muted-foreground">Branch changed from</span>
         <Tooltip>
           <TooltipTrigger
             render={

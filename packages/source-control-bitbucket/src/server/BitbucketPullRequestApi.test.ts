@@ -100,8 +100,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
   it.effect("counts the rows it walked past as more to come", () =>
     Effect.gen(function* () {
-      // Bitbucket pages in fifties whatever was asked for, so a request for ninety-nine reads a
-      // hundred and drops one.
       const next = "https://api.bitbucket.org/2.0/repositories/acme/web/pullrequests?page=2";
       mockedRequest
         .mockReturnValueOnce(Effect.succeed(response(page(50, 1, next))))
@@ -149,10 +147,27 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         cursor: { updatedBefore: "2026-07-02T00:00:00+00:00", delivered: 50 },
       });
 
-      // Bitbucket takes one `q`, so the two narrowings are joined rather than one replacing the
-      // other — and the search keeps its brackets, which is what keeps the AND out of its OR.
       expect(filterOfCall(0)).toBe(
         '(title ~ "page" OR description ~ "page") AND updated_on <= 2026-07-02T00:00:00+00:00',
+      );
+    }),
+  );
+
+  it.effect("narrows by author and draft state in the same query", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(0, 1))));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.listPullRequests({
+        repository: "acme/web",
+        state: "open",
+        limit: 50,
+        author: 'ana"',
+        draft: false,
+      });
+
+      expect(filterOfCall(0)).toBe(
+        '(author.nickname = "ana\\"" OR author.display_name = "ana\\"") AND draft = false',
       );
     }),
   );
@@ -508,8 +523,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         requested: true,
       });
 
-      // Bitbucket writes `reviewers` whole, so the one already on the pull request travels with
-      // the new one or the request would take them off it.
       const call = callAt(1);
       expect(call.method).toBe("PUT");
       expect(call.url).toBe("/repositories/acme/web/pullrequests/7");

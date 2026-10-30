@@ -1,7 +1,9 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -27,7 +29,7 @@ it.effect.each([
           source: { branch: { name: "release" } },
           destination: { branch: { name: "master" } },
           created_on: "2025-06-16T06:20:58.415108+00:00",
-          // Comments after a merge move this, so it is not the merge time.
+          // Comments after merging move this timestamp.
           updated_on: "2025-06-20T10:00:00.000000+00:00",
           closed_on: state === "OPEN" ? null : "2025-06-16T23:40:46.222238+00:00",
           links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/52" } },
@@ -187,6 +189,16 @@ describe("bitbucketProviderFailure", () => {
 
     expect(bitbucketProviderFailure(responseError(401)).reason).toBe("unauthenticated");
     expect(bitbucketProviderFailure(responseError(403)).reason).toBe("failed");
+  });
+
+  it("reports a request held back by the host-wide pause as rate limited until it ends", () => {
+    const paused = new SourceControlRateLimit.SourceControlRateLimitPausedError({
+      provider: SourceControlProviderKind.make("bitbucket"),
+      host: "bitbucket.org",
+      retryAt: 120_000,
+    });
+
+    expect(bitbucketProviderFailure(paused)).toEqual({ reason: "rate-limited", retryAt: 120_000 });
   });
 });
 

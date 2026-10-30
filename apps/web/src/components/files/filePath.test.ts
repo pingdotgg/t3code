@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { fileBreadcrumbChildren, fileBreadcrumbs, retainedBreadcrumbTrail } from "./filePath";
+import {
+  breadcrumbPathOf,
+  fileBreadcrumbChildren,
+  fileBreadcrumbs,
+  isListableHostFolder,
+  retainedBreadcrumbTrail,
+} from "./filePath";
 
 describe("fileBreadcrumbs", () => {
   it("starts host paths outside the workspace at the filesystem root", () => {
@@ -19,6 +25,26 @@ describe("fileBreadcrumbs", () => {
       "\\\\server\\share",
       "\\\\server\\share\\report.md",
     ]);
+  });
+
+  it("builds home-relative breadcrumbs with navigable folders", () => {
+    expect(fileBreadcrumbs("t3code", "~/.claude/CLAUDE.md")).toEqual([
+      { label: "~", path: "~/", kind: "directory" },
+      { label: ".claude", path: "~/.claude", kind: "directory" },
+      { label: "CLAUDE.md", path: "~/.claude/CLAUDE.md", kind: "file" },
+    ]);
+    expect(isListableHostFolder("~/")).toBe(true);
+    expect(isListableHostFolder("~/.claude")).toBe(true);
+  });
+
+  it("keeps a project folder named ~ inside the project", () => {
+    expect(fileBreadcrumbs("t3code", "~").map((crumb) => crumb.path)).toEqual(["", "~"]);
+  });
+});
+
+describe("breadcrumbPathOf", () => {
+  it("keeps the home root listable", () => {
+    expect(breadcrumbPathOf("~/")).toBe("~/");
   });
 });
 
@@ -44,20 +70,15 @@ describe("fileBreadcrumbChildren", () => {
 
 describe("retainedBreadcrumbTrail", () => {
   it.each([
-    // Walking up keeps the deeper path, all the way to the workspace root.
     ["apps/web/src", "apps/web", "apps/web/src"],
     ["apps/web/src", "", "apps/web/src"],
-    // Walking back down inside the trail keeps it too.
     ["apps/web/src", "apps/web/src", "apps/web/src"],
-    // Somewhere else starts over, including a sibling that shares a name prefix.
     ["apps/web/src", "apps/mobile", "apps/mobile"],
     ["src/lib", "src-old", "src-old"],
     ["apps/web", "apps/web/src/main.tsx", "apps/web/src/main.tsx"],
-    // Workspace and host paths never share a trail.
     ["apps/web/src", "/tmp/report", "/tmp/report"],
     ["/tmp/report", "", ""],
     ["C:\\Temp\\a", "", ""],
-    // Host folders outside the workspace keep their trail the same way.
     ["/Users/me/projects/scope", "/Users/me", "/Users/me/projects/scope"],
     ["/Users/me/projects/scope", "/Users/me/proj", "/Users/me/proj"],
     ["/Volumes/Work/a", "/Volumes/Work/a/", "/Volumes/Work/a"],

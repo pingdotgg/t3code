@@ -39,10 +39,7 @@ const runStep = Effect.fn("browserSetup.runStep")(function* (
   }
 });
 
-/**
- * Under `sudo` the process home is root's, so an unspecified home falls back to
- * the invoking user's `~/.t3`.
- */
+/** Under sudo, an unspecified home uses the invoking user's ~/.t3. */
 const setupBaseDir = Effect.fn("browserSetup.baseDir")(function* (explicit: Option.Option<string>) {
   const env = yield* HostProcess.Environment;
   const raw = Option.getOrUndefined(explicit) ?? env.T3CODE_HOME;

@@ -48,7 +48,7 @@ export interface NodeServeHandler {
 export interface NodeServeEntryOptions {
   /**
    * JS expression resolving the on-disk client-assets directory
-   * (typically `fileURLToPath(new URL("../client/", import.meta.url))`).
+   * (typically `fileURLToPath(new URL("../shared/", import.meta.url))`).
    * Omit to skip static-file serving (Next.js handles its own assets).
    */
   readonly clientDirExpression?: string | undefined;

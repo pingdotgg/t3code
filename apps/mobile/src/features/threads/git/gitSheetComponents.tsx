@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import type { ComponentProps } from "react";
 import { View } from "react-native";
@@ -33,6 +34,7 @@ export function statusSummary(
     readonly aheadCount?: number;
     readonly behindCount?: number;
     readonly pr?: { readonly state?: string; readonly number?: number } | null;
+    readonly sourceControlProvider?: { readonly kind: string } | null;
   } | null,
 ): string {
   if (!gitStatus) {
@@ -57,7 +59,10 @@ export function statusSummary(
     parts.push(`${gitStatus.behindCount} behind`);
   }
   if (gitStatus.pr?.state === "open") {
-    parts.push(`PR #${gitStatus.pr.number} open`);
+    const { shortLabel } = sourceControlClients.get(
+      gitStatus.sourceControlProvider?.kind,
+    ).changeRequest;
+    parts.push(`${shortLabel} #${gitStatus.pr.number} open`);
   }
 
   return parts.join(" \u00b7 ");

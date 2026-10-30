@@ -1,14 +1,18 @@
+import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { VcsProcessExitError } from "@t3tools/contracts";
+import { resolvePullRequestAuthorFilter, VcsProcessExitError } from "@t3tools/contracts";
 import type {
   PullRequestAction,
+  PullRequestActor,
   PullRequestComment,
   PullRequestCommit,
   PullRequestInvolvement,
+  PullRequestLabel,
+  PullRequestListFilters,
   PullRequestListState,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
@@ -36,6 +40,7 @@ import {
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodeProjectMergeCapabilitiesJson,
+  decodeProjectLabelsJson,
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
   decodeViewerJson,
@@ -178,7 +183,7 @@ export type GitLabPullRequestCliError =
   | GitLabDiffRefsUnavailableError
   | GitLabViewerUnavailableError;
 
-/** GitLab's own ceiling on `per_page`, so a larger page has to be walked. */
+/** GitLab's `per_page` limit. */
 const MAX_PAGE_SIZE = 100;
 const COMMIT_PAGE_SIZE = 100;
 /**
@@ -223,6 +228,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly limit: number;
       readonly query?: string | undefined;
       readonly cursor?: ProviderListCursor | undefined;
+      readonly filters?: PullRequestListFilters | undefined;
     }) => Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError>;
 
     readonly getMergeRequestDetail: (input: {
@@ -284,6 +290,24 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<PullRequestReviewerCandidateList, GitLabPullRequestCliError>;
+
+    readonly listProjectLabels: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly search?: string | undefined;
+    }) => Effect.Effect<
+      { readonly items: ReadonlyArray<PullRequestLabel>; readonly truncated: boolean },
+      GitLabPullRequestCliError
+    >;
+
+    readonly listProjectUsers: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly search?: string | undefined;
+    }) => Effect.Effect<
+      { readonly items: ReadonlyArray<PullRequestActor>; readonly truncated: boolean },
+      GitLabPullRequestCliError
+    >;
 
     readonly setReviewerRequest: (input: {
       readonly cwd: string;
@@ -419,12 +443,43 @@ function involvementParams(input: {
   }
 }
 
-function diffCursorPage(cursor: string): number | null {
-  return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
+/**
+ * GitLab's `labels` asks for every label it names, so only groups of one go to it; a group of
+ * alternatives is left for the service to narrow. A comma would split a name in two, and `None`
+ * and `Any` mean "unlabeled" and "labeled" to GitLab rather than labels of those names.
+ */
+function filterParams(input: {
+  readonly filters?: PullRequestListFilters | undefined;
+  readonly involvement: PullRequestInvolvement;
+  readonly viewer: string;
+}): ReadonlyArray<readonly [string, string]> {
+  const filters = input.filters;
+  if (filters === undefined) return [];
+  const listable = (names: ReadonlyArray<string>) =>
+    names.filter((name) => !name.includes(",") && !/^(?:none|any)$/iu.test(name.trim()));
+  const required = listable(
+    (filters.labels ?? []).flatMap((group) => (group.length === 1 ? group : [])),
+  );
+  const excluded = listable(filters.excludedLabels ?? []);
+  return [
+    ...(required.length === 0 ? [] : [["labels", required.join(",")] as const]),
+    ...(excluded.length === 0 ? [] : [["not[labels]", excluded.join(",")] as const]),
+    ...(filters.author === undefined || input.involvement === "authored"
+      ? []
+      : [
+          [
+            "author_username",
+            resolvePullRequestAuthorFilter(filters.author, input.viewer),
+          ] as const,
+        ]),
+    ...(filters.draft === undefined
+      ? []
+      : [["wip", filters.draft === "only" ? "yes" : "no"] as const]),
+  ];
 }
 
-function isCommitSha(value: string): boolean {
-  return /^[0-9a-f]{7,64}$/i.test(value);
+function diffCursorPage(cursor: string): number | null {
+  return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
 }
 
 function searchParams(search: string | undefined): ReadonlyArray<readonly [string, string]> {
@@ -444,7 +499,7 @@ function actionArgs(
     case "merge":
       return [
         "merge",
-        // glab turns on auto-merge whenever a pipeline is running. The button means merge now.
+        // glab defaults to auto-merge during a running pipeline.
         "--auto-merge=false",
         "--yes",
         ...(mergeMethod === "squash" ? ["--squash"] : []),
@@ -475,7 +530,7 @@ function actionArgs(
   }
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
 
@@ -493,9 +548,7 @@ export const make = Effect.gen(function* () {
         "api",
         input.path,
         ...(input.method === undefined ? [] : ["--method", input.method]),
-        // A raw body from stdin: argv is visible in process listings and is echoed back
-        // inside process-runner failure messages. Unlike `gh`, `glab api --input` sends no
-        // Content-Type at all, and GitLab answers a bodyless content type with HTTP 415.
+        // glab --input keeps payloads out of argv/logs but omits GitLab's required Content-Type.
         ...(input.stdin === undefined
           ? []
           : ["--input", "-", "--header", "Content-Type: application/json"]),
@@ -514,20 +567,17 @@ export const make = Effect.gen(function* () {
     readonly limit: number;
     readonly query?: string | undefined;
     readonly cursor?: ProviderListCursor | undefined;
+    readonly filters?: PullRequestListFilters | undefined;
     readonly page: number;
     readonly collected: ReadonlyArray<GitLabMergeRequestListItem>;
     readonly cursorAdvance: number;
   }): Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError> => {
-    // A continuation uses GitLab's offset pagination. Its timestamp filter is inclusive and has
-    // no tie-breaker, so a page where many rows share the boundary would otherwise return the
-    // same prefix forever. `delivered` is the stable offset the service has already handed over.
+    // GitLab's timestamp filter can repeat equal-time pages forever; use offsets.
     const delivered = input.cursor?.delivered ?? 0;
     const perPage = Math.min(input.limit + 1, MAX_PAGE_SIZE);
     const firstPage = Math.floor(delivered / perPage) + 1;
     const skipOnFirstPage = input.page === firstPage ? delivered % perPage : 0;
-    // A page made entirely of malformed rows has no item from which the service can build a
-    // continuation. Bound the walk to the raw span this request asked for rather than recursing
-    // forever on a host that keeps returning full unusable pages.
+    // Bound raw pages to stop recursion on entirely malformed results.
     const lastPage = Math.floor((delivered + input.limit) / perPage) + 1;
     return api({
       cwd: input.cwd,
@@ -535,6 +585,7 @@ export const make = Effect.gen(function* () {
         ["state", stateParam(input.state)],
         ...involvementParams(input),
         ...searchParams(input.query),
+        ...filterParams(input),
         ["order_by", "updated_at"],
         ["sort", "desc"],
         ["per_page", String(perPage)],
@@ -583,7 +634,7 @@ export const make = Effect.gen(function* () {
         }
         const collected = [...input.collected, ...pageItems];
         const consumed = Math.max(0, decoded.success.rawCount - skipOnFirstPage);
-        // Counted before decoding, so a skipped malformed row cannot end paging early.
+        // Count malformed rows to avoid ending pagination early.
         const exhausted = decoded.success.rawCount < perPage;
         if (exhausted) {
           return Effect.succeed({
@@ -650,9 +701,7 @@ export const make = Effect.gen(function* () {
         },
       }),
       Effect.flatMap(({ result, legacy }) => {
-        // A byte-truncated response is a JSON prefix, so this page cannot be read at all.
-        // Answering with no cursor would call the diff whole while silently dropping this page
-        // and every one after it, so the read fails and says which page could not be had.
+        // Returning no cursor for byte-truncated JSON would lose subsequent pages.
         if (result.stdoutTruncated) {
           return Effect.fail(
             new GitLabMergeRequestReadError({
@@ -683,8 +732,7 @@ export const make = Effect.gen(function* () {
         // rather than pointing the reader back at the page it just read.
         const morePages = !legacy && decoded.success.rawCount >= diffPageSize(input.commit);
         return Effect.succeed({
-          // The slice ends on a newline, so a file GitLab gave a header and no hunks for does
-          // not run into the first line of the next slice.
+          // Terminate slices so a hunkless header cannot run into the next slice.
           patch: patch.length === 0 ? patch : patch.replace(/\n?$/, "\n"),
           truncated: decoded.success.truncated,
           nextCursor: morePages ? String(input.page + 1) : null,
@@ -767,8 +815,7 @@ export const make = Effect.gen(function* () {
           );
         }
         const collected = [...input.collected, ...decoded.success.threads];
-        // The raw count again: this endpoint returns the plain notes too, so a full page of
-        // those is not the end of the positioned ones.
+        // Plain notes count toward the page size even when no positioned threads survive decoding.
         if (decoded.success.rawCount < MAX_PAGE_SIZE) {
           return Effect.succeed({ threads: collected, truncated: false });
         }
@@ -880,11 +927,13 @@ export const make = Effect.gen(function* () {
   const projectUsers = (input: {
     readonly cwd: string;
     readonly repository: string;
+    readonly search?: string | undefined;
   }): Effect.Effect<GitLabProjectUsers, GitLabPullRequestCliError> =>
     api({
       cwd: input.cwd,
       path: `projects/${projectPath(input.repository)}/users?${query([
         ["per_page", String(MAX_PAGE_SIZE)],
+        ...searchParams(input.search),
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {
@@ -972,10 +1021,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  /**
-   * GitLab charges the blobs query by how many paths it is handed, and its connection hands back
-   * one page. A hundred at a time keeps each request inside both.
-   */
+  // GitLab charges by path count and returns one connection page; respect both limits.
   const BLOB_PATHS_PER_REQUEST = 100;
 
   const blobsAt = (input: {
@@ -1035,10 +1081,7 @@ export const make = Effect.gen(function* () {
               Effect.map((pages) => {
                 const revisions = new Map<string, string>();
                 for (const { paths, page } of pages) {
-                  // A batch GitLab did not answer says nothing about its paths, so they are left
-                  // out and the caller reads them as versions it could not learn, which leaves
-                  // the marks on them alone. Filling them in as removed would report every file
-                  // a reader has cleared as changed over a project the token cannot see.
+                  // Unanswered paths are unknown; omit them to preserve viewed marks.
                   if (page === null) continue;
                   for (const [path, oid] of page) revisions.set(path, oid);
                   for (const path of paths) {
@@ -1074,17 +1117,21 @@ export const make = Effect.gen(function* () {
   return GitLabPullRequestCli.of({
     getViewerUsername: viewerUsername,
 
-    listMergeRequests: (input) => {
+    listMergeRequests: Effect.fn("GitLabPullRequestCli.listMergeRequests")(function (input) {
       const perPage = Math.min(input.limit + 1, MAX_PAGE_SIZE);
       const page = Math.floor((input.cursor?.delivered ?? 0) / perPage) + 1;
       return listPage({ ...input, page, collected: [], cursorAdvance: 0 });
-    },
+    }),
 
     getMergeRequestDetail: mergeRequestDetail,
 
-    listNotes: (input) => notesPage({ ...input, page: 1, collected: [] }),
+    listNotes: Effect.fn("GitLabPullRequestCli.listNotes")(function (input) {
+      return notesPage({ ...input, page: 1, collected: [] });
+    }),
 
-    listReactions: (input) => awardsPage({ ...input, cursor: null, page: 1, collected: null }),
+    listReactions: Effect.fn("GitLabPullRequestCli.listReactions")(function (input) {
+      return awardsPage({ ...input, cursor: null, page: 1, collected: null });
+    }),
 
     getFileRevisions: fileRevisions,
 
@@ -1122,8 +1169,8 @@ export const make = Effect.gen(function* () {
       });
     }),
 
-    listCommits: (input) =>
-      api({
+    listCommits: Effect.fn("GitLabPullRequestCli.listCommits")(function (input) {
+      return api({
         cwd: input.cwd,
         path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/commits?${query(
           [
@@ -1145,11 +1192,12 @@ export const make = Effect.gen(function* () {
                 }),
               );
         }),
-      ),
+      );
+    }),
 
-    getMergeRequestDiff: (input) => {
+    getMergeRequestDiff: Effect.fn("GitLabPullRequestCli.getMergeRequestDiff")(function* (input) {
       if (input.commit !== undefined && !isCommitSha(input.commit)) {
-        return Effect.fail(new GitLabDiffCommitError({ command: "glab", cwd: input.cwd }));
+        return yield* new GitLabDiffCommitError({ command: "glab", cwd: input.cwd });
       }
       const target = {
         cwd: input.cwd,
@@ -1158,13 +1206,13 @@ export const make = Effect.gen(function* () {
         ...(input.commit === undefined ? {} : { commit: input.commit }),
       };
       if (input.cursor === undefined) {
-        return diffPage({ ...target, page: 1 });
+        return yield* diffPage({ ...target, page: 1 });
       }
       const page = diffCursorPage(input.cursor);
-      return page === null
-        ? Effect.fail(new GitLabDiffCursorError({ command: "glab", cwd: input.cwd }))
-        : diffPage({ ...target, page });
-    },
+      if (page === null)
+        return yield* new GitLabDiffCursorError({ command: "glab", cwd: input.cwd });
+      return yield* diffPage({ ...target, page });
+    }),
 
     getMergeRequestDiffFileContents: Effect.fn(
       "GitLabPullRequestCli.getMergeRequestDiffFileContents",
@@ -1218,50 +1266,91 @@ export const make = Effect.gen(function* () {
       return { oldContents, newContents };
     }),
 
-    getProjectMergeCapabilities: (input) =>
-      api({
+    getProjectMergeCapabilities: Effect.fn("GitLabPullRequestCli.getProjectMergeCapabilities")(
+      function (input) {
+        return api({
+          cwd: input.cwd,
+          path: `projects/${projectPath(input.repository)}?license=false`,
+        }).pipe(
+          Effect.flatMap((result) => {
+            const decoded = decodeProjectMergeCapabilitiesJson(result.stdout.trim());
+            return Result.isSuccess(decoded)
+              ? Effect.succeed(decoded.success)
+              : Effect.fail(
+                  new GitLabMergeRequestReadError({
+                    command: "glab",
+                    cwd: input.cwd,
+                    operation: "getProjectMergeCapabilities",
+                    cause: decoded.failure,
+                  }),
+                );
+          }),
+        );
+      },
+    ),
+
+    listProjectLabels: Effect.fn("GitLabPullRequestCli.listProjectLabels")(function (input) {
+      return api({
         cwd: input.cwd,
-        path: `projects/${projectPath(input.repository)}?license=false`,
+        path: `projects/${projectPath(input.repository)}/labels?${query([
+          ["per_page", String(MAX_PAGE_SIZE)],
+          ...searchParams(input.search),
+        ])}`,
       }).pipe(
         Effect.flatMap((result) => {
-          const decoded = decodeProjectMergeCapabilitiesJson(result.stdout.trim());
+          const decoded = decodeProjectLabelsJson(result.stdout.trim());
           return Result.isSuccess(decoded)
-            ? Effect.succeed(decoded.success)
+            ? Effect.succeed({
+                items: decoded.success.labels,
+                truncated: decoded.success.rawCount >= MAX_PAGE_SIZE,
+              })
             : Effect.fail(
                 new GitLabMergeRequestReadError({
                   command: "glab",
                   cwd: input.cwd,
-                  operation: "getProjectMergeCapabilities",
+                  operation: "listProjectLabels",
                   cause: decoded.failure,
                 }),
               );
         }),
-      ),
+      );
+    }),
 
-    listReviewerCandidates: (input) =>
-      Effect.all([mergeRequestDetail(input), projectUsers(input)], { concurrency: 2 }).pipe(
-        Effect.map(([mergeRequest, users]) => {
-          const author = mergeRequest.author?.login;
-          const requested = new Set(mergeRequest.reviewRequestLogins);
-          return {
-            // The author is dropped rather than shown unusable: GitLab refuses to make the person
-            // who opened a merge request its reviewer.
-            candidates: users.candidates.flatMap((candidate) =>
-              candidate.login === author
-                ? []
-                : [{ ...candidate, isRequested: requested.has(candidate.login) }],
-            ),
-            truncated: users.rawCount >= MAX_PAGE_SIZE,
-          };
-        }),
-      ),
+    listProjectUsers: Effect.fn("GitLabPullRequestCli.listProjectUsers")(function (input) {
+      return projectUsers(input).pipe(
+        Effect.map(({ candidates, rawCount }) => ({
+          items: candidates.map(({ login, name, avatarUrl }) => ({ login, name, avatarUrl })),
+          truncated: rawCount >= MAX_PAGE_SIZE,
+        })),
+      );
+    }),
 
-    setReviewerRequest: (input) =>
-      mergeRequestDetail(input).pipe(
+    listReviewerCandidates: Effect.fn("GitLabPullRequestCli.listReviewerCandidates")(
+      function (input) {
+        return Effect.all([mergeRequestDetail(input), projectUsers(input)], {
+          concurrency: 2,
+        }).pipe(
+          Effect.map(([mergeRequest, users]) => {
+            const author = mergeRequest.author?.login;
+            const requested = new Set(mergeRequest.reviewRequestLogins);
+            return {
+              // GitLab forbids requesting a review from the MR author.
+              candidates: users.candidates.flatMap((candidate) =>
+                candidate.login === author
+                  ? []
+                  : [{ ...candidate, isRequested: requested.has(candidate.login) }],
+              ),
+              truncated: users.rawCount >= MAX_PAGE_SIZE,
+            };
+          }),
+        );
+      },
+    ),
+
+    setReviewerRequest: Effect.fn("GitLabPullRequestCli.setReviewerRequest")(function (input) {
+      return mergeRequestDetail(input).pipe(
         Effect.flatMap((mergeRequest) => {
-          // GitLab has no endpoint that adds or removes one reviewer: `reviewer_ids` replaces the
-          // whole set, so the set that is already there is read first and the change applied to
-          // it.
+          // GitLab replaces reviewer_ids wholesale.
           const ids = new Set(mergeRequest.reviewerIds);
           for (const reviewer of input.reviewers) {
             const id = Number(reviewer.id);
@@ -1277,7 +1366,8 @@ export const make = Effect.gen(function* () {
           });
         }),
         Effect.asVoid,
-      ),
+      );
+    }),
 
     runMergeRequestAction: Effect.fn("GitLabPullRequestCli.runMergeRequestAction")(
       function* (input) {
@@ -1309,41 +1399,45 @@ export const make = Effect.gen(function* () {
       },
     ),
 
-    updateMergeRequest: (input) =>
-      api({
+    updateMergeRequest: Effect.fn("GitLabPullRequestCli.updateMergeRequest")(function (input) {
+      return api({
         cwd: input.cwd,
         path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}`,
         method: "PUT",
-        // Only the fields the caller asked to change: GitLab leaves out what it is not sent, and
-        // clears what it is sent empty — so a title corrected on its own must carry no
-        // description at all.
+        // Omitted fields remain unchanged; empty values clear them.
         stdin: JSON.stringify({
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.description === undefined ? {} : { description: input.description }),
         }),
-      }).pipe(Effect.asVoid),
+      }).pipe(Effect.asVoid);
+    }),
 
-    commentOnMergeRequest: (input) =>
-      api({
-        cwd: input.cwd,
-        path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/notes`,
-        method: "POST",
-        // A JSON body rather than a `--raw-field`: glab coerces a field that reads as a
-        // literal `true` or a number, and a comment body is text either way.
-        stdin: JSON.stringify({ body: input.body }),
-      }).pipe(Effect.asVoid),
+    commentOnMergeRequest: Effect.fn("GitLabPullRequestCli.commentOnMergeRequest")(
+      function (input) {
+        return api({
+          cwd: input.cwd,
+          path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/notes`,
+          method: "POST",
+          // JSON avoids glab's coercion of numeric/boolean comment bodies.
+          stdin: JSON.stringify({ body: input.body }),
+        }).pipe(Effect.asVoid);
+      },
+    ),
 
-    updateNote: (input) =>
-      api({
+    updateNote: Effect.fn("GitLabPullRequestCli.updateNote")(function (input) {
+      return api({
         cwd: input.cwd,
         path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/notes/${encodeURIComponent(
           input.noteId,
         )}`,
         method: "PUT",
         stdin: JSON.stringify({ body: input.body }),
-      }).pipe(Effect.asVoid),
+      }).pipe(Effect.asVoid);
+    }),
 
-    listDiscussions: (input) => discussionsPage({ ...input, page: 1, collected: [] }),
+    listDiscussions: Effect.fn("GitLabPullRequestCli.listDiscussions")(function (input) {
+      return discussionsPage({ ...input, page: 1, collected: [] });
+    }),
 
     submitReview: Effect.fn("GitLabPullRequestCli.submitReview")(function* (input) {
       const project = projectPath(input.repository);
@@ -1394,25 +1488,29 @@ export const make = Effect.gen(function* () {
       }
     }),
 
-    replyToDiscussion: (input) =>
-      api({
+    replyToDiscussion: Effect.fn("GitLabPullRequestCli.replyToDiscussion")(function (input) {
+      return api({
         cwd: input.cwd,
         path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/discussions/${encodeURIComponent(
           input.discussionId,
         )}/notes`,
         method: "POST",
         stdin: JSON.stringify({ body: input.body }),
-      }).pipe(Effect.asVoid),
+      }).pipe(Effect.asVoid);
+    }),
 
-    setDiscussionResolution: (input) =>
-      api({
-        cwd: input.cwd,
-        path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/discussions/${encodeURIComponent(
-          input.discussionId,
-        )}`,
-        method: "PUT",
-        stdin: JSON.stringify({ resolved: input.resolved }),
-      }).pipe(Effect.asVoid),
+    setDiscussionResolution: Effect.fn("GitLabPullRequestCli.setDiscussionResolution")(
+      function (input) {
+        return api({
+          cwd: input.cwd,
+          path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/discussions/${encodeURIComponent(
+            input.discussionId,
+          )}`,
+          method: "PUT",
+          stdin: JSON.stringify({ resolved: input.resolved }),
+        }).pipe(Effect.asVoid);
+      },
+    ),
   });
 });
 

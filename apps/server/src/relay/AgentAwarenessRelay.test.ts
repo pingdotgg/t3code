@@ -19,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -36,6 +37,7 @@ import {
 } from "../cloud/config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
@@ -187,6 +189,10 @@ const makeTestRelay = Effect.fnUntraced(function* (
         catchUp.shellSnapshotReads += 1;
         return { schemaVersion: 2, snapshotSequence: 1, threads: [], archivedThreads: [] };
       }),
+    listActiveSubagentThreadIds: unused,
+    countThreads: unused,
+    listActiveShellIndex: () => Effect.succeed([]),
+    listOlderSettledThreads: unused,
     readShellSnapshot: unused,
     ensureLegacyTranscript: unused,
     dispatch: unused,
@@ -203,7 +209,6 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadTranscript: unused,
     getThreadSnapshotWindow: unused,
     getProjectThreadRecords: () => Effect.die("unused project record read"),
-    getProjectThread: unused,
     listProjectThreads: unused,
     sendToThread: unused,
     assertProviderInstanceEnabled: unused,
@@ -214,6 +219,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
     settleThread: unused,
     interruptThread: unused,
     stopWorkflow: () => Effect.die("unused stopWorkflow"),
+    forceStopThread: () => Effect.die("unused forceStopThread"),
+    awaitBackgroundTasks: unused,
     stopDelegatedTasks: unused,
     getThreadEventSequence: unused,
     recoverDelegatedTask: unused,
@@ -264,21 +271,20 @@ const makeTestRelay = Effect.fnUntraced(function* (
       delete: unused,
       getByWorkspaceRoot: unused,
       snapshot: Effect.succeed({ projects: [] } as never),
+      listPage: unused,
       getShell: unused,
       listShells: unused,
       getById: () =>
-        Effect.succeed(
-          Option.some({
-            id: PROJECT_ID,
-            title: "Project",
-            workspaceRoot: "/workspace",
-            defaultModelSelection: null,
-            scripts: [],
-            createdAt: NOW,
-            updatedAt: NOW,
-            deletedAt: null,
-          }),
-        ),
+        Effect.succeedSome({
+          id: PROJECT_ID,
+          title: "Project",
+          workspaceRoot: "/workspace",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+          deletedAt: null,
+        }),
     }),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
@@ -390,6 +396,8 @@ describe("AgentAwarenessRelay", () => {
         const terminal = shell({ status });
         yield* Ref.set(currentShell, terminal);
         yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
         assert.equal(publications[1]?.state?.phase, status);
 
         const now = yield* DateTime.now;
@@ -417,14 +425,121 @@ describe("AgentAwarenessRelay", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps settled live work until its monitor finishes", () =>
+  it.effect("holds a completion through a continuation gap, then publishes it once", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, shell({ status: "completed" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, shell());
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase),
+        ["running"],
+      );
+
+      yield* Ref.set(currentShell, shell({ status: "completed" }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase),
+        ["running", "completed"],
+      );
+    }),
+  );
+
+  it.effect("still publishes a completion when the thread settles during the hold", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      const completed = shell({ status: "completed" });
+      yield* Ref.set(currentShell, completed);
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, {
+        ...completed,
+        settledOverride: "settled",
+        settledAt: yield* DateTime.now,
+        lastVisitedAt: null,
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["running", "completed"],
+      );
+
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["running", "completed", null],
+      );
+    }),
+  );
+
+  it.effect("drops a held completion when a queued continuation hides the thread", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, shell({ status: "completed" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, shell({ status: "queued" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.notInclude(
+        publications.map((publication) => publication.state?.phase ?? null),
+        "completed",
+      );
+    }),
+  );
+
+  it.effect("retries a failed completion even after the thread settles", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay({
+        respond: (attempt) =>
+          attempt === 2
+            ? new Response("unavailable", { status: 503 })
+            : Response.json({ ok: true, deliveries: [] }),
+      });
+      yield* relay.publishThread(THREAD_ID);
+      const completed = shell({ status: "completed" });
+      yield* Ref.set(currentShell, completed);
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      yield* Ref.set(currentShell, {
+        ...completed,
+        settledOverride: "settled",
+        settledAt: yield* DateTime.now,
+        lastVisitedAt: null,
+      });
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["running", "completed", "completed"],
+      );
+
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state ?? null, null);
+    }),
+  );
+
+  it.effect("keeps settled live work until its awaited monitor finishes", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
       yield* relay.publishThread(THREAD_ID);
       const held = shell({
         status: "completed",
         settledOverride: "settled",
-        pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }],
+        pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor", awaited: true }],
       });
       yield* Ref.set(currentShell, held);
       yield* relay.publishThread(THREAD_ID);
@@ -593,10 +708,15 @@ describe("AgentAwarenessRelay", () => {
       yield* deliver(
         itemEvent("event:held-item:end", item("item:tool", { ...background, status: "completed" })),
       );
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase),
         ["running", "completed"],
       );
-    }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    ),
   );
 });

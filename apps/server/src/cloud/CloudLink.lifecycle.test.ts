@@ -163,7 +163,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ConnectReachability.ConnectReachability,
           ConnectReachability.ConnectReachability.of({
             check: Effect.die("unused"),
-            latest: Effect.succeed(Option.none()),
+            latest: Effect.succeedNone,
           }),
         ),
         Effect.provideService(HttpServer.HttpServer, {
@@ -923,8 +923,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
-  // A proof signed with a skewed boot clock is rejected as expired. The next
-  // attempt mints a new proof, so startup reconcile must keep retrying it.
   it.effect("retries a relay link proof rejected as expired", () => {
     const { store } = makeMemorySecretStore([
       [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],

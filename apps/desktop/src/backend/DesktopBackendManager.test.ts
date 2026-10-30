@@ -123,6 +123,9 @@ interface MakeInstanceInput {
   readonly onReady?: Effect.Effect<void>;
   readonly onShutdown?: Effect.Effect<void>;
   readonly onStateDirOwned?: Effect.Effect<void>;
+  readonly onStartupFailure?: (
+    failure: DesktopBackendManager.BackendStartupFailure,
+  ) => Effect.Effect<void>;
   readonly onPreflightFailed?: (
     failure: DesktopBackendManager.PreflightFailure,
   ) => Effect.Effect<boolean>;
@@ -182,6 +185,7 @@ function makeTestInstance(input: MakeInstanceInput) {
     ...(input.onShutdown ? { onShutdown: () => input.onShutdown! } : {}),
     ...(input.onStateDirOwned ? { onStateDirOwned: () => input.onStateDirOwned! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
+    ...(input.onStartupFailure ? { onStartupFailure: input.onStartupFailure } : {}),
   });
 
   return instance.pipe(Effect.provide(layerServices));
@@ -572,6 +576,58 @@ describe("DesktopBackendManager", () => {
         assert.isFalse(snapshot.restartScheduled);
         yield* TestClock.adjust(Duration.minutes(1));
         assert.equal(startCount, 1);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("reports a crash loop with the server output on the third restart", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const message = "Error: Cannot find module 'zod/v4' in /Users/René";
+        let exitCount = 0;
+        const firstExit = yield* Deferred.make<void>();
+        const reports = yield* Queue.unbounded<{
+          readonly exitCount: number;
+          readonly failure: DesktopBackendManager.BackendStartupFailure;
+        }>();
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.succeed(
+                makeProcess({
+                  // "é" split across chunks must not decode as U+FFFD, and the 4,000-char cut
+                  // lands inside the emoji's surrogate pair.
+                  stderr: Stream.make(
+                    new TextEncoder().encode(
+                      `😀${"x".repeat(3_999 - message.length)}${message.slice(0, -1)}`,
+                    ),
+                    new Uint8Array([0xc3]),
+                    new Uint8Array([0xa9]),
+                  ),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                }),
+              ),
+            ),
+          ),
+          httpClientLayer: layerHttpClient(() => Effect.never),
+          backendOutputLog: {
+            persistFailure: () => {
+              exitCount += 1;
+              return Deferred.succeed(firstExit, undefined).pipe(Effect.asVoid);
+            },
+          },
+          onStartupFailure: (failure) =>
+            Queue.offer(reports, { exitCount, failure }).pipe(Effect.asVoid),
+        });
+        yield* instance.start;
+        yield* Deferred.await(firstExit);
+        yield* TestClock.adjust(Duration.minutes(1));
+        const { exitCount: exitsWhenReported, failure } = yield* Queue.take(reports);
+        assert.equal(exitsWhenReported, 3);
+        assert.equal(failure.reason, "The server could not start (code=1).");
+        assert.isTrue(failure.output.endsWith(message));
+        assert.isTrue(failure.output.isWellFormed());
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

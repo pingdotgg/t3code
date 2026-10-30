@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Terminal from "effect/Terminal";
+import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -85,6 +86,75 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
           installedVersion: "999.0.0",
           targetVersion: packageJson.version,
         });
+        expect(installOptions).toEqual([]);
+      }),
+  );
+
+  it.effect("protect refuses root before creating any T3 directories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      const baseDir = `${parent}/t3`;
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(BootService.BootService, makeTestService(status).service),
+      );
+
+      const output = yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "protect",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => lines.join("\n")),
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.UserId, 0),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+      expect(output).toContain("without sudo");
+      expect(yield* fs.exists(baseDir)).toBe(false);
+    }),
+  );
+
+  // regression: #13239 a stale nvm-installed CLI reported "already using" its own version
+  it.effect.each(["install", "update"] as const)(
+    "%s names the CLI that found nothing to change",
+    (command) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+        const { service, installOptions } = makeTestService(status);
+        vi.spyOn(BootService, "layer").mockReturnValue(
+          Layer.succeed(BootService.BootService, service),
+        );
+        const node = "/home/me/.nvm/versions/node/v26.8.2/bin/node";
+        const script = "/home/me/.nvm/versions/node/v26.8.2/lib/node_modules/t3/dist/bin.mjs";
+
+        const output = yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+          command,
+          "--base-dir",
+          baseDir,
+        ]).pipe(
+          Effect.andThen(TestConsole.logLines),
+          Effect.map((lines) => lines.join("\n")),
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provideService(HostProcess.IsExecutable, false),
+          Effect.provideService(HostProcess.ExecutablePath, node),
+          Effect.provideService(HostProcess.Arguments, [node, script, "service", command]),
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+              Layer.fresh(TestConsole.layer),
+            ),
+          ),
+        );
+        expect(output).toContain(`t3@${packageJson.version}`);
+        expect(output).toContain(script);
         expect(installOptions).toEqual([]);
       }),
   );

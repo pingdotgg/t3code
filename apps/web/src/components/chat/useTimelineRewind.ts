@@ -1,5 +1,4 @@
-import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { SessionPhase } from "../../types";
@@ -39,12 +38,10 @@ interface TimelineRewindInput {
   readonly routeThreadRef: ScopedThreadRef;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
-  readonly serverProjection: EnvironmentThread["projection"] | null;
+  readonly serverProjection: ThreadStructure | null;
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly timelineMessages: ReadonlyArray<ChatMessage>;
-  readonly paintOnlyDisplayedTimeline: boolean;
   readonly phase: SessionPhase;
-  readonly isConnecting: boolean;
   readonly isSendBusy: boolean;
   readonly isRevertingCheckpoint: boolean;
   readonly supportsConversationRollback: boolean;
@@ -58,7 +55,7 @@ interface TimelineRewindInput {
 
 /**
  * Going back in a thread's timeline: reverting to an earlier turn (restoring that message into
- * the composer), rolling back a provider checkpoint, and forking a new thread from a run.
+ * the composer) and forking a new thread from a run.
  */
 export function useTimelineRewind(input: TimelineRewindInput) {
   const {
@@ -69,9 +66,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     serverProjection,
     activeThread,
     timelineMessages,
-    paintOnlyDisplayedTimeline,
     phase,
-    isConnecting,
     isSendBusy,
     isRevertingCheckpoint,
     supportsConversationRollback,
@@ -125,7 +120,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       );
       return;
     }
-    if (phase === "running" || isSendBusy || isConnecting) {
+    if (phase === "running" || isSendBusy) {
       setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
       return;
     }
@@ -176,57 +171,6 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   };
   const onConfirmRevertStable = useStableCallback(onConfirmRevert);
 
-  const onRollbackCheckpoint = async (input: {
-    readonly checkpointId: string;
-    readonly scopeId: string;
-  }) => {
-    if (!activeThread || isRevertingCheckpoint) return;
-    if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
-      setThreadError(
-        activeThread.id,
-        `Reconnect ${activeEnvironmentUnavailableLabel} before reverting checkpoints.`,
-      );
-      return;
-    }
-    if (phase === "running" || isSendBusy || isConnecting) {
-      setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
-      return;
-    }
-    const localApi = readLocalApi();
-    const confirmed =
-      localApi == null
-        ? window.confirm("Roll back this thread to the selected checkpoint?")
-        : await localApi.dialogs.confirm(
-            "Roll back this thread to the selected checkpoint?\nThis action cannot be undone.",
-          );
-    if (!confirmed) return;
-
-    useComposerDraftStore.setState((store) => ({
-      rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
-    }));
-    setThreadError(activeThread.id, null);
-    const result = await revertThreadCheckpoint({
-      environmentId,
-      input: {
-        threadId: activeThread.id,
-        checkpointId: input.checkpointId,
-        scopeId: input.scopeId,
-      },
-    });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      setThreadError(
-        activeThread.id,
-        error instanceof Error ? error.message : "Failed to revert thread state.",
-      );
-    }
-    useComposerDraftStore.setState((store) => {
-      const remaining = new Set(store.rewindingThreadKeys);
-      remaining.delete(routeThreadKey);
-      return { rewindingThreadKeys: remaining };
-    });
-  };
-
   const onForkFromRun = async (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
@@ -267,13 +211,6 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     });
   };
   const onForkFromRunStable = useStableCallback(onForkFromRun);
-  const onTimelineRollbackCheckpoint = (input: {
-    readonly checkpointId: string;
-    readonly scopeId: string;
-  }) => {
-    if (!paintOnlyDisplayedTimeline) void onRollbackCheckpoint(input);
-  };
-  const onTimelineRollbackCheckpointStable = useStableCallback(onTimelineRollbackCheckpoint);
   const onRevertTimelineTurn = (targetTurnCount: number, messageId: MessageId) => {
     void onRevertToTurnCountStable(targetTurnCount, messageId);
   };
@@ -282,6 +219,5 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     onConfirmRevertStable,
     onForkFromRunStable,
     onRevertTimelineTurnStable,
-    onTimelineRollbackCheckpointStable,
   };
 }

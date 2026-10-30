@@ -1,7 +1,11 @@
 import { ProjectId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { presentThreadLinkedPullRequests, resolveThreadPrSource } from "./thread-pr-presentation";
+import {
+  presentThreadLinkedPullRequests,
+  rememberBounded,
+  resolveThreadPrSource,
+} from "./thread-pr-presentation";
 
 function linkedPr(
   number: number,
@@ -42,6 +46,21 @@ describe("presentThreadLinkedPullRequests", () => {
       ]),
     ).toMatchObject({ kind: "stack", label: "2", number: 2, url: top.url });
   });
+
+  it("names a single link with its host's term", () => {
+    expect(presentThreadLinkedPullRequests([linkedPr(7)])?.accessibilityLabel).toBe(
+      "#7 pull request open",
+    );
+    expect(
+      presentThreadLinkedPullRequests([
+        linkedPr(7, {
+          host: "gitlab.com",
+          repository: "t3tools/t3code",
+          url: "https://gitlab.com/t3tools/t3code/-/merge_requests/7",
+        }),
+      ])?.accessibilityLabel,
+    ).toBe("#7 merge request open");
+  });
 });
 
 describe("resolveThreadPrSource compatibility", () => {
@@ -53,29 +72,20 @@ describe("resolveThreadPrSource compatibility", () => {
   };
   const branchRef = { ...legacyRef, number: 2, url: "https://github.com/t3tools/t3code/pull/2" };
 
-  it("polls the legacy reference when only the older linking capability exists", () => {
+  it("polls the stored reference before the server config loads", () => {
     expect(
       resolveThreadPrSource(
         { pullRequests: [], linkedPullRequest: legacyRef, branchPullRequest: branchRef },
-        { threadPullRequestLinking: true },
+        false,
       ),
     ).toEqual({ linkedPresentation: null, pullRequestRef: legacyRef });
   });
 
-  it("ignores stale snapshots after reconnecting to a server without array support", () => {
-    expect(
-      resolveThreadPrSource(
-        { pullRequests: [linkedPr(3)], linkedPullRequest: legacyRef },
-        { threadPullRequestLinking: true, threadPullRequests: false },
-      ),
-    ).toEqual({ linkedPresentation: null, pullRequestRef: legacyRef });
-  });
-
-  it("uses snapshots without polling when both capabilities are advertised", () => {
+  it("uses snapshots without polling once the server config loads", () => {
     expect(
       resolveThreadPrSource(
         { pullRequests: [linkedPr(3)], linkedPullRequest: legacyRef, branchPullRequest: branchRef },
-        { threadPullRequestLinking: true, threadPullRequests: true },
+        true,
       ),
     ).toMatchObject({ linkedPresentation: { number: 3 }, pullRequestRef: null });
   });
@@ -84,7 +94,7 @@ describe("resolveThreadPrSource compatibility", () => {
     expect(
       resolveThreadPrSource(
         { pullRequests: [], linkedPullRequest: legacyRef, branchPullRequest: branchRef },
-        { threadPullRequests: true },
+        true,
       ),
     ).toEqual({ linkedPresentation: null, pullRequestRef: branchRef });
   });
@@ -97,8 +107,22 @@ describe("resolveThreadPrSource compatibility", () => {
           linkedPullRequest: legacyRef,
           branchPullRequest: branchRef,
         },
-        { threadPullRequests: true },
+        true,
       ),
     ).toMatchObject({ linkedPresentation: { number: 3, state: null }, pullRequestRef: null });
+  });
+});
+
+describe("rememberBounded", () => {
+  it("moves a re-answered entry to the newest slot and evicts the oldest past the limit", () => {
+    let snapshots: ReadonlyMap<string, number> = new Map();
+    snapshots = rememberBounded(snapshots, "a", 1, 2);
+    snapshots = rememberBounded(snapshots, "b", 2, 2);
+    snapshots = rememberBounded(snapshots, "a", 3, 2);
+    snapshots = rememberBounded(snapshots, "c", 4, 2);
+    expect([...snapshots]).toEqual([
+      ["a", 3],
+      ["c", 4],
+    ]);
   });
 });

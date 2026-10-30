@@ -65,8 +65,8 @@ describe("CDP relay", () => {
     ]);
     pending[0]!();
     await settle();
-    expect(send).toHaveBeenNthCalledWith(1, "Page.captureScreenshot", {}, undefined);
-    expect(send).toHaveBeenNthCalledWith(2, "DOM.enable", {}, "iframe-session");
+    expect(send).toHaveBeenNthCalledWith(1, "Page.captureScreenshot", {}, undefined, undefined);
+    expect(send).toHaveBeenNthCalledWith(2, "DOM.enable", {}, "iframe-session", undefined);
     expect(written.at(-1)).toEqual({
       id: 5,
       result: { method: "Page.captureScreenshot" },
@@ -92,7 +92,30 @@ describe("CDP relay", () => {
       }),
     );
     await settle();
-    expect(send.mock.calls).toEqual([["Runtime.runIfWaitingForDebugger", {}, "iframe-session"]]);
+    expect(send.mock.calls).toEqual([
+      ["Runtime.runIfWaitingForDebugger", {}, "iframe-session", undefined],
+    ]);
+  });
+
+  // Playwright enables focus emulation on every page it connects to, and Chromium then
+  // counts the guest as captured: a preview the panel hides keeps its timers unthrottled.
+  it("acknowledges Playwright's focus emulation without forcing it onto the guest", async () => {
+    const send = vi.fn(async () => ({}));
+    const written: Array<Record<string, unknown>> = [];
+    const relay = createCdpRelayConnection(makeTarget(send), (raw) =>
+      written.push(JSON.parse(raw)),
+    );
+    relay.receive(
+      JSON.stringify({
+        id: 1,
+        method: "Emulation.setFocusEmulationEnabled",
+        params: { enabled: true },
+        sessionId: "t3-preview-page",
+      }),
+    );
+    await settle();
+    expect(written).toEqual([{ id: 1, result: {}, sessionId: "t3-preview-page" }]);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("routes tab events to the page session once the page is announced", async () => {
@@ -104,7 +127,6 @@ describe("CDP relay", () => {
     expect(written).toEqual([]);
     relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
     await settle();
-    // Electron passes an empty session id for the page's own events.
     relay.event("Page.loadEventFired", { timestamp: 1 }, "");
     relay.event("Runtime.consoleAPICalled", {}, "iframe-session");
     expect(written.slice(-2)).toEqual([
@@ -148,7 +170,7 @@ describe("CDP relay extra sessions", () => {
     expect(written.find((m) => m["id"] === 4)).toHaveProperty("error");
     relay.receive(JSON.stringify({ id: 5, method: "Page.startScreencast", sessionId: extra }));
     await settle();
-    expect(send).toHaveBeenLastCalledWith("Page.startScreencast", {}, undefined);
+    expect(send).toHaveBeenLastCalledWith("Page.startScreencast", {}, undefined, extra);
     written.length = 0;
     relay.event("Page.screencastFrame", { data: "x" }, undefined);
     expect(written.map((m) => m["sessionId"])).toEqual(["t3-preview-page", extra]);

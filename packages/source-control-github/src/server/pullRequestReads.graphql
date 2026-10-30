@@ -87,6 +87,7 @@ query PullRequestCore(
       baseRefName
       headRefOid
       isCrossRepository
+      maintainerCanModify
       headRepositoryOwner {
         login
       }
@@ -242,9 +243,13 @@ query PullRequestActivity(
       commits(last: 100) @include(if: $head) {
         nodes {
           commit {
+            id
             oid
             messageHeadline
             committedDate
+            parents(first: 1) {
+              totalCount
+            }
             authors(first: 10) {
               nodes {
                 name
@@ -298,6 +303,18 @@ query PullRequestActivity(
           }
         }
       }
+    }
+  }
+}
+
+# Merge commits include upstream changes in their stats, which the timeline does not display.
+# Read only the non-merge commits named by the activity connection.
+query PullRequestCommitStats($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on Commit {
+      oid
+      additions
+      deletions
     }
   }
 }
@@ -450,6 +467,37 @@ query LabelCandidates($owner: String!, $name: String!, $number: Int!) {
         nodes {
           name
         }
+      }
+    }
+  }
+}
+
+query RepositoryLabels($owner: String!, $name: String!, $query: String) {
+  repository(owner: $owner, name: $name) {
+    labels(first: 100, query: $query, orderBy: { field: NAME, direction: ASC }) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        name
+        color
+      }
+    }
+  }
+}
+
+# Mentionable rather than assignable users: a pull request from a fork is opened by someone with
+# no access to the repository, and a listing is still narrowed by them.
+query RepositoryAuthors($owner: String!, $name: String!, $query: String) {
+  repository(owner: $owner, name: $name) {
+    mentionableUsers(first: 50, query: $query) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        login
+        name
+        avatarUrl
       }
     }
   }

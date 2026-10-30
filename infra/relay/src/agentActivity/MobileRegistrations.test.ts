@@ -69,8 +69,7 @@ function makeLiveActivities(
     listTargets: () => Effect.succeed([]),
     listIdleArmedTargets: () => Effect.succeed([]),
     markDelivery: () => Effect.void,
-    markStartQueued: () => Effect.void,
-    clearStartQueued: () => Effect.void,
+
     invalidateDeliveryToken: () => Effect.void,
     ...overrides,
   };
@@ -128,9 +127,9 @@ function makeDeliveryAttempts(
   overrides: Partial<DeliveryAttempts.DeliveryAttempts["Service"]> = {},
 ): DeliveryAttempts.DeliveryAttempts["Service"] {
   return {
-    record: () => Effect.void,
     claimSourceJob: () => Effect.succeed("claimed"),
     completeSourceJob: () => Effect.void,
+    pruneExpired: Effect.succeed(0),
     ...overrides,
   };
 }
@@ -247,9 +246,6 @@ describe("MobileRegistrations", () => {
     "does not remotely start a Live Activity when a device registers after work is already active",
     () => {
       const queuedJobs: Array<SignedApnsDeliveryJob> = [];
-      const queuedStarts: Array<
-        Parameters<LiveActivities.LiveActivities["Service"]["markStartQueued"]>[0]
-      > = [];
       const registeredDevices: Array<Parameters<Devices.Devices["Service"]["register"]>[0]> = [];
       const devices = makeDevices({
         register: (input) =>
@@ -279,10 +275,6 @@ describe("MobileRegistrations", () => {
               last_live_activity_delivery_at: null,
             },
           ]),
-        markStartQueued: (input) =>
-          Effect.sync(() => {
-            queuedStarts.push(input);
-          }),
       });
 
       return Effect.gen(function* () {
@@ -298,7 +290,6 @@ describe("MobileRegistrations", () => {
 
         expect(result).toEqual({ ok: true });
         expect(registeredDevices).toHaveLength(1);
-        expect(queuedStarts).toEqual([]);
         expect(queuedJobs).toEqual([]);
       }).pipe(Effect.provide(layerRegistrationReplay({ devices, liveActivities, queuedJobs })));
     },

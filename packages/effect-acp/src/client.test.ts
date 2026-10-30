@@ -53,10 +53,7 @@ const PermissionResponse = jsonRpcResponse(AcpSchema.RequestPermissionResponse);
 const ErrorResponse = Schema.Struct({ id: Schema.String, error: Schema.Unknown });
 const DieResponse = Schema.Struct({
   id: Schema.String,
-  error: Schema.Struct({
-    _tag: Schema.Literal("Cause"),
-    data: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Die") })]),
-  }),
+  error: Schema.TaggedStruct("Cause", { data: Schema.Tuple([Schema.TaggedStruct("Die", {})]) }),
 });
 const decodePromptRequestLine = Schema.decodeEffect(Schema.fromJsonString(PromptRequest));
 const XAiPromptCompleteNotification = jsonRpcNotification(
@@ -1068,16 +1065,14 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       yield* Queue.offer(
         input,
         concatBytes(
-          yield* Effect.all(
-            ["permission-a", "permission-b"].map((id) =>
-              encodeJsonl(PermissionRequest, {
-                jsonrpc: "2.0",
-                id,
-                method: "session/request_permission",
-                params: payload,
-                headers: [],
-              }),
-            ),
+          yield* Effect.forEach(["permission-a", "permission-b"], (id) =>
+            encodeJsonl(PermissionRequest, {
+              jsonrpc: "2.0",
+              id,
+              method: "session/request_permission",
+              params: payload,
+              headers: [],
+            }),
           ),
         ),
       );
@@ -1307,6 +1302,37 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       }),
   );
 
+  it.effect("returns the ACP v2 idle error as the prompt result", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const error = { code: -32000, message: "Missing Authentication header" };
+      const prompt = yield* acp.agent
+        .prompt({ sessionId: "idle-error", prompt: [{ type: "text", text: "Hello" }] })
+        .pipe(Effect.forkScoped);
+      const request = yield* decodePromptRequestLine(yield* Queue.take(output));
+      yield* Queue.offer(
+        input,
+        concatBytes([
+          yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { messageId: `user-${request.id}` },
+          }),
+          yield* encodeJsonl(SessionUpdateNotification, {
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "idle-error",
+              update: { sessionUpdate: "state_update", state: "idle", stopReason: "error", error },
+            },
+          }),
+        ]),
+      );
+      assert.deepEqual(yield* Fiber.join(prompt), { stopReason: "error", error });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("routes MCP-over-ACP connect, message, notification, and disconnect callbacks", () =>
     Effect.gen(function* () {
       const handle = yield* makeHandle({ ACP_MOCK_MCP_OVER_ACP: "1" });
@@ -1418,6 +1444,55 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         originalSessionUpdate: "timeline_update",
         raw: { sessionUpdate: "timeline_update", entries: [] },
       });
+    }),
+  );
+
+  it.effect("delivers ACP v1 session notices, which the pinned v1 schema predates", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const scope = yield* Scope.make();
+      const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+      const initializeFiber = yield* acp.agent
+        .initialize({ protocolVersion: 1, clientCapabilities: { session: { notices: {} } } })
+        .pipe(Effect.forkScoped);
+      const initializeRequest = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(InitializeRequestV1))),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(InitializeResponseV1, {
+          jsonrpc: "2.0",
+          id: initializeRequest.id,
+          result: { protocolVersion: 1 },
+        }),
+      );
+      yield* Fiber.join(initializeFiber);
+
+      const notice = {
+        sessionUpdate: "notice",
+        severity: "warning",
+        title: "MCP server unavailable",
+        description: "Continuing without it.",
+      } as const;
+      const untitled = { sessionUpdate: "notice", severity: "info" } as const;
+      for (const update of [notice, untitled]) {
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(SessionUpdateNotification, {
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: { sessionId: "session-1", update },
+          }),
+        );
+      }
+      const received = yield* acp.raw.notifications.pipe(Stream.take(2), Stream.runCollect);
+      assert.deepEqual(
+        Array.from(received, (event) =>
+          event._tag === "SessionUpdate" ? event.params.update : undefined,
+        ),
+        [notice, { sessionUpdate: "_t3_unknown", originalSessionUpdate: "notice", raw: untitled }],
+      );
+      yield* Scope.close(scope, Exit.void);
     }),
   );
 });

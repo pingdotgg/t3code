@@ -95,6 +95,7 @@ const LOGIN_SHELL_ENV_NAMES = [
   "SSL_CERT_DIR",
   "NODE_EXTRA_CA_CERTS",
   "T3CODE_TELEMETRY_ENABLED",
+  "T3CODE_GITHUB_APP_CLIENT_ID",
   "__MISE_DIFF",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
@@ -360,11 +361,6 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
   function* (
     config: ShellEnvironmentConfig,
   ): Effect.fn.Return<boolean, never, ChildProcessSpawner.ChildProcessSpawner> {
-    // Concurrent, not sequential: these two probes are independent (only their
-    // results are combined below) and each spawns its own PowerShell. Run in
-    // series they sit at offset 0 of desktop.startup, before anything else, and
-    // launch traces measured them at 2718ms then 2066ms — the entire 4.8s
-    // startup span, of which desktop.bootstrap is ~30ms.
     const [noProfile, profile] = yield* Effect.all(
       [
         readWindowsEnvironment(["PATH"], { loadProfile: false }),
@@ -396,7 +392,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
   function* (
     config: ShellEnvironmentConfig,
   ): Effect.fn.Return<
-    void,
+    boolean,
     never,
     ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
   > {
@@ -432,9 +428,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "XDG_CURRENT_DESKTOP",
       "XDG_SESSION_DESKTOP",
       "XDG_SESSION_TYPE",
-      // mise's record of the PATH entries it added. It must travel with the
-      // shell's PATH, or `mise x` can rebuild PATH behind a same-named wrapper
-      // (`exec mise x claude -- claude`) that then re-runs itself forever.
+      // Forward mise's PATH delta too, or mise x can rebuild PATH into a recursive same-named wrapper.
       "__MISE_DIFF",
     ] as const;
     for (const name of shellPreferredEnvNames) {
@@ -452,21 +446,19 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "XDG_DATA_HOME",
       "XDG_RUNTIME_DIR",
       "WAYLAND_DISPLAY",
-      // CA trust set in the shell profile. Without it, a Node or OpenSSL build
-      // that has no bundled roots (a shared-OpenSSL node on PATH) cannot verify
-      // TLS, so provider updaters and agents fail to reach their registries.
+      // Shell CA settings are required by Node/OpenSSL builds without bundled roots for registry TLS.
       "SSL_CERT_FILE",
       "SSL_CERT_DIR",
       "NODE_EXTRA_CA_CERTS",
       "T3CODE_TELEMETRY_ENABLED",
+      "T3CODE_GITHUB_APP_CLIENT_ID",
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
       }
     }
 
-    // Locale variables form one precedence group: LC_ALL can override an inherited
-    // LANG or LC_CTYPE, so only hydrate the group when the process has none of them.
+    // Hydrate locale variables together; inherited LC_ALL can override LANG or LC_CTYPE.
     if (
       config.platform === "darwin" &&
       LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))
@@ -478,11 +470,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         }
       }
 
-      // GUI launches inherit no locale from launchd, so spawned agents land in the C
-      // locale and pbcopy decodes their UTF-8 output as MacRoman. Older supported
-      // macOS releases do not provide C.UTF-8, so set only LC_CTYPE to a UTF-8 locale
-      // available on those releases. Leaving LANG unset keeps C-stable collation and
-      // formatting, so output parsing is unaffected.
+      // launchd lacks locale; UTF-8 LC_CTYPE fixes pbcopy's MacRoman decoding without changing C formatting or collation.
       if (LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))) {
         config.env.LC_CTYPE = FALLBACK_LC_CTYPE;
       }
@@ -503,6 +491,8 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         }
       }
     }
+
+    return Option.isSome(trimNonEmpty(shellEnvironment.PATH));
   },
 );
 
@@ -517,12 +507,12 @@ const installShellEnvironment = (
     return installWindowsEnvironment(config);
   }
   if (config.platform === "darwin" || config.platform === "linux") {
-    return installPosixEnvironment(config).pipe(Effect.as(true));
+    return installPosixEnvironment(config);
   }
   return Effect.succeed(false);
 };
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
