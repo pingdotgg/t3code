@@ -4369,6 +4369,81 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
 
+  it.effect("shows a prompt another client sent into the session in its continuation turn", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const offered = yield* Deferred.make<void>();
+      const { runtime, thread } = yield* resumed([
+        event("session.inbox.enqueued", {
+          inboxID: "msg_external",
+          sessionID: SESSION,
+          item: { type: "user", payload: { text: "qwe!", files: [] }, delivery: "steer" },
+        }),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_external" }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_external_reply",
+          ordinal: 0,
+          text: "Hello!",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) =>
+            Effect.sync(() => void offers.push(request)).pipe(
+              Effect.andThen(Deferred.succeed(offered, undefined)),
+              Effect.asVoid,
+            ),
+          take: Effect.never,
+        }),
+      );
+      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const ended = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            collected.push(event);
+            if (event.type === "turn.terminal") yield* Deferred.succeed(ended, undefined);
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(offered);
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+      yield* Deferred.await(ended);
+      const continuationId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: OPENCODE_PROVIDER,
+        nativeTurnId: `${SESSION}:attempt:attempt:opencode2-adapter:wake`,
+      });
+      const shown = (entries: ReadonlyArray<string>) =>
+        entries.filter((entry, index) => entries.indexOf(entry) === index);
+      assert.deepEqual(
+        shown(
+          collected.flatMap((event) =>
+            event.type === "message.updated"
+              ? [`${event.message.role}: ${event.message.text}`]
+              : [],
+          ),
+        ),
+        ["user: qwe!", "assistant: Hello!"],
+      );
+      assert.deepEqual(
+        shown(
+          collected.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.providerTurnId === continuationId &&
+            (event.turnItem.type === "user_message" || event.turnItem.type === "assistant_message")
+              ? [`${event.turnItem.type}: ${event.turnItem.text}`]
+              : [],
+          ),
+        ),
+        ["user_message: qwe!", "assistant_message: Hello!"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
+  );
+
   it.effect("ends a follow-up turn a steer joined exactly once", () =>
     Effect.gen(function* () {
       const reportText = `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\nCHILD_OK\n</subagent>`;
