@@ -212,6 +212,8 @@ export class ServerBrowserContexts {
   async clearProfile(profileId: string) {
     if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
     const key = JSON.stringify([profileId, null]);
+    const existing = this.clearing.get(key);
+    if (existing) return existing;
     const clearing = (async () => {
       const pending = this.contexts.get(key);
       if (pending) {
