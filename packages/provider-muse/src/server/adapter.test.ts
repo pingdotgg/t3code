@@ -52,6 +52,8 @@ const MUSE_PROVIDER = ProviderDriverKind.make("muse");
 const INSTANCE_ID = ProviderInstanceId.make("muse_work");
 const THREAD_ID = ThreadId.make("thread-muse-test");
 const MODEL = "muse-spark-1.3-contributor";
+const isProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
+
 const museSettings = Schema.decodeSync(MuseSettings)({ enabled: true });
 const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
@@ -94,6 +96,9 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
   let closeGate: Promise<void> | undefined;
   let onProcessExit: MuseSdkHostOptions["onProcessExit"];
   let history: MuseItem[] = [];
+  // Muse resolves a turn's effort from turn/start, then the session default, then its own.
+  let sessionEffort: unknown;
+  const turnEfforts = new Map<string, unknown>();
   const responses = new Map<
     string,
     Array<Promise<Record<string, unknown>> | Record<string, unknown> | Error>
@@ -116,7 +121,14 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
           session: { sessionId, modelId: MODEL, activeTurnId: null },
           history: { items: history },
         };
+      case "session/setReasoningEffort":
+        sessionEffort = call.params.reasoningEffort;
+        return {};
       case "turn/start":
+        turnEfforts.set(
+          String(call.commandId),
+          call.params.reasoningEffort ?? sessionEffort ?? "host-default",
+        );
         return { turnId: call.commandId };
       case "turn/steer":
         return { turnId: call.params.expectedTurnId };
@@ -183,6 +195,12 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params: { sessionId, ...params } });
       }),
+    startOwnTurn: (turnId: string) =>
+      Effect.sync(() => {
+        turnEfforts.set(turnId, sessionEffort ?? "host-default");
+        notify({ jsonrpc: "2.0", method: "turn/started", params: { sessionId, turnId } });
+      }),
+    turnEffort: (turnId: string) => turnEfforts.get(turnId),
     emitHostWide: (method: string, params: Record<string, unknown>) =>
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params });
@@ -705,6 +723,104 @@ describe("MuseAdapterV2", () => {
         providerId: "meta",
       });
       yield* fake.takeCall("turn/start");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps per-turn effort when an older host lacks the session setter", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      fake.queueResponse(
+        "session/setReasoningEffort",
+        new MspError({
+          code: -32601,
+          message: "Method not found",
+          data: { kind: "methodNotFound" },
+        }),
+      );
+      const harness = yield* makeHarness(fake);
+      for (const index of [1, 2]) {
+        const input = yield* turnInput(harness.providerThread, index);
+        yield* harness.runtime.startTurn(input);
+        const turn = yield* fake.takeCall("turn/start");
+        assert.strictEqual(fake.turnEffort(turn.commandId!), "max");
+        yield* fake.emit("turn/completed", { turnId: turn.commandId!, terminal: "completed" });
+        yield* harness.takeEvent("turn.terminal");
+      }
+      assert.strictEqual(
+        fake.calls.filter((call) => call.method === "session/setReasoningEffort").length,
+        1,
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("surfaces session effort failures other than an unsupported method", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      fake.queueResponse(
+        "session/setReasoningEffort",
+        new MspError({
+          code: -32000,
+          message: "Setter rejected",
+          data: { kind: "commandRejected" },
+        }),
+      );
+      const harness = yield* makeHarness(fake);
+      const input = yield* turnInput(harness.providerThread, 1);
+      const error = yield* harness.runtime.startTurn(input).pipe(Effect.flip);
+      assert.ok(isProtocolError(error.cause));
+      assert.match(error.cause.detail, /Setter rejected/);
+      assert.strictEqual(
+        fake.calls.some((call) => call.method === "turn/start"),
+        false,
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("runs the follow-up turns Muse starts itself at the thread's selected effort", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const offers =
+        yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: (request) => Queue.offer(offers, request) } },
+      );
+      for (const [index, effort] of ["max", "low"].entries()) {
+        const input = yield* turnInput(harness.providerThread, index * 2 + 1);
+        const selection = {
+          ...input.modelSelection,
+          options: [{ id: "reasoningEffort", value: effort }],
+        };
+        yield* harness.runtime.startTurn({
+          ...input,
+          modelSelection: selection,
+          appThread: { ...input.appThread, modelSelection: selection },
+        });
+        const turn = yield* fake.takeCall("turn/start");
+        yield* fake.emit("turn/completed", { turnId: turn.commandId!, terminal: "completed" });
+        yield* harness.takeEvent("turn.terminal");
+
+        const reportId = `report-${index + 1}`;
+        yield* fake.startOwnTurn(reportId);
+        const continuation = yield* Queue.take(offers);
+        const followUp = yield* turnInput(harness.providerThread, index * 2 + 2);
+        yield* continuation.dispatchIfCurrent!(
+          harness.runtime.startTurn({
+            ...followUp,
+            message: { ...followUp.message, createdBy: "agent", creationSource: "provider" },
+          }),
+        );
+        const adopted = yield* harness.takeEvent("provider_turn.updated");
+        assert.strictEqual(adopted.providerTurn.nativeTurnRef?.nativeId, reportId);
+        yield* fake.emit("turn/completed", { turnId: reportId, terminal: "completed" });
+        assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
+        assert.strictEqual(fake.turnEffort(reportId), effort);
+      }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
