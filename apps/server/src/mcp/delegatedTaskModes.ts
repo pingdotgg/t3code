@@ -94,15 +94,21 @@ export function resolveCyberAccessProgram(
   parentSelection: ModelSelection | undefined,
   requested: ReadonlyArray<ProviderOptionSelection>,
 ): Effect.Effect<void, OrchestratorMcpFailure> {
-  const value = requested.find((selection) => selection.id === "cyberAccessProgram")?.value;
   const parentValue =
     getModelSelectionStringOptionValue(parentSelection, "cyberAccessProgram") ?? "default";
-  return value === undefined || value === "default" || value === parentValue
+  // Check every entry: a later duplicate would win wherever options are merged.
+  const chosen = requested.find(
+    (selection) =>
+      selection.id === "cyberAccessProgram" &&
+      selection.value !== "default" &&
+      selection.value !== parentValue,
+  );
+  return chosen === undefined
     ? Effect.void
     : Effect.fail(
         new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: `Cyber access program ${String(value)} differs from this thread's ${parentValue}. Omit it; the user chooses one in the composer's model options.`,
+          message: `Cyber access program ${String(chosen.value)} differs from this thread's ${parentValue}. Omit it; the user chooses one in the composer's model options.`,
         }),
       );
 }

@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -21,6 +22,15 @@ const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
 );
 const mockPeerArgs = (path: string) => [path];
+
+it("keeps a requested cyber access program when encoding turn/start", () => {
+  const encode = Schema.encodeUnknownSync(CodexClient.V2TurnStartParamsWithCollaborationMode);
+  const params = { threadId: "thread-1", input: [] };
+  for (const program of ["daybreakBlue", "daybreakRed"] as const) {
+    assert.equal(encode({ ...params, cyberAccessProgram: program }).cyberAccessProgram, program);
+  }
+  assert.notProperty(encode(params), "cyberAccessProgram");
+});
 
 it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
   const makeHandle = (env?: Record<string, string>) =>

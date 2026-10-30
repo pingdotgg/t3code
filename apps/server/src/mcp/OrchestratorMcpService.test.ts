@@ -3396,6 +3396,11 @@ describe("OrchestratorMcpService provider resolution", () => {
           requested("daybreakRed"),
         ).pipe(Effect.flip);
         assert.equal(switched.code, "invalid_request");
+        const duplicated = yield* resolveCyberAccessProgram(codex(), [
+          ...requested("default"),
+          ...requested("daybreakBlue"),
+        ]).pipe(Effect.flip);
+        assert.equal(duplicated.code, "invalid_request");
       }),
     );
 
