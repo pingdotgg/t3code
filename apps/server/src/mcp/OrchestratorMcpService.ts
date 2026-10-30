@@ -1366,7 +1366,11 @@ const make = Effect.gen(function* () {
           `Model ${model} on provider ${instanceId} rejected options: ${invalid.join(" ")}`,
         );
       }
-      yield* resolveCyberAccessProgram(inheritedSelection, requestedOptions);
+      yield* resolveCyberAccessProgram(inheritedSelection, {
+        instanceId,
+        model,
+        options: requestedOptions,
+      });
     }
 
     const inheritsOptions =

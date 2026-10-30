@@ -518,19 +518,24 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
       code: "runtime_mode_escalation_denied",
     });
 
-    const cyber = yield* call(
-      "t3_thread_configure",
-      {
-        threadId: "other-project-thread",
-        modelSelection: {
-          instanceId: "codex",
-          model: "gpt-6-sol",
-          options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+    // The thread runs Daybreak Blue on gpt-6-sol: configure may keep it, not move it.
+    const configureCyber = (model: string) =>
+      call(
+        "t3_thread_configure",
+        {
+          threadId: "other-project-thread",
+          modelSelection: {
+            instanceId: "codex",
+            model,
+            options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+          },
         },
-      },
-      clientScope("auto"),
-    );
-    expect(declaredFailure(cyber)).toMatchObject({ code: "invalid_request" });
+        clientScope("auto"),
+      );
+    expect((yield* configureCyber("gpt-6-sol")).isError).toBe(false);
+    expect(declaredFailure(yield* configureCyber("gpt-6.1-sol"))).toMatchObject({
+      code: "invalid_request",
+    });
 
     const forked = yield* call(
       "t3_thread_transfer",
@@ -552,6 +557,12 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
                 thread: {
                   id: ThreadId.make("other-project-thread"),
                   projectId: "other-project",
+                  providerInstanceId: "codex",
+                  modelSelection: {
+                    instanceId: "codex",
+                    model: "gpt-6-sol",
+                    options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+                  },
                   runtimeMode: "auto",
                   interactionMode: "default",
                   deletedAt: null,

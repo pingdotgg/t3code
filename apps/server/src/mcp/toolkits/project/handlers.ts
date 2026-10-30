@@ -204,10 +204,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           });
         // A retry's selection still reaches a new run, so replays are checked too.
         if (input.modelSelection !== undefined)
-          yield* resolveCyberAccessProgram(
-            caller?.modelSelection,
-            input.modelSelection.options ?? [],
-          );
+          yield* resolveCyberAccessProgram(caller?.modelSelection, input.modelSelection);
         const startedRuntimeMode =
           projectDefaults !== undefined && input.runtimeMode === undefined
             ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(
@@ -329,7 +326,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
           };
         }
-        yield* resolveCyberAccessProgram(undefined, input.defaultModelSelection?.options ?? []);
+        if (input.defaultModelSelection)
+          yield* resolveCyberAccessProgram(undefined, input.defaultModelSelection);
         const commandId = yield* newCommandId();
         return yield* projects
           .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
@@ -342,8 +340,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
-      const requested = input.defaultModelSelection?.options;
-      if (requested !== undefined) {
+      const requested = input.defaultModelSelection;
+      if (requested) {
         const current = yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable));
         yield* resolveCyberAccessProgram(
           Option.getOrUndefined(current)?.defaultModelSelection ?? undefined,

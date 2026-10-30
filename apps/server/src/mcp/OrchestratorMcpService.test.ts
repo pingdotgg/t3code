@@ -2636,29 +2636,42 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     it.effect("refuses a cyber access program the parent thread did not choose", () =>
       Effect.gen(function* () {
-        const error = yield* resolveCyberAccessProgram(codex(), requested("daybreakRed")).pipe(
-          Effect.flip,
-        );
+        const error = yield* resolveCyberAccessProgram(
+          codex(),
+          codex(requested("daybreakRed")),
+        ).pipe(Effect.flip);
         assert.equal(error.code, "invalid_request");
         const switched = yield* resolveCyberAccessProgram(
           codex(requested("daybreakBlue")),
-          requested("daybreakRed"),
+          codex(requested("daybreakRed")),
         ).pipe(Effect.flip);
         assert.equal(switched.code, "invalid_request");
-        const duplicated = yield* resolveCyberAccessProgram(codex(), [
-          ...requested("default"),
-          ...requested("daybreakBlue"),
-        ]).pipe(Effect.flip);
+        const duplicated = yield* resolveCyberAccessProgram(
+          codex(),
+          codex([...requested("default"), ...requested("daybreakBlue")]),
+        ).pipe(Effect.flip);
         assert.equal(duplicated.code, "invalid_request");
+        // The model may not offer the parent's program, so it does not carry over.
+        const otherModel = yield* resolveCyberAccessProgram(codex(requested("daybreakBlue")), {
+          ...codex(requested("daybreakBlue")),
+          model: "gpt-6.1-sol",
+        }).pipe(Effect.flip);
+        assert.equal(otherModel.code, "invalid_request");
       }),
     );
 
     it.effect("allows the parent's program, the default, or no request", () =>
       Effect.gen(function* () {
         const parent = codex(requested("daybreakBlue"));
-        yield* resolveCyberAccessProgram(parent, requested("daybreakBlue"));
-        yield* resolveCyberAccessProgram(parent, requested("default"));
-        yield* resolveCyberAccessProgram(codex(), [{ id: "reasoningEffort", value: "high" }]);
+        yield* resolveCyberAccessProgram(parent, codex(requested("daybreakBlue")));
+        yield* resolveCyberAccessProgram(parent, {
+          ...codex(requested("default")),
+          model: "gpt-6.1-sol",
+        });
+        yield* resolveCyberAccessProgram(
+          codex(),
+          codex([{ id: "reasoningEffort", value: "high" }]),
+        );
       }),
     );
   });
