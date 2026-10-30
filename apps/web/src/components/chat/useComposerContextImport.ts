@@ -39,6 +39,7 @@ import {
 import { assetEnvironment } from "~/state/assets";
 import { copiedComposerAttachmentFile } from "~/lib/copiedComposerAttachments";
 import { countQuestionAttachments, questionAttachmentDraftId } from "../../questionAttachments";
+import { collectInlineContextIds } from "../../lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { pendingDraftWork } from "./pendingDraftWork";
@@ -87,6 +88,7 @@ export function useComposerContextImport(input: {
   readonly composerContextRecords: ComposerDraftContextRecords;
   readonly composerImages: ReadonlyArray<ComposerImageAttachment>;
   readonly composerFilesRef: ChatComposerProps["composerFilesRef"];
+  readonly promptRef: RefObject<string>;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
 }) {
@@ -104,6 +106,7 @@ export function useComposerContextImport(input: {
     composerContextRecords,
     composerImages,
     composerFilesRef,
+    promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
   } = input;
@@ -191,6 +194,20 @@ export function useComposerContextImport(input: {
         fail("Downloading it from the source failed.");
         return;
       }
+      // Question attachments have no inline reference; annotations can own their screenshots.
+      const references = new Set(collectInlineContextIds(promptRef.current));
+      if (
+        !questionAttachmentTarget &&
+        !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
+        !(
+          record.kind === "image" &&
+          references.has(previewAnnotationContextId(localId)) &&
+          getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
+            (annotation) => annotation.id === localId,
+          )
+        )
+      )
+        return;
       file = new File([blob], record.name, { type: record.mimeType || blob.type });
     }
     // The draft these bytes belong to may have been sent or switched away from while they
