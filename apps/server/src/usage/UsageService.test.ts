@@ -467,6 +467,134 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it.effect("keeps pricing metadata paired with the rates used during a concurrent refresh", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(sessions, "session.jsonl"),
+          [
+            { type: "session_meta", payload: { id: "session", model_provider: "openai" } },
+            { type: "turn_context", payload: { model: "gpt-6-astra", turn_id: "turn" } },
+            {
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: { last_token_usage: { input_tokens: 0, output_tokens: 1 } },
+              },
+            },
+          ]
+            .map((record) => encodeUnknownJsonString(record))
+            .join("\n") + "\n",
+        );
+      });
+      let rate = 0;
+      yield* Effect.gen(function* () {
+        const resolving = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(CodexUsageHistory.CodexUsageHistory, {
+            resolve: () =>
+              Deferred.succeed(resolving, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as(new Map()),
+              ),
+          }),
+        );
+        const initialPricing = yield* service.refreshRates;
+        yield* TestClock.adjust(61_000);
+        const pending = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+        yield* Deferred.await(resolving);
+        yield* service.refreshRates;
+        yield* Deferred.succeed(release, undefined);
+        const original = yield* Fiber.join(pending);
+        assert.strictEqual(original.buckets[0]?.costUsd, 1);
+        assert.strictEqual(original.pricing.fetchedAt, initialPricing.fetchedAt);
+        const updated = yield* service.readSummary(WINDOW);
+        assert.strictEqual(updated.buckets[0]?.costUsd, 2);
+        assert.notStrictEqual(updated.pricing.fetchedAt, initialPricing.fetchedAt);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "concurrent-rates",
+            home,
+            settings,
+            ratesResponse: () =>
+              Effect.succeed(
+                Response.json({
+                  "gpt-6-astra": { input_cost_per_token: 0, output_cost_per_token: ++rate },
+                }),
+              ),
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("shows saved usage before refreshing changed transcripts after restart", () =>
+    Effect.gen(function* () {
+      const { home, settings, transcript } = yield* setup;
+      let ratesFetches = 0;
+      const ratesDocument = {
+        "claude-fable-5": { input_cost_per_token: 0.000003, output_cost_per_token: 0.000015 },
+      };
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      yield* Effect.gen(function* () {
+        const first = yield* UsageService.make;
+        const cold = yield* first.readSummary({ ...WINDOW, preferCached: true });
+        assert.strictEqual(totalOutputTokens(cold), 0);
+        assert.strictEqual(
+          cold.sources.some((source) => source.refreshing),
+          true,
+        );
+        assert.strictEqual(totalOutputTokens(yield* first.readSummary(WINDOW)), 5);
+        yield* first.awaitPersisted;
+        yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+        const config = yield* ServerConfig.ServerConfig;
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            NodePath.join(config.stateDir, "usage-model-rates.json"),
+            encodeUnknownJsonString({ fetchedAtMs: 0, document: ratesDocument }),
+          ),
+        );
+
+        const restarted = yield* UsageService.make;
+        const savedInput = { ...WINDOW, preferCached: true };
+        const saved = yield* restarted.readSummary(savedInput);
+        assert.strictEqual(totalOutputTokens(saved), 5);
+        assert.strictEqual(saved.pricing.status, "cached");
+        assert.strictEqual(ratesFetches, 1);
+        assert.strictEqual(
+          saved.sources.find((source) => source.fingerprint.provider === "claude")?.refreshing,
+          true,
+        );
+        const fresh = yield* restarted.readSummary({ ...savedInput, awaitRefresh: true });
+        assert.strictEqual(totalOutputTokens(fresh), 12);
+        assert.strictEqual(fresh.pricing.status, "fresh");
+        assert.strictEqual(ratesFetches, 2);
+        assert.strictEqual(
+          fresh.sources.some((source) => source.refreshing),
+          false,
+        );
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "saved-first",
+            home,
+            settings,
+            ratesDocument,
+            onRatesFetch: () => {
+              ratesFetches += 1;
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("keeps the first host identity across recreation and explicit override removal", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

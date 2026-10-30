@@ -233,12 +233,8 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed(null)),
     );
 
-  const loadRates = Effect.fn("UsageService.loadRates")(function* (force: boolean) {
-    const now = yield* Clock.currentTimeMillis;
-    const maxAgeMs = force ? RATES_REFRESH_FLOOR_MS : RATES_TTL_MS;
-    if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < maxAgeMs) return;
-
-    if (ratesFetchedAtMs === null) {
+  const ensureSavedRates = yield* Effect.cached(
+    Effect.gen(function* () {
       const fromDisk = yield* fileSystem.readFileString(ratesCachePath).pipe(
         Effect.flatMap((raw) => decodeRatesCache(raw)),
         Effect.catchCause(() => Effect.succeed(null)),
@@ -249,10 +245,16 @@ export const make = Effect.gen(function* () {
           rates = parsed;
           ratesFetchedAtMs = fromDisk.fetchedAtMs;
           ratesStatus = "cached";
-          if (now - fromDisk.fetchedAtMs < maxAgeMs) return;
         }
       }
-    }
+    }),
+  );
+
+  const loadRates = Effect.fn("UsageService.loadRates")(function* (force: boolean) {
+    yield* ensureSavedRates;
+    const now = yield* Clock.currentTimeMillis;
+    const maxAgeMs = force ? RATES_REFRESH_FLOOR_MS : RATES_TTL_MS;
+    if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < maxAgeMs) return;
 
     if (ratesLastFailedAtMs !== null && now - ratesLastFailedAtMs < RATES_REFRESH_FLOOR_MS) return;
 
@@ -558,8 +560,12 @@ export const make = Effect.gen(function* () {
   const scanTranscriptDir = Effect.fn("UsageService.scanTranscriptDir")(function* (
     source: TranscriptSource,
     windowStartMs: number,
+    preferCached: boolean,
   ) {
     const { provider, format, dir, volumeId, fileName } = source;
+    if (preferCached) {
+      return { provider, dir, volumeId, files: [], refreshing: true } satisfies ScannedDir;
+    }
     const exists = yield* fileSystem
       .exists(dir)
       .pipe(Effect.catchCause(() => Effect.succeed(false)));
@@ -615,6 +621,7 @@ export const make = Effect.gen(function* () {
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
     awaitRefresh: boolean,
+    preferCached: boolean,
   ) {
     const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
       Effect.provideContext(readerContext),
@@ -649,7 +656,7 @@ export const make = Effect.gen(function* () {
 
     // Scan independent sources together, directories sequentially to bound open files; preserve order for first-copy dedupe.
     const [transcripts, scanDirs] = yield* Effect.all(
-      [Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)), scans],
+      [Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs, preferCached)), scans],
       { concurrency: "unbounded" },
     );
     const scanned: readonly ScannedDir[] = [...transcripts, ...scanDirs.flat()];
@@ -705,15 +712,23 @@ export const make = Effect.gen(function* () {
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
     const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const preferCached = input.preferCached === true && input.awaitRefresh !== true;
 
     const [, scannedDirs] = yield* Effect.all(
       [
-        ensureRates(false),
-        collectDirs(windowStartMs, settings, retentionCutoffMs, input.awaitRefresh === true),
+        preferCached ? ensureSavedRates : ensureRates(false),
+        collectDirs(
+          windowStartMs,
+          settings,
+          retentionCutoffMs,
+          input.awaitRefresh === true,
+          preferCached,
+        ),
       ],
       { concurrency: 2 },
     );
 
+    const summaryPricing = pricing();
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -753,7 +768,7 @@ export const make = Effect.gen(function* () {
       Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
     let resolvedAny = false;
     for (const { reader } of transcriptReaders) {
-      if (reader.resolveServiceTiers === undefined) continue;
+      if (preferCached || reader.resolveServiceTiers === undefined) continue;
       const pending = new Set<UsageRecord>();
       for (const [index, files] of filesByDir.entries()) {
         if (scannedDirs[index]?.provider !== reader.provider) continue;
@@ -882,7 +897,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
       sources,
-      pricing: pricing(),
+      pricing: summaryPricing,
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageSummary;
   });
@@ -899,6 +914,7 @@ export const make = Effect.gen(function* () {
       input.untilTime ?? null,
       settings,
       input.awaitRefresh === true,
+      input.preferCached === true && input.awaitRefresh !== true,
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {

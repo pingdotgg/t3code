@@ -1286,7 +1286,7 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
       execute: (input, emit) =>
-        request(WS_METHODS.serverGetUsageSummary, input).pipe(
+        request(WS_METHODS.serverGetUsageSummary, { ...input, preferCached: true }).pipe(
           Effect.filterOrElse(
             (summary) => !summary.sources.some((source) => source.refreshing === true),
             (summary) =>

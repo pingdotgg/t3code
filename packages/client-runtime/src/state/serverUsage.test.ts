@@ -296,6 +296,10 @@ it.effect("keeps the cached usage summary when the awaited refresh fails", () =>
       ]);
       expect(AsyncResult.isSuccess(harness.registry.get(summary))).toBe(true);
       expect(harness.requests()).toBe(2);
+      expect(harness.inputs()).toEqual([
+        { ...INPUT, preferCached: true },
+        { ...INPUT, awaitRefresh: true },
+      ]);
       unmount();
     }),
   ),
