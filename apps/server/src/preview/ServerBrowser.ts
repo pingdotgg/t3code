@@ -2550,9 +2550,17 @@ const make = Effect.gen(function* () {
                   : {}),
               });
             } else {
-              await tab.control.human(viewer.id, () =>
-                dispatchViewerInput(tab, session, viewer, message),
-              );
+              const dispatch = () => dispatchViewerInput(tab, session, viewer, message);
+              if (
+                message.type === "mouse" &&
+                message.action === "move" &&
+                message.button === "none" &&
+                message.buttons === 0
+              ) {
+                await tab.control.humanLatest(viewer.id, `hover:${modifiersOf(message)}`, dispatch);
+              } else {
+                await tab.control.human(viewer.id, dispatch);
+              }
             }
           } catch {
             broadcastControl(tab);
