@@ -1702,6 +1702,7 @@ describe("UsageService", () => {
             },
           }),
         ),
+        Effect.provideService(HostProcess.HomeDirectory, home),
       );
       const summary = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(summary), 59);
