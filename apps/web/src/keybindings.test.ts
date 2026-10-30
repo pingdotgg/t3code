@@ -15,6 +15,7 @@ import {
   effectiveShortcutsForCommand,
   formatShortcutLabel,
   isRichTextBoldShortcut,
+  isThreadNavigationShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   resolveChatShortcutCommand,
@@ -394,6 +395,32 @@ describe("thread navigation helpers", () => {
           platform: "MacIntel",
           context: { isDesktop: true },
         },
+      ),
+    );
+  });
+});
+
+describe("isThreadNavigationShortcut", () => {
+  it("leaves a key to a focused terminal when the user's binding excludes it", () => {
+    const next = event({ key: "}", code: "BracketRight", ctrlKey: true, shiftKey: true });
+    const terminal = { platform: "Linux x86_64", context: { terminalFocus: true } };
+    assert.isTrue(isThreadNavigationShortcut(next, DEFAULT_RESOLVED_KEYBINDINGS, terminal));
+    assert.isFalse(
+      isThreadNavigationShortcut(
+        next,
+        mergeWithDefaultKeybindings(
+          compileResolvedKeybindingsConfig([
+            { key: "mod+shift+]", command: "thread.next", when: "!terminalFocus" },
+          ]),
+        ),
+        terminal,
+      ),
+    );
+    assert.isFalse(
+      isThreadNavigationShortcut(
+        event({ key: "o", ctrlKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        terminal,
       ),
     );
   });
