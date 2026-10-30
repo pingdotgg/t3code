@@ -144,7 +144,7 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
           sequence: 3,
           eventId: EventId.make("event-renamed-title"),
           type: "project.meta-updated",
-          payload: { projectId, title: "repo", updatedAt: "2026-03-24T00:00:02.000Z" },
+          payload: { projectId, title: "custom repo", updatedAt: "2026-03-24T00:00:02.000Z" },
         });
         assert.strictEqual(yield* hasCustomTitle(), true);
         yield* projects.apply({
@@ -171,6 +171,7 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
           },
         });
         assert.strictEqual(yield* hasCustomTitle(), true);
+        assert.strictEqual(Option.getOrNull(yield* projects.getShell(projectId))?.title, "custom repo");
       }),
     );
   },
