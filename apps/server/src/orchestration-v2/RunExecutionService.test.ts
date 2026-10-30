@@ -1783,30 +1783,68 @@ it.effect("ends a nested native subagent and its thread when the root run is int
 it.effect("keeps ingesting until queued background work clears after the probe goes idle", () =>
   Effect.gen(function* () {
     // The adapter's probe runs ahead of its event queue, so only the queued update may release.
+    // A child transferred to another run takes its pending work with it.
     const pending = yield* Ref.make(true);
-    const observed = yield* runBackgroundItemScenario(
-      "queued-background-work",
-      (ids) => {
-        const backgroundWork = {
-          type: "background_work.updated",
-          driver,
-          providerTurnId: ids.rootProviderTurnId,
-          pending: true,
-        } satisfies ProviderAdapter.ProviderAdapterV2Event;
-        return [
-          backgroundWork,
-          rootTerminalEvent(ids, "completed"),
-          backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 1),
-          { ...backgroundWork, pending: false },
-        ];
-      },
-      {
-        keepEventStreamOpen: true,
-        hasPendingBackgroundWorkForThread: () => Ref.get(pending),
-        onFinalized: () => Ref.set(pending, false),
-      },
+    const consumed = yield* Deferred.make<void>();
+    const result = yield* Effect.raceFirst(
+      runBackgroundItemScenario(
+        "queued-background-work",
+        (ids) => {
+          const childProviderThreadId = ProviderThreadId.make(`${ids.providerThreadId}:child`);
+          const childProviderTurnId = ProviderTurnId.make(`${ids.rootProviderTurnId}:child`);
+          const running = subagentEvent(ids, "running");
+          if (running.type !== "subagent.updated") throw new Error("Missing subagent");
+          const linked = {
+            ...running,
+            subagent: {
+              ...running.subagent,
+              origin: "provider_native" as const,
+              childThreadId: ids.childThreadId,
+              providerThreadId: childProviderThreadId,
+            },
+          };
+          const backgroundWork = (providerTurnId: ProviderTurnId, pending: boolean) =>
+            ({
+              type: "background_work.updated",
+              driver,
+              providerTurnId,
+              pending,
+            }) satisfies ProviderAdapter.ProviderAdapterV2Event;
+          return [
+            childThreadCreatedEvent(ids),
+            linked,
+            {
+              type: "provider_turn.updated",
+              driver,
+              threadId: ids.childThreadId,
+              providerTurn: {
+                id: childProviderTurnId,
+                providerThreadId: childProviderThreadId,
+                runAttemptId: null,
+                status: "completed",
+              },
+            } as ProviderAdapter.ProviderAdapterV2Event,
+            backgroundWork(childProviderTurnId, true),
+            backgroundWork(ids.rootProviderTurnId, true),
+            rootTerminalEvent(ids, "completed"),
+            { ...linked, subagent: { ...linked.subagent, runId: RunId.make("run:replacement") } },
+            backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 1),
+            backgroundWork(ids.rootProviderTurnId, false),
+          ];
+        },
+        {
+          keepEventStreamOpen: true,
+          hasPendingBackgroundWorkForThread: () => Ref.get(pending),
+          onFinalized: () => Ref.set(pending, false),
+          onEventsConsumed: Deferred.succeed(consumed, undefined).pipe(Effect.asVoid),
+        },
+      ).pipe(Effect.asSome),
+      Deferred.await(consumed).pipe(Effect.as(Option.none())),
     );
-    assert.deepEqual(observed, ["root-finalized", "turn_item:completed"]);
+    assert.deepEqual(
+      result,
+      Option.some(["subagent:running", "root-finalized", "turn_item:completed"]),
+    );
   }),
 );
 
