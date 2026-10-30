@@ -143,10 +143,14 @@ export function createWorkspaceFocusController(doc: Document) {
         )
       : undefined;
     // Moving the timeline to an old control would also stop it following a running turn,
-    // so the conversation reuses a control only while it is still in view.
+    // so the conversation reuses a control only while it is still in view. A remembered
+    // area is only the fallback it was then, so controls mounted since take precedence.
     const isConversation = area.dataset.workspaceArea === "conversation";
     const targets = new Set([
-      previous && belongs(previous) && (!isConversation || isInScrollView(previous))
+      previous &&
+      previous !== area &&
+      belongs(previous) &&
+      (!isConversation || isInScrollView(previous))
         ? previous
         : undefined,
       isConversation ? undefined : restored,

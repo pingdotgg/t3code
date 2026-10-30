@@ -26,3 +26,22 @@ it("keeps keyboard focus on a sidebar row on window return, but not a clicked ro
   expect(document.activeElement).toBe(tabbed);
   expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
 });
+
+it("keeps keyboard focus on the conversation timeline on window return, but not a click", async () => {
+  const timeline = document.createElement("div");
+  timeline.className = "messages-timeline-scroll";
+  timeline.tabIndex = -1;
+  timeline.textContent = "Assistant reply";
+  document.body.append(timeline);
+  using _timeline = { [Symbol.dispose]: () => timeline.remove() };
+
+  await userEvent.click(timeline);
+  expect(document.activeElement).toBe(timeline);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(true);
+
+  timeline.blur();
+  // F6 focuses the timeline from a key press, as workspace focus does.
+  await userEvent.keyboard("{F6}");
+  timeline.focus();
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
+});
