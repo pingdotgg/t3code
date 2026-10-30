@@ -2,7 +2,6 @@ import { LoaderCircleIcon, PauseIcon, PlayIcon, TriangleAlertIcon } from "lucide
 import { createContext, useContext, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { cn } from "~/lib/utils";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { middleTruncateAttachmentName } from "../composerInlineChip";
 
@@ -113,11 +112,8 @@ function AudioChip(props: AudioPreviewProps) {
     <ContextChip
       kind="file"
       {...(props.failed ? { state: "invalid" as const } : {})}
-      className={cn(
-        "relative isolate overflow-hidden",
-        props.variant === "bubble" &&
-          "w-64 gap-2 rounded-2xl bg-message px-3 py-2 text-sm text-message-foreground",
-      )}
+      {...(props.variant === "bubble" ? { shape: "bubble" as const } : {})}
+      className="relative isolate overflow-hidden"
       title={props.failed ? "Audio unavailable. Open the file or retry playback." : props.name}
     >
       <span
