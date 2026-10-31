@@ -648,7 +648,15 @@ const writeParentRun = (input: {
   readonly threadId: ThreadId;
   readonly runId: RunId;
   readonly ordinal: number;
-  readonly status: "preparing" | "running" | "queued" | "completed" | "rolled_back";
+  /** Preparing, failed, and interrupted runs asked for a new worktree. */
+  readonly status:
+    | "preparing"
+    | "running"
+    | "queued"
+    | "completed"
+    | "rolled_back"
+    | "failed"
+    | "interrupted";
   readonly text: string;
   /** A checkpointed run on a native provider thread, which `latest_stable` forks start from. */
   readonly stable?: boolean;
@@ -717,7 +725,9 @@ const writeParentRun = (input: {
             completedAt: input.status === "completed" ? now : null,
             checkpointId: input.stable ? CheckpointId.make(`${input.runId}:checkpoint`) : null,
             contextHandoffId: null,
-            ...(input.status === "preparing"
+            ...(input.status === "preparing" ||
+            input.status === "failed" ||
+            input.status === "interrupted"
               ? { workspacePreparation: { type: "worktree" as const, baseRef: "main" } }
               : {}),
           },
@@ -884,24 +894,26 @@ it.effect("a side chat of an idle parent still starts with the framing note", ()
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
-it.effect("a side chat waits for the parent's new worktree", () =>
+it.effect("a side chat waits for the parent's new worktree, also after its setup ended", () =>
   Effect.gen(function* () {
-    const parentId = ThreadId.make("side-chat-worktree-parent");
-    yield* createParent(parentId);
-    yield* writeParentRun({
-      threadId: parentId,
-      runId: RunId.make("side-chat-worktree-parent-run"),
-      ordinal: 1,
-      status: "preparing",
-      text: "Parent work",
-    });
+    for (const status of ["preparing", "failed", "interrupted"] as const) {
+      const parentId = ThreadId.make(`side-chat-worktree-parent-${status}`);
+      yield* createParent(parentId);
+      yield* writeParentRun({
+        threadId: parentId,
+        runId: RunId.make(`side-chat-worktree-parent-run-${status}`),
+        ordinal: 1,
+        status,
+        text: "Parent work",
+      });
 
-    const rejected = yield* forkSideChat(
-      "side-chat-worktree-fork",
-      parentId,
-      ThreadId.make("side-chat-worktree-child"),
-    ).pipe(Effect.flip);
-    assert.include(String(rejected.cause), "still preparing its worktree");
+      const rejected = yield* forkSideChat(
+        `side-chat-worktree-fork-${status}`,
+        parentId,
+        ThreadId.make(`side-chat-worktree-child-${status}`),
+      ).pipe(Effect.flip);
+      assert.include(String(rejected.cause), "has no worktree yet", status);
+    }
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 

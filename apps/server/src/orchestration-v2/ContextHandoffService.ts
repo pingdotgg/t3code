@@ -114,22 +114,18 @@ function compactText(text: string, maxLength = 240): string {
 
 export function visibleDeltaRunOrdinals(
   projection: { readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal">> },
-  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  items: ReadonlyArray<Pick<OrchestrationV2TurnItem, "runId">>,
 ): OrchestrationV2ContextHandoff["coveredRunOrdinals"] {
-  const ordinals = items.flatMap((item) => {
-    if (item.runId === null) {
-      return [];
-    }
-    const run = projection.runs.find((candidate) => candidate.id === item.runId);
-    return run === undefined ? [] : [run.ordinal];
-  });
-  if (ordinals.length === 0) {
-    return { from: 1, to: 1 };
+  const ordinalByRunId = new Map(projection.runs.map((run) => [run.id, run.ordinal]));
+  let from = Infinity;
+  let to = -Infinity;
+  for (const item of items) {
+    const ordinal = item.runId === null ? undefined : ordinalByRunId.get(item.runId);
+    if (ordinal === undefined) continue;
+    from = Math.min(from, ordinal);
+    to = Math.max(to, ordinal);
   }
-  return {
-    from: Math.min(...ordinals),
-    to: Math.max(...ordinals),
-  };
+  return from === Infinity ? { from: 1, to: 1 } : { from, to };
 }
 
 /** Drops rolled-back runs and cancelled queued messages, which are not part of the conversation. */

@@ -164,6 +164,7 @@ describe("v2 thread shell lists", () => {
       id: ThreadId.make("side-chat"),
       status: "running" as const,
       activityRunStatus: "running" as const,
+      latestRunId: RunId.make("side-chat-run"),
       lineage: {
         ...root.lineage,
         parentThreadId: root.id,
@@ -178,10 +179,24 @@ describe("v2 thread shell lists", () => {
     const disposeParent = registry.mount(parent);
     const disposeInputs = registry.mount(inputs);
     const disposeNavigation = registry.mount(threads.navigationThreadShellsAtom);
-    const withRequest = (kind: "user_input" | "command") =>
+    const withRequest = (
+      kind: "user_input" | "command",
+      options: { readonly blocking?: boolean; readonly settled?: boolean } = {},
+    ) =>
       registry.set(snapshotAtom(environmentId), {
         ...v2ShellSnapshot,
-        threads: [root, { ...sideChat, pendingRuntimeRequest: { ...request, kind } }],
+        threads: [
+          root,
+          {
+            ...sideChat,
+            ...(options.settled ? { status: "completed" as const, activityRunStatus: null } : {}),
+            pendingRuntimeRequest: {
+              ...request,
+              kind,
+              ...(options.blocking === undefined ? {} : { blocking: options.blocking }),
+            },
+          },
+        ],
       });
 
     withRequest("user_input");
@@ -190,6 +205,13 @@ describe("v2 thread shell lists", () => {
     expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
       root.id,
     ]);
+
+    // An async question waits while the side chat works, like its own row's indicator.
+    withRequest("user_input", { blocking: false });
+    expect(registry.get(parent)?.pendingSubagentRequest).toBeNull();
+    expect(registry.get(inputs)).toEqual([]);
+    withRequest("user_input", { blocking: false, settled: true });
+    expect(registry.get(parent)?.pendingSubagentRequest).toBe("user_input");
 
     withRequest("command");
     expect(registry.get(parent)?.pendingSubagentRequest).toBe("approval");

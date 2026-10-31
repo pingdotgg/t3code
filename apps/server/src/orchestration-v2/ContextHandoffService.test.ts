@@ -189,6 +189,21 @@ it("caps the side chat context block, keeping the newest parent items", () => {
   assert.notInclude(framingOnly, "Main thread activity");
 });
 
+it("covers the run range of a very long delta", () => {
+  const runs = [
+    { id: RunId.make("run:long-delta-early"), ordinal: 2 },
+    { id: RunId.make("run:long-delta-late"), ordinal: 5 },
+  ];
+  const items = Array.from({ length: 150_000 }, (_, index) => ({
+    runId: runs[index % 2]!.id,
+  }));
+
+  assert.deepEqual(
+    ContextHandoffService.visibleDeltaRunOrdinals({ runs }, [...items, { runId: null }]),
+    { from: 2, to: 5 },
+  );
+});
+
 it.effect("inherited history stops at a missing fork ancestor", () =>
   Effect.gen(function* () {
     const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");

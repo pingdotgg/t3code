@@ -2765,12 +2765,15 @@ export default function ChatView(props: ChatViewProps) {
   }, [embedded, toggleRightPanelStable, toggleRightPanelMaximizedStable]);
 
   usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
+  // A delegated task is a remote thread's subagent.
+  const isSubagentThread =
+    activeThread?.lineage.relationshipToParent === "subagent" || delegatedFrom !== null;
   // Side chats do not nest or start from subagents, and older servers would fork a listed thread.
   const sideChatsOffered =
     !embedded &&
     canOperateThread &&
     activeThread?.lineage.sideChat !== true &&
-    activeThread?.lineage.relationshipToParent !== "subagent" &&
+    !isSubagentThread &&
     serverConfig?.environment.capabilities.sideChats === true;
   const sideChat = useSideChat({
     threadRef: sideChatsOffered && isServerThread ? activeThreadRef : null,
@@ -2782,17 +2785,19 @@ export default function ChatView(props: ChatViewProps) {
   const sideChatDisabledReason =
     activeThread?.lineage.sideChat === true
       ? "Side chats cannot start side chats."
-      : activeThread?.lineage.relationshipToParent === "subagent"
+      : isSubagentThread
         ? "Subagent threads cannot start side chats."
-        : sideChatsOffered && !isServerThread
-          ? "Side chats start after the first message."
-          : sideChat.available &&
-              orchestrationV2WorktreePending(
-                activeThread?.worktreePath ?? null,
-                serverProjection?.runs ?? [],
-              )
-            ? "Available once the thread's worktree is ready."
-            : null;
+        : serverConfig !== null && serverConfig.environment.capabilities.sideChats !== true
+          ? "Update this environment's T3 Code server to use side chats."
+          : sideChatsOffered && !isServerThread
+            ? "Side chats start after the first message."
+            : sideChat.available &&
+                orchestrationV2WorktreePending(
+                  activeThread?.worktreePath ?? null,
+                  serverProjection?.runs ?? [],
+                )
+              ? "Available once the thread's worktree is set up."
+              : null;
   const openSideChatStable = useStableCallback(() => void sideChat.open());
   const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
   const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =
@@ -3199,7 +3204,10 @@ export default function ChatView(props: ChatViewProps) {
       getShortcutContext={getShortcutContextStable}
       onSendAnnotation={sendPreviewAnnotationStable}
       onCloseSurface={closeRightPanelSurface}
-      sideChatParentPanel={{ openToolDiff: onOpenToolDiffStable }}
+      sideChatParentPanel={{
+        openToolDiff: onOpenToolDiffStable,
+        runShellCommand: runShellCommandStable,
+      }}
       terminal={{
         launchContext: activeTerminalLaunchContext ?? null,
         keybindings,
@@ -3398,7 +3406,9 @@ export default function ChatView(props: ChatViewProps) {
                 citationRequest={citationRequest}
                 citationHistory={citationHistory}
                 onCiteAssistantText={citeAssistantTextStable}
-                {...(activeProject ? { onRunShellCommand: runShellCommandStable } : {})}
+                {...(activeProject
+                  ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
+                  : {})}
                 isWorking={isWorking}
                 runlessWorkActive={runlessWorkStartedAt !== null}
                 isCompacting={isCompacting}
