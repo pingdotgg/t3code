@@ -30,6 +30,8 @@ import type {
   ServerProviderSkill,
 } from "@t3tools/contracts";
 import {
+  formatAssistantCitationHref,
+  parseAssistantCitationHref,
   serializeAssistantCitation,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
@@ -404,6 +406,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     if (!current || current.type.name !== "composer-citation") return false;
     const currentCitation = current.attrs.citation as AssistantCitation;
     const next = withAssistantCitationComment(currentCitation, comment);
+    if (!parseAssistantCitationHref(formatAssistantCitationHref(next))) return false;
     const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
       ...current.attrs,
       citation: next,
@@ -1498,6 +1501,7 @@ function ComposerPromptEditorTiptapInner(
     });
     if (dismissal.kind !== "commit") return;
     const next = withAssistantCitationComment(citation, dismissal.comment);
+    if (!parseAssistantCitationHref(formatAssistantCitationHref(next))) return;
     current.view.dispatch(
       current.state.tr
         .setNodeMarkup(pos, undefined, {
