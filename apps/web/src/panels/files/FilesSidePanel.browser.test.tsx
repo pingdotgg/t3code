@@ -62,6 +62,7 @@ vi.mock("~/state/server", async () => {
   return {
     environmentServerConfigsAtom: Atom.make(new Map()),
     primaryServerKeybindingsAtom: {},
+    primaryServerEnvironmentThemesAtom: Atom.make([]),
     serverEnvironment: { configValueAtom: () => null },
   };
 });
@@ -86,6 +87,7 @@ vi.mock("~/state/session", async () => {
 
     useEnvironmentScope: () => true,
     readEnvironmentScope: () => true,
+    sessionHasScope: () => true,
   };
 });
 // The desktop app hosts these browsers itself, so no environment's server browser is consulted.
@@ -142,6 +144,7 @@ vi.mock("~/components/files/projectFilesQueryState", () => ({
   getUnsavedProjectFileQueryData: () => null,
   getOptimisticProjectFileQueryData: () => null,
   getProjectFileContents: () => undefined,
+  getProjectFileQueryAtom: vi.fn(),
   setProjectFileQueryData: vi.fn(),
   useProjectFileQuery: () => ({
     data: null,
