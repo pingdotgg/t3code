@@ -230,13 +230,27 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // Scratch inside a checkout would inherit its git status and checkpoints; require a data dir outside work trees.
+  // Both the project root and thread folders must stay outside checkouts to avoid inheriting Git state.
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
-    gitWorkflow.isRepository(config.baseDir).pipe(
-      Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
-      Effect.map((isRepository) =>
-        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
-      ),
+    Effect.gen(function* () {
+      const directories = [config.baseDir];
+      if (config.scratchDir !== undefined) {
+        let existing = config.scratchDir;
+        while (!(yield* fileSystem.exists(existing))) {
+          const parent = path.dirname(existing);
+          if (parent === existing) break;
+          existing = parent;
+        }
+        directories.push(existing);
+      }
+      for (const directory of directories) {
+        const isRepository = yield* gitWorkflow
+          .isRepository(directory)
+          .pipe(Effect.catchIf(isGitMissing, () => Effect.succeed(false)));
+        if (isRepository) return Option.none<string>();
+      }
+      return Option.some(path.resolve(config.baseDir, "scratch"));
+    }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
       ),
@@ -320,12 +334,13 @@ const make = Effect.gen(function* () {
     const root = yield* scratchRoot;
     if (Option.isNone(root)) return Option.none();
     if (!(yield* isScratchRoot(input.projectId, root.value))) return Option.none();
+    const threadRoot = config.scratchDir ?? root.value;
     const date = DateTime.formatIso(yield* DateTime.now).slice(0, 10);
     const words = folderWords(input.text);
     const id = input.threadId.toLowerCase().replace(/[^a-z0-9]/g, "");
     const folderFor = (idPart: string) =>
-      path.join(root.value, [date, words, idPart].filter(Boolean).join("-"));
-    yield* makeScratchFolder(root.value);
+      path.join(threadRoot, [date, words, idPart].filter(Boolean).join("-"));
+    yield* makeScratchFolder(threadRoot);
     const fullFolder = folderFor(id);
     return yield* claimFreeFolder(
       (attempt) =>

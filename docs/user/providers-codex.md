@@ -25,6 +25,28 @@ T3 Code can use your installed Codex and its existing login. Run `codex login`
 on the environment's machine to sign in. [Provider setup](./install.md#providers)
 covers installation and custom configuration.
 
+## Projectless threads in other Codex clients
+
+Codex clients sharing the same Codex home can display T3 Code's **No project**
+threads as separate projects. To choose where new projectless threads work, set
+`T3CODE_SCRATCH_DIR` on the machine running the T3 server and restart it. For
+Codex clients that recognize dated folders under `~/Documents/Codex`, start with:
+
+```bash
+T3CODE_SCRATCH_DIR="$HOME/Documents/Codex" t3
+```
+
+For a background service, set the variable in its
+[service environment file](./background-service.md). Desktop launches must inherit
+the variable too; setting it only in a provider's environment does not configure
+the T3 server.
+
+Choose a dedicated directory outside Git repositories. The setting applies to all
+new projectless threads on that server. Existing threads keep their directories
+and files. Unset the variable to use the default T3 scratch directory for new
+threads again. Codex's directory recognition can change between releases, and
+this does not reclassify older threads in Codex.
+
 ## Use multiple accounts
 
 Add another ChatGPT account in **Settings → Providers**, then select the account
