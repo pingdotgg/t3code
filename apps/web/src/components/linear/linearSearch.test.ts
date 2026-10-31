@@ -11,6 +11,7 @@ import {
   linearParentScope,
   parseLinearSearch,
   patchLinearSearch,
+  validateLinearRouteSearch,
   withLinearScope,
 } from "./linearSearch";
 
@@ -54,6 +55,20 @@ describe("parseLinearSearch", () => {
       view: T3_ACTIVITY_VIEW,
       labelIds: ["a", "b"],
     });
+  });
+});
+
+describe("validateLinearRouteSearch", () => {
+  it("unsets rejected keys so raw params merged from the parent route cannot leak", () => {
+    const search = validateLinearRouteSearch({ team: "t", priority: "abc", states: true });
+    expect(search).toMatchObject({ team: "t" });
+    expect(search.priority).toBeUndefined();
+    expect(search.states).toBeUndefined();
+    expect("priority" in search).toBe(true);
+  });
+
+  it("accepts a single hand-typed priority", () => {
+    expect(validateLinearRouteSearch({ priority: 3 }).priority).toEqual([3]);
   });
 });
 

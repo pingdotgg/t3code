@@ -42,7 +42,11 @@ function cleanString(raw: unknown, max = 200): string | undefined {
 }
 
 function cleanList(raw: unknown): Array<string> | undefined {
-  const values = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
+  const values = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string" || typeof raw === "number"
+      ? [raw]
+      : [];
   const seen = new Set<string>();
   for (const value of values) {
     const clean = cleanString(typeof value === "number" ? String(value) : value);
@@ -50,6 +54,31 @@ function cleanList(raw: unknown): Array<string> | undefined {
     if (seen.size >= MAX_LIST_VALUES) break;
   }
   return seen.size === 0 ? undefined : [...seen];
+}
+
+const SEARCH_KEYS = [
+  "team",
+  "project",
+  "milestone",
+  "issue",
+  "q",
+  "assignee",
+  "states",
+  "priority",
+  "labelIds",
+  "cycle",
+  "view",
+  "group",
+  "showCompleted",
+] as const satisfies ReadonlyArray<keyof LinearSearch>;
+
+/**
+ * Route validator. The parent layout has no validator, so its raw params are merged under the
+ * result; every key we own is set explicitly so a hand-edited value cannot leak past parsing.
+ */
+export function validateLinearRouteSearch(raw: Record<string, unknown>): LinearSearch {
+  const parsed = parseLinearSearch(raw);
+  return Object.fromEntries(SEARCH_KEYS.map((key) => [key, parsed[key]])) as LinearSearch;
 }
 
 /** Validates untrusted router search into a normalized {@link LinearSearch}. */
