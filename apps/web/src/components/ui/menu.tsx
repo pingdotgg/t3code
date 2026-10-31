@@ -58,6 +58,7 @@ function MenuPopup({
             "[-webkit-app-region:no-drag]",
             "max-w-[calc(100vw-2rem)]",
             width === "content" ? "w-max min-w-0" : "min-w-[min(10rem,calc(100vw-2rem))]",
+            "transition-[scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0",
             className,
           )}
           data-slot="menu-popup"
