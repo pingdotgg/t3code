@@ -38,6 +38,7 @@ import type { PdfViewState } from "./PdfViewer";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePreview";
+import { useHtmlRenderPointerHold } from "~/hooks/useHtmlRenderPointerHold";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { shortcutConflictKey } from "~/keybindings";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
@@ -264,13 +265,15 @@ export function HtmlRenderDocument(props: {
     }
     void openLink(url, { event: modifiers }).catch((cause: unknown) => console.error(cause));
   });
+  const pointerHeld = useHtmlRenderPointerHold(frameRef);
+  const holding = expandedImage !== null || pointerHeld;
   const { onFullscreenChange } = props;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports fullscreen to the parent while the image viewer is open, and clears it on unmount
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the timeline during a page gesture or image viewer, and clears it on unmount
   useEffect(() => {
-    if (expandedImage === null) return;
+    if (!holding) return;
     onFullscreenChange?.(true);
     return () => onFullscreenChange?.(false);
-  }, [expandedImage, onFullscreenChange]);
+  }, [holding, onFullscreenChange]);
   // Links, keys and images require frame focus and recent reader activity: a page can take
   // focus by script, so this blocks opens on load, though not a page that waits for the
   // reader's next input.

@@ -11,6 +11,7 @@ import {
 } from "@t3tools/shared/htmlRender";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { useHtmlRenderPointerHold } from "~/hooks/useHtmlRenderPointerHold";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { observeResize } from "~/lib/observeResize";
 
@@ -31,6 +32,7 @@ export function GuestHtmlRender({
   const theme = useHtmlRenderTheme();
   const boxRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  useHtmlRenderPointerHold(frameRef);
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const [contentHeight, setContentHeight] = useState<number>();
   // The theme rides in the fragment for the first paint; later changes are posted.
