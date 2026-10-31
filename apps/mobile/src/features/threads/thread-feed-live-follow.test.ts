@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  resolveThreadFeedIsAtEnd,
   resolveThreadFeedLiveFollow,
   resolveThreadFeedReflowAnchor,
   resolveThreadFeedReflowOffset,
   resolveThreadFeedReflowScroll,
   resolveThreadFeedSubmissionAnchor,
   resolveThreadWorkGroupInitialScroll,
+  shouldCatchUpThreadFeedOnScrollEnd,
+  shouldMeasureThreadFeedGeometry,
   shouldFollowThreadWorkGroupAppend,
+  type ThreadFeedLiveFollowEvent,
 } from "./thread-feed-live-follow";
 
 describe("tool-group scroll restoration", () => {
@@ -308,5 +312,242 @@ describe("width reflow anchors", () => {
         layout,
       ),
     ).toBeNull();
+  });
+});
+
+describe("thread feed position and follow", () => {
+  function createFeed() {
+    let following = true;
+    let isAtEnd = true;
+    return (event: ThreadFeedLiveFollowEvent, userScrollSettling = false) => {
+      following = resolveThreadFeedLiveFollow(following, event);
+      isAtEnd = resolveThreadFeedIsAtEnd(isAtEnd, event, following, userScrollSettling);
+      return { following, isAtEnd, showScrollToEnd: !following && !isAtEnd };
+    };
+  }
+
+  it("keeps the button hidden throughout a bottom bounce while follow is paused", () => {
+    const update = createFeed();
+    const pausedAtEnd = { following: false, isAtEnd: true, showScrollToEnd: false };
+    expect(update({ type: "user-scroll-begin" })).toEqual(pausedAtEnd);
+    expect(update({ type: "scroll", isAtEnd: true, userScrollSessionActive: true })).toEqual(
+      pausedAtEnd,
+    );
+    expect(
+      update({ type: "user-scroll-end", isAtEnd: true, userScrollSessionActive: true }),
+    ).toEqual({
+      following: true,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+  });
+
+  it("shows new content growing below a stationary drag without resuming follow", () => {
+    const update = createFeed();
+    update({ type: "user-scroll-begin" });
+    expect(update({ type: "content-size-change", isAtEnd: false })).toEqual({
+      following: false,
+      isAtEnd: false,
+      showScrollToEnd: true,
+    });
+    expect(update({ type: "content-size-change", isAtEnd: true })).toEqual({
+      following: false,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+  });
+
+  it("ignores transient streaming measurements while following, including before a drag", () => {
+    const update = createFeed();
+    expect(shouldMeasureThreadFeedGeometry(true, false)).toBe(false);
+    expect(update({ type: "content-size-change", isAtEnd: false })).toEqual({
+      following: true,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+    expect(update({ type: "user-scroll-begin" })).toEqual({
+      following: false,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+    expect(shouldMeasureThreadFeedGeometry(false, false)).toBe(true);
+  });
+
+  it("ignores a follow scroll that arrives before the newest streamed layout is pinned", () => {
+    const update = createFeed();
+    expect(update({ type: "scroll", isAtEnd: false, userScrollSessionActive: false })).toEqual({
+      following: true,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+    expect(update({ type: "user-scroll-begin" })).toEqual({
+      following: false,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+  });
+
+  it("updates a paused feed after a viewport resize without resuming follow", () => {
+    const update = createFeed();
+    update({ type: "user-scroll-begin" });
+    expect(update({ type: "layout", isAtEnd: false })).toEqual({
+      following: false,
+      isAtEnd: false,
+      showScrollToEnd: true,
+    });
+    expect(update({ type: "layout", isAtEnd: true })).toEqual({
+      following: false,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+  });
+
+  it("holds the release position through layout changes until settling finishes", () => {
+    const update = createFeed();
+    update({ type: "user-scroll-begin" });
+    expect(update({ type: "layout", isAtEnd: false }, true)).toEqual({
+      following: false,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+  });
+
+  it("catches the last chunk after release without flashing the button or claiming it is visible", () => {
+    const update = createFeed();
+    update({ type: "user-scroll-begin" });
+    expect(shouldMeasureThreadFeedGeometry(false, true)).toBe(false);
+    expect(update({ type: "content-size-change", isAtEnd: false }, true)).toEqual({
+      following: false,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+    expect(update({ type: "scroll", isAtEnd: false, userScrollSessionActive: true }, true)).toEqual(
+      {
+        following: false,
+        isAtEnd: true,
+        showScrollToEnd: false,
+      },
+    );
+    const settled = {
+      type: "user-scroll-end",
+      releaseIsAtEnd: true,
+      isAtEnd: false,
+      userScrollSessionActive: true,
+    } as const;
+    expect(shouldCatchUpThreadFeedOnScrollEnd(settled)).toBe(true);
+    expect(update(settled)).toEqual({
+      following: true,
+      isAtEnd: false,
+      showScrollToEnd: false,
+    });
+    // The one catch-up scroll completes even if no more content arrives.
+    expect(update({ type: "scroll", isAtEnd: true, userScrollSessionActive: false })).toEqual({
+      following: true,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+  });
+
+  it.each([true, false])(
+    "holds the release position (%s) until momentum begins, then refreshes it",
+    (releaseIsAtEnd) => {
+      const update = createFeed();
+      update({ type: "user-scroll-begin" });
+      update({ type: "scroll", isAtEnd: releaseIsAtEnd, userScrollSessionActive: true });
+      const momentumPosition = {
+        type: "scroll",
+        isAtEnd: !releaseIsAtEnd,
+        userScrollSessionActive: true,
+      } as const;
+      expect(update(momentumPosition, true)).toEqual({
+        following: false,
+        isAtEnd: releaseIsAtEnd,
+        showScrollToEnd: !releaseIsAtEnd,
+      });
+      // Momentum begin cancels the release timer and immediately remeasures.
+      expect(update(momentumPosition)).toEqual({
+        following: false,
+        isAtEnd: !releaseIsAtEnd,
+        showScrollToEnd: releaseIsAtEnd,
+      });
+      expect(
+        update({
+          type: "user-scroll-end",
+          isAtEnd: !releaseIsAtEnd,
+          userScrollSessionActive: true,
+        }),
+      ).toEqual({
+        following: !releaseIsAtEnd,
+        isAtEnd: !releaseIsAtEnd,
+        showScrollToEnd: releaseIsAtEnd,
+      });
+    },
+  );
+
+  it("keeps earlier content in place when release was above the end", () => {
+    const update = createFeed();
+    update({ type: "user-scroll-begin" });
+    update({ type: "scroll", isAtEnd: false, userScrollSessionActive: true });
+    update({ type: "content-size-change", isAtEnd: false }, true);
+    const settled = {
+      type: "user-scroll-end",
+      releaseIsAtEnd: false,
+      isAtEnd: false,
+      userScrollSessionActive: true,
+    } as const;
+    expect(shouldCatchUpThreadFeedOnScrollEnd(settled)).toBe(false);
+    expect(update(settled)).toEqual({
+      following: false,
+      isAtEnd: false,
+      showScrollToEnd: true,
+    });
+  });
+
+  it.each([
+    { name: "momentum settled away from the end", isAtEnd: false, userScrollSessionActive: true },
+    {
+      name: "release stayed at the end",
+      releaseIsAtEnd: true,
+      isAtEnd: true,
+      userScrollSessionActive: true,
+    },
+    {
+      name: "a programmatic scroll ended",
+      releaseIsAtEnd: true,
+      isAtEnd: false,
+      userScrollSessionActive: false,
+    },
+  ])("does not request a catch-up when $name", ({ name: _name, ...event }) => {
+    expect(shouldCatchUpThreadFeedOnScrollEnd({ type: "user-scroll-end", ...event })).toBe(false);
+  });
+
+  it("shows the button above the end and hides it on return before momentum ends", () => {
+    const update = createFeed();
+    update({ type: "user-scroll-begin" });
+    expect(update({ type: "scroll", isAtEnd: false, userScrollSessionActive: true })).toEqual({
+      following: false,
+      isAtEnd: false,
+      showScrollToEnd: true,
+    });
+    expect(update({ type: "scroll", isAtEnd: true, userScrollSessionActive: true })).toEqual({
+      following: false,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
+  });
+
+  it("preserves an above-end position on drag begin and resets it for a new thread or send", () => {
+    const update = createFeed();
+    update({ type: "disclosure-settled", isAtEnd: false, userScrollSessionActive: false });
+    expect(update({ type: "user-scroll-begin" })).toEqual({
+      following: false,
+      isAtEnd: false,
+      showScrollToEnd: true,
+    });
+    expect(update({ type: "reset" })).toEqual({
+      following: true,
+      isAtEnd: true,
+      showScrollToEnd: false,
+    });
   });
 });
