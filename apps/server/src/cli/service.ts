@@ -95,7 +95,7 @@ export const reconcileService = Effect.fn("cli.service.reconcile")(function* (op
   if (status.installed && status.current) {
     return { changed: false, status } satisfies ServiceReconcileResult;
   }
-  if (!status.installed) {
+  if (status.supported && !status.installed) {
     // A new service listens on this machine only, until `t3 up` opens the local network.
     const { entries } = yield* readServiceEnv(baseDir);
     if (entries.T3CODE_LAN === undefined && entries.T3CODE_HOST === undefined) {
