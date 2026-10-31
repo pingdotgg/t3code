@@ -58,9 +58,10 @@ instance's `config`:
 }
 ```
 
-This is off by default and applies only to local commands. Later output appears in a new run in
-the same thread, which returns to idle when the output finishes. T3 Code does not send the agent
-another prompt for these updates.
+This is off by default and applies only to local commands. The agent must stream late assistant
+output as `agent_message_chunk` notifications; standalone ACP v2 `agent_message` updates do not
+trigger continuation. Supported late output appears in a new run in the same thread, which returns
+to idle when the output finishes. T3 Code does not send the agent another prompt for these updates.
 
 ## Where agents run
 
