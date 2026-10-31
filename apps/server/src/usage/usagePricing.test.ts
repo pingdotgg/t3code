@@ -131,7 +131,6 @@ describe("usage pricing", () => {
     expect(cacheSavingsUsd(table, record("claude-opus-5-5", null, "fast"))).toBeCloseTo(
       2 * cacheSavingsUsd(table, record("claude-opus-5-5")),
     );
-    // No published fast tier, and custom prices, both stay at the standard rate.
     expect(cost("claude-fable-5-1", "fast")).toBe(cost("claude-fable-5-1", "standard"));
     expect(cost("claude-opus-5-5", "fast", overrides)).toBe(
       cost("claude-opus-5-5", "standard", overrides),
@@ -159,14 +158,12 @@ describe("usage pricing", () => {
       categoryCostUsd: split(8, 0.8, 10, 40),
       speedPremiumUsd: expect.closeTo(29.4),
     });
-    // A reported cost keeps its total and splits in proportion to list rates.
     expect(priceUsage(table, record("claude-opus-5-5", 29.4, "fast"))).toEqual({
       costUsd: 29.4,
       costSource: "providerReported",
       categoryCostUsd: split(4, 0.4, 5, 20),
       speedPremiumUsd: expect.closeTo(14.7),
     });
-    // Without rates there is nothing to split it by.
     expect(priceUsage(table, record("unknown-model", 29.4, "fast"))).toMatchObject({
       costUsd: 29.4,
       categoryCostUsd: null,
@@ -183,7 +180,6 @@ describe("usage pricing", () => {
         cache_read_input_token_cost_priority: 2e-6,
         input_cost_per_token_ultrafast: 6e-5,
         output_cost_per_token_ultrafast: 3e-4,
-        // No ultrafast cache rate: keeps the standard 10:1 input-to-cache ratio.
       },
       "gpt-6-sol": rate(2e-6, 2e-7),
     });
@@ -196,7 +192,6 @@ describe("usage pricing", () => {
     expect(cacheSavingsUsd(table, record("gpt-6-astra", null, "ultrafast"))).toBeCloseTo(
       6 * cacheSavingsUsd(table, record("gpt-6-astra")),
     );
-    // A tier the model does not publish bills at the standard rate.
     expect(cost("gpt-6-sol", "ultrafast")).toBe(cost("gpt-6-sol", "standard"));
   });
 
@@ -230,6 +225,21 @@ describe("usage pricing", () => {
   it("adds a bare alias when every qualified entry has the same rate", () => {
     const table = parseRateTable({
       "provider-a/example-model": rate(1),
+      "provider-b/example-model": rate(1),
+    });
+
+    expect(lookupRate(table, "example-model")).toEqual(
+      lookupRate(table, "provider-a/example-model"),
+    );
+  });
+
+  it("keeps a bare alias when a reseller entry omits the fast tier", () => {
+    const table = parseRateTable({
+      "provider-a/example-model": {
+        ...rate(1),
+        input_cost_per_token_priority: 2,
+        output_cost_per_token_priority: 10,
+      },
       "provider-b/example-model": rate(1),
     });
 

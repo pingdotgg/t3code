@@ -17,27 +17,17 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 /** OpenCode 2 accepts only HTTP Basic auth, always with this user name. */
 const OPENCODE_USERNAME = "opencode";
 
-/**
- * A session's execution ended, but this build could not decode the event (a
- * newer server added a field or a value). Only the type and session survive,
- * so the turn still ends.
- */
 export interface OpenCode2UnreadableTerminal {
   readonly type: "unreadable.execution.ended";
   readonly executionType: (typeof EXECUTION_ENDS)[number];
   readonly sessionID: string;
 }
 
-/**
- * A session's execution started, but this build could not decode the event.
- * It marks where a new execution begins and never ends a turn.
- */
 export interface OpenCode2UnreadableStart {
   readonly type: "unreadable.execution.started";
   readonly sessionID: string;
 }
 
-/** The events that end an execution; any other undecodable event is skipped. */
 const EXECUTION_ENDS = [
   "session.execution.succeeded",
   "session.execution.failed",
@@ -46,7 +36,6 @@ const EXECUTION_ENDS = [
 const isExecutionEnd = (type: string): type is (typeof EXECUTION_ENDS)[number] =>
   (EXECUTION_ENDS as ReadonlyArray<string>).includes(type);
 
-/** The server sent nothing, not even a heartbeat, for `SILENT_STREAM_TIMEOUT`. */
 export class OpenCode2SilentStreamError extends Schema.TaggedError<OpenCode2SilentStreamError>()(
   "OpenCode2SilentStreamError",
   {},
@@ -61,15 +50,7 @@ export type OpenCode2StreamEvent =
   | OpenCode2UnreadableTerminal
   | OpenCode2UnreadableStart;
 
-/**
- * An OpenCode 2 client plus a forward-compatible `/api/event` stream. The
- * client's own `event.subscribe` fails the whole stream on the first event a
- * newer server adds, so `events` decodes each frame on its own and skips the
- * ones this build does not know, except an execution's end or start, which it
- * keeps as an {@link OpenCode2UnreadableTerminal} or {@link OpenCode2UnreadableStart}.
- * `events` succeeds once the server accepted the subscription: the stream is
- * volatile, so callers subscribe before they start work whose events they need.
- */
+/** events resolves on subscription acceptance; subscribe before work because the stream is volatile. */
 export interface OpenCode2Api {
   readonly client: OpenCodeClient;
   readonly events: Effect.Effect<
@@ -81,7 +62,6 @@ export interface OpenCode2Api {
   >;
 }
 
-/** Builds clients for OpenCode 2 servers, one per base URL and password. */
 export class OpenCode2Client extends Context.Service<
   OpenCode2Client,
   {
@@ -92,14 +72,10 @@ export class OpenCode2Client extends Context.Service<
   }
 >()("@t3tools/provider-opencode/server/v2/OpenCode2Client") {}
 
-/**
- * OpenCode writes a `: heartbeat` comment every 10 to 15 seconds, so this long
- * without a single byte means the server is stuck, not idle.
- */
+// Heartbeats arrive every 10-15 seconds; longer silence means stuck, not idle.
 const SILENT_STREAM_TIMEOUT = "45 seconds";
 
 const decodeEvent = Schema.decodeUnknownResult(Schema.fromJsonString(OpenCodeEvent));
-// Just enough of an event to route it, for frames the full schema rejects.
 const decodeEnvelope = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -109,36 +85,35 @@ const decodeEnvelope = Schema.decodeUnknownOption(
   ),
 );
 
-const undecodable = (data: string) =>
-  Effect.gen(function* () {
-    const envelope = decodeEnvelope(data);
-    const type = envelope._tag === "Some" ? envelope.value.type.slice(0, 80) : "<unreadable>";
-    const sessionID = envelope._tag === "Some" ? envelope.value.data?.sessionID : undefined;
-    if (isExecutionEnd(type) && sessionID !== undefined) {
-      yield* Effect.logWarning(
-        "Ended an OpenCode execution from an event this build cannot decode.",
-        {
-          type,
-        },
-      );
-      return Result.succeed<OpenCode2StreamEvent>({
-        type: "unreadable.execution.ended",
-        executionType: type,
-        sessionID,
-      });
-    }
-    if (type === "session.execution.started" && sessionID !== undefined) {
-      yield* Effect.logDebug("Read an OpenCode execution start this build cannot decode.");
-      return Result.succeed<OpenCode2StreamEvent>({
-        type: "unreadable.execution.started",
-        sessionID,
-      });
-    }
-    yield* Effect.logDebug("Skipped an OpenCode event this build cannot decode.", { type });
-    return Result.failVoid;
-  });
+// Rejected stream frames can be frequent when the server introduces new event types.
+const undecodable = Effect.fnUntraced(function* (data: string) {
+  const envelope = decodeEnvelope(data);
+  const type = envelope._tag === "Some" ? envelope.value.type.slice(0, 80) : "<unreadable>";
+  const sessionID = envelope._tag === "Some" ? envelope.value.data?.sessionID : undefined;
+  if (isExecutionEnd(type) && sessionID !== undefined) {
+    yield* Effect.logWarning(
+      "Ended an OpenCode execution from an event this build cannot decode.",
+      {
+        type,
+      },
+    );
+    return Result.succeed<OpenCode2StreamEvent>({
+      type: "unreadable.execution.ended",
+      executionType: type,
+      sessionID,
+    });
+  }
+  if (type === "session.execution.started" && sessionID !== undefined) {
+    yield* Effect.logDebug("Read an OpenCode execution start this build cannot decode.");
+    return Result.succeed<OpenCode2StreamEvent>({
+      type: "unreadable.execution.started",
+      sessionID,
+    });
+  }
+  yield* Effect.logDebug("Skipped an OpenCode event this build cannot decode.", { type });
+  return Result.failVoid;
+});
 
-/** Subscribes to `/api/event`, then streams every frame this build can route. */
 const readEvents = HttpClient.get("/api/event", {
   headers: { accept: "text/event-stream" },
 }).pipe(
@@ -161,20 +136,17 @@ const readEvents = HttpClient.get("/api/event", {
   ),
 );
 
-/**
- * OpenCode decodes Basic credentials as UTF-8. `HttpClientRequest.basicAuth`
- * encodes them as Latin-1 (`btoa`), which gets non-ASCII passwords rejected.
- */
+// OpenCode requires UTF-8 Basic credentials; HttpClientRequest.basicAuth uses Latin-1.
 const basicAuthorization = (password: string | Redacted.Redacted) => {
   const plain = Redacted.isRedacted(password) ? Redacted.value(password) : password;
   return `Basic ${Buffer.from(`${OPENCODE_USERNAME}:${plain}`, "utf8").toString("base64")}`;
 };
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   return OpenCode2Client.of({
-    connect: ({ baseUrl, password }) => {
+    connect: Effect.fn("OpenCode2Client.connect")(function ({ baseUrl, password }) {
       const authenticated = HttpClient.mapRequest(
         httpClient,
         HttpClientRequest.setHeader("Authorization", basicAuthorization(password)),
@@ -191,17 +163,13 @@ export const make = Effect.gen(function* () {
           ),
         })),
       );
-    },
+    }),
   });
 });
 
 export const layer = Layer.effect(OpenCode2Client, make);
 
-/**
- * Streams every item of a cursor-paged OpenCode 2 list. The first request
- * carries the caller's input (including `order`); later requests send only
- * the cursor, because OpenCode rejects a cursor combined with `order`.
- */
+/** Send input only initially; cursor pages must omit order or OpenCode rejects them. */
 export const paginate = <Input extends { readonly cursor?: unknown }, Item, E, R>(
   input: Input,
   list: (

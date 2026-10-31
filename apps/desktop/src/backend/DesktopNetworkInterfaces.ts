@@ -39,7 +39,7 @@ export class DesktopNetworkInterfaces extends Context.Service<
   }
 >()("@t3tools/desktop/backend/DesktopNetworkInterfaces") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   return DesktopNetworkInterfaces.of({

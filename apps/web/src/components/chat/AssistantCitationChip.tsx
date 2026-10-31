@@ -6,7 +6,6 @@ import {
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, PencilIcon, QuoteIcon } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useEffectEvent,
   useRef,
@@ -47,9 +46,7 @@ export function AssistantCitationChip({
     onCancel?: () => void;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
-    /** Reports each keystroke of the unsaved comment. */
     onDraftChange?: (comment: string) => void;
-    /** Returns focus to the host editor when the popover closes instead of to the pencil trigger. */
     onRestoreFocus?: () => void;
   };
 }) {
@@ -62,6 +59,7 @@ export function AssistantCitationChip({
   const commentOpen = commentEditor?.open ?? false;
   const sourceAnchor = commentEditor?.sourceAnchor;
   const activeSourceAnchor = sourceAnchor === unavailableSourceAnchor ? undefined : sourceAnchor;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the uncommitted comment draft held in a ref once the parent closes the comment editor
   useEffect(() => {
     if (!commentOpen) draftCommentRef.current = null;
   }, [commentOpen]);
@@ -79,10 +77,10 @@ export function AssistantCitationChip({
     if (settleDraftOnClose("none")) {
       commentEditor?.onOpenChange(false);
     } else {
-      // Keep the draft mounted, positioned at the composer trigger instead of a detached range.
       setUnavailableSourceAnchor(sourceAnchor);
     }
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the cited DOM source while the comment editor is open and reacts when it disappears
   useEffect(() => {
     if (!commentOpen || sourceAnchor === unavailableSourceAnchor) return;
     const anchor = sourceAnchor ?? findAssistantCitationSourceAnchor(document, citation);
@@ -93,14 +91,20 @@ export function AssistantCitationChip({
       onUnavailable: onSourceUnavailable,
     });
   }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
-  // A multi-line selection's bounding box spans the full message width; anchor
-  // the bubble to the selection's last line, where the pointer released.
   const popupAnchor = activeSourceAnchor
     ? {
         contextElement: activeSourceAnchor.source,
         getBoundingClientRect: () => {
           const rects = activeSourceAnchor.range.getClientRects();
-          return rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+          const rect =
+            rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+          // Code blocks and tables scroll sideways inside the message, so the cited
+          // text can end in their hidden overflow. Base UI only shifts the popup while
+          // it still touches the anchor, so clamp the anchor to the message's width.
+          const bounds = activeSourceAnchor.source.getBoundingClientRect();
+          const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
+          const right = Math.max(Math.min(rect.right, bounds.right), left);
+          return new DOMRect(left, rect.top, right - left, rect.height);
         },
       }
     : undefined;
@@ -122,7 +126,7 @@ export function AssistantCitationChip({
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-foreground"
+      className="inline-flex min-w-0 items-center gap-[0.2em] self-baseline text-inherit no-underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm"
       aria-label={`View cited assistant text: ${label}`}
     >
       <QuoteIcon aria-hidden="true" />
@@ -189,7 +193,6 @@ export function AssistantCitationChip({
               finalFocus={
                 commentEditor.onRestoreFocus
                   ? () => {
-                      // Leave focus alone when the user closed the popover by moving to another control.
                       const activeElement = document.activeElement;
                       if (
                         activeElement === document.body ||
@@ -247,19 +250,15 @@ export function AssistantCitationChip({
 
 function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
   const [fade, setFade] = useState({ top: false, bottom: false });
-  const updateFade = useCallback((element: HTMLElement) => {
+  const updateFade = (element: HTMLElement) => {
     const top = element.scrollTop > 1;
     const bottom = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
     setFade((current) =>
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
-  }, []);
-  // Stable so a fade update during resize delivery does not resubscribe the element.
-  const observeFade = useCallback(
-    (element: HTMLDivElement | null) =>
-      element ? observeResize(element, () => updateFade(element)) : undefined,
-    [updateFade],
-  );
+  };
+  const observeFade = (element: HTMLDivElement | null) =>
+    element ? observeResize(element, () => updateFade(element)) : undefined;
   return (
     <div
       ref={observeFade}

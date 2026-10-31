@@ -1,7 +1,7 @@
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -11,11 +11,6 @@ import { toastManager } from "../../ui/toast";
 import { readableFailure } from "../pullRequestDetail.logic";
 import { guideRunKey, useGuideRunStore } from "./guideRunStore";
 
-/**
- * A pull request's stored guide and the way to write a new one, shared by the Guide tab and the
- * header menu. Starting a run hands it to the run coordinator, which re-reads it until it ends
- * and says so if the reader is not looking at the guide.
- */
 export function useReviewGuideWriter({
   environmentId,
   reference,
@@ -23,7 +18,6 @@ export function useReviewGuideWriter({
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  /** The pull request's title for the notice when the guide is ready. */
   title: string | null;
 }) {
   const query = useEnvironmentQuery(
@@ -39,7 +33,10 @@ export function useReviewGuideWriter({
   const data = query.data;
   const running = starting || data?.run?._tag === "Running";
 
-  const watchRun = useEffectEvent(() =>
+  // A run reported by the server is watched where its answer lands (state/pullRequests.ts).
+  const write = async () => {
+    if (running) return;
+    setStarting(true);
     useGuideRunStore.getState().watch({
       environmentId,
       reference,
@@ -47,28 +44,17 @@ export function useReviewGuideWriter({
       previousGuideAt: data?.guide?.generatedAt ?? null,
       previousFailedAt: data?.run?._tag === "Failed" ? data.run.failedAt : null,
       since: Date.now(),
-    }),
-  );
-  // A run started elsewhere, or before a reload, is watched as soon as it is seen.
-  useEffect(() => {
-    if (data?.run?._tag === "Running") watchRun();
-  }, [data?.run?._tag]);
-
-  const write = async () => {
-    if (running) return;
-    setStarting(true);
-    watchRun();
+    });
     const result = await generate({ environmentId, input: reference });
     setStarting(false);
     if (result._tag === "Failure") {
-      // Nothing started, so there is nothing to watch for and nothing more to announce.
       useGuideRunStore.getState().settle(guideRunKey(environmentId, reference));
       toastManager.add({
         type: "error",
         title: "Could not start a review guide",
         description: readableFailure(
           squashAtomCommandFailure(result),
-          "Check the review guide model in Settings → Source Control.",
+          "Check the review guide model in Settings → Source control.",
         ),
       });
     }

@@ -1,5 +1,5 @@
 import type { SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { ProviderRuntimeTurnStatus, TurnTokenUsage } from "@t3tools/contracts";
+import type { RuntimeTurnState, TurnTokenUsage } from "@t3tools/contracts";
 
 function finiteNonNegativeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
@@ -14,21 +14,14 @@ const BILLED_USAGE_FIELDS = [
   "output_tokens",
 ] as const;
 
-// Adds earlier segments' counts to a count the final result reports. A count
-// the final result lacks stays missing, so status rules see the same fields.
 function addKnownCount(finalCount: unknown, earlierCounts: ReadonlyArray<unknown>): unknown {
-  const known = finiteNonNegativeInteger(finalCount);
-  if (known === undefined) return finalCount;
-  return earlierCounts.reduce<number>(
-    (sum, count) => sum + (finiteNonNegativeInteger(count) ?? 0),
-    known,
-  );
+  const counts = [finalCount, ...earlierCounts]
+    .map(finiteNonNegativeInteger)
+    .filter((count) => count !== undefined);
+  return counts.length === 0 ? finalCount : counts.reduce((sum, count) => sum + count, 0);
 }
 
-// A steer ends the running segment with an aborted result, and the SDK scopes
-// each result's usage to its own segment. Adds the billed counts of those
-// earlier segments onto the final result's usage. Other usage fields describe
-// the final result only and are left as they are.
+// Steering aborts the current segment; each SDK result reports only that segment's usage.
 function withEarlierSegmentUsage(
   usage: Record<string, unknown>,
   earlierSegmentUsage: ReadonlyArray<unknown>,
@@ -43,42 +36,27 @@ function withEarlierSegmentUsage(
     );
   }
   const outputDetails = usage.output_tokens_details as Record<string, unknown> | undefined;
-  if (outputDetails != null) {
-    total.output_tokens_details = {
-      ...outputDetails,
-      thinking_tokens: addKnownCount(
-        outputDetails.thinking_tokens,
-        segments.map(
-          (segment) =>
-            (segment.output_tokens_details as Record<string, unknown> | undefined)?.thinking_tokens,
-        ),
+  total.output_tokens_details = {
+    ...outputDetails,
+    thinking_tokens: addKnownCount(
+      outputDetails?.thinking_tokens,
+      segments.map(
+        (segment) =>
+          (segment.output_tokens_details as Record<string, unknown> | undefined)?.thinking_tokens,
       ),
-    };
-  }
+    ),
+  };
   return total;
 }
 
-/**
- * Normalizes a Claude turn's billed usage from its final SDK result.
- * `earlierSegmentUsage` holds the usage of results a steer ended before the
- * final one, oldest first.
- */
 export function normalizeClaudeTurnTokenUsage(
   result: { readonly subtype: SDKResultMessage["subtype"]; readonly usage?: unknown } | undefined,
   hasSubagents: boolean,
-  terminalStatus: ProviderRuntimeTurnStatus,
+  terminalStatus: RuntimeTurnState,
   earlierSegmentUsage: ReadonlyArray<unknown> = [],
 ): TurnTokenUsage {
   const finalUsage = result?.usage as Record<string, unknown> | undefined;
-  const usage = finalUsage && withEarlierSegmentUsage(finalUsage, earlierSegmentUsage);
-  if (!usage) {
-    return {
-      usageStatus: "unavailable",
-      usageScope: "main_agent",
-      hasSubagents,
-    };
-  }
-
+  const usage = withEarlierSegmentUsage(finalUsage ?? {}, earlierSegmentUsage);
   const uncachedInputTokens = finiteNonNegativeInteger(usage.input_tokens);
   const cachedInputTokens = finiteNonNegativeInteger(usage.cache_read_input_tokens);
   const cacheCreationTokens = finiteNonNegativeInteger(usage.cache_creation_input_tokens);
@@ -126,8 +104,14 @@ export function normalizeClaudeTurnTokenUsage(
   if (
     terminalStatus === "completed" &&
     result?.subtype === "success" &&
+    finiteNonNegativeInteger(finalUsage?.input_tokens) !== undefined &&
+    finiteNonNegativeInteger(finalUsage?.output_tokens) !== undefined &&
     inputTokens !== undefined &&
-    rawOutputTokens !== undefined
+    rawOutputTokens !== undefined &&
+    BILLED_USAGE_FIELDS.every(
+      (field) =>
+        finalUsage?.[field] == null || finiteNonNegativeInteger(finalUsage[field]) !== undefined,
+    )
   ) {
     return {
       ...commonUsage,

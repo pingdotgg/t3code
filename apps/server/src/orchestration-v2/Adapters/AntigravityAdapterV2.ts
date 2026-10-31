@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
@@ -20,20 +21,20 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 import {
   antigravityPermissionMode,
   applyAntigravityAcpModelSelection,
+  buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
-import {
-  readAntigravityClientTextFile,
-  writeAntigravityClientTextFile,
-} from "../../provider/acp/AntigravityClientFiles.ts";
+import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import {
   antigravityApprovalOptions,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
+  makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
+import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -63,7 +64,6 @@ const AntigravityProviderCapabilitiesV2 = {
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly selfInvocation: SelfInvocation;
-  /** Spawns the official agent with the instance's Google profile. */
   readonly makeRuntime: (
     input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
   ) => Effect.Effect<
@@ -71,9 +71,7 @@ export interface AntigravityAdapterV2Options {
     EffectAcpErrors.AcpError | ProviderSetupError,
     Scope.Scope
   >;
-  /** Serialises process ownership against sign-in and sign-out. */
   readonly withProcess: AntigravityAuth["withProcess"];
-  /** Model to select for the provider default alias, from the manifest. */
   readonly defaultModel: Effect.Effect<string | undefined>;
   readonly onSessionStarted?: (
     started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
@@ -84,11 +82,7 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
 }
 
-/**
- * ACP 1.1.1 exposes subagent invocations as ordinary `start_subagent` tools
- * without child session ids. Project them as subagent items keyed by the tool
- * call so the timeline shows them as delegated work.
- */
+/** Native subagent tools report no child session ids. */
 const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractSubagentUpdate"]> = (
   toolCall,
 ) => {
@@ -112,7 +106,6 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
   };
 };
 
-/** The services the Antigravity flavor runs its runtime and session files with. */
 interface AntigravityFlavorServices {
   readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
@@ -123,29 +116,57 @@ interface AntigravityFlavorServices {
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
-  // The attachments dir grant lets the agent read pasted files at the paths
-  // the turn text references. It is a leaf directory of uploads. A session
-  // without a workspace gets no workspace root rather than the server's cwd.
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
-  const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
-    Effect.gen(function* () {
-      // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
-      // process by closing a child of it, and the adapter respawns on the next turn.
+  const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
+    function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
-          // `input.clientCapabilities` matches the handlers AcpAdapterV2
-          // registers for this flavor: client file system and form elicitation.
           options.makeRuntime({
             ...input,
+            clientFileReads: true,
             additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
+      // Repair keeps state across updates, so each runtime must have one session-update handler.
+      const reads = makeAntigravityReadRepair();
+      // Served reads are reported from the read handler, so they take turns with agent updates.
+      const updates = yield* Semaphore.make(1);
+      let projectUpdate: Parameters<typeof runtime.handleSessionUpdate>[0] | undefined;
       return {
         ...runtime,
+        handleReadTextFile: (handler) =>
+          runtime.handleReadTextFile((request, context) =>
+            handler(request, context).pipe(
+              Effect.onExit((exit) => {
+                const served = reads.attempted(request.path, Exit.isSuccess(exit));
+                if (served === undefined || projectUpdate === undefined) return Effect.void;
+                return updates
+                  .withPermit(
+                    projectUpdate({
+                      sessionId: served.sessionId,
+                      update: {
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: served.toolCallId,
+                        status: "completed",
+                      },
+                    }),
+                  )
+                  .pipe(Effect.ignore);
+              }),
+            ),
+          ),
+        prompt: (payload, promptOptions) =>
+          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+        handleSessionUpdate: (handler) => {
+          projectUpdate = handler;
+          return runtime.handleSessionUpdate((notification) =>
+            updates.withPermit(handler(reads.repair(notification))),
+          );
+        },
         start: () =>
           runtime
             .start()
@@ -154,48 +175,51 @@ export function makeAntigravityAcpAdapterFlavor(
                 (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
               ),
             ),
-      };
-    }).pipe(
-      Effect.provideService(Crypto.Crypto, options.crypto),
-      Effect.mapError((cause): EffectAcpErrors.AcpError =>
-        cause._tag === "ProviderSetupError"
-          ? new EffectAcpErrors.AcpTransportError({ detail: cause.detail, cause })
-          : cause,
-      ),
-    );
+      } satisfies typeof runtime;
+    },
+    Effect.provideService(Crypto.Crypto, options.crypto),
+    Effect.mapError((cause): EffectAcpErrors.AcpError =>
+      cause._tag === "ProviderSetupError"
+        ? new EffectAcpErrors.AcpTransportError({ detail: cause.detail, cause })
+        : cause,
+    ),
+  );
 
   return {
     driver: ANTIGRAVITY_PROVIDER,
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
     makeRuntime,
-    // Loading history replays every tool call; resume restores the session
-    // without the replay and is what the official client does.
-    preferResumeSession: true,
+    buildPrompt: ({ text, attachments, promptCapabilities }) =>
+      buildAntigravityPrompt({
+        input: text,
+        attachments,
+        attachmentsDir: options.host.paths.attachmentsDir,
+        promptCapabilities,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+        Effect.provideService(Path.Path, options.path),
+      ),
+    // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
-    applyModelSelection: ({ runtime, modelSelection }) =>
-      Effect.gen(function* () {
-        const defaultModel = yield* options.defaultModel;
-        return yield* applyAntigravityAcpModelSelection({
-          runtime,
-          model:
-            modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model,
-          defaultModel,
-          mapError: (cause) => cause,
-        });
-      }),
+    applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
+      runtime,
+      modelSelection,
+    }) {
+      const defaultModel = yield* options.defaultModel;
+      return yield* applyAntigravityAcpModelSelection({
+        runtime,
+        model:
+          modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model,
+        defaultModel,
+        mapError: (cause) => cause,
+      });
+    }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
     clientFileSystem: {
       readTextFile: (request, cwd) =>
         readAntigravityClientTextFile({
-          fileSystem: options.fileSystem,
-          path: options.path,
-          allowedRoots: antigravityClientFileRoots(cwd),
-          request,
-        }),
-      writeTextFile: (request, cwd) =>
-        writeAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
           allowedRoots: antigravityClientFileRoots(cwd),
@@ -207,23 +231,16 @@ export function makeAntigravityAcpAdapterFlavor(
       const question = extractAntigravityUserInputQuestion(request);
       if (question === undefined) return undefined;
       return {
-        question: {
-          id: question.id,
-          header: question.header,
-          question: question.question,
-          options: question.options.map((option) => ({
-            label: option.label,
-            description: option.description,
-          })),
-          multiSelect: false,
-        },
+        question,
         respond: (answers) => makeAntigravityUserInputResponse(request, answers),
       };
     },
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
-    supportsCompaction: true,
+    // ACP 1.3.0 treats /compact as ordinary model input.
+    supportsCompaction: false,
+    requiresSignIn: isAntigravitySignInRequiredError,
   };
 }
 

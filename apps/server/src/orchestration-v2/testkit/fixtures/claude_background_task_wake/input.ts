@@ -16,9 +16,6 @@ export function claudeBackgroundTaskWakeInput(): OrchestratorFixtureInput {
   return {
     steps: [
       { type: "message", text: CLAUDE_BACKGROUND_TASK_WAKE_PROMPT },
-      // The wake turn arrives after the root settled, so it waits in the wake
-      // buffer until continuation run 2 drains it. The wake result is held
-      // until run 2 has attached, so it settles run 2 and not an idle stream.
       {
         type: "await_run_status",
         targetRunIndex: 2,

@@ -6,19 +6,22 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import {
   NonNegativeInt,
+  settingsSecretLiteral,
+  SourceControlProviderKind,
   TrimmedNonEmptyString,
   type SourceControlProviderAuth,
+  type SourceControlProviderInfo,
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
-import {
-  detectSourceControlProviderFromRemoteUrl,
-  isSshRemoteUrl,
-} from "@t3tools/shared/sourceControl";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
+import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
+import { definition } from "../shared/definition.ts";
 
 import {
   BitbucketPullRequestListSchema,
@@ -29,18 +32,17 @@ import {
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-import { readSourceControlHostSettings } from "@t3tools/source-control-core/client/definition";
+import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
 
-import * as BitbucketClient from "../client/definition.ts";
-import { retryAtFromHeader } from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as BitbucketClient from "../shared/definition.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
-/** A response body past this is cut short, so one huge diff cannot exhaust the server. */
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-/** Bitbucket redirects a diff once; this leaves room without following a chain forever. */
 const MAX_REDIRECTS = 3;
-/** A single API operation must bound both header delivery and body consumption. */
 const BITBUCKET_API_REQUEST_TIMEOUT = "30 seconds";
+/** A sweep over many branches would otherwise reach Bitbucket as one burst of lookups. */
+const CONCURRENCY = 4;
 
 const BitbucketApiEnvConfig = Config.all({
   baseUrl: Config.String("T3CODE_BITBUCKET_API_BASE_URL").pipe(
@@ -50,6 +52,15 @@ const BitbucketApiEnvConfig = Config.all({
   email: Config.String("T3CODE_BITBUCKET_EMAIL").pipe(Config.option),
   apiToken: Config.String("T3CODE_BITBUCKET_API_TOKEN").pipe(Config.option),
 });
+
+// Server and Data Center use a different API; a custom Cloud endpoint must be explicit.
+export const BitbucketServesHost = Config.String("T3CODE_BITBUCKET_API_BASE_URL").pipe(
+  Config.option,
+  Config.map(
+    (baseUrl) => (host: string) =>
+      Option.isSome(baseUrl) || host === "bitbucket.org" || host.endsWith(".bitbucket.org"),
+  ),
+);
 
 const BitbucketApiOperation = Schema.Literals([
   "resolveRepository",
@@ -61,8 +72,6 @@ const BitbucketApiOperation = Schema.Literals([
   "createPullRequest",
   "probeAuth",
   "checkoutPullRequest",
-  // The raw escape hatch. Callers name their own operation in their own error, the way the
-  // pull request wrappers do on top of `gh` and `glab`.
   "request",
 ]);
 type BitbucketApiOperation = typeof BitbucketApiOperation.Type;
@@ -76,6 +85,10 @@ export class BitbucketRepositoryLocatorError extends Schema.TaggedError<Bitbucke
   static readonly detail = "Bitbucket repositories must be specified as workspace/repository.";
 
   get detail(): string {
+    return BitbucketRepositoryLocatorError.detail;
+  }
+
+  get userFacingDetail(): string {
     return BitbucketRepositoryLocatorError.detail;
   }
 
@@ -234,15 +247,11 @@ export class BitbucketCheckoutError extends Schema.TaggedError<BitbucketCheckout
   }
 }
 
-/**
- * A url that does not belong to the configured Bitbucket. Refused rather than followed, because
- * the request carries the account's credentials and a url that came back in a response — a
- * pagination cursor, or the target of a redirect — is not this server's to trust.
- */
+/** Reject response-supplied URLs that could leak credentials. */
 export class BitbucketUntrustedUrlError extends Schema.TaggedError<BitbucketUntrustedUrlError>()(
   "BitbucketUntrustedUrlError",
   {
-    /** The host only. A rejected hop is often a signed url, whose query carries a credential. */
+    /** Host only; signed URL queries can contain credentials. */
     host: Schema.String,
   },
 ) {
@@ -267,6 +276,7 @@ export const BitbucketApiError = Schema.Union([
   BitbucketRepositoryRemoteNotFoundError,
   BitbucketPullRequestBodyReadError,
   BitbucketCheckoutError,
+  SourceControlRateLimit.SourceControlRateLimitPausedError,
 ]);
 export type BitbucketApiError = typeof BitbucketApiError.Type;
 const isBitbucketApiError = Schema.is(BitbucketApiError);
@@ -330,21 +340,10 @@ export class BitbucketApi extends Context.Service<
   {
     readonly probeAuth: Effect.Effect<SourceControlProviderAuth, never>;
 
-    /**
-     * One authenticated request, returning the body verbatim. Bitbucket answers most endpoints
-     * with JSON and a few — a pull request diff, for one — with plain text, so the body is
-     * handed back undecoded for the caller to read as it sees fit.
-     */
     readonly request: (input: {
       readonly method: "GET" | "POST" | "PUT" | "DELETE";
-      /**
-       * A path below the API base, or a whole URL as a paged response reports its next page.
-       * A whole URL is refused unless it belongs to the configured Bitbucket.
-       */
       readonly url: string;
-      /** A JSON document, for the endpoints that take one. */
       readonly body?: string;
-      /** Response bytes to keep; past this the body comes back cut short and marked. */
       readonly maxBytes?: number;
     }) => Effect.Effect<{ readonly body: string; readonly truncated: boolean }, BitbucketApiError>;
     readonly listPullRequests: (input: {
@@ -547,10 +546,7 @@ type BitbucketCredential =
   | { readonly kind: "access-token"; readonly accessToken: string }
   | { readonly kind: "api-token"; readonly email: string; readonly apiToken: string };
 
-/**
- * Visible ASCII only. A value the HTTP stack rejects makes it throw an error quoting the whole
- * header, and that error travels to clients as a cause, so an unusable token is treated as unset.
- */
+/** Invalid header values can throw errors containing credentials; treat them as unset. */
 const HEADER_SAFE = /^[\x21-\x7e]+$/u;
 
 function credentialFrom(input: {
@@ -567,16 +563,16 @@ function credentialFrom(input: {
   return null;
 }
 
-/**
- * Credentials saved in settings win over the `T3CODE_BITBUCKET_*` environment variables, which
- * stay as a fallback. Within each source the access token wins.
- */
 function resolveCredential(
   settings: BitbucketClient.BitbucketSettings,
   env: Config.Success<typeof BitbucketApiEnvConfig>,
 ): BitbucketCredential | null {
   return (
-    credentialFrom(settings) ??
+    credentialFrom({
+      accessToken: settingsSecretLiteral(settings.accessToken),
+      email: settings.email,
+      apiToken: settingsSecretLiteral(settings.apiToken),
+    }) ??
     credentialFrom({
       accessToken: Option.getOrElse(env.accessToken, () => ""),
       email: Option.getOrElse(env.email, () => ""),
@@ -614,7 +610,6 @@ function authFromCredential(credential: BitbucketCredential | null): SourceContr
   };
 }
 
-/** Null for anything that is not a url at all, which is never the configured Bitbucket. */
 function originOf(value: string): string | null {
   try {
     return new URL(value).origin;
@@ -623,50 +618,57 @@ function originOf(value: string): string | null {
   }
 }
 
-function responseError(
+const responseError = Effect.fn("BitbucketApi.responseError")(function* (
   operation: BitbucketApiOperation,
   response: HttpClientResponse.HttpClientResponse,
-): Effect.Effect<never, BitbucketApiError> {
-  // Bounded like any other body: an error response is no smaller than a successful one, and
-  // only its length is reported anyway.
-  return Effect.gen(function* () {
-    const now = yield* Clock.currentTimeMillis;
-    const retryAt = retryAtFromHeader(response.headers["retry-after"], now);
-    const collected = yield* collectUint8StreamText({
-      stream: response.stream,
-      maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new BitbucketResponseBodyReadError({
-            operation,
-            status: response.status,
-            retryAt,
-            cause,
-          }),
-      ),
-    );
-    return yield* new BitbucketResponseError({
-      operation,
-      status: response.status,
-      responseBodyLength: collected.text.length,
-      retryAt,
-    });
+): Effect.fn.Return<never, BitbucketApiError> {
+  const now = yield* Clock.currentTimeMillis;
+  const retryAt = SourceControlRateLimit.retryAtFromHeader(response.headers["retry-after"], now);
+  const collected = yield* collectUint8StreamText({
+    stream: response.stream,
+    maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new BitbucketResponseBodyReadError({
+          operation,
+          status: response.status,
+          retryAt,
+          cause,
+        }),
+    ),
+  );
+  return yield* new BitbucketResponseError({
+    operation,
+    status: response.status,
+    responseBodyLength: collected.text.length,
+    retryAt,
   });
-}
+});
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* BitbucketApiEnvConfig;
   const host = yield* SourceControlHost.SourceControlHost;
   const git = host.git;
   const httpClient = yield* HttpClient.HttpClient;
   const fileSystem = yield* FileSystem.FileSystem;
+  const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+  const slots = yield* Semaphore.make(CONCURRENCY);
+  // The repository host PullRequestService keys its own backoff under, so both share one pause.
+  const rateLimitKey = {
+    provider: SourceControlProviderKind.make("bitbucket"),
+    host: "bitbucket.org",
+  };
+
+  const servesHost = yield* BitbucketServesHost;
+
+  const servesProvider = (provider: SourceControlProviderInfo | null) =>
+    provider?.kind === "bitbucket" && servesHost(URL.parse(provider.baseUrl)?.hostname ?? "");
 
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
 
-  // Read on every request so credentials saved in settings apply without a restart.
-  const currentCredential = host.settings.get.pipe(
+  const currentCredential = host.settings.getWithSecrets(BitbucketClient.definition.kind).pipe(
     Effect.map((settings) =>
       resolveCredential(
         readSourceControlHostSettings(
@@ -699,6 +701,33 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * Every request waits for one of the shared slots, then honors the pause a 429 starts for the
+   * whole host. Each queued lookup would otherwise spend its own 429 and keep the quota exhausted.
+   * Background reads fail at once while paused; a write or an interactive read has a user waiting
+   * on it, so it still goes out.
+   */
+  const throttled = Effect.fn("BitbucketApi.throttled")(
+    function* <A, R>(method: string, effect: Effect.Effect<A, BitbucketApiError, R>) {
+      const interactive = yield* SourceControlRateLimit.Interactive;
+      const lease = yield* limits.check(
+        rateLimitKey,
+        interactive || method !== "GET" ? { allowPaused: true } : undefined,
+      );
+      return yield* effect.pipe(
+        Effect.tap(() => limits.recordSuccess({ ...rateLimitKey, lease })),
+        Effect.tapError((error) =>
+          (error._tag === "BitbucketResponseError" ||
+            error._tag === "BitbucketResponseBodyReadError") &&
+          error.status === 429
+            ? limits.recordRateLimit({ ...rateLimitKey, lease, retryAt: error.retryAt })
+            : Effect.void,
+        ),
+      );
+    },
+    (effect) => slots.withPermit(effect),
+  );
+
   const decodeResponse = <S extends Schema.Top>(
     operation: BitbucketApiOperation,
     schema: S,
@@ -724,30 +753,42 @@ export const make = Effect.gen(function* () {
     request: HttpClientRequest.HttpClientRequest,
     schema: S,
   ): Effect.Effect<S["Type"], BitbucketApiError, S["DecodingServices"]> =>
-    withAuth(request.pipe(HttpClientRequest.acceptJson)).pipe(
-      Effect.flatMap(httpClient.execute),
-      Effect.mapError(
-        (cause) =>
-          new BitbucketRequestError({
-            operation,
-            cause,
-          }),
+    throttled(
+      request.method,
+      withAuth(request.pipe(HttpClientRequest.acceptJson)).pipe(
+        Effect.flatMap(httpClient.execute),
+        Effect.mapError(
+          (cause) =>
+            new BitbucketRequestError({
+              operation,
+              cause,
+            }),
+        ),
+        Effect.flatMap((response) => decodeResponse(operation, schema, response)),
+        Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
+        Effect.catchTags({
+          TimeoutError: (cause) => Effect.fail(new BitbucketRequestError({ operation, cause })),
+        }),
       ),
-      Effect.flatMap((response) => decodeResponse(operation, schema, response)),
-      Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
-      Effect.catchTags({
-        TimeoutError: (cause) => Effect.fail(new BitbucketRequestError({ operation, cause })),
-      }),
     );
 
   const resolveRepository = Effect.fn("BitbucketApi.resolveRepository")(function* (input: {
     readonly cwd: string;
+    readonly reference?: string;
     readonly context?: SourceControlProvider.SourceControlProviderContext;
     readonly repository?: string;
   }) {
+    if (input.context?.provider.kind === "bitbucket" && !servesProvider(input.context.provider)) {
+      // Falling back to another remote could act on a different repository.
+      return yield* new BitbucketRepositoryRemoteNotFoundError({ cwd: input.cwd });
+    }
     if (input.repository !== undefined) {
       return yield* requireRepositoryLocator(input.repository);
     }
+
+    const url = input.reference ? URL.parse(input.reference) : null;
+    const link = url ? definition.parseChangeRequestUrl(url) : null;
+    if (link) return yield* requireRepositoryLocator(link.repository);
 
     const fromContext =
       input.context?.provider.kind === "bitbucket"
@@ -775,7 +816,7 @@ export const make = Effect.gen(function* () {
     );
 
     for (const remote of remotes.remotes) {
-      if (detectSourceControlProviderFromRemoteUrl(remote.url)?.kind !== "bitbucket") continue;
+      if (!servesProvider(recognizeRemoteWith(definition, remote.url))) continue;
       const parsed = parseBitbucketRemoteUrl(remote.url);
       if (parsed) return parsed;
     }
@@ -846,19 +887,27 @@ export const make = Effect.gen(function* () {
     readonly sourceRepositoryName: string;
     readonly isCrossRepository: boolean;
   }) {
-    if (
-      input.context?.provider.kind === "bitbucket" &&
-      !input.isCrossRepository &&
-      parseBitbucketRemoteUrl(input.context.remoteUrl) !== null
-    ) {
-      return input.context.remoteName;
-    }
-
     if (!input.isCrossRepository) {
-      const remoteName = yield* git
-        .resolvePrimaryRemoteName(input.cwd)
-        .pipe(Effect.orElseSucceed(() => null));
-      if (remoteName) return remoteName;
+      const context = input.context?.provider.kind === "bitbucket" ? input.context : undefined;
+      const remoteName =
+        context?.remoteName ??
+        (yield* git.resolvePrimaryRemoteName(input.cwd).pipe(Effect.orElseSucceed(() => null)));
+      if (remoteName) {
+        const remoteUrl =
+          context?.remoteUrl ??
+          (yield* readConfigValueNullable(input.cwd, `remote.${remoteName}.url`));
+        const repository =
+          remoteUrl && (context || recognizeRemoteWith(definition, remoteUrl))
+            ? parseBitbucketRemoteUrl(remoteUrl)
+            : null;
+        if (
+          repository &&
+          `${repository.workspace}/${repository.repoSlug}`.toLowerCase() ===
+            input.sourceRepositoryName.toLowerCase()
+        ) {
+          return remoteName;
+        }
+      }
     }
 
     const cloneUrls = yield* getRepository({
@@ -876,14 +925,6 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  // A pull request's diff, diffstat and conflicts are served as redirects to a commit-range
-  // URL, and the client does not follow redirects unless asked. The hop stays on the same host,
-  // so the credentials travel with it.
-  /**
-   * The one host these credentials may be sent to. A url that came back inside a response — a
-   * pagination cursor, or the target of a redirect — is data, not instruction, so it is checked
-   * against this before the account's token travels with it.
-   */
   const apiOrigin = originOf(config.baseUrl);
 
   const trustedUrl = (value: string): string | null => {
@@ -892,11 +933,7 @@ export const make = Effect.gen(function* () {
     return origin !== null && origin === apiOrigin ? value : null;
   };
 
-  /**
-   * Redirects are followed here rather than by the client, which forwards every header to
-   * whatever host it is sent to. A pull request diff, diffstat and conflicts are all served as
-   * redirects, so they have to be followed — but only back to the same Bitbucket.
-   */
+  /** Redirects forward auth headers; restrict them to the configured Bitbucket. */
   const send = (input: {
     readonly method: "GET" | "POST" | "PUT" | "DELETE";
     readonly url: string;
@@ -917,7 +954,7 @@ export const make = Effect.gen(function* () {
           : input.method === "DELETE"
             ? HttpClientRequest.make("DELETE")(url)
             : HttpClientRequest.put(url);
-    // No `Accept: application/json`: the diff endpoints answer with a patch, not JSON.
+    // Diff endpoints return patches, not JSON.
     const withBody =
       input.body === undefined
         ? base
@@ -947,58 +984,67 @@ export const make = Effect.gen(function* () {
   };
 
   const request: BitbucketApi["Service"]["request"] = (input) =>
-    send({ ...input, redirects: 0 }).pipe(
-      Effect.flatMap((response) =>
-        HttpClientResponse.matchStatus({
-          // Read through the body stream rather than `text`, so an oversized diff is stopped
-          // as it arrives instead of being materialized whole and then cut. The same collector
-          // the process runner bounds command output with.
-          "2xx": (success) =>
-            collectUint8StreamText({
-              stream: success.stream,
-              maxBytes: input.maxBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new BitbucketResponseBodyReadError({
-                    operation: "request",
-                    status: success.status,
-                    cause,
-                  }),
+    throttled(
+      input.method,
+      send({ ...input, redirects: 0 }).pipe(
+        Effect.flatMap((response) =>
+          HttpClientResponse.matchStatus({
+            // Read through the body stream rather than `text`, so an oversized diff is stopped as
+            // it arrives instead of being materialized whole and then cut.
+            "2xx": (success) =>
+              collectUint8StreamText({
+                stream: success.stream,
+                maxBytes: input.maxBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new BitbucketResponseBodyReadError({
+                      operation: "request",
+                      status: success.status,
+                      cause,
+                    }),
+                ),
+                Effect.map((collected) => ({
+                  body: collected.text,
+                  truncated: collected.truncated,
+                })),
               ),
-              Effect.map((collected) => ({
-                body: collected.text,
-                truncated: collected.truncated,
-              })),
-            ),
-          orElse: (failed) => responseError("request", failed),
-        })(response),
+            orElse: (failed) => responseError("request", failed),
+          })(response),
+        ),
+        // This also caps redirect hops: no request can finish headers then stall its body forever.
+        Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            Effect.fail(new BitbucketRequestError({ operation: "request", cause })),
+        }),
       ),
-      // This also caps redirect hops: no request can finish headers then stall its body forever.
-      Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
-      Effect.catchTags({
-        TimeoutError: (cause) =>
-          Effect.fail(new BitbucketRequestError({ operation: "request", cause })),
-      }),
     );
 
   return BitbucketApi.of({
     request,
-    probeAuth: executeJson(
-      "probeAuth",
-      HttpClientRequest.get(apiUrl("/user")),
-      BitbucketUserSchema,
-    ).pipe(
-      Effect.map((user) => ({
-        status: "authenticated" as const,
-        account: nonEmpty(user.username ?? user.display_name ?? user.account_id),
-        host: Option.some("bitbucket.org"),
-        detail: Option.none<string>(),
-      })),
-      Effect.catch(() => currentCredential.pipe(Effect.map(authFromCredential))),
+    // Bitbucket answers anonymous /user with 401, so without a credential there is nothing to ask.
+    probeAuth: currentCredential.pipe(
+      Effect.flatMap((credential) =>
+        credential === null
+          ? Effect.succeed(authFromCredential(null))
+          : executeJson(
+              "probeAuth",
+              HttpClientRequest.get(apiUrl("/user")),
+              BitbucketUserSchema,
+            ).pipe(
+              Effect.map((user) => ({
+                status: "authenticated" as const,
+                account: nonEmpty(user.username ?? user.display_name ?? user.account_id),
+                host: Option.some("bitbucket.org"),
+                detail: Option.none<string>(),
+              })),
+              Effect.catch(() => currentCredential.pipe(Effect.map(authFromCredential))),
+            ),
+      ),
     ),
-    listPullRequests: (input) =>
-      resolveRepository(input).pipe(
+    listPullRequests: Effect.fn("BitbucketApi.listPullRequests")(function (input) {
+      return resolveRepository(input).pipe(
         Effect.flatMap((repository) => {
           const states = toBitbucketStates(input.state);
           const query: Record<string, string | ReadonlyArray<string>> = {
@@ -1023,13 +1069,16 @@ export const make = Effect.gen(function* () {
           );
         }),
         Effect.map((list) => list.values.map(normalizeBitbucketPullRequestRecord)),
-      ),
-    getPullRequest: (input) =>
-      getRawPullRequest(input).pipe(Effect.map(normalizeBitbucketPullRequestRecord)),
-    getRepositoryCloneUrls: (input) =>
-      getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls)),
-    createRepository: (input) =>
-      requireRepositoryLocator(input.repository).pipe(
+      );
+    }),
+    getPullRequest: Effect.fn("BitbucketApi.getPullRequest")(function (input) {
+      return getRawPullRequest(input).pipe(Effect.map(normalizeBitbucketPullRequestRecord));
+    }),
+    getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function (input) {
+      return getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls));
+    }),
+    createRepository: Effect.fn("BitbucketApi.createRepository")(function (input) {
+      return requireRepositoryLocator(input.repository).pipe(
         Effect.flatMap((repository) =>
           executeJson(
             "createRepository",
@@ -1047,55 +1096,55 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
-      ),
-    createPullRequest: (input) =>
-      Effect.gen(function* () {
-        const repository = yield* resolveRepository(input);
-        const description = yield* fileSystem.readFileString(input.bodyFile).pipe(
-          Effect.mapError(
-            (cause) =>
-              new BitbucketPullRequestBodyReadError({
-                cwd: input.cwd,
-                bodyFile: input.bodyFile,
-                cause,
-              }),
-          ),
-        );
-        const sourceOwner = sourceWorkspace(input);
-        const body = {
-          title: input.title,
-          description,
-          source: {
-            branch: {
-              name: SourceControlProvider.sourceBranch(input),
-            },
-            ...(sourceOwner
-              ? {
-                  repository: {
-                    full_name: `${sourceOwner}/${input.source?.repository ?? repository.repoSlug}`,
-                  },
-                }
-              : {}),
+      );
+    }),
+    createPullRequest: Effect.fn("BitbucketApi.createPullRequest")(function* (input) {
+      const repository = yield* resolveRepository(input);
+      const description = yield* fileSystem.readFileString(input.bodyFile).pipe(
+        Effect.mapError(
+          (cause) =>
+            new BitbucketPullRequestBodyReadError({
+              cwd: input.cwd,
+              bodyFile: input.bodyFile,
+              cause,
+            }),
+        ),
+      );
+      const sourceOwner = sourceWorkspace(input);
+      const body = {
+        title: input.title,
+        description,
+        source: {
+          branch: {
+            name: SourceControlProvider.sourceBranch(input),
           },
-          destination: {
-            branch: {
-              name: input.target?.refName ?? input.baseBranch,
-            },
+          ...(sourceOwner
+            ? {
+                repository: {
+                  full_name: `${sourceOwner}/${input.source?.repository ?? repository.repoSlug}`,
+                },
+              }
+            : {}),
+        },
+        destination: {
+          branch: {
+            name: input.target?.refName ?? input.baseBranch,
           },
-        };
+        },
+      };
 
-        yield* executeJson(
-          "createPullRequest",
-          HttpClientRequest.post(
-            apiUrl(
-              `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}/pullrequests`,
-            ),
-          ).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
-          BitbucketPullRequestSchema,
-        );
-      }),
-    getDefaultBranch: (input) =>
-      resolveRepository(input).pipe(
+      yield* executeJson(
+        "createPullRequest",
+        HttpClientRequest.post(
+          apiUrl(
+            `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}/pullrequests`,
+          ),
+        ).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
+        BitbucketPullRequestSchema,
+      );
+    }),
+    getDefaultBranch: Effect.fn("BitbucketApi.getDefaultBranch")(function (input) {
+      return resolveRepository(input).pipe(
         Effect.flatMap((locator) =>
           Effect.all(
             {
@@ -1110,15 +1159,10 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(defaultChangeRequestTargetBranch),
-      ),
-    // Bitbucket Cloud pull requests are Git-backed and Bitbucket does not provide
-    // an official checkout CLI. This provider-local path uses GitVcsDriver as a
-    // narrow escape hatch to materialize Bitbucket PR refs. Do not generalize this
-    // as the source-control provider model: if we support non-Git-compatible
-    // hosting providers or native JJ/Sapling checkout flows, move this into a
-    // VCS-specific change-request checkout capability.
-    checkoutPullRequest: (input) =>
-      Effect.gen(function* () {
+      );
+    }),
+    checkoutPullRequest: Effect.fn("BitbucketApi.checkoutPullRequest")(
+      function* (input) {
         const destinationRepository = yield* resolveRepository(input);
         const pullRequest = yield* getRawPullRequestFromRepository(
           destinationRepository,
@@ -1168,17 +1212,20 @@ export const make = Effect.gen(function* () {
           remoteBranch,
         });
         yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
-      }).pipe(
-        Effect.mapError((cause) =>
-          isBitbucketApiError(cause)
-            ? cause
-            : new BitbucketCheckoutError({
-                cwd: input.cwd,
-                reference: input.reference,
-                cause,
-              }),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError((cause) =>
+            isBitbucketApiError(cause)
+              ? cause
+              : new BitbucketCheckoutError({
+                  cwd: input.cwd,
+                  reference: input.reference,
+                  cause,
+                }),
+          ),
         ),
-      ),
+    ),
   });
 });
 

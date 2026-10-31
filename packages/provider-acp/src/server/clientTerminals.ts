@@ -12,16 +12,6 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
 
-/**
- * Client-side implementation of the ACP `terminal` capability.
- *
- * Agents create terminals to run commands through the client
- * (`terminal/create`), poll buffered output, await exit, kill, and release
- * them. Terminals also appear as embedded tool-call content, which
- * {@link resolveEmbeddedTerminalContent} rewrites into plain text so the
- * existing tool-call projection renders live command output.
- */
-
 const MAX_LIVE_TERMINALS = 16;
 const MAX_UNRELEASED_TERMINALS = 64;
 const MAX_RETAINED_TERMINALS = 32;
@@ -70,8 +60,7 @@ function appendOutput(state: OutputBufferState, chunk: Uint8Array): void {
 function readOutput(state: OutputBufferState): string {
   let combined: Uint8Array = NodeBuffer.Buffer.concat(state.chunks, state.bytes);
   if (state.truncated) {
-    // Drop leading UTF-8 continuation bytes so truncation lands on a
-    // character boundary, as the spec requires.
+    // The spec requires truncation at a UTF-8 character boundary.
     let start = 0;
     while (start < combined.byteLength && (combined[start]! & 0b1100_0000) === 0b1000_0000) {
       start += 1;
@@ -97,12 +86,10 @@ export interface AcpTerminalOutputSnapshot {
 interface ManagedAcpTerminal {
   readonly terminalId: string;
   readonly sessionId: string;
-  /** The spawned command with args, kept for MCP-fallback identification. */
   readonly commandLine: string;
   readonly buffer: OutputBufferState;
   readonly exit: Deferred.Deferred<EffectAcpSchema.WaitForTerminalExitResponse>;
   readonly kill: Effect.Effect<void>;
-  /** Closes the terminal's scope, killing the process if still running. */
   readonly dispose: Effect.Effect<void>;
   exitStatus: EffectAcpSchema.TerminalExitStatus | undefined;
   released: boolean;
@@ -129,9 +116,7 @@ export interface AcpClientTerminals {
     sessionId: string,
     terminalId: string,
   ) => AcpTerminalOutputSnapshot | undefined;
-  /** Command line a terminal was created with; presentation-only lookup. */
   readonly readCommandLine: (terminalId: string) => string | undefined;
-  /** Kills every terminal that is still running. Safe to call repeatedly. */
   readonly disposeAll: Effect.Effect<void>;
 }
 
@@ -151,13 +136,13 @@ function acpTerminalCommand(input: {
   readonly shellCommands?: boolean | undefined;
   readonly defaultCwd: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
-  readonly forceKillAfter?: Duration.Input | undefined;
+  readonly forceKillAfter: Duration.Input;
 }) {
   return ChildProcess.make(input.request.command, input.request.args ?? [], {
     cwd: input.request.cwd ?? input.defaultCwd,
     ...(input.environment === undefined ? {} : { env: input.environment }),
     shell: input.shellCommands === true && (input.request.args?.length ?? 0) === 0,
-    forceKillAfter: input.forceKillAfter ?? "5 seconds",
+    forceKillAfter: input.forceKillAfter,
   });
 }
 
@@ -165,6 +150,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   options: AcpClientTerminalsOptions,
 ): Effect.fn.Return<AcpClientTerminals, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const forceKillAfter = options.forceKillAfter ?? "5 seconds";
   const creationPermit = yield* Semaphore.make(1);
   const terminals = new Map<string, ManagedAcpTerminal>();
   let nextTerminalNumber = 1;
@@ -237,8 +223,6 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
             (request.env?.length ?? 0) === 0
               ? undefined
               : { ...options.environment, ...sessionEnvironment, ...requestEnvironment };
-          // Each terminal owns a scope so the spawned process is reliably reaped:
-          // closing the scope kills a still-running command and frees the handle.
           const terminalScope = yield* Scope.make();
           const child = yield* restore(
             spawner
@@ -248,7 +232,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                   shellCommands: options.shellCommands,
                   defaultCwd: options.defaultCwd,
                   environment,
-                  forceKillAfter: options.forceKillAfter,
+                  forceKillAfter,
                 }),
               )
               .pipe(
@@ -282,7 +266,9 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
               ),
             },
             exit: yield* Deferred.make<EffectAcpSchema.WaitForTerminalExitResponse>(),
-            kill: child.kill().pipe(Effect.ignore),
+            // The spawner only applies the command's forceKillAfter on scope close;
+            // an explicit kill must pass it or a SIGTERM-ignoring command never exits.
+            kill: child.kill({ forceKillAfter }).pipe(Effect.ignore),
             dispose: Scope.close(terminalScope, Exit.void).pipe(Effect.ignore),
             exitStatus: undefined,
             released: false,
@@ -388,8 +374,6 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
     ),
   );
 
-  // Terminal failures surface to the agent as JSON-RPC errors and to the
-  // user only as a failed tool item, so log them for server-side diagnosis.
   const logged =
     <Request, Response>(
       operation: string,
@@ -417,10 +401,6 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   };
 });
 
-/**
- * Rewrites embedded `terminal` tool-call content into plain text content so
- * the provider-neutral tool-call projection can display live command output.
- */
 export function resolveEmbeddedTerminalContent(
   notification: EffectAcpSchema.SessionNotification,
   readOutputSnapshot: AcpClientTerminals["readOutputSnapshot"],

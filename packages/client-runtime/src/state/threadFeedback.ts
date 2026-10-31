@@ -44,16 +44,6 @@ export function codexFeedbackNotice(submission: CodexFeedbackSubmission) {
   }
 }
 
-export function beginCodexFeedbackSubmission(
-  submissionsInFlight: Set<string>,
-  threadKey: string,
-): (() => void) | null {
-  if (submissionsInFlight.has(threadKey)) return null;
-  submissionsInFlight.add(threadKey);
-  return () => submissionsInFlight.delete(threadKey);
-}
-
-/** A chat row that exists only on this client, such as a feedback exchange. */
 export interface LocalChatMessage {
   readonly id: MessageId;
   readonly role: "user" | "assistant";
