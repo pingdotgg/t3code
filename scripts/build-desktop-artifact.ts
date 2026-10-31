@@ -2908,6 +2908,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       },
     };
+    // electron-updater replaces an installed AppImage in place only when its name has no x.y.z version.
+    if (buildConfig.publish) {
+      buildConfig.appImage = {
+        artifactName:
+          updateChannel === "nightly" ? "T3-Code-Nightly-${arch}.${ext}" : "T3-Code-${arch}.${ext}",
+      };
+    }
     buildConfig.deb = {
       // FPM runs outside the staged app directory, so source paths must be absolute.
       fpm: [
