@@ -1,6 +1,7 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomValue } from "@effect/atom-react";
-import { FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
+import { DownloadIcon, FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 
 import { openCommandPalette } from "../commandPaletteBus";
 import { isElectron } from "../env";
@@ -17,6 +18,7 @@ import { WorkspacePageHeader } from "./WorkspacePageHeader";
  * hero's place list with nothing in it but the ways to get a project.
  */
 export function NoProjectsHero() {
+  const navigate = useNavigate();
   const contentArea = workspaceAreaProps("home", 1, "Home");
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, startScratchThread } = useScratchProject();
@@ -43,6 +45,12 @@ export function NoProjectsHero() {
                 label="Add project…"
                 detail="Open a folder or clone a repository"
                 onSelect={openAddProject}
+              />
+              <DraftProjectRow
+                icon={<DownloadIcon className="size-4 shrink-0 text-foreground" />}
+                label="Import conversations…"
+                detail="Continue from Claude Code, Codex or Pi"
+                onSelect={() => void navigate({ to: "/welcome" })}
               />
               {scratchTargetEnvironmentId === null ? null : (
                 <>

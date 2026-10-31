@@ -1,6 +1,5 @@
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
-import { Spinner } from "~/components/ui/spinner";
-import { ArchiveIcon, ArchiveX, Trash2Icon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, CheckCheckIcon, Trash2Icon } from "lucide-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
@@ -17,14 +16,25 @@ import { RelativeTime } from "../RelativeTime";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+  SettingsToolbar,
+  SettingsSearchField,
+  SettingsNoMatches,
+  SettingsLoadingRows,
+  SettingsEmptyState,
+  SettingsEmptyTiles,
+  SettingsEmptyTile,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 
 import { useRef, useState } from "react";
 
 const ARCHIVE_ACTIONS = [
-  { action: "unarchive", label: "Unarchive", Icon: ArchiveX },
+  { action: "unarchive", label: "Unarchive", Icon: ArchiveRestoreIcon },
   { action: "delete", label: "Delete", Icon: Trash2Icon },
 ] as const;
 type ArchiveAction = (typeof ARCHIVE_ACTIONS)[number]["action"];
@@ -40,8 +50,10 @@ export function ArchivedThreadsPanel() {
     isLoading: isLoadingArchive,
     refresh: refreshArchivedThreads,
   } = useArchivedThreadSnapshots(scope.environmentIds);
+  const [archiveQuery, setArchiveQuery] = useState("");
+  const normalizedArchiveQuery = archiveQuery.trim().toLowerCase();
 
-  const { groups: archivedGroups, hasMultipleEnvironments } = (() => {
+  const { groups: allArchivedGroups, hasMultipleEnvironments } = (() => {
     const selectedProjectKeys =
       scope.kind === "project" || scope.kind === "checkout"
         ? new Set(scope.members.map((member) => `${member.environmentId}:${member.id}`))
@@ -68,6 +80,8 @@ export function ArchivedThreadsPanel() {
     const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
       snapshot.threads.map((thread) => ({
         ...presentThreadShell(environmentId, thread),
+        projectTitle:
+          projectsByEnvironmentAndId.get(`${environmentId}:${thread.projectId}`)?.title ?? "",
         environmentLabel: environmentLabels.get(environmentId) ?? environmentId,
       })),
     );
@@ -132,6 +146,22 @@ export function ArchivedThreadsPanel() {
     }));
     return { groups: sortedGroups, hasMultipleEnvironments };
   })();
+  // Filters the loaded snapshots on the client: a thread matches on its title
+  // or its project's name.
+  const archivedGroups = (() => {
+    if (normalizedArchiveQuery.length === 0) return allArchivedGroups;
+    return allArchivedGroups.flatMap((group) => {
+      const projectMatches = group.title.toLowerCase().includes(normalizedArchiveQuery);
+      const threads = projectMatches
+        ? group.threads
+        : group.threads.filter(
+            (thread) =>
+              thread.title.toLowerCase().includes(normalizedArchiveQuery) ||
+              thread.projectTitle.toLowerCase().includes(normalizedArchiveQuery),
+          );
+      return threads.length > 0 ? [{ ...group, threads }] : [];
+    });
+  })();
 
   type ArchivedThread = (typeof archivedGroups)[number]["threads"][number];
 
@@ -187,34 +217,64 @@ export function ArchivedThreadsPanel() {
   };
 
   return (
-    <SettingsPageContainer>
-      {archivedGroups.length === 0 ? (
+    <SettingsPageContainer
+      centered={allArchivedGroups.length === 0 && !isLoadingArchive && !archiveError}
+    >
+      {allArchivedGroups.length > 0 ? (
+        <SettingsToolbar>
+          <SettingsSearchField
+            value={archiveQuery}
+            onChange={setArchiveQuery}
+            placeholder="Search archived threads"
+          />
+        </SettingsToolbar>
+      ) : null}
+      {allArchivedGroups.length > 0 && archivedGroups.length === 0 ? (
+        <SettingsNoMatches onClear={() => setArchiveQuery("")}>
+          No archived threads match “{archiveQuery.trim()}”.
+        </SettingsNoMatches>
+      ) : null}
+      {allArchivedGroups.length === 0 && (isLoadingArchive || archiveError) ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}
           title={searchableSetting("archive").title}
+          hideTitle
         >
-          <SettingsRow
-            title={
-              <span className="inline-flex items-center gap-2">
-                {isLoadingArchive ? (
-                  <Spinner size="sm" tone="muted" />
-                ) : (
+          {isLoadingArchive ? (
+            <SettingsLoadingRows label="Loading archived threads" />
+          ) : (
+            <SettingsRow
+              title={
+                <span className="inline-flex items-center gap-2">
                   <ArchiveIcon className="size-3.5 text-muted-foreground" />
-                )}
-                {isLoadingArchive
-                  ? "Loading archived threads"
-                  : archiveError
-                    ? "Could not load archived threads"
-                    : "No archived threads"}
-              </span>
-            }
-            description={
-              isLoadingArchive
-                ? "Checking connected environments."
-                : (archiveError ?? "Archived threads will appear here.")
-            }
-          />
+                  Could not load archived threads
+                </span>
+              }
+              description={archiveError}
+            />
+          )}
         </SettingsSection>
+      ) : allArchivedGroups.length === 0 ? (
+        <section id={searchableSetting("archive").id} tabIndex={-1}>
+          <SettingsEmptyState
+            ghostRows={3}
+            title="No archived threads"
+            description="Threads you archive stay searchable here and can be restored at any time."
+          >
+            <SettingsEmptyTiles narrow>
+              <SettingsEmptyTile
+                icon={<ArchiveIcon />}
+                title="Archive a thread"
+                description="From its menu in the sidebar."
+              />
+              <SettingsEmptyTile
+                icon={<CheckCheckIcon />}
+                title="Settled threads"
+                description="Cleared from Settled."
+              />
+            </SettingsEmptyTiles>
+          </SettingsEmptyState>
+        </section>
       ) : (
         archivedGroups.map(({ key, project, title, threads: projectThreads }, index) => (
           <SettingsSection
@@ -247,6 +307,11 @@ export function ArchivedThreadsPanel() {
                           Created <RelativeTime timestamp={thread.createdAt} />
                         </TooltipPopup>
                       </Tooltip>
+                      {thread.messageCount === undefined ? null : (
+                        <span className="mt-1 block">
+                          {thread.messageCount} {thread.messageCount === 1 ? "message" : "messages"}
+                        </span>
+                      )}
                     </span>
                   }
                   control={
