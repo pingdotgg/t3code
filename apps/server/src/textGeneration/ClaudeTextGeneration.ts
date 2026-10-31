@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -87,6 +88,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
@@ -196,6 +198,27 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                 ),
               )
           : cwd;
+      const settingsArgument =
+        proxy === undefined
+          ? settingsJson
+          : yield* Effect.gen(function* () {
+              const directory = yield* fileSystem.makeTempDirectoryScoped({
+                prefix: "t3code-claude-settings-",
+              });
+              yield* fileSystem.chmod(directory, 0o700);
+              const settingsPath = path.join(directory, "settings.json");
+              yield* fileSystem.writeFileString(settingsPath, settingsJson, { mode: 0o600 });
+              return settingsPath;
+            }).pipe(
+              Effect.mapError((cause) =>
+                normalizeCliError(
+                  "claude",
+                  operation,
+                  cause,
+                  "Failed to prepare Claude CLI settings",
+                ),
+              ),
+            );
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
@@ -209,7 +232,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
-          settingsJson,
+          settingsArgument,
           ...(investigate
             ? [
                 "--tools",

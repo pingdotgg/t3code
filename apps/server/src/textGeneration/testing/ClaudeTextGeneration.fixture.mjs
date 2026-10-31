@@ -1,4 +1,5 @@
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 const argv = process.argv.slice(2);
 const args = argv.join(" ");
@@ -26,7 +27,30 @@ if (!argv.includes("--strict-mcp-config")) {
   fail("text generation must not load configured MCP servers", 9);
 }
 const settingsIndex = argv.indexOf("--settings");
-if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {
+const settingsArgument = argv[settingsIndex + 1];
+const expectedProxy = process.env.T3_FAKE_CLAUDE_SETTINGS_EXPECTED;
+if (expectedProxy) {
+  const { url, apiKey, platform } = JSON.parse(expectedProxy);
+  if (args.includes(apiKey)) fail("proxy settings exposed in argv", 13);
+  const settings = JSON.parse(NodeFS.readFileSync(settingsArgument, "utf8"));
+  if (settings.env?.ANTHROPIC_BASE_URL !== url || settings.env?.ANTHROPIC_AUTH_TOKEN !== apiKey) {
+    fail("settings file missing proxy route", 14);
+  }
+  if (
+    platform !== "win32" &&
+    ((NodeFS.statSync(settingsArgument).mode & 0o777) !== 0o600 ||
+      (NodeFS.statSync(NodePath.dirname(settingsArgument)).mode & 0o777) !== 0o700)
+  ) {
+    fail("settings file permissions expose credentials", 15);
+  }
+  NodeFS.writeFileSync(process.env.T3_FAKE_CLAUDE_SETTINGS_RECEIPT, settingsArgument);
+}
+const settings = JSON.parse(
+  settingsArgument.startsWith("{")
+    ? settingsArgument
+    : NodeFS.readFileSync(settingsArgument, "utf8"),
+);
+if (settingsIndex === -1 || settings.disableAllHooks !== true) {
   fail("text generation must disable hooks", 10);
 }
 const cwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
