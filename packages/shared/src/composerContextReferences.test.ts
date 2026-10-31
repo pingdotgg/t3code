@@ -341,6 +341,8 @@ describe("provider projection", () => {
     expect(restoreComposerContextReferences(`Watch the attached files.${envelope}`)).toBe(
       "Watch the attached files.",
     );
+    const literalEnvelope = '<t3_context version="1">\nexample\n</t3_context>';
+    expect(restoreComposerContextReferences(literalEnvelope)).toBe(literalEnvelope);
     expect(restoreComposerContextReferences("Plain [Note: x] text")).toBe("Plain [Note: x] text");
   });
 });

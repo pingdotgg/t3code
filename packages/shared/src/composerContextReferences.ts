@@ -363,7 +363,7 @@ export function projectComposerContextForProvider(input: {
 const PROVIDER_MARKER = /\[([A-Za-z][a-z0-9 ]{0,39}): ([^\]\n]*?); ref=([a-z0-9_-]{1,128})\]/gi;
 // Payloads are escaped, so the first closing tag always ends the envelope.
 const PROVIDER_ENVELOPE = new RegExp(
-  String.raw`\n*<${CONTEXT_ENVELOPE_TAG} version="1">\n[\s\S]*?\n</${CONTEXT_ENVELOPE_TAG}>`,
+  String.raw`\n*<${CONTEXT_ENVELOPE_TAG} version="1">\n<${CONTEXT_ENTRY_TAG} kind="[\s\S]*?\n</${CONTEXT_ENVELOPE_TAG}>`,
   "g",
 );
 
