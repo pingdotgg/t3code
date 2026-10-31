@@ -4,6 +4,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as CursorKeychain from "./CursorKeychain.ts";
@@ -223,6 +225,48 @@ describe("Cursor usage limits", () => {
         Effect.succeed("keychain-token"),
       );
       expect(limits.windows[0]?.usedPercent).toBe(42);
+    }),
+  );
+
+  it.effect("waits for Keychain approval before starting the HTTP request timeout", () =>
+    Effect.gen(function* () {
+      const pending = yield* withNodeServices(
+        readCursorUsageLimits({ apiEndpoint: "" }, {}, true).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ planUsage: { totalPercentUsed: 42 } }),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Effect.sleep("12 seconds").pipe(Effect.as("keychain-token")),
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("12 seconds");
+      const limits = yield* Fiber.join(pending);
+      expect(limits.windows[0]?.usedPercent).toBe(42);
+    }),
+  );
+
+  it.effect("still bounds a stalled HTTP request after Keychain approval", () =>
+    Effect.gen(function* () {
+      const pending = yield* withNodeServices(
+        readCursorUsageLimits({ apiEndpoint: "" }, {}, true).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.never),
+          ),
+        ),
+        Effect.sleep("12 seconds").pipe(Effect.as("keychain-token")),
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("22 seconds");
+      expect((yield* Fiber.join(pending)).unavailable?.reason).toBe("probeFailed");
     }),
   );
 
