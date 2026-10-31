@@ -229,6 +229,10 @@ const decodeCodexBackgroundTerminalTerminateResponse = Schema.decodeUnknownEffec
 const decodeCodexBackgroundTerminalsListResponse = Schema.decodeUnknownEffect(
   CodexBackgroundTerminalsListResponse,
 );
+const CodexThreadSampleResponse = Schema.Struct({ text: Schema.NullOr(Schema.String) });
+const decodeCodexThreadSampleResponse = Schema.decodeUnknownEffect(CodexThreadSampleResponse);
+export const CODEX_PROMPT_SUGGESTION_PROMPT =
+  "Predict the next message the user will send in this conversation. Reply with only that message, written as the user would type it, in under 20 words. Do not use tools. If there is no clear next step, reply with nothing.";
 const CODEX_CLIENT_CAPABILITIES = {
   experimentalApi: true,
   optOutNotificationMethods: ["turn/diff/updated"],
@@ -1919,6 +1923,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
+
+        const promptSuggestionsEnabled = input.promptSuggestions === true;
+        // Best effort: older Codex lacks thread/sample, and a sample fails once the user sends again.
+        const samplePromptSuggestion = (
+          context: ActiveCodexTurnContext,
+          nativeThreadId: string,
+          nativeTurnId: string,
+        ) =>
+          client.raw
+            .request("thread/sample", {
+              threadId: nativeThreadId,
+              expectedTurnId: nativeTurnId,
+              prompt: CODEX_PROMPT_SUGGESTION_PROMPT,
+              effort: "low",
+            })
+            .pipe(
+              Effect.flatMap(decodeCodexThreadSampleResponse),
+              Effect.flatMap(({ text }) => {
+                const suggestion = text?.trim() ?? "";
+                return suggestion.length === 0
+                  ? Effect.void
+                  : emitProviderEvent({
+                      type: "prompt_suggestion.updated",
+                      driver: CODEX_PROVIDER,
+                      threadId: context.projectionThreadId,
+                      runId: context.input.runId,
+                      text: suggestion,
+                    });
+              }),
+              Effect.catchCause((cause) =>
+                Effect.logDebug("orchestration-v2.codex-prompt-suggestion-failed", { cause }),
+              ),
+              Effect.forkIn(scope),
+              Effect.asVoid,
+            );
 
         const emitImageWorkState =
           /* Provider events include streaming deltas; avoid a span for each update. */
@@ -5915,6 +5954,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
           yield* emitRootTerminal(hold.context, { ...hold.event, status });
           yield* Deferred.succeed(hold.next, undefined);
+          const nativeThreadId = hold.context.providerThread.nativeThreadRef?.nativeId;
+          if (promptSuggestionsEnabled && status === "completed" && nativeThreadId != null) {
+            yield* samplePromptSuggestion(hold.context, nativeThreadId, hold.context.nativeTurnId);
+          }
         });
 
         const releaseGoalHold = Effect.fnUntraced(function* (
@@ -6242,6 +6285,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const retainSettledContext =
                 input.status === "completed" &&
                 (yield* turnHasRetainedBackgroundWork(input.nativeTurnId));
+              // A held goal predicts when settleGoalHold completes it.
+              if (
+                promptSuggestionsEnabled &&
+                input.status === "completed" &&
+                input.context.subagent === null &&
+                !input.continueRun &&
+                !holdsForGoal &&
+                nativeThreadId != null
+              ) {
+                yield* samplePromptSuggestion(input.context, nativeThreadId, input.nativeTurnId);
+              }
               if (retainSettledContext) {
                 yield* Ref.update(settledTurns, (current) => {
                   const updated = new Map(current);

@@ -2881,6 +2881,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
+    readonly promptSuggestions?: boolean;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3039,6 +3040,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
         modelSelection: CLAUDE_TEST_MODEL_SELECTION,
         runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        promptSuggestions: options?.promptSuggestions === true,
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
@@ -6559,6 +6561,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "completed");
       assert.deepEqual(reportedContextTokens(harness.events), [38_123]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("offers the prompt suggestion Claude sends after a completed turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({ promptSuggestions: true });
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-prompt-suggestion"),
+        text: "Add a subtract function.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000690", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "prompt_suggestion",
+          suggestion: "  add tests for subtract\n",
+          uuid: "00000000-0000-4000-8000-000000000691",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.until(() =>
+        harness.events.some((event) => event.type === "prompt_suggestion.updated"),
+      );
+      assert.equal(harness.getOpenedOptions()?.promptSuggestions, true);
+      assert.deepEqual(
+        harness.events.filter((event) => event.type === "prompt_suggestion.updated"),
+        [
+          {
+            type: "prompt_suggestion.updated",
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            threadId: harness.threadId,
+            runId: input.runId,
+            text: "add tests for subtract",
+          },
+        ],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

@@ -146,6 +146,15 @@ the text is an unedited recalled prompt, with the caret on the first visual line
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
 
+## Suggested next prompt
+
+Turn on **Suggest next prompt** in Settings > Labs. After a Claude or Codex turn completes, the empty
+composer shows a predicted next message in gray. Press `Tab` to fill it in, then edit or send it.
+Each suggestion is one extra request that reuses the turn's prompt cache, so it uses a little of
+your plan's usage. Claude skips suggestions on the first turn of a thread, in plan mode, and near
+usage limits. Codex needs version 0.165 or later. The setting applies to new sessions. Suggestions
+show on web and desktop.
+
 ## Edit an earlier prompt
 
 On web and desktop, choose **Edit from here** beneath a sent message to rewind
