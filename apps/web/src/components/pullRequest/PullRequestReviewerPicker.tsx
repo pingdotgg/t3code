@@ -5,6 +5,8 @@ import type {
   PullRequestReviewerCandidate,
 } from "@t3tools/contracts";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
+import { RelativeTime } from "~/components/RelativeTime";
+import { Badge } from "../ui/badge";
 import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -45,9 +47,16 @@ export function PullRequestReviewerPicker({
     reportFailure: false,
   });
 
-  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
+  // Suggested people first, then who has already been asked, then everyone else with access.
+  const narrowed = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
     matches(entry, query),
   );
+  const candidates = [
+    ...narrowed.filter((entry) => entry.suggestion !== undefined && !entry.isRequested),
+    ...narrowed.filter((entry) => entry.isRequested),
+    ...narrowed.filter((entry) => entry.suggestion === undefined && !entry.isRequested),
+  ];
+  const hasGroups = candidates.some((entry) => entry.isRequested || entry.suggestion !== undefined);
 
   const toggle = async (candidate: PullRequestReviewerCandidate) => {
     if (pending !== null) return;
@@ -104,18 +113,42 @@ export function PullRequestReviewerPicker({
       candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
       disabled={pending !== null}
       onSelect={(candidate) => void toggle(candidate)}
+      groupLabel={
+        hasGroups
+          ? (candidate) =>
+              candidate.isRequested
+                ? "Already asked"
+                : candidate.suggestion !== undefined
+                  ? "Suggested"
+                  : "Everyone with access"
+          : undefined
+      }
     >
-      {(candidate) => (
-        <>
-          <PullRequestActorLabel actor={candidate} className="flex-1" />
-          {candidate.kind === "team" ? (
-            <span className="shrink-0 text-muted-foreground">team</span>
-          ) : null}
-          {candidate.isRequested ? (
-            <CheckIcon aria-label="Already asked" className="size-3.5 shrink-0" />
-          ) : null}
-        </>
-      )}
+      {(candidate) => {
+        const reason = candidate.isRequested ? (
+          candidate.requestedAt ? (
+            <>
+              requested <RelativeTime timestamp={candidate.requestedAt} />
+            </>
+          ) : null
+        ) : (
+          (candidate.suggestion ?? null)
+        );
+        return (
+          <>
+            <PullRequestActorLabel actor={candidate} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">
+              {candidate.kind === "team" ? <>team{reason ? " · " : null}</> : null}
+              {reason}
+            </span>
+            {candidate.isRequested ? (
+              <Badge variant="warning">Pending</Badge>
+            ) : pending === candidate.id ? (
+              <CheckIcon aria-label="Asking" className="size-3.5 shrink-0 opacity-60" />
+            ) : null}
+          </>
+        );
+      }}
     </PullRequestCandidatePicker>
   );
 }

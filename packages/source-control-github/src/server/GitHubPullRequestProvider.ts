@@ -503,6 +503,7 @@ export const make = Effect.gen(function* () {
               botLogins: new Set<string>(),
               commits: [],
               viewer: { canUpdate: true, didAuthor: false },
+              reviewRequests: undefined,
             })),
           ),
         ],
@@ -525,6 +526,26 @@ export const make = Effect.gen(function* () {
             ),
             reviewers: reviewThreads.reviewers,
             reactions: reviewThreads.reactions,
+            ...(reviewThreads.reviewRequests === undefined
+              ? {}
+              : {
+                  reviewRequests: reviewThreads.reviewRequests.map((event) => ({
+                    ...event,
+                    actor: withAvatar(
+                      event.actor,
+                      reviewThreads.avatarsByLogin,
+                      input.host,
+                      reviewThreads.botLogins,
+                    ),
+                    reviewer:
+                      withAvatar(
+                        event.reviewer,
+                        reviewThreads.avatarsByLogin,
+                        input.host,
+                        reviewThreads.botLogins,
+                      ) ?? event.reviewer,
+                  })),
+                }),
             commits: (reviewThreads.commits.length > 0
               ? reviewThreads.commits
               : pullRequest.commits

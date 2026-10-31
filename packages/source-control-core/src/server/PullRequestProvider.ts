@@ -22,6 +22,7 @@ import type {
   PullRequestMergeability,
   PullRequestOmittedFileStat,
   PullRequestReaction,
+  PullRequestReviewRequestEvent,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
   PullRequestReviewDecision,
@@ -215,6 +216,8 @@ export interface ProviderChangeRequestActivity {
   readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
   readonly commits: ReadonlyArray<PullRequestCommit>;
   readonly reactions?: ReadonlyArray<PullRequestReaction>;
+  /** Review requests from the host's timeline, where it keeps them. */
+  readonly reviewRequests?: ReadonlyArray<PullRequestReviewRequestEvent>;
 }
 
 export interface ProviderDiffSlice {

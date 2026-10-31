@@ -1825,8 +1825,9 @@ export default function ThreadTerminalDrawer({
         <div
           className={cn(
             "flex h-full min-h-0 bg-(--terminal-background)",
-            // The side panel runs edge to edge; the drawer lines text up with its tabs.
-            !isPanel && "px-4 pt-1 pb-1",
+            // The side panel runs edge to edge, below its floating actions; the
+            // drawer lines text up with its tabs.
+            isPanel ? "pt-11" : "px-4 pt-1 pb-1",
           )}
         >
           <div className="min-w-0 flex-1">

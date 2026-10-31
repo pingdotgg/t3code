@@ -712,6 +712,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   inherits: false;
 }
 
+/* Pads content clear of an optional floating pane header. */
+@utility pt-under-header {
+  padding-top: var(--surface-top-inset, 0px);
+}
+
 /* Secondary buttons, select triggers, the active segment, empty-state discs. */
 @utility surface-raised {
   --surface-fill: var(--raised-fill);

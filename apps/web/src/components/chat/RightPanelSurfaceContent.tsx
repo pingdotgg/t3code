@@ -11,6 +11,8 @@ import type {
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { lazy, Suspense } from "react";
 import SideChatPane from "./SideChatPane";
+import { FolderX } from "lucide-react";
+import { FileSurfaceState } from "../files/fileSurfaceChrome";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
@@ -199,7 +201,15 @@ export function RightPanelSurfaceContent(props: {
     case "file": {
       const files = props.files;
       const attachment = surface.kind === "file" ? surface.attachment : undefined;
-      if (!attachment && (files.projectName === null || !files.workspaceRoot)) return null;
+      if (!attachment && (files.projectName === null || !files.workspaceRoot)) {
+        return (
+          <FileSurfaceState
+            icon={<FolderX />}
+            title="No project folder"
+            description="This thread has no workspace folder, so there are no files to show."
+          />
+        );
+      }
       return (
         <Suspense fallback={null}>
           <FilePreviewPanel

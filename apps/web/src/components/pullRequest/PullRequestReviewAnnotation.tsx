@@ -7,7 +7,7 @@ import type {
   PullRequestThreadCommentsResult,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
-import { HammerIcon, MessageSquareIcon, Trash2Icon } from "lucide-react";
+import { CheckIcon, FileCodeIcon, HammerIcon, Trash2Icon } from "lucide-react";
 import { Circle, CircleCheck } from "lucide";
 import { useRef, useState } from "react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -18,8 +18,12 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { PullRequestEditButton } from "./PullRequestEditButton";
+import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
+import { COMMENT_CARD_CLASS, CommentCardHead } from "../diffs/DiffCommentAnnotation";
+import { Badge } from "../ui/badge";
 import {
   editPullRequestThreadComment,
   mergePullRequestThreadComments,
@@ -30,7 +34,8 @@ import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
 
-const CARD_CLASS = "mx-3 my-2 rounded-card border border-border surface-card p-3 text-sm";
+/** Inset under the code like the thread diff's comments, on the same raised card. */
+const CARD_CLASS = `mx-2.5 mt-1.5 mb-2 p-2.5 text-sm ${COMMENT_CARD_CLASS}`;
 
 function submitKeys(input: {
   readonly value: string;
@@ -80,30 +85,82 @@ export function PendingReviewCommentCard({
 }) {
   return (
     <div
-      className={cn(CARD_CLASS, "border-dashed")}
+      className={cn(CARD_CLASS, "[--surface-tint-rim:var(--diff-comment-rim,var(--popover-rim))]")}
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <MessageSquareIcon className="size-3.5" />
-        <span>Pending. Sent when you submit the review</span>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="ml-auto"
-          aria-label="Discard this comment"
-          onClick={onRemove}
-        >
-          <Trash2Icon className="size-3.5" />
-        </Button>
+      <CommentCardHead
+        stateLabel={
+          <Tooltip>
+            <TooltipTrigger render={<Badge variant="secondary" />}>Pending</TooltipTrigger>
+            <TooltipPopup side="top">Sent when you submit the review</TooltipPopup>
+          </Tooltip>
+        }
+        action={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label="Discard this comment"
+            onClick={onRemove}
+          >
+            <Trash2Icon className="size-3" />
+          </Button>
+        }
+      />
+      <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">{comment.body}</p>
+    </div>
+  );
+}
+
+/** The file and line a thread sits on, and the last lines of code it was written against. */
+function ReviewThreadLocation({ thread }: { thread: PullRequestReviewThread }) {
+  const label = `${thread.path}${thread.line ? `:${thread.line}` : ""}`;
+  return (
+    <div className="-mx-3 -mt-3 mb-3 border-b border-border">
+      <div className="flex min-w-0 items-center gap-2 px-3 py-2">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="inline-flex min-w-0 items-center gap-1.5 rounded-kbd bg-secondary px-1.5 py-0.5 font-mono text-meta text-muted-foreground" />
+            }
+          >
+            <FileCodeIcon aria-hidden className="size-3.5 shrink-0" />
+            <span className="truncate">{label}</span>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">{label}</TooltipPopup>
+        </Tooltip>
+        {thread.isOutdated ? <Badge variant="secondary">Outdated</Badge> : null}
+        <Badge variant={thread.isResolved ? "success" : "warning"} className="ml-auto">
+          {thread.isResolved ? "Resolved" : "Unresolved"}
+        </Badge>
       </div>
-      <p className="mt-2 whitespace-pre-wrap leading-relaxed">{comment.body}</p>
+      {thread.snippet && thread.snippet.length > 0 ? (
+        <div className="mx-3 mb-3 overflow-x-auto rounded-md border border-border bg-background py-1 font-mono text-meta leading-5">
+          {thread.snippet.map((line, index) => (
+            <div
+              // oxlint-disable-next-line react/no-array-index-key -- Snippet lines can repeat; these stateless rows never reorder.
+              key={index}
+              className={cn(
+                "flex min-w-max gap-3 px-3",
+                line.kind === "added" && "bg-success-tint",
+                line.kind === "deleted" && "bg-error-tint",
+              )}
+            >
+              <span className="w-8 shrink-0 text-right tabular-nums text-dim-foreground">
+                {line.line ?? ""}
+              </span>
+              <span className="whitespace-pre text-foreground">{line.text}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 export function ReviewThreadCard({
   thread,
+  standalone = false,
   workspaceRoot,
   canReply,
   canResolve,
@@ -122,6 +179,11 @@ export function ReviewThreadCard({
   onReacted,
 }: {
   thread: PullRequestReviewThread;
+  /**
+   * Read away from the diff, in the Summary conversation: the card names its file and line,
+   * shows the code it is about, and keeps a reply box open at its foot.
+   */
+  standalone?: boolean;
   workspaceRoot: string;
   canReply: boolean;
   canResolve: boolean;
@@ -211,13 +273,130 @@ export function ReviewThreadCard({
     }));
   };
 
+  // Beside the reply field while the conversation is open; in the head otherwise, so a folded
+  // or read-only thread can still be resolved or reopened.
+  const resolveBesideReply = canResolve && expanded && canReply;
+  const resolveButton = (
+    <Button size="xs" variant="secondary" disabled={pending} onClick={onToggleResolved}>
+      {thread.isResolved ? null : <CheckIcon />}
+      {thread.isResolved ? "Unresolve" : "Resolve"}
+    </Button>
+  );
+
+  if (standalone) {
+    return (
+      <div className="group rounded-card border border-border surface-card p-3 text-body">
+        <ReviewThreadLocation thread={thread} />
+        <div className="space-y-3">
+          {comments.map((comment, index) => (
+            <article key={comment.id} className={cn("group min-w-0", index > 0 && "ml-6")}>
+              <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+                <PullRequestActorLabel actor={comment.author} />
+                <span>
+                  <RelativeTime timestamp={comment.createdAt} />
+                </span>
+                {editingId === comment.id ? null : canEditComment(comment) ? (
+                  <PullRequestEditButton
+                    aria-label="Edit comment"
+                    onClick={() => setEditingId(comment.id)}
+                  />
+                ) : null}
+              </div>
+              {editingId === comment.id ? (
+                <PullRequestMarkdownEditor
+                  className="mt-1"
+                  value={comment.body}
+                  cwd={workspaceRoot}
+                  environmentId={environmentId}
+                  label="Edit comment"
+                  saving={savingEdit}
+                  onSave={(body) => void saveEdit(comment.id, body)}
+                  onCancel={() => setEditingId(null)}
+                />
+              ) : (
+                <PullRequestMarkdown
+                  className="mt-1 min-w-0 text-body"
+                  text={comment.body}
+                  cwd={workspaceRoot}
+                  environmentId={environmentId}
+                />
+              )}
+              <PullRequestReactionBar
+                className="mt-1"
+                reactions={comment.reactions ?? []}
+                canReact={canReact}
+                subjectId={comment.id}
+                environmentId={environmentId}
+                reference={reference}
+                onRefresh={onReacted}
+              />
+            </article>
+          ))}
+        </div>
+        {nextCommentsCursor !== null ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            className="mt-2"
+            disabled={loadingMore}
+            onClick={() => void loadMore()}
+          >
+            {loadingMore ? "Loading..." : "Load more comments"}
+          </Button>
+        ) : null}
+        {canReply || canResolve || onFix ? (
+          <div className="mt-3 flex min-w-0 items-start gap-2">
+            {canReply ? (
+              <Textarea
+                size="sm"
+                rows={1}
+                className="min-w-0 flex-1"
+                value={reply}
+                placeholder="Reply..."
+                aria-label="Reply to this conversation"
+                onChange={(event) => setReply(event.target.value)}
+                onKeyDown={(event) =>
+                  submitKeys({
+                    value: reply,
+                    pending,
+                    onSubmit: () => void send(),
+                    onCancel: () => setReply(""),
+                  })(event)
+                }
+              />
+            ) : (
+              <span className="flex-1" />
+            )}
+            {canReply && reply.trim().length > 0 ? (
+              <Button size="sm" disabled={pending} onClick={() => void send()}>
+                Reply
+              </Button>
+            ) : null}
+            {onFix ? (
+              <Button size="sm" variant="ghost" disabled={pending || fixPending} onClick={onFix}>
+                <HammerIcon className="size-3.5" />
+                {fixPending ? "Preparing..." : fixLabel}
+              </Button>
+            ) : null}
+            {canResolve ? (
+              <Button size="sm" variant="secondary" disabled={pending} onClick={onToggleResolved}>
+                <CheckIcon aria-hidden className="size-3.5" />
+                {thread.isResolved ? "Unresolve" : "Resolve"}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div
-      className={CARD_CLASS}
+      className={cn(CARD_CLASS, "[--surface-tint-rim:var(--popover-rim)]")}
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="flex items-center gap-2 text-meta text-muted-foreground">
         <MorphIcon
           className={cn("size-3.5", thread.isResolved && "text-success-foreground")}
           icon={thread.isResolved ? CircleCheck : Circle}
@@ -244,7 +423,7 @@ export function ReviewThreadCard({
             {fixPending ? "Preparing..." : fixLabel}
           </Button>
         ) : null}
-        {canResolve ? (
+        {canResolve && !resolveBesideReply ? (
           <Button
             size="xs"
             variant="ghost"
@@ -262,7 +441,7 @@ export function ReviewThreadCard({
           <div className="mt-2 space-y-3">
             {comments.map((comment) => (
               <article key={comment.id} className="group min-w-0">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                   <PullRequestActorLabel actor={comment.author} />
                   <span>
                     <RelativeTime timestamp={comment.createdAt} />
@@ -291,7 +470,7 @@ export function ReviewThreadCard({
                 ) : (
                   <div className="mt-1 flex items-start gap-1">
                     <PullRequestMarkdown
-                      className="min-w-0 flex-1 text-sm"
+                      className="min-w-0 flex-1 text-body"
                       text={comment.body}
                       cwd={workspaceRoot}
                       environmentId={environmentId}
@@ -321,13 +500,15 @@ export function ReviewThreadCard({
           ) : null}
 
           {canReply ? (
+            // A reply field sits under every open conversation, with Resolve beside it. Focusing
+            // it opens the full editor; Cancel or Escape folds it back, keeping what was written.
             replying ? (
-              <div className="mt-2">
+              <div className="mt-2 border-t border-border pt-2">
                 <Textarea
                   autoFocus
                   size="sm"
                   value={reply}
-                  placeholder="Reply"
+                  placeholder="Reply…"
                   aria-label="Reply to this conversation"
                   onChange={(event) => setReply(event.target.value)}
                   onKeyDown={(event) =>
@@ -350,12 +531,22 @@ export function ReviewThreadCard({
                   >
                     Reply
                   </Button>
+                  {canResolve ? resolveButton : null}
                 </div>
               </div>
             ) : (
-              <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
-                Reply
-              </Button>
+              <div className="mt-2 flex items-center gap-1.5 border-t border-border pt-2">
+                <Input
+                  className="min-w-0 flex-1"
+                  size="compact"
+                  readOnly
+                  value={reply}
+                  placeholder="Reply…"
+                  aria-label="Reply to this conversation"
+                  onFocus={() => setReplying(true)}
+                />
+                {canResolve ? resolveButton : null}
+              </div>
             )
           ) : null}
         </>
