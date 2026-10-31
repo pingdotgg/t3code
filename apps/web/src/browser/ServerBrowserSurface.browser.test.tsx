@@ -7,9 +7,11 @@ import type {
 import "~/index.css";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../test/render";
+import { type ComponentProps } from "react";
+import { act, render } from "../../test/render";
 
 const mocks = vi.hoisted(() => ({
+  access: {},
   send: vi.fn<(input: PreviewStreamInput) => void>(),
   connect: vi.fn(),
   events: null as PreviewStreamEvents | null,
@@ -31,12 +33,12 @@ vi.mock(import("@t3tools/client-runtime/preview/server-browser-stream"), async (
 
 vi.mock(import("~/state/previewStream"), async (original) => ({
   ...(await original()),
-  usePreviewStreamAccess: () => ({}) as never,
+  usePreviewStreamAccess: () => mocks.access as never,
 }));
 
 import { ServerBrowserSurface } from "./ServerBrowserSurface";
 
-async function renderSurface() {
+async function renderSurface(props: Partial<ComponentProps<typeof ServerBrowserSurface>> = {}) {
   mocks.send.mockReset();
   mocks.connect.mockReset();
   const container = document.createElement("div");
@@ -49,6 +51,7 @@ async function renderSurface() {
         threadId={ThreadId.make("thread-1")}
         tabId="tab-1"
         visible
+        {...props}
       />,
       { container },
     ),
@@ -67,6 +70,30 @@ const mouseUp = (canvas: HTMLCanvasElement, button: number) => {
 };
 
 describe("ServerBrowserSurface", () => {
+  it("takes control on the panel stream and focuses the page only after the grant", async () => {
+    const handled = vi.fn();
+    await using surface = await renderSurface({
+      takeControlOnOpen: true,
+      onControlRequestHandled: handled,
+    });
+    const pageInput = surface.canvas.parentElement!.querySelector("textarea")!;
+    const report = (controller: "agent" | "you") =>
+      act(() =>
+        mocks.events?.onControl?.({
+          canOperate: true,
+          controller,
+          generation: 1,
+          dialog: null,
+        }),
+      );
+    await report("agent");
+    expect(mocks.send).toHaveBeenCalledWith({ type: "takeControl" });
+    expect(document.activeElement).not.toBe(pageInput);
+    await report("you");
+    expect(document.activeElement).toBe(pageInput);
+    expect(handled).toHaveBeenCalledOnce();
+  });
+
   it("routes mouse thumb buttons to the preview's history instead of the app", async () => {
     await using surface = await renderSurface();
     const { canvas } = surface;

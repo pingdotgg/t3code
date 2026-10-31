@@ -125,7 +125,12 @@ interface RightPanelStoreState {
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
-  openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
+  pendingBrowserControl: string | null;
+  openBrowser: (
+    ref: ScopedThreadRef,
+    tabId: string | null,
+    takeControlRuntimeTabId?: string,
+  ) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   /** Moves in place; "" opens the root explorer. folderTrail keeps the return path; keepSource opens beside the source. */
   navigateFolder: (
@@ -388,6 +393,7 @@ const userAction = (
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
   closesView = false,
 ): Partial<RightPanelStoreState> => ({
+  pendingBrowserControl: null,
   ...updateThread(state, threadKey, (current) => {
     const next = updater(current);
     if (next === current) return current;
@@ -693,16 +699,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ),
           })),
         ),
-      openBrowser: (ref, tabId) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
+      pendingBrowserControl: null,
+      openBrowser: (ref, tabId, takeControlRuntimeTabId) =>
+        set((state) => ({
+          ...userAction(state, scopedThreadKey(ref), (current) => {
             const surface = browserSurface(tabId);
             const withoutPlaceholder = tabId
               ? current.surfaces.filter((entry) => entry.id !== "browser:new")
               : current.surfaces;
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
           }),
-        ),
+          pendingBrowserControl: takeControlRuntimeTabId ?? null,
+        })),
       openPullRequest: (ref, target) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
