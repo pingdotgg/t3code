@@ -563,7 +563,7 @@ describe("SandboxProvisioner", () => {
         Effect.flatMap((provisioner) =>
           provisioner.create({ provider: "boat", apiKey: "boat_test" }),
         ),
-        Effect.provide(SandboxProvisioner.layer.pipe(Layer.provide(ServerSettings.layerTest()))),
+        Effect.provide(testLayer),
         Effect.provideService(HttpClient.HttpClient, client),
         Effect.flip,
       );

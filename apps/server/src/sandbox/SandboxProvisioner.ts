@@ -385,12 +385,24 @@ const make = Effect.gen(function* () {
         detail: `This sandbox reached its ${Math.round((record.ttlMinutes / 60) * 10) / 10}-hour limit. Delete it and create a new one.`,
       });
     }
+    const remainingMinutes =
+      record.hardDeadlineAt === null
+        ? record.ttlMinutes
+        : Math.max(
+            1,
+            Math.ceil(
+              (DateTime.toEpochMillis(DateTime.makeUnsafe(record.hardDeadlineAt)) -
+                DateTime.toEpochMillis(DateTime.makeUnsafe(now))) /
+                60_000,
+            ),
+          );
     const apiKey = yield* resolveApiKey(record.provider, undefined);
     const resumed = yield* onHttp(
       driver.resume({
         config: { apiKey },
         sandboxId: record.sandboxId,
-        ttlMinutes: record.ttlMinutes,
+        // The provider's own TTL is a backstop; it must not outlive the record's deadline.
+        ttlMinutes: remainingMinutes,
       }),
     );
     const updated: SandboxRecord = {
