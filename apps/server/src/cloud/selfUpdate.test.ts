@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -105,6 +106,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           return "launcher-id";
         })),
     prepareTrial: Effect.undefined,
+    committed: Effect.void,
   });
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
@@ -248,6 +250,10 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     readonly executable: "own runtime" | "elsewhere";
     readonly managed?: boolean;
     readonly symlinkedHome?: boolean;
+    /** Installs a `~/.local/bin/t3` launcher pointing at this runtime version. */
+    readonly launcherVersion?: string;
+    /** Called with the launcher path, completing once the service commits this version. */
+    readonly committed?: (launcher: string) => Effect.Effect<void>;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -255,8 +261,10 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     const realHome = path.join(tempDir, "home");
     const baseDir = input.symlinkedHome ? path.join(tempDir, "linked-home") : realHome;
     const versionsDir = path.join(baseDir, "runtime", "versions");
+    const launcher = path.join(tempDir, ".local", "bin", "t3");
     yield* TestClock.setTime(24 * 60 * 60 * 1000);
-    for (const version of [staleVersion, packageJson.version]) {
+    const versions = [staleVersion, packageJson.version, input.launcherVersion ?? staleVersion];
+    for (const version of new Set(versions)) {
       const directory = path.join(realHome, "runtime", "versions", version);
       yield* fs.makeDirectory(directory, { recursive: true });
       yield* fs.writeFileString(path.join(directory, "t3"), "");
@@ -265,6 +273,10 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
       yield* fs.utimes(sentinel, 0, 0);
     }
     if (input.symlinkedHome) yield* fs.symlink(realHome, baseDir);
+    if (input.launcherVersion !== undefined) {
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      yield* fs.symlink(path.join(versionsDir, input.launcherVersion, "t3"), launcher);
+    }
     // Like `process.execPath`, the running runtime is reported by its real path.
     const executablePath =
       input.executable === "own runtime"
@@ -272,14 +284,23 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
         : "/usr/local/bin/node";
     const removed = yield* ServerSelfUpdate.pruneRuntimesOnStart({
       baseDir,
-      managed: input.managed ?? false,
+      launcher: {
+        managed: input.managed ?? false,
+        committed: input.committed?.(launcher) ?? Effect.void,
+      },
     }).pipe(
       Effect.provideService(HostProcess.ExecutablePath, executablePath),
       Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(HostProcess.Environment, {}),
+      Effect.provideService(HostProcess.HomeDirectory, tempDir),
       Effect.provideService(ProcessRunner.ProcessRunner, otherProcesses),
     );
-    return { removed, remaining: (yield* fs.readDirectory(versionsDir)).toSorted() };
+    return {
+      removed,
+      remaining: (yield* fs.readDirectory(versionsDir)).toSorted(),
+      launcherTarget: yield* fs.readLink(launcher).pipe(Effect.option),
+      versionsDir,
+    };
   });
 
   // The SSH launcher runs `t3 serve` straight from the pinned runtime, with no boot service.
@@ -302,6 +323,59 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     Effect.gen(function* () {
       const { removed } = yield* pruneOnStart({ executable: "elsewhere", managed: true });
       expect(removed).toEqual([staleVersion]);
+    }),
+  );
+
+  // The app updates the service but not the CLI, which would otherwise keep running the old runtime.
+  it.effect("moves a launcher on an older runtime to the boot service's version", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { removed, launcherTarget, versionsDir } = yield* pruneOnStart({
+        executable: "elsewhere",
+        managed: true,
+        launcherVersion: staleVersion,
+      });
+      expect(launcherTarget).toEqual(
+        Option.some(path.join(versionsDir, packageJson.version, "t3")),
+      );
+      expect(removed).toEqual([staleVersion]);
+    }),
+  );
+
+  it.effect("keeps the launcher until the service commits an update on trial", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let duringTrial: Option.Option<string> = Option.none();
+      const { launcherTarget, versionsDir } = yield* pruneOnStart({
+        executable: "elsewhere",
+        managed: true,
+        launcherVersion: staleVersion,
+        committed: (launcher) =>
+          fs.readLink(launcher).pipe(
+            Effect.orDie,
+            Effect.map((target) => {
+              duringTrial = Option.some(target);
+            }),
+          ),
+      });
+      expect(duringTrial).toEqual(Option.some(path.join(versionsDir, staleVersion, "t3")));
+      expect(launcherTarget).toEqual(
+        Option.some(path.join(versionsDir, packageJson.version, "t3")),
+      );
+    }),
+  );
+
+  it.effect("leaves a launcher on a newer runtime alone", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const newerVersion = "99.0.0";
+      const { launcherTarget, versionsDir } = yield* pruneOnStart({
+        executable: "elsewhere",
+        managed: true,
+        launcherVersion: newerVersion,
+      });
+      expect(launcherTarget).toEqual(Option.some(path.join(versionsDir, newerVersion, "t3")));
     }),
   );
 

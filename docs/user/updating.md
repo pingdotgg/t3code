@@ -99,12 +99,12 @@ Update the side the notice names, then reconnect.
 
 The offered action depends on how the server runs:
 
-| Action                     | What to do                                                                                                                                                                                      |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
-| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
-| **Copy update command**    | Run the command on the named host to update the detected global npm install, then restart the server with your usual options.                                                                   |
-| **Copy relaunch command**  | Stop the command-line server on its host and relaunch with the copied command, keeping your usual subcommand and options. This does not update an installed `t3` command.                       |
+| Action                     | What to do                                                                                                                                                                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely, along with a `t3` command set up by the install script. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
+| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                                                                                     |
+| **Copy update command**    | Run the command on the named host to update the detected global npm install, then restart the server with your usual options.                                                                                                                           |
+| **Copy relaunch command**  | Stop the command-line server on its host and relaunch with the copied command, keeping your usual subcommand and options. This does not update an installed `t3` command.                                                                               |
 
 On the host, run:
 

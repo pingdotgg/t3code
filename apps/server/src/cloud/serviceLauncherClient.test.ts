@@ -76,6 +76,7 @@ it.effect("waits for the launcher to durably commit the trial update ID", () =>
     };
     host.emit({ type: "committed", updateId: committed.id });
     expect(yield* Fiber.join(prepared)).toEqual(committed);
+    yield* client.committed;
   }),
 );
 
