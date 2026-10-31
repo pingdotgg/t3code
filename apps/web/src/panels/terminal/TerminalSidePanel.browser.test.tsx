@@ -50,7 +50,6 @@ const surface: Extract<RightPanelSurface, { kind: "terminal" }> = {
 const terminalProps = {
   surface,
   launchContext: null,
-  focusRequestId: 0,
   onAddTerminalContext: () => undefined,
   onSplitTerminal: () => undefined,
   onSplitTerminalVertical: () => undefined,
