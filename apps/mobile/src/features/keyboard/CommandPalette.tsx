@@ -17,7 +17,7 @@ import {
   pickedQuery,
   threadRecentUse,
 } from "@t3tools/shared/paletteSearch";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
