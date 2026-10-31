@@ -16,6 +16,7 @@ import {
 import {
   providerInstanceEntriesFor,
   resolveDefaultProviderModelSelection,
+  resolveProjectDefaultProviderModelSelection,
 } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -64,10 +65,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     (representative?.serverConfig
       ? providersByEnvironment.get(representative.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
-  const storedSelection = resolveDefaultProviderModelSelection(
-    providers,
-    settings.defaultModelSelection,
-  );
+  const storedSelection =
+    settings.defaultModelSelection === null
+      ? resolveProjectDefaultProviderModelSelection(providers, settings, target?.projectId ?? null)
+      : resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
   const selection = storedSelection
     ? resolveEffectiveDefaultModelSelection(settings, providers, storedSelection)
     : null;
@@ -82,6 +83,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedModel = defaultModelSelectionsAreMixed(
     clientSettings,
     targets.map((candidate) => ({
+      projectId: candidate.projectId,
       settings: candidate.settings,
       providers: providersByEnvironment.get(candidate.environmentId) ?? EMPTY_SERVER_PROVIDERS,
     })),

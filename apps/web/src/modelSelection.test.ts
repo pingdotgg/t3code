@@ -2,6 +2,7 @@ import {
   ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -83,10 +84,12 @@ describe("scoped default model selections", () => {
   // regression: #27997 equal automatic defaults can resolve to different providers
   it("compares automatic defaults using each environment's models", () => {
     const codex = {
+      projectId: null,
       settings: DEFAULT_UNIFIED_SETTINGS,
       providers: [provider({ instanceId: "codex", models: ["gpt-6-astra"] })],
     };
     const claude = {
+      projectId: null,
       settings: DEFAULT_UNIFIED_SETTINGS,
       providers: [
         provider({
@@ -111,7 +114,36 @@ describe("scoped default model selections", () => {
         { ...codex, providers: [provider({ instanceId: "codex", models: ["gpt-6-sol"] })] },
       ]),
     ).toBe(true);
+
+    const projectId = ProjectId.make("claude-only");
+    const project = {
+      projectId,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: {
+          [projectId]: {
+            providerInstances: { [ProviderInstanceId.make("codex")]: { enabled: false } },
+          },
+        },
+      },
+      providers: [...codex.providers, ...claude.providers],
+    };
+    const remoteProject = { ...claude, projectId: ProjectId.make("remote-project") };
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [project, remoteProject])).toBe(
+      false,
+    );
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [remoteProject, project])).toBe(
+      false,
+    );
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        project,
+        { ...project, projectId: ProjectId.make("other-project") },
+      ]),
+    ).toBe(true);
+
     const configured = {
+      projectId: null,
       settings: {
         ...DEFAULT_SERVER_SETTINGS,
         providerModelPreferences: {
@@ -147,6 +179,7 @@ describe("scoped default model selections", () => {
   it("keeps automatic, explicit, and different saved options distinct", () => {
     const providers = [provider({ instanceId: "codex", models: ["gpt-6-astra"] })];
     const selected = {
+      projectId: null,
       providers,
       settings: {
         ...DEFAULT_UNIFIED_SETTINGS,
@@ -162,7 +195,7 @@ describe("scoped default model selections", () => {
     expect(
       defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
         selected,
-        { providers, settings: DEFAULT_UNIFIED_SETTINGS },
+        { projectId: null, providers, settings: DEFAULT_UNIFIED_SETTINGS },
       ]),
     ).toBe(true);
     expect(

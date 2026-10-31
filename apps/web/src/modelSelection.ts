@@ -4,6 +4,7 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   type ModelSelection,
+  type ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -33,6 +34,7 @@ import {
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
   resolveDefaultProviderModelSelection,
+  resolveProjectDefaultProviderModelSelection,
 } from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
@@ -315,13 +317,17 @@ export function resolveEffectiveDefaultModelSelection(
 export function defaultModelSelectionsAreMixed(
   clientSettings: ClientSettings,
   targets: ReadonlyArray<{
+    projectId: ProjectId | null;
     settings: ServerSettings;
     providers: ReadonlyArray<ServerProvider>;
   }>,
 ): boolean {
-  const selections = targets.map(({ settings, providers }) => {
+  const selections = targets.map(({ projectId, settings, providers }) => {
     const stored = settings.defaultModelSelection;
-    const selection = resolveDefaultProviderModelSelection(providers, stored);
+    const selection =
+      stored === null
+        ? resolveProjectDefaultProviderModelSelection(providers, settings, projectId)
+        : resolveDefaultProviderModelSelection(providers, stored);
     return {
       stored,
       effective: selection
