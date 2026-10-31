@@ -20,6 +20,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
@@ -849,6 +850,10 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         issuedAt: 1,
       };
       const seen: Array<McpInvocationContext.McpInvocationScope> = [];
+      const warnings: Array<unknown> = [];
+      const logger = Logger.make(({ message, logLevel }) => {
+        if (logLevel === "Warn") warnings.push(message);
+      });
       const ProbeToolkit = Toolkit.make(
         Tool.make("probe", {
           description: "Reports the caller.",
@@ -886,20 +891,25 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           Layer.succeed(McpHttpServer.McpClientAuthenticator, {
             authenticate: (request) =>
               Effect.succeed(
-                request.headers.authorization === `Bearer ${clientToken}` ? clientScope : undefined,
+                ["Bearer", "bearer", "bEaReR"].some(
+                  (scheme) => request.headers.authorization === `${scheme} ${clientToken}`,
+                )
+                  ? clientScope
+                  : undefined,
               ),
           }),
         ),
       );
       yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
         Layer.build,
+        Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
       );
       const httpClient = yield* HttpClient.HttpClient;
-      const call = (token: string | undefined) =>
+      const call = (authorization: string | undefined) =>
         Effect.gen(function* () {
           const headers = {
             accept: "application/json, text/event-stream",
-            ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+            ...(authorization === undefined ? {} : { authorization }),
           };
           const initialize = yield* httpClient.post("/mcp", {
             headers,
@@ -922,12 +932,13 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           });
         });
 
-      expect((yield* call(providerToken)).status).toBe(200);
-      expect((yield* call(clientToken)).status).toBe(200);
-      expect(seen.map((scope) => scope.requestNamespace)).toEqual([
-        "provider-session",
-        "client:session-1",
-      ]);
+      for (const scheme of ["Bearer", "bearer", "bEaReR"]) {
+        expect((yield* call(`${scheme} ${providerToken}`)).status).toBe(200);
+        expect((yield* call(`${scheme} ${clientToken}`)).status).toBe(200);
+      }
+      expect(seen.map((scope) => scope.requestNamespace)).toEqual(
+        Array.from({ length: 3 }, () => ["provider-session", "client:session-1"]).flat(),
+      );
 
       const missing = yield* call(undefined);
       expect(missing.status).toBe(401);
@@ -935,12 +946,29 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         /^Bearer resource_metadata="http:\/\/[^"]+\/\.well-known\/oauth-protected-resource\/mcp"$/,
       );
 
-      const expiredClient = yield* call("stale-payload.stale-signature");
+      for (const authorization of ["Basic dummy", `BearerX ${providerToken}`, "Bearer "]) {
+        expect((yield* call(authorization)).status).toBe(401);
+      }
+      expect((yield* call(`bearer ${providerToken.toLowerCase()}`)).status).toBe(401);
+
+      const expiredClient = yield* call("bearer stale-payload.stale-signature");
+      expect(expiredClient.status).toBe(401);
       expect(expiredClient.headers["www-authenticate"]).toContain("resource_metadata=");
       expect(expiredClient.headers["www-authenticate"]).toContain('error="invalid_token"');
 
-      const deadProvider = yield* call("deadProviderToken");
+      const deadProvider = yield* call("bEaReR deadProviderToken");
       expect(deadProvider.status).toBe(401);
+      expect(warnings).toEqual(
+        [
+          "missing_authorization_header",
+          "unsupported_authorization_scheme",
+          "unsupported_authorization_scheme",
+          "missing_bearer_token",
+          "unknown_or_expired_token",
+          "unknown_or_expired_token",
+          "unknown_or_expired_token",
+        ].map((reason) => ["rejected MCP request with an unusable credential", { reason }]),
+      );
       expect(deadProvider.headers["www-authenticate"]).toBe('Bearer error="invalid_token"');
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
