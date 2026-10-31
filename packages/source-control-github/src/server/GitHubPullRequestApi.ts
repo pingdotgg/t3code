@@ -1688,7 +1688,6 @@ export const make = Effect.gen(function* () {
       ),
   );
 
-  // A missing fingerprint triggers a full watch read; a failed request fails the whole batch.
   const watchFingerprintResolver = GraphQLResolver.aliased(client.PullRequestWatchFingerprint, {
     batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(
@@ -1700,11 +1699,17 @@ export const make = Effect.gen(function* () {
       const lookup = pullRequestLookup(input);
       if (lookup === null) return Effect.succeed(null);
       return GraphQLResolver.request(lookup, watchFingerprintResolver).pipe(
-        Effect.map((result) => {
+        Effect.flatMap((result) => {
           const pullRequest = result.repository?.pullRequest;
-          return pullRequest == null ? null : toPullRequestWatchFingerprint(pullRequest);
+          return pullRequest == null
+            ? Effect.fail(
+                new GitHubRequestPolicy.GitHubApiNotFoundError({
+                  host: input.host,
+                  operation: "getPullRequestWatchFingerprint",
+                }),
+              )
+            : Effect.succeed(toPullRequestWatchFingerprint(pullRequest));
         }),
-        Effect.catchIf(isNotFoundOnly, () => Effect.succeed(null)),
         (effect) => batchedRead({ ...input, operation: "getPullRequestWatchFingerprint" }, effect),
       );
     };
