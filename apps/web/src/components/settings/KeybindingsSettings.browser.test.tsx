@@ -1,3 +1,4 @@
+import { RegistryProvider } from "@effect/atom-react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
@@ -17,8 +18,19 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 vi.mock(import("./SettingsScopeContext"), async (original) => ({
   ...(await original()),
   useSettingsScope: (() => {
-    const environment = { environmentId: "env", serverConfig: { keybindings: [] } };
-    return { environment, connectedEnvironments: [environment] };
+    const environment = {
+      environmentId: "env",
+      label: "Build workstation",
+      serverConfig: { keybindings: [], keybindingsConfigPath: null, availableEditors: [] },
+    };
+    return {
+      scope: { kind: "environment" },
+      environment,
+      environments: [environment],
+      connectedEnvironments: [environment],
+      targets: [],
+      target: null,
+    };
   }) as never,
 }));
 
@@ -91,4 +103,25 @@ describe("Esc in a shortcut recorder", () => {
     await userEvent.keyboard("{Escape}");
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
   });
+});
+
+it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
+  await using screen = await render(
+    <RegistryProvider>
+      <KeybindingsSettingsPanel />
+    </RegistryProvider>,
+  );
+  const whenTrigger = screen.getByRole("button", { name: "Edit when clause for Terminal: Toggle" });
+  const expression = screen.getByRole("textbox", { name: "When expression" });
+
+  await whenTrigger.click();
+  await userEvent.type(expression, "terminalFocus");
+  await userEvent.type(expression, " &&");
+  await expect.element(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+  await userEvent.keyboard("{Escape}");
+  await whenTrigger.click();
+
+  await expect.element(expression).toHaveValue("terminalFocus");
+  await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });
