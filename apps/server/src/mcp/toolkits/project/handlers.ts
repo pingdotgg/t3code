@@ -24,6 +24,7 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { withoutSessionScopedOptions } from "@t3tools/shared/model";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -184,7 +185,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const modelSelection =
           input.modelSelection ??
           launchedModel ??
-          caller?.modelSelection ??
+          (caller?.modelSelection && {
+            ...caller.modelSelection,
+            ...(caller.modelSelection.options && {
+              options: withoutSessionScopedOptions(caller.modelSelection.options),
+            }),
+          }) ??
           (projectDefaults
             ? resolveNewThreadModelSelection({
                 defaultSelection: projectDefaults.defaultModelSelection,

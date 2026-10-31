@@ -1554,7 +1554,7 @@ export function ExistingThreadSettingsRouteScreen({
       prompt={prompt}
       onPromptChange={(text) => setComposerDraftText(draftKey, text)}
       reportedModelSelection={reportedModelSelection}
-      onSelectModel={(option) => updateModelSelection(withRememberedModelOptions(option.selection))}
+      onSelectModel={(option) => updateModelSelection(option.selection)}
       restoreSelection={withRememberedModelOptions}
       optionDescriptors={resolveProviderOptionDescriptors({
         capabilities: currentModelOption?.capabilities,
