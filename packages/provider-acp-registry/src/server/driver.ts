@@ -213,6 +213,20 @@ function baseSnapshot(
     status: input.settings.enabled ? input.status : "disabled",
     auth: { ...input.auth, canLogout: input.auth.canLogout ?? false },
     checkedAt: input.checkedAt,
+    ...(input.settings.source === "registry" && input.settings.agentId === "devin"
+      ? {
+          usageLimits: {
+            checkedAt: input.checkedAt,
+            windows: [],
+            unavailable: {
+              reason: "unsupported" as const,
+              message:
+                "Devin does not report your remaining quota here. Open Devin with the same account to view your allowance and on-demand credits.",
+            },
+            externalUsage: { label: "Devin usage", url: "https://app.devin.ai/settings/usage" },
+          },
+        }
+      : {}),
     setup: {
       canInstall: false,
       ...(input.documentationUrl ? { documentationUrl: input.documentationUrl } : {}),
