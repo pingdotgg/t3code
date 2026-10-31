@@ -314,6 +314,8 @@ const FEED_REFLOW_SETTLE_MS = 200;
 // across all of them keeps a passing moment off the end from re-anchoring the rest to a row.
 const FEED_REFLOW_HOLD_MS = 600;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
+// Lines a fold body up with its summary text (12 px chevron + 8 px gap).
+const MARKDOWN_DETAILS_BODY_INDENT = 20;
 const ASSISTANT_ROW_HORIZONTAL_PADDING = 3.5;
 const THREAD_FEED_DISCLOSURE_ENTER_TRANSITION = FadeIn.delay(
   THREAD_DISCLOSURE_TRANSITION_MS,
@@ -1281,6 +1283,7 @@ function MarkdownDetailsFold(props: {
   readonly children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(props.open);
+  const imageWidth = useContext(MarkdownImageAvailableWidthContext);
   return (
     <View className="my-2 border-y border-border-subtle">
       <Pressable
@@ -1301,7 +1304,15 @@ function MarkdownDetailsFold(props: {
           {props.summary}
         </Text>
       </Pressable>
-      {expanded ? <View className="pb-3 pl-5">{props.children}</View> : null}
+      {expanded ? (
+        <MarkdownImageAvailableWidthContext
+          value={Math.max(0, imageWidth - MARKDOWN_DETAILS_BODY_INDENT)}
+        >
+          <View className="pb-3" style={{ paddingLeft: MARKDOWN_DETAILS_BODY_INDENT }}>
+            {props.children}
+          </View>
+        </MarkdownImageAvailableWidthContext>
+      ) : null}
     </View>
   );
 }
