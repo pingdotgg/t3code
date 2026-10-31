@@ -62,7 +62,23 @@ describe("thread workflows", () => {
         ...projection,
         providerThreads: [{ ...projection.providerThreads[0]!, nativeThreadRef: null }],
       }),
-    ).toBe(false);
+    ).toBe(true);
+    expect(threadSupportsProviderHandoff({ ...projection, providerThreads: [] })).toBe(false);
+
+    const attached = (supportsProviderSwitchingViaHandoff: boolean) =>
+      threadSupportsProviderHandoff({
+        ...projection,
+        providerThreads: [{ ...projection.providerThreads[0]!, nativeThreadRef: null }],
+        providerSessions: [
+          {
+            id: "detached-session",
+            status: "ready",
+            capabilities: { sessions: { supportsProviderSwitchingViaHandoff } },
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection);
+    expect(attached(true)).toBe(true);
+    expect(attached(false)).toBe(false);
   });
 
   it("sorts queued messages and gates promotion from capabilities", () => {
