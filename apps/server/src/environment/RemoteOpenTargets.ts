@@ -16,7 +16,7 @@ export class RemoteOpenTargets extends Context.Service<
   }
 >()("t3/environment/RemoteOpenTargets") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const net = yield* NetService.NetService;
@@ -39,8 +39,7 @@ export const make = Effect.gen(function* () {
     const targets: Array<RemoteOpenTarget> = [];
 
     if (!sshdListening) {
-      // Tailscale SSH answers on the tailnet name with no local sshd, so only
-      // that name can work. A running tailscaled alone is not an SSH route.
+      // Tailscale SSH needs no local sshd; tailscaled alone does not prove an SSH route.
       if (
         magicDnsName !== null &&
         (yield* readTailscaleSshEnabled.pipe(
@@ -65,8 +64,7 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    // os.hostname() may already be an FQDN (macOS often reports
-    // "Name.local"); mDNS names are always `<first-label>.local`.
+    // hostname() may be an FQDN; mDNS always uses <first-label>.local.
     const hostname = yield* HostProcess.Hostname;
     const shortHostname = hostname.split(".")[0]?.trim();
     if (shortHostname !== undefined && shortHostname.length > 0) {
@@ -80,7 +78,11 @@ export const make = Effect.gen(function* () {
     return targets;
   });
 
-  return RemoteOpenTargets.of({ resolveTargets: () => resolveTargets });
+  return RemoteOpenTargets.of({
+    resolveTargets: Effect.fn("RemoteOpenTargets.resolveTargets")(function () {
+      return resolveTargets;
+    }),
+  });
 });
 
 export const layer = Layer.effect(RemoteOpenTargets, make);

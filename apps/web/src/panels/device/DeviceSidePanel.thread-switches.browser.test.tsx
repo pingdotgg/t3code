@@ -62,10 +62,16 @@ const deviceState: DeviceServiceState = {
   revision: 1,
 };
 let currentState = deviceState;
-vi.mock("~/state/device", () => ({
+vi.mock("~/state/device", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  const Effect = await import("effect/Effect");
+  return {
+  deviceHostProbeAtom: Atom.family(() => Atom.make(Effect.void)),
+  NO_DEVICE_PROBE_ATOM: Atom.make(AsyncResult.initial()),
   deviceEnvironment: { list: "list", open: "open", close: "close" },
   useDeviceState: () => ({ state: currentState, loaded: true }),
-}));
+};
+});
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
     command === "open"

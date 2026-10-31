@@ -12,7 +12,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -101,7 +100,7 @@ it.effect.each([
           IdAllocator.layer,
           Layer.mock(GitWorkflowService.GitWorkflowService)({}),
           Layer.mock(ProjectStore.ProjectStoreV2)({
-            get: () => Effect.succeed(Option.some({ workspaceRoot: parent } as never)),
+            get: () => Effect.succeedSome({ workspaceRoot: parent } as never),
           }),
           Layer.mock(ProjectionStoreV2)({
             getThread: () => Effect.succeed(projection.thread),
