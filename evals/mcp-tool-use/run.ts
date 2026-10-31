@@ -957,7 +957,7 @@ const pullRequest = (repo: string, input: Readonly<Record<string, unknown>>) => 
 const linkedEntry = (sample: Sample, url: string) => {
   const pr = pullRequest(sample.repo, { url });
   const seeded = sample.testCase.setup.world?.linkedPullRequests?.find(
-    ({ number }) => number === pr.number,
+    ({ number }) => number === pr.number && pr.repository === sample.repo,
   );
   return { ...pr, state: seeded?.state ?? "open", title: seeded?.title ?? null };
 };
@@ -1022,12 +1022,12 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
         .map((url) => linkedEntry(sample, url))
         .filter((entry) => states.includes(entry.state));
       for (const { url } of unlinked) sample.linked.delete(url);
-      const groups = Map.groupBy(unlinked, (entry) => entry.state);
+      const groups = Map.groupBy(unlinked, (entry) => `${entry.repository}/${entry.state}`);
       return {
-        unlinked: [...groups].map(([state, entries]) => ({
+        unlinked: [...groups.values()].map((entries) => ({
           host: "github.com",
-          repository: sample.repo,
-          state,
+          repository: entries[0]!.repository,
+          state: entries[0]!.state,
           numbers: entries.map((entry) => entry.number),
         })),
         unlinkedCount: unlinked.length,
