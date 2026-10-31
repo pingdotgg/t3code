@@ -12,6 +12,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ComposerPendingApprovalActionsProps {
+  designLabels?: boolean;
   requestId: RuntimeRequestId;
   isResponding: boolean;
   canRespond: boolean;
@@ -53,6 +54,7 @@ export function resolveApprovalPrimaryDecision(
 }
 
 export function ComposerPendingApprovalActions({
+  designLabels = false,
   requestId,
   isResponding,
   canRespond,
@@ -144,7 +146,9 @@ export function ComposerPendingApprovalActions({
                 onClick={() => void onRespondToApproval(requestId, decline.decision)}
               >
                 {decline.warning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
-                <span className="max-w-40 truncate">{decline.label}</span>
+                <span className="max-w-40 truncate">
+                  {designLabels && decline.label === "Deny" ? "Decline" : decline.label}
+                </span>
               </Button>,
             )
           : null}
@@ -160,7 +164,9 @@ export function ComposerPendingApprovalActions({
                 onClick={() => void onRespondToApproval(requestId, allowDecision)}
               >
                 {allowWarning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
-                <span className="max-w-40 truncate">{primary.label}</span>
+                <span className="max-w-40 truncate">
+                  {designLabels && primary.label === "Allow" ? "Approve" : primary.label}
+                </span>
               </Button>,
             )
           : null}
