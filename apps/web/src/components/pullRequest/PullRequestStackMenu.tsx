@@ -6,7 +6,7 @@ import type {
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronDownIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -156,14 +156,15 @@ export function PullRequestStackMenu({
                 <MenuTrigger
                   render={
                     <Button
-                      variant="ghost"
-                      size="xs"
+                      variant="success-outline"
+                      size="chip"
                       aria-label={`Stack ${stack.number}, layer ${position} of ${stack.layers.length}`}
                     />
                   }
                 >
                   <PullRequestGlyph.stack aria-hidden className="size-3.5" /> {position}/
                   {stack.layers.length}
+                  <ChevronDownIcon aria-hidden className="size-3" />
                   {onRetry ? (
                     <TriangleAlertIcon aria-hidden className="size-3 text-warning" />
                   ) : null}
@@ -179,10 +180,11 @@ export function PullRequestStackMenu({
               </span>
             </TooltipPopup>
           </Tooltip>
-          <MenuPopup align="start">
+          <MenuPopup align="start" className="w-[437px] max-w-[calc(100vw-2rem)]">
             <MenuGroup>
               <PullRequestStackHeader
                 number={stack.number}
+                onClose={() => setOpen(false)}
                 terminology={terminology}
                 size={stack.layers.length}
                 notice={notice}
