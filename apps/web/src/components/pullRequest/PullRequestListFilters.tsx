@@ -366,7 +366,7 @@ function PullRequestAuthorFilter({
           {value ?? "Anyone"}
         </span>
       </MenuSubTrigger>
-      <MenuSubPopup>
+      <MenuSubPopup className="w-65 [--type-label:0.8125rem]">
         <PullRequestAuthorChoices
           value={value}
           options={options}
@@ -579,7 +579,7 @@ export function PullRequestFiltersMenu({
           className="hidden size-3 text-dim-foreground @3xl/pr-list:inline"
         />
       </MenuTrigger>
-      <MenuPopup align="end" side="bottom">
+      <MenuPopup align="end" side="bottom" className="w-62 [--type-label:0.8125rem]">
         <PullRequestFilterRadioSubmenu
           label="Involvement"
           icon={UsersRoundIcon}
