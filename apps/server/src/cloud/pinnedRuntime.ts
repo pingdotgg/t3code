@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's realPath is Node's JS realpath, which collapses `..` as text.
+import * as NodeFSP from "node:fs/promises";
+
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -395,10 +398,9 @@ export function launcherOwnsVersionsDir(
 }
 
 /**
- * Where the symlink at `link` points, not following that target any further: its text, and the
- * same with its folder resolved on disk, which sees through a symlinked T3 home. Empty for a
- * non-link, or a target with `.` or `..`: Node resolves those as text, but the OS after a
- * symlinked folder, and t3 never writes them.
+ * Where the symlink at `link` points, not following that target any further: the target with its
+ * folder resolved on disk, which sees through a symlinked T3 home, and, for a dangling link, its
+ * text when it has no `.` or `..`. Empty for a non-link.
  */
 export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_targets")(function* (
   link: string,
@@ -406,18 +408,17 @@ export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_tar
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const text = yield* fs.readLink(link).pipe(Effect.option);
-  if (
-    Option.isNone(text) ||
-    text.value.split(/[\\/]/).some((part) => part === "." || part === "..")
-  ) {
-    return [];
-  }
-  const target = path.resolve(path.dirname(link), text.value);
-  const physical = yield* fs.realPath(path.dirname(target)).pipe(
-    Effect.map((directory) => [path.join(directory, path.basename(target))]),
+  if (Option.isNone(text)) return [];
+  const raw = path.isAbsolute(text.value)
+    ? text.value
+    : `${path.dirname(link)}${path.sep}${text.value}`;
+  // Native and unnormalized, so `..` after a symlinked folder goes where the OS takes it.
+  const physical = yield* Effect.tryPromise(() => NodeFSP.realpath(path.dirname(raw))).pipe(
+    Effect.map((directory) => [path.join(directory, path.basename(raw))]),
     Effect.orElseSucceed(() => []),
   );
-  return [target, ...physical];
+  const plain = !text.value.split(/[\\/]/).some((part) => part === "." || part === "..");
+  return plain ? [path.resolve(raw), ...physical] : physical;
 });
 
 /** Whether `candidate` is a version's own executable, `<versionsDir>/<version>/t3[.exe]`. */

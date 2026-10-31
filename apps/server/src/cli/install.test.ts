@@ -100,6 +100,11 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: root });
       assert.equal(yield* fs.readLink(rootLink), commandLink);
       yield* fs.remove(rootLink);
+      // install.sh keeps a T3 home spelled with `.` as given.
+      yield* fs.remove(link);
+      yield* fs.symlink(`${root}/./.t3/runtime/versions/${VERSION}/t3`, link);
+      yield* provide(installCli());
+      assert.equal(yield* fs.readLink(link), commandLink);
 
       // This home's desktop launcher is replaced, as install.sh does.
       yield* fs.remove(link);
