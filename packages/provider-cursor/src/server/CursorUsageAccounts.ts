@@ -202,8 +202,16 @@ const make = Effect.gen(function* () {
       !isCursorCacheFresh(caches.get(credentialKey), nowMs, retentionStartMs)
     ) {
       const refresh = yield* startRefresh(credential, credentialKey, retentionStartMs);
-      if (awaitRefresh) yield* Deferred.await(refresh);
-      else refreshing = true;
+      if (awaitRefresh) {
+        yield* Deferred.await(refresh);
+        if (
+          !failures.has(credentialKey) &&
+          !isCursorCacheFresh(caches.get(credentialKey), nowMs, retentionStartMs)
+        ) {
+          const retry = yield* startRefresh(credential, credentialKey, retentionStartMs);
+          yield* Deferred.await(retry);
+        }
+      } else refreshing = true;
     }
 
     const cache = caches.get(credentialKey);

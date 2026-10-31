@@ -235,11 +235,13 @@ function makeFakeCursor() {
     events: [] as { readonly timestampMs: number; readonly outputTokens: number }[],
     error: null as string | null,
     gate: undefined as Deferred.Deferred<void> | undefined,
+    started: undefined as Deferred.Deferred<void> | undefined,
     calls: [] as { readonly sinceMs: number; readonly untilMs: number }[],
   };
   const read = (_credential: unknown, sinceMs: number, untilMs: number) =>
     Effect.gen(function* () {
       state.calls.push({ sinceMs, untilMs });
+      if (state.started !== undefined) yield* Deferred.succeed(state.started, undefined);
       if (state.gate !== undefined) yield* Deferred.await(state.gate);
       const { accountKey, error } = state;
       if (error !== null) return { accountKey, records: [], missing: false, error };
@@ -1458,6 +1460,65 @@ describe("UsageService", () => {
           ),
         );
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("widens Cursor history after awaiting a shared narrower refresh", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.gate = yield* Deferred.make<void>();
+      cursor.state.started = yield* Deferred.make<void>();
+      cursor.state.events = [
+        { timestampMs: CURSOR_NOW - 120 * 24 * HOUR_MS, outputTokens: 5 },
+        { timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 },
+      ];
+      const context = yield* Layer.build(
+        layerCursorUsageAccounts(
+          Layer.succeed(CursorAccountReader.CursorAccountReader, { read: cursor.read }),
+        ).pipe(
+          Layer.provide(
+            layerService({
+              prefix: "usage-service-cursor-shared-refresh",
+              home,
+              settings,
+              platform: "darwin",
+            }),
+          ),
+        ),
+      );
+      const accounts = Context.get(context, CursorUsageAccounts.CursorUsageAccounts);
+      const input = {
+        keychainUsageEnabled: true,
+        windowStartMs: 0,
+        retentionCutoffMs: CURSOR_NOW - 92 * 24 * HOUR_MS,
+        awaitRefresh: false,
+      };
+      const narrow = yield* accounts.scan(input);
+      assert.isTrue(narrow[0]?.refreshing);
+      yield* Deferred.await(cursor.state.started);
+      const wider = yield* accounts
+        .scan({ ...input, retentionCutoffMs: 0, awaitRefresh: true })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      assert.strictEqual(cursor.state.calls.length, 1);
+      yield* Deferred.succeed(cursor.state.gate, undefined);
+      const sources = yield* Fiber.join(wider);
+      assert.deepStrictEqual(cursor.state.calls, [
+        { sinceMs: input.retentionCutoffMs, untilMs: CURSOR_NOW },
+        { sinceMs: 0, untilMs: CURSOR_NOW },
+      ]);
+      assert.strictEqual(sources[0]?.status, "ok");
+      assert.deepStrictEqual(
+        sources[0]?.files?.flatMap((file) =>
+          file.records.map(({ timestampMs, totals }) => ({
+            timestampMs,
+            outputTokens: totals.outputTokens,
+          })),
+        ),
+        cursor.state.events,
+      );
+      yield* accounts.awaitPersisted;
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("does not read the macOS Cursor Keychain before account usage is enabled", () =>
