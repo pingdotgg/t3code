@@ -385,6 +385,65 @@ const approval = (turnId: string) => ({
 vi.mock("node:fs/promises", { spy: true });
 
 describe("MuseAdapterV2", () => {
+  it.effect("invokes only the first live skill with the unchanged request as arguments", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      fake.queueResponse("skill/list", {
+        skills: [{ selector: "architect" }, { selector: "ai-ugc:ugc-mode" }],
+      });
+      const harness = yield* makeHarness(fake);
+      const base = yield* turnInput(harness.providerThread);
+      const input = {
+        ...base,
+        message: {
+          ...base.message,
+          text: "Please $nope then $ai-ugc:ugc-mode tidy $architect $ai-ugc:ugc-mode",
+        },
+      };
+      yield* harness.runtime.startTurn(input);
+      const call = yield* fake.takeCall("turn/start");
+      const parts = call.params.input as Array<{
+        type: string;
+        selector?: string;
+        arguments?: string;
+      }>;
+      assert.strictEqual(parts.length, 1);
+      assert.strictEqual(parts[0]?.type, "skill");
+      assert.strictEqual(parts[0]?.selector, "ai-ugc:ugc-mode");
+      assert.isTrue(parts[0]?.arguments?.endsWith(input.message.text));
+      assert.include(parts[0]?.arguments ?? "", "<runtime_info>");
+      assert.include(parts[0]?.arguments ?? "", "Muse Code");
+      assert.include(parts[0]?.arguments ?? "", MODEL);
+      assert.strictEqual(call.params.displayText, input.message.text);
+      assert.strictEqual(fake.calls.filter((call) => call.method === "skill/list").length, 1);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps plain and unavailable skill requests as text", () =>
+    Effect.gen(function* () {
+      for (const [text, response] of [
+        ["Tidy the changes", { skills: [{ selector: "git" }] }],
+        ["$git tidy $nope", { skills: [{ selector: "architect" }] }],
+        ["$git tidy $nope", new Error("listing failed")],
+      ] as const) {
+        const fake = yield* makeFakeMuse();
+        fake.queueResponse("skill/list", response);
+        const harness = yield* makeHarness(fake);
+        const base = yield* turnInput(harness.providerThread);
+        const input = { ...base, message: { ...base.message, text } };
+        yield* harness.runtime.startTurn(input);
+        const call = yield* fake.takeCall("turn/start");
+        const parts = call.params.input as Array<{ type: string; text?: string }>;
+        assert.isTrue(parts.every((part) => part.type === "text"));
+        assert.strictEqual(parts.at(-1)?.text, input.message.text);
+        assert.strictEqual(
+          fake.calls.filter((call) => call.method === "skill/list").length,
+          text.startsWith("$") ? 1 : 0,
+        );
+      }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("connects the thread's MCP credential on native start and resume", () =>
     Effect.gen(function* () {
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
@@ -1405,9 +1464,14 @@ describe("MuseAdapterV2", () => {
         runId: input.runId,
         providerThread: harness.providerThread,
         providerTurnId: turn.providerTurn.id,
-        message: { ...input.message, text: "Focus on the parser" },
+        message: { ...input.message, text: "$git focus on the parser" },
       });
-      assert.strictEqual((yield* fake.takeCall("turn/steer")).params.expectedTurnId, turn.nativeId);
+      const steer = yield* fake.takeCall("turn/steer");
+      assert.strictEqual(steer.params.expectedTurnId, turn.nativeId);
+      assert.deepStrictEqual(steer.params.input, [
+        { type: "text", text: "$git focus on the parser" },
+      ]);
+      assert.isFalse(fake.calls.some((call) => call.method === "skill/list"));
       const interrupt = yield* harness.runtime
         .interruptTurn({
           providerThread: harness.providerThread,
