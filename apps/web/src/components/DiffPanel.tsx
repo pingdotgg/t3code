@@ -87,6 +87,7 @@ import {
   DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  MenuRadioItemIndicator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -821,13 +822,22 @@ export default function DiffPanel({
           <DropdownMenuContent align="start">
             <DropdownMenuRadioGroup value={selectedScopeValue} onValueChange={selectScopeValue}>
               <DropdownMenuRadioItem value="branch" closeOnClick>
-                <span>Changes</span>
+                <span className="flex items-center justify-between gap-2">
+                  <span>Changes</span>
+                  <MenuRadioItemIndicator />
+                </span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="unstaged" closeOnClick>
-                <span>Uncommitted</span>
+                <span className="flex items-center justify-between gap-2">
+                  <span>Uncommitted</span>
+                  <MenuRadioItemIndicator />
+                </span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="latest" closeOnClick>
-                <span>Latest turn</span>
+                <span className="flex items-center justify-between gap-2">
+                  <span>Latest turn</span>
+                  <MenuRadioItemIndicator />
+                </span>
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
             <DropdownMenuSub>
@@ -847,6 +857,7 @@ export default function DiffPanel({
                           <span className="ml-auto text-xs tabular-nums text-muted-foreground">
                             {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                           </span>
+                          <MenuRadioItemIndicator />
                         </span>
                       </DropdownMenuRadioItem>
                     );
