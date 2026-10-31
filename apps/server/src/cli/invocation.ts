@@ -42,22 +42,24 @@ const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(I
  * `T3CODE_NPM_LAUNCHER_PATH` is inherited by child shells, so accept it only for this package
  * version to avoid claiming another `t3` invocation is the npm install.
  */
-export const resolveEntryPath = Effect.gen(function* () {
+export const resolveNpmLauncherPath = Effect.gen(function* () {
   const npmLauncher = (yield* HostProcess.Environment).T3CODE_NPM_LAUNCHER_PATH?.trim();
-  if (npmLauncher) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const manifest = yield* fs
-      .readFileString(path.join(path.dirname(npmLauncher), "../package.json"))
-      .pipe(Effect.flatMap(decodeInstallManifest), Effect.option);
-    if (
-      Option.isSome(manifest) &&
-      manifest.value.name === "t3" &&
-      manifest.value.version === packageJson.version
-    ) {
-      return npmLauncher;
-    }
-  }
+  if (!npmLauncher) return Option.none<string>();
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const manifest = yield* fs
+    .readFileString(path.join(path.dirname(npmLauncher), "../package.json"))
+    .pipe(Effect.flatMap(decodeInstallManifest), Effect.option);
+  return Option.isSome(manifest) &&
+    manifest.value.name === "t3" &&
+    manifest.value.version === packageJson.version
+    ? Option.some(npmLauncher)
+    : Option.none<string>();
+});
+
+export const resolveEntryPath = Effect.gen(function* () {
+  const npmLauncher = yield* resolveNpmLauncherPath;
+  if (Option.isSome(npmLauncher)) return npmLauncher.value;
   if (yield* HostProcess.IsExecutable) return yield* HostProcess.ExecutablePath;
   return (yield* HostProcess.Arguments)[1] ?? "";
 });
@@ -119,6 +121,19 @@ export const resolveCliCommand = (subcommand: string) =>
 
 const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
+
+/** The npm launcher starts the runtime named by its package version, so only the package manager moves it. */
+export function packageUpdateCommand(installation: ServerInstallation, version: string): string {
+  const spec = `t3@${version}`;
+  switch (installation.kind) {
+    case "npm-global":
+      return `npm install --global --prefix ${shellWord(installation.prefix)} ${spec}`;
+    case "pnpm-dlx":
+      return `pnpm dlx ${spec}`;
+    default:
+      return `${installation.kind} ${spec}`;
+  }
+}
 
 /** PowerShell also treats typographic quotes as delimiters; escape them and suppress expansion. */
 const powershellWord = (value: string) =>
