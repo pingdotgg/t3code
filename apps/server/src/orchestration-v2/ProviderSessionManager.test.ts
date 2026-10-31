@@ -492,6 +492,10 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly replacementAdapter?: {
+    readonly state: Ref.Ref<TestProviderRuntimeState>;
+    readonly active: Ref.Ref<boolean>;
+  };
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -528,7 +532,28 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    }).pipe(
+      Effect.flatMap((adapter) => {
+        const replacement = input.replacementAdapter;
+        if (replacement === undefined)
+          return Effect.succeed(ProviderAdapterRegistry.layerSingle(adapter));
+        // Mirrors a provider instance rebuilt after its settings changed.
+        return makeProviderAdapter(replacement.state).pipe(
+          Effect.map((rebuilt) =>
+            Layer.succeed(
+              ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+              ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+                get: () =>
+                  Ref.get(replacement.active).pipe(
+                    Effect.map((active) => (active ? rebuilt : adapter)),
+                  ),
+                list: () => Effect.succeed([adapter.instanceId]),
+              }),
+            ),
+          ),
+        );
+      }),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -972,6 +997,57 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 reopens an idle session on the adapter rebuilt from changed settings",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacementState = yield* Ref.make(emptyState);
+      const replaced = yield* Ref.make(false);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-settings-change");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const staleRuntime = yield* open;
+        yield* Ref.set(replaced, true);
+        const nextRuntime = yield* open;
+
+        assert.equal(
+          (yield* Ref.get(replacementState)).openCount,
+          1,
+          "next turn should open its session on the adapter built from the new settings",
+        );
+        assert.notStrictEqual(nextRuntime, staleRuntime);
+        assert.equal(
+          (yield* Ref.get(state)).closeCount,
+          1,
+          "the session opened with the old settings should be released",
+        );
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            replacementAdapter: { state: replacementState, active: replaced },
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
