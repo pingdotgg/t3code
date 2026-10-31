@@ -388,9 +388,20 @@ export function summarizeT3ToolCalls(
       );
       break;
     }
-    case "link-pr":
-      label = phrase("Linked", "link", quantity(selected.length, "pull request"));
+    case "link-pr": {
+      let count = 0;
+      let countKnown = true;
+      for (const call of selected) {
+        if (Array.isArray(call.input?.urls)) count += call.input.urls.length;
+        // A batch input too large for the wire is summarized, so the label drops the number.
+        else if (call.input?.url === undefined && call.input?.number === undefined)
+          countKnown = false;
+        else count += 1;
+      }
+      const object = countKnown ? quantity(count, "pull request") : "pull requests";
+      label = phrase("Linked", "link", object);
       break;
+    }
     case "unlink-pr": {
       let count = 0;
       let countKnown = true;
