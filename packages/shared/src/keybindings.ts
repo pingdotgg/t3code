@@ -208,7 +208,13 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+a", command: "composer.mode", when: "!terminalFocus" },
   { key: "mod+shift+x", command: "composer.workspace", when: "!terminalFocus" },
   { key: "mod+shift+g", command: "composer.branch", when: "!terminalFocus" },
-  { key: "mod+shift+l", command: "composer.previousWorktree", when: "!terminalFocus" },
+  // A selected assistant passage takes the chord from the worktree switch.
+  {
+    key: "mod+shift+l",
+    command: "composer.previousWorktree",
+    when: "!terminalFocus && !assistantSelection",
+  },
+  { key: "mod+shift+l", command: "chat.citeSelection", when: "assistantSelection" },
   { key: "mod+shift+k", command: "pullRequest.copyNumber", when: "!terminalFocus" },
   { key: "mod+shift+arrowup", command: "modelPicker.previousProvider", when: "modelPickerOpen" },
   { key: "mod+shift+arrowdown", command: "modelPicker.nextProvider", when: "modelPickerOpen" },

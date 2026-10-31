@@ -1,12 +1,13 @@
 import { useLayoutEffect } from "react";
-import type { RunId } from "@t3tools/contracts";
-import type { TimelineEntry } from "../../session-logic";
+import { type RunId } from "@t3tools/contracts";
+import { type TimelineEntry } from "../../session-logic";
 import {
   timelineTurnFoldRunIdsByEntryId,
   type MessagesTimelineRow,
   type TimelineLatestRun,
+  type TimelineTurnFoldKey,
 } from "./MessagesTimeline.logic";
-import type { ThreadFindPositionReader } from "./threadFind";
+import { type ThreadFindPositionReader } from "./threadFind";
 import { attachThreadFindTimeline } from "./threadFindStore";
 import { readThreadFindPosition } from "./threadFindPosition";
 
@@ -27,7 +28,7 @@ export function useThreadFindPositionReader({
   readonly threadKey: string;
   readonly navigate: () => void;
   readonly timelineViewportElement: HTMLDivElement | null;
-  readonly findFoldRunIds: ReadonlyMap<string, RunId> | null;
+  readonly findFoldRunIds: ReadonlyMap<string, TimelineTurnFoldKey> | null;
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly latestRun: TimelineLatestRun | null;
   readonly runningRunId: RunId | null;
@@ -66,7 +67,7 @@ export function useThreadFindPositionReader({
             const entry = timelineEntries.find((entry) => {
               const runId =
                 row.kind === "turn-fold"
-                  ? foldRunIds.get(entry.id)
+                  ? foldRunIds.get(entry.id)?.runId
                   : entry.kind === "message"
                     ? entry.message.runId
                     : entry.kind === "proposed-plan"

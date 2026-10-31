@@ -4,10 +4,10 @@ import {
   isReasoningControl,
   selectableProviderOptionChoices,
 } from "@t3tools/client-runtime/model-traits";
-import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
+import type { ProviderOptionDescriptor } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
-import { CheckIcon, ChevronRightIcon, ChevronUpIcon, GaugeIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, GaugeIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -22,13 +22,14 @@ import {
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
-import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
-import { composerFloatingLayerProps, focusCheckedPermission } from "./composerEventScope";
+import { composerFloatingLayerProps, takeOpenTarget } from "./composerEventScope";
 import { EffortGlyph, resolveEffortGlyph } from "./EffortGlyph";
+import { useComposerMenuState } from "./useComposerMenuState";
 import { DockedPickerContext } from "./ProviderModelPicker";
 import {
   getTraitsSectionVisibility,
   type TraitsSelectionInput,
+  TraitsMenuContent,
   ULTRATHINK_IN_BODY_NOTE,
   useTraitsSelection,
 } from "./TraitsPicker";
@@ -150,6 +151,76 @@ export function describeComposerEffort(
       </>
     ),
   };
+}
+
+/** Model-specific options stay beside the fixed-width model list. */
+export function hasComposerModelOptions(input: TraitsSelectionInput | null) {
+  if (!input) return false;
+  const visibility = getTraitsSectionVisibility(input);
+  return (
+    columnControls(input.provider, visibility.selectDescriptors, visibility.booleanDescriptors)
+      .others.length > 0
+  );
+}
+
+/** A separate reasoning menu, with the canvas's Fast mode section below the levels. */
+export function ComposerReasoningPicker(props: {
+  traits: TraitsSelectionInput;
+  effortDisplay: EffortDisplay;
+  size: ComposerControlSize;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useComposerMenuState(props.disabled);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const display = describeComposerEffort(props.traits, props.effortDisplay, props.size);
+  if (!display.suffix) return null;
+  return (
+    <Menu
+      open={open}
+      onOpenChange={setOpen}
+      onOpenChangeComplete={(isOpen) => {
+        const target = takeOpenTarget(triggerRef.current);
+        if (isOpen && target === "effort") {
+          const popupId = triggerRef.current?.getAttribute("aria-controls");
+          if (popupId)
+            document
+              .getElementById(popupId)
+              ?.querySelector<HTMLElement>('[aria-checked="true"]')
+              ?.focus({ preventScroll: true });
+        }
+      }}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <ComposerControl
+                  ref={triggerRef}
+                  size={props.size}
+                  disabled={props.disabled}
+                  aria-label={`Reasoning: ${display.detail ?? "Options"}`}
+                  data-composer-shortcut="composer.effort"
+                />
+              }
+            />
+          }
+        >
+          {display.suffix}
+        </TooltipTrigger>
+        <TooltipPopup side="top">{display.detail}</TooltipPopup>
+      </Tooltip>
+      <MenuPopup
+        side="top"
+        align="end"
+        width="wide"
+        spacing="compact"
+        {...composerFloatingLayerProps}
+      >
+        <TraitsMenuContent {...props.traits} reasoningOnly />
+      </MenuPopup>
+    </Menu>
+  );
 }
 
 const COLUMN_ROW =
@@ -526,132 +597,5 @@ export function ComposerEffortColumn(props: {
         )}
       </div>
     </>
-  );
-}
-
-const FOOTER_SEGMENT =
-  "flex h-6 cursor-pointer items-center justify-center gap-1 px-2 text-muted-foreground text-meta outline-none first:rounded-l-md last:rounded-r-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
-
-function SpeedSegment(props: {
-  checked: boolean;
-  label: string;
-  description?: string | undefined;
-  onPick: () => void;
-}) {
-  const buttonProps = {
-    type: "button",
-    role: "radio",
-    "aria-checked": props.checked,
-    "data-checked": props.checked || undefined,
-    className: FOOTER_SEGMENT,
-    onClick: props.onPick,
-  } as const;
-  const content = props.label;
-  if (!props.description) return <button {...buttonProps}>{content}</button>;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<button {...buttonProps} />}>{content}</TooltipTrigger>
-      <TooltipPopup side="top">{props.description}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function SpeedControl(props: { traits: TraitsSelectionInput }) {
-  const traits = useTraitsSelection(props.traits);
-  const { speedSelect, fastToggle } = splitSpeed(
-    props.traits.provider,
-    traits.selectDescriptors,
-    traits.booleanDescriptors,
-  );
-  if (traits.modelIsUnavailable || (!speedSelect && !fastToggle)) return null;
-  return (
-    <div
-      role="radiogroup"
-      aria-label={speedSelect?.label ?? fastToggle?.label}
-      className="flex rounded-lg bg-input/40 p-0.5"
-    >
-      {speedSelect
-        ? selectableProviderOptionChoices(speedSelect).map((option) => (
-            <SpeedSegment
-              key={option.id}
-              checked={option.id === traits.selectValue(speedSelect)}
-              label={option.label}
-              description={option.description}
-              onPick={() => traits.changeSelect(speedSelect, option.id)}
-            />
-          ))
-        : fastToggle
-          ? ([false, true] as const).map((value) => (
-              <SpeedSegment
-                key={String(value)}
-                checked={(fastToggle.currentValue === true) === value}
-                label={value ? "Fast" : "Standard"}
-                onPick={() => traits.changeBoolean(fastToggle.id, value)}
-              />
-            ))
-          : null}
-    </div>
-  );
-}
-
-/** Permissions change rarely, so the footer names the mode and nests the choice in a menu. */
-function PermissionsMenu(props: {
-  runtimeMode: RuntimeMode;
-  options: ReadonlyArray<RuntimeModeOption>;
-  onChange: (mode: RuntimeMode) => void;
-}) {
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const current = props.options.find((option) => option.mode === props.runtimeMode);
-  if (!current) return null;
-  const CurrentIcon = current.icon;
-  return (
-    <Menu
-      onOpenChangeComplete={(open) => {
-        if (open) focusCheckedPermission(triggerRef.current);
-      }}
-    >
-      <MenuTrigger
-        render={
-          <ComposerControl
-            size="xs"
-            ref={triggerRef}
-            type="button"
-            data-composer-permissions-trigger
-            aria-label={`Permissions: ${current.label}`}
-            className="ms-auto"
-          />
-        }
-      >
-        <CurrentIcon aria-hidden="true" className="size-3.5" />
-        {current.label}
-        <ChevronUpIcon aria-hidden="true" className="size-3" />
-      </MenuTrigger>
-      <MenuPopup side="top" align="end" {...composerFloatingLayerProps}>
-        <ComposerPermissionsSection
-          runtimeMode={props.runtimeMode}
-          runtimeModeOptions={props.options}
-          onRuntimeModeChange={props.onChange}
-        />
-      </MenuPopup>
-    </Menu>
-  );
-}
-
-/** The model picker's footer: speed stays one click away, permissions sit one menu deeper. */
-export function ComposerPickerFooter(props: {
-  traits: TraitsSelectionInput | null;
-  runtimeMode: RuntimeMode;
-  runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
-  onRuntimeModeChange: (mode: RuntimeMode) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-border/70 bg-muted/40 px-3 py-2">
-      {props.traits ? <SpeedControl traits={props.traits} /> : null}
-      <PermissionsMenu
-        runtimeMode={props.runtimeMode}
-        options={props.runtimeModeOptions}
-        onChange={props.onRuntimeModeChange}
-      />
-    </div>
   );
 }
