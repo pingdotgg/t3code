@@ -3,7 +3,9 @@ import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -98,7 +100,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const statePath = path.join(baseDir, "runtime", "service-state.json");
   const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3", platform);
   yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
-  yield* fs.writeFileString(runtime.entryPath, "#!/bin/sh\n");
+  yield* fs.writeFileString(runtime.entryPath, "#!/bin/sh\n", { mode: 0o755 });
   yield* fs.writeFileString(runtime.sentinelPath, "1.2.3\n");
 
   const commands: string[] = [];
@@ -125,6 +127,13 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       invocations.push(input);
       timeouts.set(command, input.timeout);
       const failed = command === control.failCommand;
+      // GNU cp has no -c; leave a partial copy so the fallback has to clear it.
+      const copyRejected = input.command === "cp" && input.args[0] === "-c";
+      if (copyRejected) {
+        const destination = input.args.at(-1) ?? "";
+        yield* fs.makeDirectory(destination, { recursive: true }).pipe(Effect.orDie);
+        yield* fs.writeFileString(path.join(destination, "t3"), "partial").pipe(Effect.orDie);
+      }
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
@@ -152,6 +161,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed ||
+            copyRejected ||
             (input.args[1] === "is-active" && !control.active) ||
             (input.args[1] === "is-enabled" && !control.enabled)
             ? 1
@@ -174,7 +184,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     Effect.gen(function* () {
       const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
       yield* fs.makeDirectory(path.dirname(paths.entryPath), { recursive: true });
-      yield* fs.writeFileString(paths.entryPath, "#!/bin/sh\n");
+      yield* fs.writeFileString(paths.entryPath, "#!/bin/sh\n", { mode: 0o755 });
       yield* fs.writeFileString(paths.sentinelPath, `${cliVersion}\n`);
       return yield* BootService.make({
         baseDir: serviceBaseDir,
@@ -487,7 +497,17 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.2.4",
         });
-        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+        if (platform === "darwin") {
+          const program = BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath));
+          expect(program).toBe(path.join(baseDir, "runtime", "launcher", "t3"));
+          expect(
+            yield* fs.readFileString(
+              path.join(baseDir, "runtime", "launcher", ".install-complete"),
+            ),
+          ).toBe("1.2.4\n");
+        } else {
+          expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+        }
         expect(
           commands.filter(
             (command) =>
@@ -761,8 +781,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
   it.effect("installs, reports current state, and uninstalls on macOS", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, timeouts, runtime } = yield* makeHarness("darwin");
+      const { service, fs, baseDir, statePath, commands, timeouts } = yield* makeHarness("darwin");
       const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
       const plan = yield* service.install();
 
       expect(
@@ -778,19 +799,210 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         activeVersion: "1.2.3",
       });
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        `    <string>${runtime.entryPath}</string>\n    <string>__service-launcher</string>`,
+        `    <string>${path.join(launcherDir, "t3")}</string>\n    <string>__service-launcher</string>`,
       );
+      expect(
+        commands.some((command) =>
+          command.startsWith(
+            `cp -c -pR ${path.join(baseDir, "runtime", "versions", "1.2.3")} ${launcherDir}.next-`,
+          ),
+        ),
+      ).toBe(true);
       expect(yield* service.status).toMatchObject({
         current: true,
         installedVersion: "1.2.3",
       });
+      yield* fs.writeFileString(path.join(launcherDir, ".install-complete"), "1.2.2\n");
+      expect((yield* service.status).current).toBe(false);
+      yield* service.install();
+      expect((yield* service.status).current).toBe(true);
       expect(yield* service.uninstall).toBe(true);
+      expect(yield* fs.exists(launcherDir)).toBe(false);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       // launchd can take 90s to bootout; the runner's 60s default could let bootstrap race it.
       expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.t3code.service")).toEqual(
         Duration.seconds(120),
       );
+    }),
+  );
+
+  // regression: #17225 macOS privacy grants are keyed to the launch agent's program path
+  it.effect("keeps the launch agent program at one path across version updates", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      const program = BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath));
+
+      yield* (yield* makeService(undefined, "1.2.4")).install();
+      const updatedProgram = BootService.bootServiceProgramOf(
+        yield* fs.readFileString(plan.unitPath),
+      );
+
+      expect(updatedProgram).toBe(program);
+      expect(updatedProgram).not.toContain("/runtime/versions/");
+      expect(yield* fs.exists(updatedProgram ?? "")).toBe(true);
+    }),
+  );
+
+  it.effect("swaps in a new launch agent runtime without writing into the running one", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
+      const versionEntry = (version: string) =>
+        path.join(baseDir, "runtime", "versions", version, "t3");
+      yield* service.install();
+      const running = yield* fs.open(path.join(launcherDir, "t3"), { flag: "r" });
+
+      const newer = yield* makeService(undefined, "1.2.4");
+      yield* fs.writeFileString(versionEntry("1.2.4"), "#!/bin/sh\n# 1.2.4\n");
+      yield* newer.install({ start: false });
+
+      const buffer = new Uint8Array(64);
+      const read = yield* running.read(buffer);
+      expect(new TextDecoder().decode(buffer.subarray(0, Number(read)))).toBe("#!/bin/sh\n");
+      expect(yield* fs.readFileString(path.join(launcherDir, "t3"))).toBe("#!/bin/sh\n# 1.2.4\n");
+      expect((yield* fs.stat(path.join(launcherDir, "t3"))).mode & 0o111).toBe(
+        (yield* fs.stat(versionEntry("1.2.4"))).mode & 0o111,
+      );
+
+      const failingSwap = yield* makeService(undefined, "1.2.5").pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          rename: (from, to) =>
+            fs.rename(
+              from,
+              from !== launcherDir && path.basename(from) === "launcher"
+                ? path.join(to, "missing", "t3")
+                : to,
+            ),
+        }),
+      );
+      expect((yield* Effect.flip(failingSwap.install({ start: false })))._tag).toBe(
+        "BootServiceInstallError",
+      );
+      expect(yield* fs.readFileString(path.join(launcherDir, ".install-complete"))).toBe("1.2.4\n");
+      expect(yield* fs.readFileString(path.join(launcherDir, "t3"))).toBe("#!/bin/sh\n# 1.2.4\n");
+
+      const failingCopy = yield* makeService(undefined, "1.2.6").pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          copy: (from, to) =>
+            fs
+              .makeDirectory(to)
+              .pipe(Effect.andThen(fs.copy(path.join(from, "missing"), path.join(to, "missing")))),
+        }),
+      );
+      expect((yield* Effect.flip(failingCopy.install({ start: false })))._tag).toBe(
+        "BootServiceInstallError",
+      );
+      expect(yield* fs.readDirectory(path.join(baseDir, "runtime"))).not.toContainEqual(
+        expect.stringMatching(/^launcher\./),
+      );
+      expect(yield* fs.readFileString(path.join(launcherDir, "t3"))).toBe("#!/bin/sh\n# 1.2.4\n");
+    }),
+  );
+
+  it.effect("keeps a launch agent program in place when an update is interrupted mid-swap", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
+      const plan = yield* service.install();
+      const movedAside = yield* Deferred.make<void>();
+      const proceed = yield* Deferred.make<void>();
+      const newer = yield* makeService(undefined, "1.2.4").pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          rename: (from, to) =>
+            from === launcherDir
+              ? fs
+                  .rename(from, to)
+                  .pipe(
+                    Effect.andThen(Deferred.succeed(movedAside, undefined)),
+                    Effect.andThen(Deferred.await(proceed)),
+                  )
+              : fs.rename(from, to),
+        }),
+      );
+
+      const installing = yield* Effect.forkChild(newer.install({ start: false }));
+      yield* Deferred.await(movedAside);
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(installing), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(proceed, undefined);
+      yield* Fiber.join(interrupting);
+
+      const program = BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath));
+      expect(program).toBe(path.join(launcherDir, "t3"));
+      expect((yield* fs.stat(program ?? "")).mode & 0o111).toBe(0o111);
+    }),
+  );
+
+  it.effect("leaves a complete launch agent runtime when two updates overlap", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
+      const plan = yield* service.install();
+      const firstCopied = yield* Deferred.make<void>();
+      const resumeFirst = yield* Deferred.make<void>();
+      const secondPartlyCopied = yield* Deferred.make<void>();
+      const resumeSecond = yield* Deferred.make<void>();
+      const first = yield* makeService(undefined, "1.2.4").pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          copy: (from, to) =>
+            fs
+              .copy(from, to)
+              .pipe(
+                Effect.andThen(Deferred.succeed(firstCopied, undefined)),
+                Effect.andThen(Deferred.await(resumeFirst)),
+              ),
+        }),
+      );
+      const second = yield* makeService(undefined, "1.2.5").pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          copy: (from, to) =>
+            fs
+              .makeDirectory(to, { recursive: true })
+              .pipe(
+                Effect.andThen(
+                  fs.copyFile(
+                    path.join(from, ".install-complete"),
+                    path.join(to, ".install-complete"),
+                  ),
+                ),
+                Effect.andThen(Deferred.succeed(secondPartlyCopied, undefined)),
+                Effect.andThen(Deferred.await(resumeSecond)),
+                Effect.andThen(fs.copyFile(path.join(from, "t3"), path.join(to, "t3"))),
+              ),
+        }),
+      );
+      const versionEntry = (version: string) =>
+        path.join(baseDir, "runtime", "versions", version, "t3");
+      yield* fs.writeFileString(versionEntry("1.2.4"), "#!/bin/sh\n# 1.2.4\n");
+      yield* fs.writeFileString(versionEntry("1.2.5"), "#!/bin/sh\n# 1.2.5\n");
+
+      const firstInstall = yield* Effect.forkChild(first.install({ start: false }));
+      yield* Deferred.await(firstCopied);
+      const secondInstall = yield* Effect.forkChild(second.install({ start: false }));
+      yield* Deferred.await(secondPartlyCopied);
+      yield* Deferred.succeed(resumeFirst, undefined);
+      yield* Fiber.await(firstInstall);
+      yield* Deferred.succeed(resumeSecond, undefined);
+      yield* Fiber.await(secondInstall);
+
+      const program = BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath));
+      expect(program).toBe(path.join(launcherDir, "t3"));
+      expect(yield* fs.exists(program ?? "")).toBe(true);
+      expect(["#!/bin/sh\n# 1.2.4\n", "#!/bin/sh\n# 1.2.5\n"]).toContain(
+        yield* fs.readFileString(program ?? ""),
+      );
+      expect((yield* fs.stat(program ?? "")).mode & 0o111).toBe(0o111);
     }),
   );
 
