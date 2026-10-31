@@ -587,10 +587,15 @@ function approvalDecisionToLegacyReviewDecision(
 function providerRequestKindFromPermissions(
   permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
 ): ProviderRequestKind {
-  if ((permissions.fileSystem?.write?.length ?? 0) > 0) {
+  // Codex leaves the legacy `read`/`write` lists out when a path is a glob or
+  // special path, and is replacing them with `entries`.
+  const requests = (access: "read" | "write") =>
+    (permissions.fileSystem?.[access]?.length ?? 0) > 0 ||
+    permissions.fileSystem?.entries?.some((entry) => entry.access === access);
+  if (requests("write")) {
     return "file-change";
   }
-  if ((permissions.fileSystem?.read?.length ?? 0) > 0) {
+  if (requests("read")) {
     return "file-read";
   }
   return "command";
