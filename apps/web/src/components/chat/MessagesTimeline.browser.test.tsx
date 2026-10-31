@@ -708,17 +708,13 @@ describe("MessagesTimeline chapters", () => {
     };
     const entries = [message("Recent entry", {}, "recent")];
     await using screen = await renderElement(
-      <MessagesTimeline
-        {...props}
-        timelineEntries={entries}
-        historyControls={historyControls}
-      />,
+      <MessagesTimeline {...props} timelineEntries={entries} historyControls={historyControls} />,
     );
 
-    act(() => useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter-earlier")));
-    await vi.waitFor(() =>
-      expect(onLoadEarlier).toHaveBeenCalledWith("chapter-earlier"),
+    act(() =>
+      useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter-earlier")),
     );
+    await vi.waitFor(() => expect(onLoadEarlier).toHaveBeenCalledWith("chapter-earlier"));
 
     const earlierHiddenEntry = message("Earlier note", {}, "earlier");
     await screen.rerender(
@@ -728,9 +724,7 @@ describe("MessagesTimeline chapters", () => {
         historyControls={historyControls}
       />,
     );
-    await vi.waitFor(() =>
-      expect(onLoadEarlier).toHaveBeenCalledTimes(2),
-    );
+    await vi.waitFor(() => expect(onLoadEarlier).toHaveBeenCalledTimes(2));
   });
 });
 
