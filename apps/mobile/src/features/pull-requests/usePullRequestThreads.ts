@@ -19,8 +19,6 @@ import { formatComposerContextReference } from "@t3tools/shared/composerContextR
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRef, useState } from "react";
-import { Platform } from "react-native";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { pullRequestComposerContext } from "../../lib/composerContext";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { uuidv4 } from "../../lib/uuid";
@@ -76,16 +74,13 @@ export function usePullRequestThreads(
   const canAsk = !connected || canOperate;
   const canCheckout = useEnvironmentScope(target.environmentId, AuthSourceControlWriteScope);
   const navigation = useNavigation();
-  const selectDetail = useSelectWorkspaceDetail();
   const pending = useRef(false);
   const previousPrompts = useRef(new Map<string, string>());
   const openThread = (thread: LinkedThread) => {
     openThreadRoute({ environmentId: params.environmentId, threadId: thread.id });
   };
-  // Android shows one page at a time; iOS opens the thread over the pull request, so Back returns.
   const openThreadRoute = (destination: ReactNavigation.RootParamList["Thread"]) => {
-    if (Platform.OS === "android") selectDetail({ name: "Thread", params: destination });
-    else navigation.dispatch(StackActions.push("Thread", destination));
+    navigation.dispatch(StackActions.push("Thread", destination));
   };
   const [busy, setBusy] = useState(false);
   const ask = async (thread?: LinkedThread, task: PullRequestAgentTask = "ask") => {

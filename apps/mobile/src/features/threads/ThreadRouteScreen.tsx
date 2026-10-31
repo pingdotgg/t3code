@@ -126,7 +126,7 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 }
 
 function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
-  const goBack = useWorkspaceBackNavigation("threads");
+  const goBack = useWorkspaceBackNavigation();
   const { layout } = useAdaptiveWorkspaceLayout();
   const { themeVariables } = useAppearancePreferences();
   if (Platform.OS !== "android")
@@ -239,7 +239,7 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
 }
 
 function LiveThreadRouteController(props: ThreadRouteScreenProps) {
-  useAndroidWorkspaceBack("threads");
+  useAndroidWorkspaceBack();
   const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();

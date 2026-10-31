@@ -1,15 +1,14 @@
 import type { NavigationState } from "@react-navigation/native";
 import { resetRootStack, type RootStackNavigation } from "./root-stack-reset";
 
-function androidWorkspaceBackReturnsToThread(state: NavigationState) {
-  const current = state.routes[state.index];
-  const params = current?.params as ReactNavigation.RootParamList["Thread"] | undefined;
-  return (
-    current?.name === "Thread" &&
-    state.routes[state.index - 1]?.name === "Thread" &&
-    params !== undefined &&
-    !parentThreadIsBelow(state, params)
-  );
+// Back follows history; Git confirmations can stack copies of the current thread, so skip those too.
+function androidWorkspaceBackTarget(state: NavigationState) {
+  let index = state.index;
+  const params = state.routes[index]?.params as ReactNavigation.RootParamList["Thread"] | undefined;
+  if (state.routes[index]?.name === "Thread" && params) {
+    while (parentThreadIsBelow({ ...state, index }, params)) index -= 1;
+  }
+  return index - 1;
 }
 
 /** The root stack with only the workspace list. */
@@ -59,12 +58,12 @@ export function linkedThreadStep(
 
 export function returnToAndroidWorkspaceList(
   navigation: RootStackNavigation & { readonly goBack: () => void },
-  selectTab: () => void,
 ) {
   const state = navigation.getState();
-  if (state && androidWorkspaceBackReturnsToThread(state)) return navigation.goBack();
-  selectTab();
-  resetAndroidWorkspace(navigation);
+  const index = state ? androidWorkspaceBackTarget(state) : -1;
+  if (!state || index < 0) return resetAndroidWorkspace(navigation);
+  if (index === state.index - 1) return navigation.goBack();
+  resetRootStack(navigation, () => ({ ...state, index, routes: state.routes.slice(0, index + 1) }));
 }
 
 // In the split view these destinations swap the detail pane beside the sidebar instead of

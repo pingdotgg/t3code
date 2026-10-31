@@ -52,8 +52,8 @@ function resolveWorkspaceTabsSelection(
 
 // One model per provider. Handlers on frozen screens keep stale closures, so
 // they read the current selection from the registry at call time.
-function createWorkspaceTabsModel() {
-  const stored = Atom.make(initialWorkspaceTabsState());
+function createWorkspaceTabsModel(selectedTab?: WorkspaceTab) {
+  const stored = Atom.make(initialWorkspaceTabsState(selectedTab));
   const scrollOffsets: Record<WorkspaceSearchTab, number> = {
     threads: 0,
     pullRequests: 0,
@@ -75,9 +75,10 @@ function createWorkspaceTabsModel() {
 export function WorkspaceTabsProvider(props: {
   readonly children: ReactNode;
   readonly settingsOpen?: boolean;
+  readonly initialTab?: WorkspaceTab;
 }) {
   const registry = use(RegistryContext);
-  const [model] = useState(createWorkspaceTabsModel);
+  const [model] = useState(() => createWorkspaceTabsModel(props.initialTab));
   const state = useAtomValue(model.resolved);
   const context = {
     state,

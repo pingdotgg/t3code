@@ -19,7 +19,7 @@ export function ThreadHeader(
     readonly onOpenFilesInspector: () => void;
   },
 ) {
-  const goBack = useWorkspaceBackNavigation("threads");
+  const goBack = useWorkspaceBackNavigation();
   const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
     useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
