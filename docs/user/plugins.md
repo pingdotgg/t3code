@@ -59,7 +59,7 @@ code a plugin loads from outside its directory is not covered.
 
 Disable stops a plugin without forgetting your approval. Remove stops it and forgets it, including
 its saved settings and storage. An added directory is never deleted; the server's copy of an npm
-package is. Both are always available, even when the directory is gone.
+package is. You can disable or remove a plugin even when its directory is gone.
 
 A plugin that crashes waits briefly before its next start, and is stopped after repeated failures.
 A plugin that cannot run on this version of T3 Code is marked **Incompatible**. A plugin that
@@ -67,8 +67,8 @@ receives events shows how delivery is going beside its state; when delivery keep
 until you resume it, and no events are skipped. Fix the problem, then choose **Resume**.
 
 Managing plugins, including installing and updating from npm, needs administrative access to the
-environment. A browser paired with a standard link can see the plugins but not change them; pair it
-with an administrative link to manage them.
+environment. A connection without permission to manage environment access can see plugins but
+cannot change them. Standard pairing links currently include that management permission.
 
 The mobile app shows plugins read-only, under **Settings** > **Server settings** > **Plugins**: their
 state, event delivery, and details, including the npm package and integrity of a plugin installed
@@ -136,7 +136,7 @@ With the `settings` capability, list up to 32 fields in `settings`. Each has a `
 
 Fill them in under **Settings** > **Plugins** in the web or desktop app, for the environment
 selected at the top. A saved secret shows only that it is saved: enter a new value to replace it, or
-**Clear** it. A browser paired with a standard link sees the values but cannot change them. The
+**Clear** it. Editing requires permission to manage environment access. The
 mobile app shows the saved values read-only on the environment's settings screen (secrets only as
 saved or not set); edit them from an administrative web or desktop connection.
 
