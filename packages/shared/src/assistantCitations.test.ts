@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   ASSISTANT_CITATION_CONTEXT_LENGTH,
   ASSISTANT_CITATION_MAX_COMMENT_LENGTH,
+  ASSISTANT_CITATION_MAX_ID_LENGTH,
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   EnvironmentId,
   MessageId,
@@ -125,9 +126,9 @@ describe("assistant citation references", () => {
   it("accepts complete 8k CJK quotes and comments with maximum-sized source selectors", () => {
     const largeCitation: AssistantCitation = {
       ...citation,
-      environmentId: EnvironmentId.make("環".repeat(512)),
-      threadId: ThreadId.make("線".repeat(512)),
-      messageId: MessageId.make("文".repeat(512)),
+      environmentId: EnvironmentId.make("環".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH)),
+      threadId: ThreadId.make("線".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH)),
+      messageId: MessageId.make("文".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH)),
       text: "引".repeat(ASSISTANT_CITATION_MAX_TEXT_LENGTH),
       comment: "注".repeat(ASSISTANT_CITATION_MAX_COMMENT_LENGTH),
       start: Number.MAX_SAFE_INTEGER - ASSISTANT_CITATION_MAX_TEXT_LENGTH,
@@ -152,6 +153,30 @@ describe("assistant citation references", () => {
     expect(renderAssistantCitationsAsText(marker)).toBe(
       `\n\n> Assistant quote:\n> ${largeCitation.text}\n\nComment: ${largeCitation.comment}\n\n`,
     );
+  });
+
+  it("round-trips citations of provider messages whose IDs nest the thread ID", () => {
+    const threadId = ThreadId.make(
+      "thread:project:7a0c2f3e-5b1d-4c8a-9e6f-2d4b8a1c3e5f:0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f",
+    );
+    const nest = (outer: string, inner: string) => `${outer}:${encodeURIComponent(inner)}`;
+    const providerTurnId = nest(
+      "provider-turn:provider:pi:native-turn",
+      nest(threadId, `${threadId}:run:1`),
+    );
+    const messageId = MessageId.make(
+      nest(
+        "message:provider:pi:native-item",
+        nest(providerTurnId, `${providerTurnId}:assistant:0`),
+      ),
+    );
+    const piCitation: AssistantCitation = { ...citation, threadId, messageId };
+    const marker = serializeAssistantCitation(piCitation);
+
+    expect(messageId.length).toBeGreaterThan(512);
+    expect(collectAssistantCitations(marker)).toEqual([
+      { citation: piCitation, source: marker, start: 0, end: marker.length },
+    ]);
   });
 
   it("edits only the bound comment and trims only its outer whitespace", () => {
