@@ -150,6 +150,11 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
+  splitMarkdownDetails,
+  withReferenceDefinitions,
+  type MarkdownReferenceDefinition,
+} from "../../lib/markdownDocument";
+import {
   SelectableMarkdownText,
   type MarkdownFileContextMenu,
   type MarkdownImageRenderer,
@@ -309,6 +314,8 @@ const FEED_REFLOW_SETTLE_MS = 200;
 // across all of them keeps a passing moment off the end from re-anchoring the rest to a row.
 const FEED_REFLOW_HOLD_MS = 600;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
+// Lines a fold body up with its summary text (12 px chevron + 8 px gap).
+const MARKDOWN_DETAILS_BODY_INDENT = 20;
 const ASSISTANT_ROW_HORIZONTAL_PADDING = 3.5;
 const THREAD_FEED_DISCLOSURE_ENTER_TRANSITION = FadeIn.delay(
   THREAD_DISCLOSURE_TRANSITION_MS,
@@ -1184,16 +1191,65 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  /** The feed row a fold toggle anchors to; null leaves the feed's default anchor. */
+  readonly disclosureAnchorKey?: string | undefined;
+  readonly onToggleDisclosure: (anchorKey: string | null) => void;
 }) {
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
-  const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
+  // Folds split first so an artifact template inside a fold stays in its body.
+  const { segments, definitions } = useMemo(
+    () => splitMarkdownDetails(liveMarkdown),
+    [liveMarkdown],
+  );
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
     linkCustomization: (href) =>
       withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
   };
+  const renderBlocks = (key: string, markdown: string) => (
+    <AssistantMarkdownBlocks
+      key={key}
+      markdown={markdown}
+      definitions={definitions}
+      markdownStyles={props.markdownStyles}
+      linkHandlers={linkHandlers}
+      onUseArtifactTemplate={props.onUseArtifactTemplate}
+      renderImage={props.renderImage}
+      skills={props.skills}
+    />
+  );
 
+  return segments.map((segment) => {
+    if (segment.kind === "details") {
+      return (
+        <MarkdownDetailsFold
+          key={`details:${segment.sourceOffset}`}
+          summary={segment.summary}
+          open={segment.open}
+          onToggle={() => props.onToggleDisclosure(props.disclosureAnchorKey ?? null)}
+        >
+          {renderBlocks("body", segment.body)}
+        </MarkdownDetailsFold>
+      );
+    }
+    return renderBlocks(`markdown:${segment.sourceOffset}`, segment.markdown);
+  });
+});
+
+function AssistantMarkdownBlocks(props: {
+  readonly markdown: string;
+  readonly definitions: ReadonlyArray<MarkdownReferenceDefinition>;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly linkHandlers: MarkdownLinkHandlers;
+  readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
+  readonly renderImage: MarkdownImageRenderer;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+}) {
+  const segments = useMemo(
+    () => splitCodexArtifactTemplateMarkdown(props.markdown),
+    [props.markdown],
+  );
   return segments.map((segment) => {
     if (segment.kind === "artifact-template") {
       return (
@@ -1205,20 +1261,61 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
       );
     }
     if (segment.markdown.trim().length === 0) return null;
-
-    const markdown = renderCodexInlineDirectivesAsMarkdown(segment.markdown);
     return (
       <SelectableMarkdownText
         key={`markdown:${segment.sourceOffset}`}
-        markdown={markdown}
+        markdown={renderCodexInlineDirectivesAsMarkdown(
+          withReferenceDefinitions(segment.markdown, props.definitions),
+        )}
         skills={props.skills}
         textStyle={props.markdownStyles.nativeTextStyle}
-        {...linkHandlers}
+        {...props.linkHandlers}
         renderImage={props.renderImage}
       />
     );
   });
-});
+}
+
+function MarkdownDetailsFold(props: {
+  readonly summary: string;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(props.open);
+  const imageWidth = useContext(MarkdownImageAvailableWidthContext);
+  return (
+    <View className="my-2 border-y border-border-subtle">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        onPress={() => {
+          props.onToggle();
+          setExpanded(!expanded);
+        }}
+        className="min-h-11 flex-row items-center gap-2 py-2 active:opacity-70"
+      >
+        <SymbolView
+          name={expanded ? "chevron.down" : "chevron.right"}
+          size={12}
+          tintColorClassName="accent-foreground-muted"
+        />
+        <Text className="min-w-0 flex-1 font-t3-medium text-sm text-foreground">
+          {props.summary}
+        </Text>
+      </Pressable>
+      {expanded ? (
+        <MarkdownImageAvailableWidthContext
+          value={Math.max(0, imageWidth - MARKDOWN_DETAILS_BODY_INDENT)}
+        >
+          <View className="pb-3" style={{ paddingLeft: MARKDOWN_DETAILS_BODY_INDENT }}>
+            {props.children}
+          </View>
+        </MarkdownImageAvailableWidthContext>
+      ) : null}
+    </View>
+  );
+}
 
 function useMarkdownStyles(): MarkdownStyleSets {
   const { appearance } = useAppearancePreferences();
@@ -1597,6 +1694,7 @@ function renderFeedEntry(
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
+    readonly onToggleMarkdownDetails: (anchorKey: string | null) => void;
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
@@ -2183,6 +2281,8 @@ function renderFeedEntry(
               onUseArtifactTemplate={props.onUseArtifactTemplate}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
+              disclosureAnchorKey={entry.id}
+              onToggleDisclosure={props.onToggleMarkdownDetails}
             />
           </MarkdownImageAvailableWidthContext>
         ) : null}
@@ -3051,6 +3151,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       linkHandlers={markdownLinkHandlers}
       renderImage={renderMarkdownImage}
       skills={props.skills}
+      onToggleDisclosure={suspendEndScrollMaintenanceForDisclosure}
     />
   );
   const reviewCommentColors = useReviewCommentColors();
@@ -3532,6 +3633,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             onToggleWorkGroup,
             onToggleWorkRow,
             onToggleTurnFold,
+            onToggleMarkdownDetails: suspendEndScrollMaintenanceForDisclosure,
             onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
