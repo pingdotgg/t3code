@@ -1696,7 +1696,17 @@ const make = Effect.gen(function* () {
       task.completionDelivery?.state !== "acknowledged" &&
       task.completionDelivery?.state !== "disposed"
     ) {
-      const parentProjection = yield* loadProjection(scope.thread.threadId);
+      const parentThreadId = scope.thread.threadId;
+      const parentProjection = yield* threadManagement
+        .getThreadRecords(parentThreadId, ["runs"])
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Unable to read thread ${parentThreadId}: ${errorMessage(error)}`,
+            ),
+          ),
+        );
       const observingRun = ThreadManagementService.latestActiveRun(parentProjection);
       yield* threadManagement
         .dispatch({
