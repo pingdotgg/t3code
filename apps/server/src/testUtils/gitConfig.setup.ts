@@ -1,8 +1,4 @@
-// Git for Windows installs with core.autocrlf=true, which checks committed LF
-// files out as CRLF and breaks every byte-exact content assertion; a signing
-// key or a non-default init branch on the developer's machine breaks fixtures
-// the same way. Set as environment so each git child the driver spawns sees it
-// without touching the fixtures.
+// Override inherited autocrlf, signing and init-branch settings through env so every git child gets stable fixtures.
 const entries: ReadonlyArray<readonly [key: string, value: string]> = [
   ["core.autocrlf", "false"],
   ["core.filemode", "false"],

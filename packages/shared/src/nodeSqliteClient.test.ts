@@ -8,6 +8,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
+import type * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
 import * as SqliteClient from "./nodeSqliteClient.ts";
@@ -64,6 +66,41 @@ const countEntries = (sql: SqlClient.SqlClient) =>
 const layer = it.layer(SqliteClient.layer({ filename: ":memory:" }));
 
 layer("NodeSqliteClient", (it) => {
+  it.effect("records the writer connection owner on a waiting query", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const held = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holder = yield* sql
+        .withTransaction(
+          sql`SELECT 1`.pipe(
+            Effect.andThen(Deferred.succeed(held, undefined)),
+            Effect.andThen(Deferred.await(release)),
+          ),
+        )
+        .pipe(Effect.withSpan("test.writerHolder"), Effect.forkChild);
+      yield* Deferred.await(held);
+
+      const waitingSpan = yield* Deferred.make<Tracer.Span>();
+      const observeWaiter: Statement.Transformer = (statement, _sql, _fiber, span) =>
+        Deferred.succeed(waitingSpan, span).pipe(Effect.as(statement));
+      const waiter = yield* sql`SELECT 1`.pipe(
+        Effect.provideService(Statement.CurrentTransformer, observeWaiter),
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        (effect) => Effect.forkChild(effect, { startImmediately: true }),
+      );
+      const span = yield* Deferred.await(waitingSpan);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(waiter);
+
+      assert.equal(span.attributes.get("db.lock_owner_at_start.name"), "test.writerHolder");
+      assert.typeOf(span.attributes.get("db.lock_owner_at_start.fiber_id"), "number");
+      assert.typeOf(span.attributes.get("db.lock_owner_at_start.trace_id"), "string");
+      assert.typeOf(span.attributes.get("db.lock_owner_at_start.span_id"), "string");
+    }),
+  );
+
   it.effect("retries preparing a query after the missing schema becomes available", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -139,8 +176,7 @@ it.effect("keeps another connection from committing between a transaction's read
           const [row] = yield* sql<{ readonly value: number }>`
             SELECT value FROM counters WHERE id = 1
           `;
-          // With a deferred BEGIN this commit lands and the write below fails
-          // with SQLITE_BUSY_SNAPSHOT, which no busy timeout can wait out.
+          // Deferred BEGIN permits a competing commit, causing SQLITE_BUSY_SNAPSHOT that no timeout can resolve.
           yield* Effect.sync(() =>
             assert.throws(
               () => other.exec("UPDATE counters SET value = value + 1 WHERE id = 1"),
@@ -198,6 +234,27 @@ it.effect("lets the writer commit while a read-only transaction is open", () =>
 
       assert.deepEqual(counts, { before: 1, after: 1 });
       assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 2);
+    }),
+  ),
+);
+
+it.effect("serves another read while a read-only transaction is open", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const opened = yield* Deferred.make<void>();
+      const other = yield* Effect.forkChild(
+        Deferred.await(opened).pipe(Effect.andThen(countEntries(sql).pipe(SqliteClient.readOnly))),
+      );
+      yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* countEntries(sql);
+            yield* Deferred.succeed(opened, undefined);
+            // One shared reader would make this join wait on the transaction forever.
+            assert.equal(yield* Fiber.join(other), 1);
+          }),
+        )
+        .pipe(SqliteClient.readOnly);
     }),
   ),
 );
@@ -297,6 +354,25 @@ it.effect("uses the writer when the reader cannot open the database", () =>
 
       assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
       assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
+
+      // A read beside an open read transaction must not start a worker on the next slot.
+      const held = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holder = yield* sql
+        .withTransaction(
+          countEntries(sql).pipe(
+            Effect.andThen(Deferred.succeed(held, undefined)),
+            Effect.andThen(Deferred.await(release)),
+          ),
+        )
+        .pipe(SqliteClient.readOnly, Effect.forkChild);
+      yield* Deferred.await(held);
+      const other = yield* countEntries(sql).pipe(SqliteClient.readOnly, (effect) =>
+        Effect.forkChild(effect, { startImmediately: true }),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      assert.equal(yield* Fiber.join(other), 1);
       assert.equal(startedWorkers.length, startedBefore + 1);
     }),
   ),

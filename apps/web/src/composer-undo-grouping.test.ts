@@ -47,11 +47,7 @@ function composer(text = "") {
       }
       return api;
     },
-    /**
-     * The transaction the composer's `handlePaste` dispatches: a plain insert,
-     * tagged by `markAsClipboardEdit`. ProseMirror's own paste path would tag
-     * it, but the composer takes every text paste before that path runs.
-     */
+    // The custom paste path bypasses ProseMirror's clipboard tagging.
     paste: (s: string) => {
       clock += 80;
       dispatch(markAsClipboardEdit(state.tr.insertText(s), "paste"));

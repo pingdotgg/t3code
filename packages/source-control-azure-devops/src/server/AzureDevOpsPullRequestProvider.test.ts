@@ -83,8 +83,7 @@ const readSlice = (input: {
               reads.push(item.path);
               inFlight += 1;
               peakInFlight = Math.max(peakInFlight, inFlight);
-              // Every read suspends before it answers, as a subprocess would, so what runs at
-              // once is the scheduler's answer rather than an artefact of resolving inline.
+              // Yield like a subprocess to exercise concurrency.
               const answersAfter = input.paths.length - input.paths.indexOf(item.path);
               for (let turn = 0; turn < answersAfter; turn += 1) yield* Effect.yieldNow;
               inFlight -= 1;
@@ -208,8 +207,7 @@ describe("getDiff reads", () => {
               Effect.gen(function* () {
                 inFlight += 1;
                 peakInFlight = Math.max(peakInFlight, inFlight);
-                // Suspends before answering, as a subprocess would, so what is out at once is the
-                // scheduler's answer rather than an artefact of resolving inline.
+                // Yield like a subprocess to exercise concurrency.
                 yield* Effect.yieldNow;
                 yield* Effect.yieldNow;
                 inFlight -= 1;
