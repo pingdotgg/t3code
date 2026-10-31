@@ -1,6 +1,6 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import type { ComponentType } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
@@ -35,7 +35,11 @@ import {
 } from "./nativeSourceFileAdapter";
 import { SourceText } from "@t3tools/mobile-source-text";
 
-import { boundedSelectableSourceTokens, prepareSourceFileDocument } from "./source-file-document";
+import {
+  boundedSelectableSourceTokens,
+  MAX_SELECTABLE_SOURCE_SPANS,
+  prepareSourceFileDocument,
+} from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
 import { createSourceLineScroll } from "./source-file-scroll";
 
@@ -50,6 +54,8 @@ interface SourceFileSurfaceProps {
 }
 
 type SourceHighlightStatus = "highlighting" | "ready" | "error";
+
+const PLAIN_SOURCE_HIGHLIGHT_ATOM = Atom.make(AsyncResult.success(null));
 
 const HighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly codeSurface: ResolvedMobileCodeSurface;
@@ -136,12 +142,16 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
     props.initialLine !== null && props.initialLine !== undefined && props.initialLine > 0
       ? Math.min(Math.floor(props.initialLine) - 1, Math.max(0, lines.length - 1))
       : null;
-  const highlightAtom = sourceHighlightAtom({
-    path: props.path,
-    contents: normalizedContents,
-    theme,
-  });
-  const highlightResult = useAtomValue(highlightAtom);
+  // Each line uses a span before tokens; these selectable documents must render as plain text.
+  const highlightAtom =
+    props.selectable && lines.length > MAX_SELECTABLE_SOURCE_SPANS
+      ? PLAIN_SOURCE_HIGHLIGHT_ATOM
+      : sourceHighlightAtom({
+          path: props.path,
+          contents: normalizedContents,
+          theme,
+        });
+  const highlightResult = useAtomValue<Atom.Type<typeof highlightAtom>>(highlightAtom);
   const tokens = AsyncResult.isSuccess(highlightResult) ? highlightResult.value : null;
   const status: SourceHighlightStatus = AsyncResult.isFailure(highlightResult)
     ? "error"

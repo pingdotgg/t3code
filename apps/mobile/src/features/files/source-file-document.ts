@@ -3,6 +3,7 @@ import { buildNativeSourceRows } from "./nativeSourceFileAdapter";
 
 const MAX_CACHED_DOCUMENTS = 8;
 const MAX_CACHED_CHARACTERS = 4 * 1024 * 1024;
+export const MAX_SELECTABLE_SOURCE_SPANS = 2_000;
 
 export interface SourceFileDocument {
   readonly contents: string;
@@ -62,7 +63,7 @@ export function boundedSelectableSourceTokens(
   let spans = tokens.length;
   for (const line of tokens) {
     spans += line.length;
-    if (spans > 2_000) return null;
+    if (spans > MAX_SELECTABLE_SOURCE_SPANS) return null;
   }
   return tokens;
 }
