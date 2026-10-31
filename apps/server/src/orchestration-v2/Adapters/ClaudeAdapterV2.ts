@@ -10351,14 +10351,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               hostPlatform,
             ),
           };
-          const replaced = yield* Ref.getAndSet(queryContext, context);
-          if (replaced !== null) {
-            replaced.handedOffSubagents = new Set(
-              [...context.subagentsFromEarlierProcesses].filter(
-                (subagent) => !replaced.subagentsFromEarlierProcesses.has(subagent),
-              ),
-            );
-          }
+          // One step, so the replaced process cannot exit between the install and the handoff.
+          yield* Ref.update(queryContext, (replaced) => {
+            if (replaced !== null) {
+              replaced.handedOffSubagents = new Set(
+                [...context.subagentsFromEarlierProcesses].filter(
+                  (subagent) => !replaced.subagentsFromEarlierProcesses.has(subagent),
+                ),
+              );
+            }
+            return context;
+          });
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
