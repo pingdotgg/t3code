@@ -16,12 +16,15 @@ import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   type ConnectionCatalogEntry,
   type ConnectionCredential,
+  type FocusAllowlist,
   type ConnectionProfile,
   type ConnectionRegistration,
   type ConnectionRoute,
   type PlatformConnectionRegistration,
   SshConnectionProfile,
   connectionRegistrationCatalogEntry,
+  sameFocusAllowlist,
+  shouldConnect,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
@@ -98,6 +101,7 @@ export class EnvironmentRegistry extends Context.Service<
       ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
     >;
     readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
+    readonly focusAllowlist: SubscriptionRef.SubscriptionRef<FocusAllowlist>;
     readonly start: Effect.Effect<void>;
     /**
      * Succeeds with `false` and changes nothing when the environment is
@@ -167,6 +171,11 @@ export class EnvironmentRegistry extends Context.Service<
       | Persistence.ConnectionPersistenceError
       | ConnectionBlockedError
     >;
+    /**
+     * Pauses environments an iOS Focus filter leaves out, without changing their saved switches.
+     * `null` lifts the restriction.
+     */
+    readonly setFocusAllowlist: (allowlist: FocusAllowlist) => Effect.Effect<void>;
     readonly setCompatibility: (
       environmentId: EnvironmentId,
       error: ConnectionBlockedError | null,
@@ -269,6 +278,7 @@ export const make = Effect.gen(function* () {
   const entries =
     yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(initialEntries);
   const networkStatus = yield* SubscriptionRef.make(yield* connectivity.status);
+  const focusAllowlist = yield* SubscriptionRef.make<FocusAllowlist>(null);
   const serviceScopes = yield* SubscriptionRef.make<
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
   >(new Map());
@@ -366,7 +376,7 @@ export const make = Effect.gen(function* () {
           const supervisor = yield* EnvironmentSupervisor.make(entry, {
             // Seed the intent to avoid publishing a false switched-off state
             // before an enabled, compatible environment starts connecting.
-            initiallyDesired: entry.enabled && entry.unsupportedReason === undefined,
+            initiallyDesired: shouldConnect(entry, yield* SubscriptionRef.get(focusAllowlist)),
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
@@ -1093,7 +1103,9 @@ export const make = Effect.gen(function* () {
           return nextEntries;
         });
         if (lease !== undefined) {
-          yield* enabled ? lease.supervisor.connect : lease.supervisor.disconnect;
+          yield* shouldConnect(next, yield* SubscriptionRef.get(focusAllowlist))
+            ? lease.supervisor.connect
+            : lease.supervisor.disconnect;
         } else if (enabled) {
           yield* createServiceScope(next);
         }
@@ -1110,6 +1122,31 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
+
+  const focusAllowlistLock = yield* Semaphore.make(1);
+  const setFocusAllowlist = Effect.fn("EnvironmentRegistry.setFocusAllowlist")(function* (
+    allowlist: FocusAllowlist,
+  ) {
+    const previous = yield* SubscriptionRef.get(focusAllowlist);
+    if (sameFocusAllowlist(previous, allowlist)) return;
+    yield* SubscriptionRef.set(focusAllowlist, allowlist);
+    // Like `setEnabled`, flip the existing supervisors so they keep their durable streams.
+    yield* Effect.forEach(
+      (yield* SubscriptionRef.get(serviceScopes)).keys(),
+      (environmentId) =>
+        withLeaseLock(
+          environmentId,
+          Effect.gen(function* () {
+            const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+            if (lease === undefined) return;
+            const connect = shouldConnect(lease.entry, allowlist);
+            if (connect === shouldConnect(lease.entry, previous)) return;
+            yield* connect ? lease.supervisor.connect : lease.supervisor.disconnect;
+          }),
+        ),
+      { concurrency: "unbounded", discard: true },
+    );
+  }, focusAllowlistLock.withPermits(1));
 
   const state = Effect.fn("EnvironmentRegistry.state")(function* (environmentId: EnvironmentId) {
     const supervisor = yield* acquireSupervisor(environmentId);
@@ -1174,7 +1211,8 @@ export const make = Effect.gen(function* () {
             new Map(current).set(environmentId, { ...lease, entry: next }),
           );
           if (error !== null) yield* lease.supervisor.disconnect;
-          else if (next.enabled) yield* lease.supervisor.connect;
+          else if (shouldConnect(next, yield* SubscriptionRef.get(focusAllowlist)))
+            yield* lease.supervisor.connect;
         }
         yield* SubscriptionRef.update(entries, (current) =>
           new Map(current).set(environmentId, next),
@@ -1186,6 +1224,7 @@ export const make = Effect.gen(function* () {
   return EnvironmentRegistry.of({
     entries,
     networkStatus,
+    focusAllowlist,
     start,
     register,
     assertKnownAddress,
@@ -1196,6 +1235,7 @@ export const make = Effect.gen(function* () {
     removeRelayEnvironments,
     retryNow,
     setEnabled,
+    setFocusAllowlist,
     setCompatibility,
     state,
     stateChanges,

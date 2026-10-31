@@ -32,6 +32,7 @@ function presentation(
     entry: { target: target(environmentId, endpoint), profile: Option.none(), enabled: true },
     connection: { phase: "connected", error: null, traceId: null },
     serverConfig,
+    pausedByFocus: false,
   };
 }
 

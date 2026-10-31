@@ -1160,6 +1160,79 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("a Focus allowlist pauses other environments without changing their switches", () =>
+    Effect.gen(function* () {
+      const allowed = RELAY_TARGET.environmentId;
+      const paused = SECOND_RELAY_TARGET.environmentId;
+      const switchedOff = TARGET.environmentId;
+      const harness = yield* makeHarness([RELAY_TARGET, SECOND_RELAY_TARGET, TARGET], [], [], {
+        initialDisabled: [switchedOff],
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        for (const environmentId of [allowed, paused]) {
+          yield* awaitConnectionState(
+            registry,
+            environmentId,
+            (state) => state.phase === "connected",
+          );
+        }
+
+        yield* registry.setFocusAllowlist(new Set([allowed, switchedOff]));
+        expect(yield* SubscriptionRef.get(registry.focusAllowlist)).toEqual(
+          new Set([allowed, switchedOff]),
+        );
+        yield* awaitConnectionState(
+          registry,
+          paused,
+          (state) => !state.desired && state.phase === "available",
+        );
+        expect(yield* registry.state(allowed)).toMatchObject({ phase: "connected" });
+        expect((yield* SubscriptionRef.get(registry.entries)).get(paused)?.enabled).toBe(true);
+        expect(yield* Ref.get(harness.storedDisabled)).toEqual(new Set([switchedOff]));
+        // Allowing an environment does not override its own switch.
+        expect(yield* registry.state(switchedOff)).toMatchObject({ desired: false });
+
+        yield* registry.setFocusAllowlist(null);
+        yield* awaitConnectionState(registry, paused, (state) => state.phase === "connected");
+        expect(yield* registry.state(switchedOff)).toMatchObject({ desired: false });
+        expect(yield* Ref.get(harness.storedDisabled)).toEqual(new Set([switchedOff]));
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("switching on an environment that a Focus excludes stores the switch only", () =>
+    Effect.gen(function* () {
+      const environmentId = RELAY_TARGET.environmentId;
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        initialDisabled: [environmentId],
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.setFocusAllowlist(new Set());
+        yield* registry.start;
+
+        yield* registry.setEnabled(environmentId, true);
+        expect((yield* SubscriptionRef.get(registry.entries)).get(environmentId)?.enabled).toBe(
+          true,
+        );
+        expect(yield* Ref.get(harness.storedDisabled)).toEqual(new Set());
+        expect(yield* registry.state(environmentId)).toMatchObject({ desired: false });
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+
+        yield* registry.setFocusAllowlist(null);
+        yield* awaitConnectionState(
+          registry,
+          environmentId,
+          (state) => state.phase === "connected",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("re-registering a switched-off environment keeps it off", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([RELAY_TARGET], [], [], {
