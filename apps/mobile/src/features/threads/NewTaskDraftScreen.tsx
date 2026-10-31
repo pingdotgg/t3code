@@ -271,7 +271,9 @@ export function NewTaskDraftScreen(props: {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const shareTemplates = AsyncResult.isSuccess(preferences)
     ? usableShareTemplates(preferences.value.shareTemplates)
-    : null;
+    : AsyncResult.isFailure(preferences)
+      ? []
+      : null;
   const [shareTemplateChoice, setShareTemplateChoice] = useState<{
     readonly shareId: string;
     readonly template: string | null;

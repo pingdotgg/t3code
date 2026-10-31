@@ -11,6 +11,12 @@ describe("applyShareTemplate", () => {
       expected: "Review this for bugs:\n\nhttps://example.com/pr/1",
     },
     {
+      name: "preserves shared indentation and trailing newlines",
+      prompt: "  {{shared}}  ",
+      shared: "    code\n",
+      expected: "    code\n",
+    },
+    {
       name: "fills every placeholder",
       prompt: "Summarize {{shared}} and cite {{shared}}.",
       shared: "the article",
