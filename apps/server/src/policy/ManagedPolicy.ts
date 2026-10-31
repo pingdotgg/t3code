@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   ManagedPolicyFileError,
   managedPolicyPath,
+  layerWindowsRegistry,
   readManagedPolicy,
   readManagedPolicyFile,
 } from "@t3tools/shared/managedPolicyFile";
@@ -173,7 +174,7 @@ const make = Effect.gen(function* () {
   return policy;
 });
 
-export const layer = Layer.effect(ManagedPolicy, make);
+export const layer = Layer.effect(ManagedPolicy, make).pipe(Layer.provide(layerWindowsRegistry));
 
 /** A policy for tests; `undefined` means unmanaged. */
 export const layerTest = (document?: ManagedPolicyDocument) =>

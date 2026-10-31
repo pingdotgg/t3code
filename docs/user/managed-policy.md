@@ -66,8 +66,9 @@ a device profile, since T3 Code ignores user profiles, and deploy only one profi
 A profile cannot hold `null`, so use a policy file if a setting's value must be `null`.
 
 **Windows registry.** Set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON,
-from Group Policy Preferences or an Intune script. T3 Code reads it with `reg.exe`; where registry
-tools are blocked for users, deploy the policy file instead. In PowerShell, as an administrator:
+from Group Policy Preferences or an Intune script. T3 Code reads it through the Windows registry
+API, so it works where registry tools such as `reg.exe` are blocked for users. In PowerShell, as an
+administrator:
 
 ```powershell
 $json = (Get-Content -Raw -Encoding UTF8 policy.json) -replace '\r?\n\s*', ''
