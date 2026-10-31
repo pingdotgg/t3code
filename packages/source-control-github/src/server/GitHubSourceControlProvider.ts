@@ -1,8 +1,4 @@
-import {
-  isSecretReference,
-  settingsSecretLiteral,
-  SourceControlProviderKind,
-} from "@t3tools/contracts";
+import { settingsSecretLiteral, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -229,7 +225,7 @@ export const makeDiscovery = Effect.gen(function* () {
     probe: Effect.fn("GitHubSourceControlProvider.discovery")(function* (cwd: string) {
       const settings = readSourceControlHostSettings(
         GitHubClient.settings,
-        yield* sourceControlHost.settings.get.pipe(
+        yield* sourceControlHost.settings.getWithSecrets(GitHubClient.definition.kind).pipe(
           Effect.map((current) => current.sourceControlHosts[GitHubClient.definition.kind]),
           Effect.orElseSucceed(() => undefined),
         ),
@@ -242,7 +238,7 @@ export const makeDiscovery = Effect.gen(function* () {
         spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings) },
       });
       const token = settings.tokens["github.com"];
-      const savedToken = isSecretReference(token) || settingsSecretLiteral(token).trim() !== "";
+      const savedToken = settingsSecretLiteral(token).trim() !== "";
       const signedIn =
         appSignIn.enabled && !savedToken && (settings.signIns["github.com"] ?? "").trim() !== "";
       const variable = environmentTokenVariable(environment);

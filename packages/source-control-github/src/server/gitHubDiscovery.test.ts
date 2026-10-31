@@ -8,6 +8,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
@@ -83,13 +84,17 @@ it.effect("asks for no credential when the identity resolver left the base URL e
   }),
 );
 
-const referencedTokenSettings = Schema.decodeSync(ServerSettings)({
+const decodeSettings = Schema.decodeSync(ServerSettings);
+const referencedTokenSettings = decodeSettings({
   sourceControlHosts: {
     github: { tokens: { "github.com": { provider: "vault", reference: "op://v/gh" } } },
   },
 });
 
-it.effect("checks a GitHub token saved as a secret reference against the API", () =>
+it.effect.each([
+  { name: "readable", token: "resolved-token", source: "the token saved in Settings" },
+  { name: "unreadable", token: "", source: "GH_TOKEN from the server environment" },
+])("checks the $name GitHub token reference against the API", (scenario) =>
   Effect.gen(function* () {
     const paths: Array<string> = [];
     const discovery = yield* GitHubSourceControlProvider.makeDiscovery.pipe(
@@ -108,25 +113,49 @@ it.effect("checks a GitHub token saved as a secret reference against the API", (
             },
           }),
           Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
-          TestSourceControlHost.layer({
-            settings: referencedTokenSettings,
-            process: {
-              run: () =>
-                Effect.succeed(
-                  TestSourceControlHost.processOutput("", {
-                    exitCode: ChildProcessSpawner.ExitCode(1),
-                  }),
-                ),
-            },
-          }),
+          Layer.effect(
+            SourceControlHost.SourceControlHost,
+            Effect.gen(function* () {
+              const host = yield* SourceControlHost.SourceControlHost;
+              return {
+                ...host,
+                settings: {
+                  ...host.settings,
+                  getWithSecrets: () =>
+                    Effect.succeed(
+                      decodeSettings({
+                        sourceControlHosts: {
+                          github: { tokens: { "github.com": scenario.token } },
+                        },
+                      }),
+                    ),
+                },
+              };
+            }),
+          ).pipe(
+            Layer.provide(
+              TestSourceControlHost.layer({
+                settings: referencedTokenSettings,
+                process: {
+                  run: () =>
+                    Effect.succeed(
+                      TestSourceControlHost.processOutput("", {
+                        exitCode: ChildProcessSpawner.ExitCode(1),
+                      }),
+                    ),
+                },
+              }),
+            ),
+          ),
         ),
       ),
-      Effect.provideService(HostProcess.Environment, {}),
+      Effect.provideService(HostProcess.Environment, { GH_TOKEN: "environment-token" }),
     );
     if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
     const item = yield* discovery.probe("/repo");
     assert.deepStrictEqual(paths, ["user"]);
     assert.strictEqual(item.auth.status, "authenticated");
     assert.deepStrictEqual(item.auth.account, Option.some("octocat"));
+    assert.include(Option.getOrThrow(item.auth.detail), scenario.source);
   }),
 );
