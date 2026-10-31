@@ -4233,7 +4233,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (threadHasUnfinishedWork(projection)) return yield* reject("still has work in progress.");
       if (thread.projectId === command.projectId) return;
       const target = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
-      if (Option.isNone(target) || target.value.deletedAt !== null) {
+      if (Option.isNone(target) || target.value.deletedAt !== null || target.value.archivedAt !== null) {
         return yield* reject(`cannot move to missing project ${command.projectId}.`);
       }
       const now = yield* DateTime.now;
