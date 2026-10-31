@@ -9,10 +9,7 @@ import {
   type TerminalBufferState,
 } from "@t3tools/client-runtime/state/terminal";
 
-import {
-  synchronizeTerminalOutput,
-  writeTerminalOutputUpdate,
-} from "../../components/ThreadTerminalDrawer";
+import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer";
 import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, ghosttyCellText } from "./core";
 import { loadGhosttyRuntime } from "./runtime";
 import { terminalNavigationShortcutData } from "../../keybindings";
@@ -320,7 +317,9 @@ describe("GhosttyTerminalCore snapshots", () => {
   it("clears paste readiness when a capped replay discards a disable sequence", async () => {
     const core = await createCore();
     let state = createSession("\x1b[?2004hprompt$ ");
-    let cursor = synchronizeTerminalOutput(core, state, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    let update = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    writeTerminalOutputUpdate(core, update);
+    let cursor = update.cursor;
     expect(core.isBracketedPasteMode()).toBe(true);
 
     state = applyTerminalAttachStreamEvent(
@@ -337,11 +336,13 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(terminalOutputText(state.output)).not.toContain("\x1b[?2004l");
     expect(terminalOutputText(state.output)).not.toContain("\x1b[?2004h");
 
-    cursor = synchronizeTerminalOutput(core, state, cursor);
+    update = readTerminalOutputUpdate(state.output, cursor);
+    writeTerminalOutputUpdate(core, update);
+    cursor = update.cursor;
     expect(core.isBracketedPasteMode()).toBe(false);
 
     state = append(state, "\x1b[?2004hprompt$ ");
-    synchronizeTerminalOutput(core, state, cursor);
+    writeTerminalOutputUpdate(core, readTerminalOutputUpdate(state.output, cursor));
     expect(core.isBracketedPasteMode()).toBe(true);
     expect(core.encodePaste("a\nb")).toBe("\x1b[200~a\nb\x1b[201~");
   });
