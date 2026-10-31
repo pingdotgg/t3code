@@ -47,7 +47,7 @@ interface ComposerPrimaryActionsProps {
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
-  onImplementPlanInNewThread?: () => void;
+  onImplementPlanInNewThread?: (() => void) | undefined;
   promptHasText: boolean;
   /** Dictation is running; Send finishes it and submits once the transcript lands. */
   voiceInputActive?: boolean;
