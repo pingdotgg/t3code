@@ -143,7 +143,7 @@ export function ConnectAgentSurface() {
 
   if (loaded.status === "loading") {
     return (
-      <StandalonePage>
+      <StandalonePage tone="plain">
         <ConnectAgentHeading
           title="Checking the sign-in request"
           description="One moment while this environment verifies the agent's request."
@@ -155,7 +155,7 @@ export function ConnectAgentSurface() {
 
   if (loaded.status === "invalid") {
     return (
-      <StandalonePage>
+      <StandalonePage tone="plain">
         <ConnectAgentHeading title="This sign-in cannot continue" description={loaded.message} />
         <p className="mt-4 text-body text-muted-foreground">
           Close this page and start the sign-in again from your agent.
@@ -169,7 +169,7 @@ export function ConnectAgentSurface() {
   const canApprove = pending === null && (oneClick || pairingCode.trim().length > 0);
 
   return (
-    <StandalonePage>
+    <StandalonePage tone="plain">
       <ConnectAgentHeading
         title={`Connect ${details.clientName}`}
         description={
