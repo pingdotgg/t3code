@@ -78,18 +78,26 @@ const make = Effect.fn("makeHostResources")(function* () {
     const totalDelta = cpu.total - previousCpu.total;
     const idleDelta = cpu.idle - previousCpu.idle;
     let cpuCount = cpu.count;
-    let cpuUtilization =
+    const hostUtilization =
       previousCpu.count === cpu.count && totalDelta > 0 && idleDelta >= 0
         ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
         : null;
+    let cpuUtilization = hostUtilization;
     if (cpuMax) {
-      const quotaCpus = Math.min(Number(cpuMax[1]) / Number(cpuMax[2]), cpu.count);
-      // Nearest integer keeps the picker's cpuCount × idle closest to the quota's real capacity.
-      cpuCount = Math.min(cpu.count, Math.max(1, Math.round(quotaCpus)));
-      cpuUtilization =
-        previousUsage !== null && usage !== null && elapsedMicros > 0 && quotaCpus > 0
-          ? Math.min(1, Math.max(0, (usage - previousUsage) / (elapsedMicros * quotaCpus)))
-          : null;
+      // availableParallelism also honours CPU affinity (cpusets).
+      const capacity = Math.min(
+        Number(cpuMax[1]) / Number(cpuMax[2]),
+        NodeOS.availableParallelism(),
+      );
+      cpuCount = Math.max(1, Math.floor(capacity));
+      if (previousUsage !== null && usage !== null && elapsedMicros > 0 && capacity > 0) {
+        const cgroupIdle = capacity - (usage - previousUsage) / elapsedMicros;
+        // Agents can run in sibling cgroups (agentScope.ts), so a busy host still counts.
+        const hostIdle = hostUtilization === null ? capacity : cpu.count * (1 - hostUtilization);
+        cpuUtilization = Math.min(1, Math.max(0, 1 - Math.min(cgroupIdle, hostIdle) / capacity));
+      } else {
+        cpuUtilization = null;
+      }
     }
 
     let totalMemoryBytes = NodeOS.totalmem();

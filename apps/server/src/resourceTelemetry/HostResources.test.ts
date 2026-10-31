@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import type * as NodeOS from "node:os";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -7,8 +8,34 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 
 import * as HostResources from "./HostResources.ts";
+
+// An 8-CPU host; every cpus() call advances each CPU by 100 ms at `host.busy` utilization.
+const host = vi.hoisted(() => ({ busy: 0, reads: 0 }));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeOS>();
+  return {
+    ...actual,
+    availableParallelism: () => 8,
+    cpus: () => {
+      const elapsed = 100 * host.reads++;
+      const times = {
+        user: elapsed * host.busy,
+        nice: 0,
+        sys: 0,
+        idle: elapsed * (1 - host.busy),
+        irq: 0,
+      };
+      return Array.from({ length: 8 }, () => ({ model: "test", speed: 1, times }));
+    },
+  };
+});
+const setup = (busy = 0) => {
+  host.busy = busy;
+  host.reads = 0;
+};
 
 const GiB = 1024 ** 3;
 const MiB = 1024 ** 2;
@@ -67,6 +94,7 @@ const read = Effect.gen(function* () {
 describe("HostResources.layer", () => {
   it.effect("reports the CPU quota and usage of the server's cgroup", () =>
     Effect.gen(function* () {
+      setup();
       const snapshot = yield* read;
 
       // One CPU of quota, 150 ms of it used during the 200 ms sample.
@@ -88,6 +116,7 @@ describe("HostResources.layer", () => {
 
   it.effect("reports memory against the server cgroup's memory.max", () =>
     Effect.gen(function* () {
+      setup();
       const snapshot = yield* read;
 
       assert.strictEqual(snapshot.totalMemoryBytes, GiB);
@@ -98,6 +127,25 @@ describe("HostResources.layer", () => {
         linuxHost({
           ...unlimitedCgroup,
           [`${cgroup}/memory.max`]: [`${GiB}\n`],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("counts a busy host against an idle, quota-limited server cgroup", () =>
+    Effect.gen(function* () {
+      // Agents in sibling cgroups keep the host 90% busy; the server's own cgroup is idle.
+      setup(0.9);
+      const snapshot = yield* read;
+
+      assert.strictEqual(snapshot.cpuCount, 2);
+      // Only 0.8 of 8 host CPUs are free, which is 60% of the 2-CPU quota in use.
+      assert.closeTo(snapshot.cpuUtilization ?? Number.NaN, 0.6, 1e-9);
+    }).pipe(
+      Effect.provide(
+        linuxHost({
+          ...unlimitedCgroup,
+          [`${cgroup}/cpu.max`]: ["200000 100000\n"],
         }),
       ),
     ),
