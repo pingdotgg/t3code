@@ -111,6 +111,13 @@ interface NativeComposerEditorProps extends ViewProps {
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
 
+// A view command rejects with "Unable to find the view" when the composer's native view is
+// unmounted, which can happen while an open question hides the composer slot. There is nothing
+// to act on then.
+function settleViewCommand(command: Promise<void> | undefined): void {
+  command?.catch(() => undefined);
+}
+
 function basename(path: string): string {
   const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separator >= 0 ? path.slice(separator + 1) : path;
@@ -139,7 +146,19 @@ export function ComposerEditor({
   const [, forceNativeEventRender] = useState(0);
   // Start history empty so restored drafts or recycled views receive a non-echo controlled payload.
   const nativeEventSnapshotsRef = useRef<ComposerNativeEventSnapshot[]>([]);
-  const confirmedTokensRef = useRef(collectComposerInlineTokens(props.value));
+  // Tokens advance from the previous committed value; render-phase state keeps
+  // an abandoned render from leaking a trailing token into the next one.
+  const [confirmedTokens, setConfirmedTokens] = useState(() => ({
+    value: props.value,
+    tokens: collectComposerInlineTokens(props.value),
+  }));
+  let tokens = confirmedTokens.tokens;
+  if (confirmedTokens.value !== props.value) {
+    tokens = collectComposerInlineTokens(props.value, {
+      preserveTrailingFrom: confirmedTokens.tokens,
+    });
+    setConfirmedTokens({ value: props.value, tokens });
+  }
   const bodyText = useScaledTextRole("body");
   const theme = useUniwindTheme();
   const fontFamily = FONT_FAMILIES.regular;
@@ -147,10 +166,10 @@ export function ComposerEditor({
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => void nativeRef.current?.focus(),
-      blur: () => void nativeRef.current?.blur(),
+      focus: () => settleViewCommand(nativeRef.current?.focus()),
+      blur: () => settleViewCommand(nativeRef.current?.blur()),
       setSelection: (nextSelection) =>
-        void nativeRef.current?.setSelection(nextSelection.start, nextSelection.end),
+        settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
     }),
     [],
   );
@@ -158,10 +177,6 @@ export function ComposerEditor({
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
   const chipTextColor = createNativeComposerTheme(theme).text;
   const tokensJson = useMemo(() => {
-    const tokens = collectComposerInlineTokens(props.value, {
-      preserveTrailingFrom: confirmedTokensRef.current,
-    });
-    confirmedTokensRef.current = tokens;
     return JSON.stringify(
       composerContextEditorTokens(props.value, tokens, skillLabels).map((token) => {
         const record =
@@ -194,11 +209,12 @@ export function ComposerEditor({
         };
       }),
     );
-  }, [props.value, props.context, skillLabels, theme, chipTextColor]);
+  }, [props.value, tokens, props.context, skillLabels, theme, chipTextColor]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
   // the native revision and rejected by the editor instead of re-applying a
   // stale caret or stale text mid-typing.
+  /* oxlint-disable react/refs -- Native controlled edits must reconcile against the last acknowledged native event before sending the next payload. */
   const controlledEventCount = resolveComposerControlledEventCount(
     props.value,
     selection ?? null,
@@ -211,6 +227,7 @@ export function ComposerEditor({
     mostRecentEventCount,
     nativeEventSnapshotsRef.current,
   );
+  /* oxlint-enable react/refs */
   const isNativeEcho =
     controlledEventCount === mostRecentEventCount && acknowledgesLatestNativeEvent;
   const controlledDocumentJson = JSON.stringify({
@@ -220,14 +237,16 @@ export function ComposerEditor({
     mostRecentEventCount: controlledEventCount,
     isNativeEcho,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prunes native editor event snapshots once a committed payload acknowledges them
   useEffect(() => {
     if (!acknowledgesLatestNativeEvent) return;
     nativeEventSnapshotsRef.current = pruneAcknowledgedComposerNativeEvents(
       nativeEventSnapshotsRef.current,
       mostRecentEventCount,
     );
-  }, [acknowledgesLatestNativeEvent, mostRecentEventCount]);
+  }, [acknowledgesLatestNativeEvent, mostRecentEventCount, nativeEventSnapshotsRef]);
   const assumedValue = props.value;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the committed controlled payload as the native editor's assumed state
   useEffect(() => {
     // Newer native events make this payload stale; do not record it as applied.
     if (isNativeEcho || controlledEventCount !== mostRecentEventCountRef.current) return;
@@ -236,7 +255,14 @@ export function ComposerEditor({
       controlledEventCount,
       assumedValue,
     );
-  }, [assumedValue, controlledEventCount, isNativeEcho, controlledDocumentJson]);
+  }, [
+    assumedValue,
+    controlledEventCount,
+    isNativeEcho,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Every changed native payload, including selection-only changes, must update the assumed native snapshot.
+    controlledDocumentJson,
+    nativeEventSnapshotsRef,
+  ]);
   const acceptNativeEvent = useCallback(
     (eventCount: number, value: string, nextSelection: ComposerEditorSelection) => {
       const acknowledgedEventCount = acknowledgeComposerNativeEvent(
@@ -254,7 +280,7 @@ export function ComposerEditor({
       });
       return acknowledgedEventCount;
     },
-    [],
+    [nativeEventSnapshotsRef],
   );
   const themeJson = JSON.stringify(createNativeComposerTheme(theme));
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};

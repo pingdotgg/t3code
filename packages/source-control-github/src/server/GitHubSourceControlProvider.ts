@@ -27,6 +27,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
@@ -212,6 +213,9 @@ export const makeDiscovery = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const environment = yield* HostProcess.Environment;
+  const appSignIn = yield* GitHubAppSignIn.GitHubAppSignIn;
+  const offerAppSignIn = <A extends SourceControlProviderDiscoveryItem>(item: A): A =>
+    appSignIn.enabled ? { ...item, appSignIn: true } : item;
 
   return {
     type: "managed-cli",
@@ -234,9 +238,18 @@ export const makeDiscovery = Effect.gen(function* () {
         spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings) },
       });
       const savedToken = (settings.tokens["github.com"] ?? "").trim() !== "";
+      const signedIn =
+        appSignIn.enabled && !savedToken && (settings.signIns["github.com"] ?? "").trim() !== "";
       const variable = environmentTokenVariable(environment);
-      const tokenSource = savedToken ? "the token saved in Settings" : variable;
-      if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) return cli;
+      const appName = GitHubClient.APP_SIGN_IN.appName;
+      const tokenSource = savedToken
+        ? "the token saved in Settings"
+        : signedIn
+          ? `the ${appName} sign-in`
+          : variable;
+      if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) {
+        return offerAppSignIn(cli);
+      }
       const viewer = yield* api
         .rest({ host: "github.com", operation: "discovery", path: "user" })
         .pipe(Effect.result);
@@ -244,7 +257,7 @@ export const makeDiscovery = Effect.gen(function* () {
         ? Option.getOrUndefined(decodeViewer(viewer.success.body))?.login
         : undefined;
       const accounts = cli.auth.accounts === undefined ? {} : { accounts: cli.auth.accounts };
-      return {
+      return offerAppSignIn({
         ...cli,
         status: "available" as const,
         auth: {
@@ -255,24 +268,28 @@ export const makeDiscovery = Effect.gen(function* () {
                 host: "github.com",
                 detail: savedToken
                   ? "Using the token saved in Settings; it overrides GH_TOKEN and the gh login."
-                  : `Using ${variable} from the server environment; it overrides the account chosen in Settings.`,
+                  : signedIn
+                    ? `Signed in with ${appName}.`
+                    : `Using ${variable} from the server environment; it overrides the account chosen in Settings.`,
               })
             : Result.isFailure(viewer) && viewer.failure._tag !== "GitHubApiAuthenticationError"
               ? providerAuth({
                   status: "unknown",
                   host: "github.com",
-                  detail: `Could not check ${savedToken ? tokenSource : `the token in ${tokenSource}`}: ${viewer.failure.message}`,
+                  detail: `Could not check ${savedToken || signedIn ? tokenSource : `the token in ${tokenSource}`}: ${viewer.failure.message}`,
                 })
               : providerAuth({
                   status: "unauthenticated",
                   host: "github.com",
                   detail: savedToken
                     ? "GitHub refused the token saved in Settings. Replace or remove it in Settings → Source Control."
-                    : `GitHub refused the token in ${tokenSource}. Replace it, or unset it to use \`gh auth login\`.`,
+                    : signedIn
+                      ? `GitHub refused the ${appName} sign-in. Sign in again in Settings → Source Control.`
+                      : `GitHub refused the token in ${tokenSource}. Replace it, or unset it to use \`gh auth login\`.`,
                 })),
           ...accounts,
         },
-      } satisfies SourceControlProviderDiscoveryItem;
+      } satisfies SourceControlProviderDiscoveryItem);
     }),
     // Claim disabled hosts so errors identify the setting.
     refineUnknownRemote: ({ context }) => {
@@ -337,6 +354,7 @@ function fromGitHubApiError(
     case "GitHubApiNotFoundError":
       return failure(notFound, error);
     case "GitHubCliFailedError":
+    case "GitHubAppSessionError":
     case "GitHubApiResponseError":
     case "GitHubApiRequestError":
       return failure(error.message.trim() || "GitHub request failed.", error);
@@ -750,7 +768,9 @@ export const make = Effect.gen(function* () {
       );
 
       yield* Effect.gen(function* () {
-        if (!exists) yield* runGit(input.cwd, "branch", ["branch", "--", localBranch, target.ref]);
+        if (!exists) {
+          yield* git.createBranch({ cwd: input.cwd, branch: localBranch, startPoint: target.ref });
+        }
         yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
         if (exists) {
           yield* runGit(
@@ -839,13 +859,19 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("github"),
+    resolveRemoteWebHost: Effect.fn("GitHubSourceControlProvider.resolveRemoteWebHost")(
+      ({ context }) => Effect.succeed(gitHubApiHostForRemote(context.remoteUrl)),
+    ),
     // GitHub matches bare heads; read a full page to disambiguate forks by owner.
     headBranchProbe: ({ headSelectors }) => ({
       headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
       limit: 100,
     }),
-    readChangeRequestTemplate: ({ cwd, treeish }) =>
-      GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
+    readChangeRequestTemplate: Effect.fn("GitHubSourceControlProvider.readChangeRequestTemplate")(
+      function ({ cwd, treeish }) {
+        return GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute);
+      },
+    ),
     // `createChangeRequest` targets what `resolveRepository` picks: GH_REPO when it parses, else
     // the remote `gh repo set-default` marked (`gh-resolved`). An HTTPS remote keeps a
     // non-default port in the context's host, and the mark is then ignored.
@@ -882,19 +908,19 @@ export const make = Effect.gen(function* () {
     ),
     // `gh pr create` run in the checkout, as an agent in a T3 worktree often does, takes its base
     // from this key.
-    recordBranchBase: ({ cwd, branch, baseBranch }) =>
-      git
-        .execute({
-          operation: "GitHubSourceControlProvider.recordBranchBase",
-          cwd,
-          args: ["config", `branch.${branch}.gh-merge-base`, baseBranch],
-        })
+    recordBranchBase: Effect.fn("GitHubSourceControlProvider.recordBranchBase")(function ({
+      cwd,
+      branch,
+      baseBranch,
+    }) {
+      return git
+        .writeConfigValue({ cwd, key: `branch.${branch}.gh-merge-base`, value: baseBranch })
         .pipe(
-          Effect.asVoid,
           Effect.catch((cause) =>
             Effect.logWarning("Could not record the branch base for gh", { cause }),
           ),
-        ),
+        );
+    }),
     resolveLink: (input) => {
       // Automatic enrichment must not send ambient CLI credentials to a host from message text.
       if (input.url.host !== "github.com") return undefined;
@@ -904,31 +930,37 @@ export const make = Effect.gen(function* () {
       if (!match) return undefined;
       return readLinkSubject(input, `repos/${match[1]}/${match[2]}/issues/${match[3]}`);
     },
-    listChangeRequests: (input) =>
-      (input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive).pipe(
-        Effect.flatMap((allowReserve) =>
-          listByHead({
-            cwd: input.cwd,
-            headSelector: input.headSelector,
-            state: input.state,
-            limit: input.limit ?? (input.state === "open" ? 1 : 20),
-            host: contextHost(input.context),
-            context: input.context,
-            allowReserve,
-          }),
-        ),
-        Effect.map((records) => records.map(toChangeRequest)),
-        Effect.mapError(
-          providerError("listChangeRequests", input.cwd, { reference: input.headSelector }),
-        ),
-      ),
-    getChangeRequest: (input) =>
-      readPullRequest({ ...input, host: contextHost(input.context) }).pipe(
+    listChangeRequests: Effect.fn("GitHubSourceControlProvider.listChangeRequests")(
+      function (input) {
+        return (
+          input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive
+        ).pipe(
+          Effect.flatMap((allowReserve) =>
+            listByHead({
+              cwd: input.cwd,
+              headSelector: input.headSelector,
+              state: input.state,
+              limit: input.limit ?? (input.state === "open" ? 1 : 20),
+              host: contextHost(input.context),
+              context: input.context,
+              allowReserve,
+            }),
+          ),
+          Effect.map((records) => records.map(toChangeRequest)),
+          Effect.mapError(
+            providerError("listChangeRequests", input.cwd, { reference: input.headSelector }),
+          ),
+        );
+      },
+    ),
+    getChangeRequest: Effect.fn("GitHubSourceControlProvider.getChangeRequest")(function (input) {
+      return readPullRequest({ ...input, host: contextHost(input.context) }).pipe(
         Effect.map(toChangeRequest),
         Effect.mapError(
           providerError("getChangeRequest", input.cwd, { reference: input.reference }),
         ),
-      ),
+      );
+    }),
     createChangeRequest: Effect.fn("GitHubSourceControlProvider.createChangeRequest")(
       function* (input) {
         const locator = yield* resolveRepository(input);
@@ -972,7 +1004,11 @@ export const make = Effect.gen(function* () {
         const locator =
           parseGitHubRepositorySelector(input.repository, fallbackHost) ??
           (/^[^/\s]+$/.test(bareName)
-            ? { host: fallbackHost, owner: yield* readViewerLogin(fallbackHost), name: bareName }
+            ? {
+                host: fallbackHost,
+                owner: yield* readViewerLogin(fallbackHost),
+                name: bareName,
+              }
             : null);
         if (locator === null) return yield* failure("Repositories are named owner/name.");
         return repositoryCloneUrls(yield* readRepository(locator));
@@ -980,7 +1016,9 @@ export const make = Effect.gen(function* () {
       (effect, input) =>
         effect.pipe(
           Effect.mapError(
-            providerError("getRepositoryCloneUrls", input.cwd, { repository: input.repository }),
+            providerError("getRepositoryCloneUrls", input.cwd, {
+              repository: input.repository,
+            }),
           ),
         ),
     ),
@@ -1033,11 +1071,14 @@ export const make = Effect.gen(function* () {
       },
       (effect, input) => effect.pipe(Effect.mapError(providerError("getDefaultBranch", input.cwd))),
     ),
-    checkoutChangeRequest: (input) =>
-      checkoutPullRequest(input).pipe(
-        Effect.mapError(
-          providerError("checkoutChangeRequest", input.cwd, { reference: input.reference }),
-        ),
-      ),
+    checkoutChangeRequest: Effect.fn("GitHubSourceControlProvider.checkoutChangeRequest")(
+      function (input) {
+        return checkoutPullRequest(input).pipe(
+          Effect.mapError(
+            providerError("checkoutChangeRequest", input.cwd, { reference: input.reference }),
+          ),
+        );
+      },
+    ),
   });
 });

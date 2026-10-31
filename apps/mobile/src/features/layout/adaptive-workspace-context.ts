@@ -20,7 +20,6 @@ interface AdaptiveWorkspaceContextValue {
   readonly fileInspector: FileInspectorPaneLayout;
   readonly primarySidebarSearchQuery: string;
   readonly startNewTask: () => void;
-  readonly deferThreadSelectionUntil: (operation: Promise<unknown>) => void;
   /** Use `useSelectWorkspaceDetail`, which also works outside the layout. */
   readonly selectDetail?: (detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) => void;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
@@ -67,7 +66,6 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   fileInspector: compactFileInspector,
   primarySidebarSearchQuery: "",
   startNewTask: () => undefined,
-  deferThreadSelectionUntil: () => undefined,
   activateAuxiliaryPaneRole: () => () => undefined,
   registerWorkspaceInspector: () => () => undefined,
   setPrimarySidebarSearchQuery: () => undefined,

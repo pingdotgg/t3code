@@ -17,11 +17,7 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 
-import {
-  persistClientSettingsPatch,
-  useMergedSettings,
-  useMigrateModelPreferences,
-} from "../../hooks/useSettings";
+import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
@@ -46,7 +42,6 @@ export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const { target } = useSettingsScope();
-  useMigrateModelPreferences(target?.environmentId ?? null, target?.settings ?? null);
   return useMergedSettings(target?.settings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
@@ -72,6 +67,7 @@ function useRunScopedPlan() {
   return (
     environments: Parameters<typeof planScopedSettingsPatch>[1],
     planner: Parameters<typeof writer>[1],
+    onFailed?: () => void,
   ) => {
     const plan = planner(environments);
     if (plan.unavailableReason) {
@@ -80,6 +76,7 @@ function useRunScopedPlan() {
         title: "Setting not saved",
         description: plan.unavailableReason,
       });
+      onFailed?.();
       return;
     }
     void writer(
@@ -104,6 +101,7 @@ function useRunScopedPlan() {
       persistClientSettingsPatch,
     ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
       if (failedEnvironments.length === 0) return;
+      onFailed?.();
       toastManager.add({
         type: "error",
         title:
@@ -124,8 +122,13 @@ function useRunScopedPlan() {
 export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
-  return (patch: ScopedSettingsPatch) =>
-    run(environments, (current) => planScopedSettingsPatch(scope, current, patch));
+  /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
+  return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
+    run(
+      environments,
+      (current) => planScopedSettingsPatch(scope, current, patch),
+      options?.onFailed,
+    );
 }
 
 export function useClearScopedSettings() {
