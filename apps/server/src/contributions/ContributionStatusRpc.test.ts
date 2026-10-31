@@ -185,7 +185,7 @@ describe("subscribeContributionStatus", () => {
       const runtime = ContributionStatusStore.layer.pipe(
         Layer.provideMerge(producer),
         Layer.provide(
-          Layer.merge(
+          Layer.mergeAll(
             NodeServices.layer,
             PortScanner.layerTest,
             Layer.succeed(
