@@ -530,16 +530,12 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
             }
             const isIpv6 = input.args.includes("tcpv6");
             return Effect.succeed({
-              stdout: isIpv6
-                ? ""
-                : "  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234\r\n",
-              stderr: "",
+              ...processOutput(
+                isIpv6
+                  ? ""
+                  : "  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234\r\n",
+              ),
               code: isIpv6 && ipv6Fails ? ChildProcessSpawner.ExitCode(1) : null,
-              timedOut: false,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-              stdoutInvalidUtf8: false,
-              stderrInvalidUtf8: false,
             });
           },
         }),
@@ -550,12 +546,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
   );
 
   return Effect.gen(function* () {
-    const scanner = yield* PortScanner.PortDiscovery;
-    yield* scanner.registerTerminalProcesses({
-      threadId: "scanner-thread",
-      terminalId: "scanner-terminal",
-      processIds: [1234],
-    });
+    const scanner = yield* ownedScanner();
     expect(yield* scanner.scan()).toEqual([]);
     ipv6Fails = false;
     expect(yield* scanner.scan()).toMatchObject([
@@ -592,9 +583,7 @@ effectIt.effect("filters native Windows ownership without probes and caches proc
           Layer.provide(
             Layer.succeed(FetchHttpClient.Fetch, (input) => {
               requests.push(String(input));
-              return Promise.resolve(
-                new Response("app", { headers: { "content-type": "text/html" } }),
-              );
+              return Promise.resolve(new Response("app"));
             }),
           ),
         ),
@@ -602,12 +591,7 @@ effectIt.effect("filters native Windows ownership without probes and caches proc
     ),
   );
   return Effect.gen(function* () {
-    const scanner = yield* PortScanner.PortDiscovery;
-    yield* scanner.registerTerminalProcesses({
-      threadId: "scanner-thread",
-      terminalId: "scanner-terminal",
-      processIds: [1234],
-    });
+    const scanner = yield* ownedScanner();
     const servers = yield* scanner.scan();
     expect(servers).toMatchObject([{ port: 5173, pid: 1234, processName: "node" }]);
     expect(servers).toHaveLength(1);
