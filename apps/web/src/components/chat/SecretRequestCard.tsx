@@ -21,7 +21,7 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { CheckIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
+import { CheckIcon, KeyRoundIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 import { isSecretsFeatureEnabled } from "../../env";
@@ -131,7 +131,7 @@ function PendingSecretRequestForm(props: {
   return (
     <form
       data-v2-item-type={item.type}
-      className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4"
+      className="flex min-w-0 flex-col rounded-xl surface-tray p-1"
       onSubmit={onSubmit}
       autoComplete="off"
       // On click, not pointerdown: the mousedown that follows a pointerdown
@@ -144,93 +144,96 @@ function PendingSecretRequestForm(props: {
         document.getElementById(inputId)?.focus();
       }}
     >
-      <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2.5">
+        <KeyRoundIcon aria-hidden className="size-4 shrink-0 text-warning-foreground" />
         <label htmlFor={inputId} className="text-label text-foreground">
           {item.label}
         </label>
         {item.reason.trim() ? (
-          <p className="text-body wrap-anywhere text-muted-foreground">{item.reason}</p>
+          <p className="min-w-0 text-body wrap-anywhere text-muted-foreground">{item.reason}</p>
         ) : null}
+        <p
+          id={privacyId}
+          className="ms-auto flex min-w-0 items-center gap-1 text-meta text-muted-foreground"
+        >
+          <ShieldCheckIcon className="size-3 shrink-0" aria-hidden />
+          {secretRequestPrivacyNote(item)}
+        </p>
       </div>
-      <div className="flex min-w-0 items-center gap-2">
-        {sources.length > 0 ? (
-          <SecretSourceSelect
-            value={source?.id ?? null}
-            sources={sources}
-            label={item.label}
-            disabled={submitting}
-            onValueChange={(next) => {
-              setSourceId(next);
-              setError(null);
-            }}
-          />
-        ) : null}
-        <div className="min-w-0 flex-1">
-          {source === null ? (
-            <Input
-              id={inputId}
-              // A CSS-masked text field still exposes its value to screen readers.
-              type="password"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              data-1p-ignore
-              data-lpignore="true"
-              data-bwignore
-              placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
-              value={secret}
+      <div className="flex min-w-0 flex-col gap-2 rounded-lg bg-card p-2.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {sources.length > 0 ? (
+            <SecretSourceSelect
+              value={source?.id ?? null}
+              sources={sources}
+              label={item.label}
               disabled={submitting}
-              aria-invalid={error !== null || undefined}
-              aria-describedby={describedBy}
-              onChange={(event) => setSecret(event.currentTarget.value)}
-            />
-          ) : (
-            <Input
-              id={inputId}
-              font="mono"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              placeholder={source.referencePlaceholder}
-              value={reference}
-              disabled={submitting}
-              aria-invalid={error !== null || undefined}
-              aria-describedby={describedBy}
-              onChange={(event) => {
-                setReference(event.currentTarget.value);
+              onValueChange={(next) => {
+                setSourceId(next);
                 setError(null);
               }}
             />
-          )}
+          ) : null}
+          <div className="min-w-40 flex-1">
+            {source === null ? (
+              <Input
+                size="lg"
+                id={inputId}
+                // A CSS-masked text field still exposes its value to screen readers.
+                type="password"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-1p-ignore
+                data-lpignore="true"
+                data-bwignore
+                placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+                value={secret}
+                disabled={submitting}
+                aria-invalid={error !== null || undefined}
+                aria-describedby={describedBy}
+                onChange={(event) => setSecret(event.currentTarget.value)}
+              />
+            ) : (
+              <Input
+                size="lg"
+                id={inputId}
+                font="mono"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                placeholder={source.referencePlaceholder}
+                value={reference}
+                disabled={submitting}
+                aria-invalid={error !== null || undefined}
+                aria-describedby={describedBy}
+                onChange={(event) => {
+                  setReference(event.currentTarget.value);
+                  setError(null);
+                }}
+              />
+            )}
+          </div>
+          <Button type="submit" disabled={submitting || draft.trim().length === 0}>
+            Save securely
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            disabled={submitting}
+            onClick={() => void send({ type: "decline" })}
+          >
+            Decline
+          </Button>
         </div>
-        <Button type="submit" disabled={submitting || draft.trim().length === 0}>
-          Save securely
-        </Button>
-      </div>
-      {error !== null ? (
-        <p id={errorId} role="alert" className="text-meta text-destructive">
-          {error}
-        </p>
-      ) : null}
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <p
-          id={privacyId}
-          className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground"
-        >
-          <ShieldCheckIcon className="size-3.5 shrink-0" aria-hidden />
-          {secretRequestPrivacyNote(item)}
-        </p>
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost-muted"
-          disabled={submitting}
-          onClick={() => void send({ type: "decline" })}
-        >
-          Decline
-        </Button>
+        {error !== null ? (
+          <p id={errorId} role="alert" className="text-meta text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
     </form>
   );
