@@ -174,16 +174,52 @@ it("passes a good run and names every rule a bad run breaks", () => {
   const preview = projectCases.find(
     (entry) => entry.id === "title-only-project-creation-side-effects",
   )!;
-  const disclosure = "It creates README.md and assets/icon.svg, then attempts an Initial commit.";
+  const disclosure =
+    "It initializes a Git repository, creates README.md and assets/icon.svg, then attempts an Initial commit.";
   for (const text of [
     disclosure,
-    "README.md and assets/icon.svg are created; an Initial commit is attempted.",
-    "Writes `README.md`.\nGenerates `assets/icon.svg`.\nAttempts an initial commit.",
-    "I won't create anything yet. After approval, the tool creates README.md and assets/icon.svg, then attempts an Initial commit.",
-    "After approval, README.md and assets/icon.svg are created and an Initial commit is attempted. I won't create anything yet.",
+    "A Git repository is initialized; README.md and assets/icon.svg are created; an Initial commit is attempted.",
+    "Runs `git init`.\nWrites `README.md`.\nGenerates `assets/icon.svg`.\nAttempts an initial commit.",
+    "I won't create anything yet. After approval, the tool initializes Git, creates README.md and assets/icon.svg, then attempts an Initial commit.",
+    "After approval, Git is initialized, README.md and assets/icon.svg are created and an Initial commit is attempted. I won't create anything yet.",
   ]) {
     assert.deepEqual(failed(preview.expect, { calls: [], text, stopReason: "end_turn" }), [], text);
   }
+  const precedence = projectCases.find(
+    (entry) => entry.id === "git-identity-precedes-explicit-grouping",
+  )!;
+  for (const text of [
+    "Git identity takes precedence over explicit grouping, so these projects cannot be merged this way.",
+    "Repository identity wins over the grouping key; I can't combine these projects using it.",
+    "Explicit grouping cannot override Git repository identity. I cannot merge them with this key.",
+  ]) {
+    assert.deepEqual(
+      failed(precedence.expect, { calls: [], text, stopReason: "end_turn" }),
+      [],
+      text,
+    );
+  }
+  const acceptedBadExplanations: Array<string> = [];
+  for (const text of [
+    "Git identity can be overridden by explicit grouping, but I cannot make the change now.",
+    "Explicit grouping overrides Git identity, but I cannot merge them now.",
+    "Git identity does not take precedence over explicit grouping. I cannot merge them now.",
+  ]) {
+    if (failed(precedence.expect, { calls: [], text, stopReason: "end_turn" }).length === 0) {
+      acceptedBadExplanations.push(text);
+    }
+  }
+  for (const text of [
+    "It creates README.md and assets/icon.svg, then attempts an Initial commit.",
+    "It creates README.md and assets/icon.svg, then attempts an Initial commit, but does not initialize Git.",
+    "Git is not initialized. It creates README.md and assets/icon.svg, then attempts an Initial commit.",
+    "It initializes Git and creates README.md and assets/icon.svg, then attempts an Initial commit. The Git repository will not be initialized.",
+  ]) {
+    if (failed(preview.expect, { calls: [], text, stopReason: "end_turn" }).length === 0) {
+      acceptedBadExplanations.push(text);
+    }
+  }
+  assert.deepEqual(acceptedBadExplanations, []);
   for (const run of [
     {
       calls: [{ step: 0, tool: "Bash", input: { command: "git init /home/user/docs" } }],
