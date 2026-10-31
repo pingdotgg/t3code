@@ -31,14 +31,8 @@ const TONE_DOT_CLASS = {
   error: "bg-adaptive-rose-600-400",
 } as const satisfies Record<ContributionStatusTone, string>;
 
-/**
- * Plugin notifications as an in-app banner under the status bar, one at a
- * time for a few seconds each. Only notifications that arrive while the app
- * is open are shown; tapping one about a thread opens it, and a banner goes
- * away once the server no longer retains its notification (its plugin
- * stopped, it expired or was evicted, or the server restarted) or its
- * environment is removed.
- */
+// Deliver transient notifications to the mounted native client; retained history is suppressed.
+// Withdraw banners with server retention or environment removal, and announce each fresh banner to accessibility.
 export function PluginNotificationBannerHost() {
   const { environments } = useEnvironments();
   const [queue, setQueue] = useState<ReadonlyArray<Banner>>([]);

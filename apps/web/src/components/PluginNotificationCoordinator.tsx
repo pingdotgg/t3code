@@ -11,13 +11,8 @@ import { useEnvironments } from "../state/environments";
 import { usePluginNotificationFrame } from "../state/pluginNotifications";
 import { toastManager } from "./ui/toast";
 
-/**
- * Shows plugin notifications as toasts, for every environment whose server
- * supports them. Only notifications that arrive while the app is open are
- * shown; a toast closes once the server no longer retains its notification
- * (its plugin stopped, it expired or was evicted, or the server restarted)
- * or its environment is removed.
- */
+// Toast only notifications arriving while this client is mounted; retained history is suppressed.
+// Close imperative handles when notifications are withdrawn or their environment is removed.
 export function PluginNotificationCoordinator() {
   const { environments } = useEnvironments();
   return environments.map(({ environmentId }) => (
