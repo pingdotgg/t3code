@@ -4,8 +4,8 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -63,6 +63,13 @@ const layerTestFor = (platform: NodeJS.Platform) =>
   ElectronWindow.layer.pipe(Layer.provide(Layer.succeed(HostProcess.Platform, platform)));
 
 const layerTest = layerTestFor("linux");
+
+function makeBrowserWindow(input: { readonly id: number; readonly destroyed: boolean }) {
+  return {
+    id: input.id,
+    isDestroyed: vi.fn(() => input.destroyed),
+  } as unknown as Electron.BrowserWindow;
+}
 
 function makeWindowsRevealWindow() {
   return {

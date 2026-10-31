@@ -176,6 +176,7 @@ describe("DesktopClerk", () => {
         "requestSingleInstanceLock",
         "on:second-instance",
         "on:open-url",
+        "on:open-file",
         "createClerkBridge",
       ]);
       assert.deepEqual(storageMock.mock.calls, [
@@ -313,7 +314,7 @@ it.effect(
     const listeners = new Map<string, (...args: unknown[]) => void>();
     const revealed = Promise.withResolvers<void>();
     const loadURL = vi.fn(async (_url: string) => undefined);
-    const window = { loadURL };
+    const window = { loadURL, isDestroyed: () => false };
     const electronApp = {
       on: (name: string, listener: (...args: unknown[]) => void) =>
         Effect.sync(() => {
@@ -321,7 +322,8 @@ it.effect(
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
     const electronWindow = {
-      currentMainOrFirst: Effect.succeedSome(window),
+      waitForMain: Effect.succeed(window),
+      main: Effect.succeedSome(window),
       reveal: () => Effect.sync(() => revealed.resolve()),
     } as unknown as ElectronWindow.ElectronWindow["Service"];
     return Effect.gen(function* () {
