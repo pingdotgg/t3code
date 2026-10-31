@@ -62,6 +62,7 @@ vi.mock("~/browser/previewRuntime", () => ({
 vi.mock("~/state/environments", () => ({
   useEnvironmentHttpBaseUrl: () => "http://localhost:3773/",
   usePrimaryEnvironmentId: () => null,
+  readPrimaryEnvironmentId: () => null,
   useEnvironment: () => ({ label: "Local" }),
 }));
 vi.mock("~/remoteOpen", () => ({
@@ -74,6 +75,7 @@ vi.mock("~/remoteOpen", () => ({
 }));
 vi.mock("~/hooks/useSettings", () => ({
   updateClientSettings: vi.fn(),
+  isClientSettingsHydrated: () => true,
   ensureClientSettingsHydrated: () => Promise.resolve(),
   getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
   useClientSettings: (select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
@@ -119,6 +121,11 @@ vi.mock("~/components/files/projectFilesQueryState", () => ({
 vi.mock("~/components/DiffWorkerPoolProvider", () => ({ DiffWorkerPoolProvider: Wrapper }));
 // The tree is the Pierre file tree web component; the breadcrumbs are the entry point under test.
 vi.mock("~/components/files/FileBrowserPanel", () => ({ default: () => null }));
+vi.mock("~/browser/browserDefaults", () => ({
+  resolveBrowserDefaults: () =>
+    Promise.resolve({ viewport: { _tag: "fill" }, profileId: "default" }),
+}));
+vi.mock("~/components/chat/OpenInPicker", () => ({ OpenInPicker: () => null }));
 vi.mock("~/components/chat/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
 vi.mock("~/components/ui/tooltip", () => ({
   Tooltip: Wrapper,

@@ -22,8 +22,15 @@ function DevicePanel(props: {
   onDismissSetup: () => void;
 }) {
   return (
-    <PanelHostContext value={{ threadRef: props.threadRef, visible: props.visible,
-      composerDraftTarget: props.threadRef, workspaceMutationId: null, sendAnnotation: () => undefined }}>
+    <PanelHostContext
+      value={{
+        threadRef: props.threadRef,
+        visible: props.visible,
+        composerDraftTarget: props.threadRef,
+        workspaceMutationId: null,
+        sendAnnotation: () => undefined,
+      }}
+    >
       <DeviceSidePanel surface={props.surface} onDismissSetup={props.onDismissSetup} />
     </PanelHostContext>
   );
