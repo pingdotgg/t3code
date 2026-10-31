@@ -1,0 +1,141 @@
+{
+  "baseCommit": "d20e9fa935d5a943c5c2988837827612b00bfa70",
+  "capture": {
+    "clock": "2026-10-24T12:00:00.000Z",
+    "timezone": "UTC",
+    "locale": "en-US",
+    "theme": "dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "zoom": 1,
+    "reducedMotion": true,
+    "deviceScaleFactorNote": "Record actual browser DPR (for example 2) as an explicit capture override; viewport is CSS pixels."
+  },
+  "project": {
+    "id": "issue-17110-project",
+    "title": "Issue 17110 synthetic Claude",
+    "path": "/tmp/t3-issue-17110-synthetic-project"
+  },
+  "browserSteps": [
+    "Use a fresh isolated client profile; set dark theme, en-US locale, UTC timezone, 1440x900 CSS viewport, DPR 1, 100% zoom and reduced motion.",
+    "For capture freeze Date only at capture.clock before app scripts run; do not freeze performance.now or timers. Record injection and actual browser/CLI versions with images.",
+    "Open Issue 17110 synthetic Claude, then Issue 17110 synthetic empty Claude thread. Leave composer empty; never send a turn.",
+    "Capture closed composer showing selected model/effort. Open model/options picker, reveal legacy models if needed, and capture full effort menu with expected labels. Do not change selection before this capture.",
+    "For max-fast open options and capture Fast enabled alongside selected Max; do not send.",
+    "For project-defaults also open project settings/default model picker and capture selected model and effort menu; dismiss without saving. A new-thread draft may be inspected for inheritance, never sent.",
+    "For per-model-exemption after initial capture inspect Sonnet 5.5 (Max capped to High) and Opus 4.8 (Max capped to Extra High), then dismiss. Reseed before subsequent baseline captures.",
+    "Record scenario, commit, generated capture.json, effective cap/probe result, browser and CLI versions, and each capture action with fresh images."
+  ],
+  "scenarios": {
+    "no-cap-haiku": {
+      "model": "claude-haiku-5-5",
+      "effort": "max",
+      "settings": {},
+      "expected": ["Max"]
+    },
+    "no-cap-opus": {
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "settings": {},
+      "expected": ["Max"]
+    },
+    "xhigh-haiku": {
+      "model": "claude-haiku-5-5",
+      "effort": "max",
+      "settings": {
+        "maxEffortLevel": "xhigh"
+      },
+      "expected": ["Max (capped to Extra High)"]
+    },
+    "xhigh-opus": {
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "settings": {
+        "maxEffortLevel": "xhigh"
+      },
+      "expected": ["Max (capped to Extra High)"]
+    },
+    "high-labels": {
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "settings": {
+        "maxEffortLevel": "high"
+      },
+      "expected": [
+        "Extra High (capped to High)",
+        "Max (capped to High)",
+        "Ultracode (capped to High)",
+        "Ultrathink"
+      ]
+    },
+    "sonnet-remapped-max": {
+      "model": "claude-sonnet-4-6",
+      "effort": "max",
+      "settings": {
+        "maxEffortLevel": "xhigh"
+      },
+      "expected": ["Max"]
+    },
+    "opus-4-6-max-high": {
+      "model": "claude-opus-4-6",
+      "effort": "max",
+      "settings": {
+        "maxEffortLevel": "xhigh"
+      },
+      "expected": ["Max (capped to High)"]
+    },
+    "project-defaults": {
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "settings": {
+        "maxEffortLevel": "xhigh"
+      },
+      "expected": ["Max (capped to Extra High)"],
+      "projectDefault": true
+    },
+    "max-fast": {
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "settings": {
+        "maxEffortLevel": "xhigh"
+      },
+      "expected": ["Max (capped to Extra High)", "Fast enabled"],
+      "fastMode": true
+    },
+    "per-model-exemption": {
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "settings": {
+        "maxEffortLevel": "xhigh",
+        "modelSettings": {
+          "opus": {
+            "maxEffortLevel": "max"
+          },
+          "claude-sonnet-5-5": {
+            "maxEffortLevel": "high"
+          }
+        }
+      },
+      "expected": ["Max"]
+    },
+    "effort-alias": {
+      "model": "claude-opus-5-5",
+      "effort": "ultracode",
+      "settings": {
+        "maxEffortLevel": "high"
+      },
+      "expected": ["Ultracode (capped to High)"]
+    },
+    "effort-alias-at-cap": {
+      "model": "claude-opus-5-5",
+      "effort": "ultracode",
+      "settings": {
+        "maxEffortLevel": "xhigh"
+      },
+      "expected": ["Ultracode"]
+    }
+  }
+}
