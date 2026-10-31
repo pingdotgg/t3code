@@ -6,9 +6,17 @@ import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);
 const decodeThreadId = Schema.decodeOption(ThreadId);
 
+// Keep ID punctuation distinct from prose delimiters when a plain URL is pasted.
+function encodeDeepLinkSegment(value: string): string {
+  return encodeURIComponent(value).replace(
+    /[.!'()]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
 export function threadDeepLink(ref: ScopedThreadRef): string {
   return new URL(
-    `/${encodeURIComponent(ref.environmentId)}/${encodeURIComponent(ref.threadId)}`,
+    `/${encodeDeepLinkSegment(ref.environmentId)}/${encodeDeepLinkSegment(ref.threadId)}`,
     DEFAULT_HOSTED_APP_URL,
   ).href;
 }

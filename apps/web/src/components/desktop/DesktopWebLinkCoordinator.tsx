@@ -7,6 +7,7 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { parseThreadDeepLink, threadDeepLink } from "@t3tools/shared/threadDeepLinks";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
+import { readLocalApi } from "../../localApi";
 import { readPairingAppLink, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import { useRouter } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
@@ -225,7 +226,7 @@ export function DesktopWebLinkCoordinator() {
       return;
     }
     if (bareThread !== null) {
-      await openInBrowser(threadDeepLink(bareThread));
+      await readLocalApi()?.shell.openExternal(threadDeepLink(bareThread));
       return;
     }
     const routeParams = router.state.matches.at(-1)?.params ?? {};

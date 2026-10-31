@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
   routeParams: {} as Record<string, string>,
   preview: vi.fn(),
+  openExternal: vi.fn(async (_url: string) => true),
   openLink: vi.fn(async () => undefined),
   navigate: vi.fn(async (): Promise<void> => undefined),
   openScratchProject: vi.fn(async () => null),
@@ -172,6 +173,7 @@ async function mount(...urls: string[]) {
   stack.use(
     stubGlobal("desktopBridge", {
       getClientSettings: async () => null,
+      openExternal: state.openExternal,
       webLinks: {
         onOpen: (listener: (url: string) => void) => {
           deliver = listener;
@@ -373,5 +375,19 @@ it.each([false, true])(
     expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ href: "/remote/thread" });
     expect(state.openScratchProject).not.toHaveBeenCalled();
     expect(state.openLink).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["https://app.t3.codes/unknown/thread", "t3code://threads/unknown/thread"])(
+  "opens an uncatalogued thread in the external browser: %s",
+  async (url) => {
+    setup();
+    await using _coordinator = await mount(url);
+    await vi.waitFor(() =>
+      expect(state.openExternal).toHaveBeenCalledWith("https://app.t3.codes/unknown/thread"),
+    );
+    expect(state.openScratchProject).not.toHaveBeenCalled();
+    expect(state.preview).not.toHaveBeenCalled();
+    expect(state.navigate).not.toHaveBeenCalled();
   },
 );

@@ -9,10 +9,18 @@ import {
 const ref = { environmentId: EnvironmentId.make("env-1"), threadId: ThreadId.make("thread:1%2F") };
 
 describe("public thread links", () => {
-  it("round-trips encoded ids without losing literal escapes", () => {
-    expect(parseThreadDeepLink(threadDeepLink(ref))).toEqual(ref);
-    expect(parseThreadDeepLink("t3code://threads/env-1/thread%3A1%252F")).toEqual(ref);
-  });
+  it.each(["thread:1%2F", "thread.", "thread!", "thread)", "thread'", "thread("])(
+    "round-trips copied IDs through parsing and paste: %s",
+    (id) => {
+      const reference = { environmentId: EnvironmentId.make("env!"), threadId: ThreadId.make(id) };
+      const link = threadDeepLink(reference);
+      expect(parseThreadDeepLink(link)).toEqual(reference);
+      expect(normalizeThreadClipboard(link, null).fragment?.records).toEqual([
+        threadContextRecord(reference, reference.threadId),
+      ]);
+      expect(parseThreadDeepLink("t3code://threads/env-1/thread%3A1%252F")).toEqual(ref);
+    },
+  );
   it.each([
     "https://evil.test/env/thread",
     "https://app.t3.codes/settings/general",
