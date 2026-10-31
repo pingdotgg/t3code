@@ -170,7 +170,9 @@ export async function captureHyprlandWindow(
   const setup = new HyprlandCaptureSetup(paths);
   let state = await setup.state();
   if (state.status === "update-required") {
-    await setup.perform("install-hyprland-helper");
+    await setup.perform("install-hyprland-helper").catch((cause: unknown) => {
+      throw new CaptureSetupRequiredError(state.message, { cause });
+    });
     state = await setup.state();
   }
   if (state.status !== "ready") throw new CaptureSetupRequiredError(state.message);

@@ -9,8 +9,8 @@ import { nativeImage } from "electron";
 export const HYPRLAND_CAPTURE_ACTION = "capture-window";
 
 export class CaptureSetupRequiredError extends Error {
-  constructor(state: string) {
-    super(`${state} Open Settings → SnapShots to continue setup.`);
+  constructor(state: string, options?: ErrorOptions) {
+    super(`${state} Open Settings → SnapShots to continue setup.`, options);
   }
 }
 export const NIRI_CAPTURE_PATH = "/com/t3tools/SnapShot";
