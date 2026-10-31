@@ -69,6 +69,7 @@ const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
           type: "user",
           message: { role: "user", content: text },
           parent_tool_use_id: null,
+          origin: { kind: "human" },
         },
       },
     },

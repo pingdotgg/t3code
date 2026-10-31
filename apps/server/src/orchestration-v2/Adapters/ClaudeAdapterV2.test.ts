@@ -49,6 +49,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -4463,6 +4464,56 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect.each([
+    { name: "web", createdBy: "user", creationSource: "web", human: true },
+    { name: "mobile", createdBy: "user", creationSource: "mobile", human: true },
+    { name: "scheduled", createdBy: "user", creationSource: "web", scheduled: true, human: false },
+    { name: "server", createdBy: "user", creationSource: "server", human: false },
+    { name: "mcp", createdBy: "agent", creationSource: "mcp", human: false },
+  ] as const)(
+    "stamps $name sends and steers as human only when a user typed them",
+    ({ createdBy, creationSource, human, ...rest }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("message-origin"),
+          text: "Watch the artifact",
+          attachments: [],
+          messageCreatedBy: createdBy,
+          messageCreationSource: creationSource,
+        });
+        const message = {
+          ...input.message,
+          ...("scheduled" in rest ? { scheduledTaskId: ScheduledTaskId.make("task-origin") } : {}),
+        };
+        yield* harness.runtime.startTurn({ ...input, message });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${input.attemptId}`,
+          }),
+          message: { ...message, messageId: MessageId.make("message-origin-steer") },
+        });
+
+        const expected = human ? { kind: "human" } : undefined;
+        assert.deepEqual(harness.offeredMessages[0]?.origin, expected);
+        assert.equal(harness.offeredMessages[1]?.priority, "now");
+        assert.deepEqual(harness.offeredMessages[1]?.origin, expected);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   // regression: #15475 MCP title arriving after the tool starts must survive to completion
   it.effect.each([
     { isError: false, title: "Check weather" },
@@ -7736,6 +7787,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 type: "user",
                 message: { role: "user", content: prompt },
                 parent_tool_use_id: null,
+                origin: { kind: "human" },
               },
             },
           },

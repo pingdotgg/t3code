@@ -89,6 +89,8 @@ export function withCreationProvenance(
     case "thread.merge_back":
     case "delegated_task.request":
       return { ...command, ...provenance };
+    case "queued-run.edit":
+      return { ...command, editor: provenance };
     default:
       return command;
   }
