@@ -2195,6 +2195,7 @@ export const layerWithOptions = (
                     }),
                 ),
               );
+              const promptSuggestions = yield* promptSuggestionsEnabled;
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
@@ -2209,7 +2210,6 @@ export const layerWithOptions = (
               });
               const sessionScope = yield* Scope.fork(sessionScopes);
               yield* agentScope.clear(input.threadId);
-              const promptSuggestions = yield* promptSuggestionsEnabled;
               const runtime = yield* adapter
                 .openSession({
                   threadId: input.threadId,
