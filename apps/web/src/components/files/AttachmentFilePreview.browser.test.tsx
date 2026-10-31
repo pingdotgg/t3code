@@ -538,7 +538,7 @@ describe("large text preview recovery", () => {
       // A cold worker can take longer than waitFor allows to load and index on CI.
       await indexed[0];
       await vi.waitFor(() => expect(screen.container.textContent).toContain("1,000 lines"));
-      const viewport = screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+      const viewport = screen.container.querySelector<HTMLElement>('div[tabindex="0"]')!;
       await act(() =>
         viewport.dispatchEvent(
           new WheelEvent("wheel", { deltaY: 250, bubbles: true, cancelable: true }),
@@ -548,7 +548,7 @@ describe("large text preview recovery", () => {
       const scrollTop = viewport.scrollTop;
       state(`${original}#renewed`, "one");
       await screen.rerender(preview("unrelated-command"));
-      expect(screen.container.querySelector('[tabindex="0"]')).toBe(viewport);
+      expect(screen.container.querySelector('div[tabindex="0"]')).toBe(viewport);
       expect(viewport.scrollTop).toBe(scrollTop);
       expect(workers).toHaveLength(1);
       state(`${changed}#updated`, "two");
@@ -2762,7 +2762,7 @@ it.each(["rtf", "epub", "ods"] as const)(
           expect(screen.container.textContent).toContain("North");
           expect(screen.container.textContent).toContain("150");
           expect(screen.container.textContent).not.toContain("private note");
-          expect(screen.container.textContent).toContain("1 rows · 2 columns");
+          expect(screen.container.textContent).toContain("1 rows");
           expect(screen.container.textContent).not.toContain("Limited to 500");
         } else {
           const frame = screen.container.querySelector("iframe");
@@ -2772,6 +2772,12 @@ it.each(["rtf", "epub", "ods"] as const)(
       },
       { timeout: 10_000 },
     );
+    if (kind === "ods") {
+      await userEvent.hover(page.getByText("1 rows", { exact: true }));
+      await expect
+        .element(page.getByText("2 columns", { exact: true }))
+        .toHaveTextContent("2 columns");
+    }
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
   },
 );

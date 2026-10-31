@@ -134,7 +134,7 @@ export function PullRequestDetailGhost({
         !seed && "motion-safe:animate-skeleton",
       )}
     >
-      <div className="@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border/60">
+      <div className="@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border">
         <div className="pl-4 grid h-7 min-w-0 items-center overflow-hidden">
           <div className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground sm:text-xs">
             {onBack ? (
