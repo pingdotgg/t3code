@@ -15,6 +15,8 @@
 # The archive is unpacked into $T3CODE_HOME/runtime/versions/<version>, the
 # same layout `t3 service install` uses, so the service reuses this download
 # instead of fetching the release again.
+# The `t3` symlink points at $T3CODE_HOME/runtime/t3, which points at that
+# version, so upgrades never replace a file in the bin folder.
 set -eu
 
 repo="pingdotgg/t3code"
@@ -235,47 +237,84 @@ fi
 
 step "Setting up the t3 command..."
 mkdir -p "$bin_dir"
-# Replace only this home's own t3 links: into its versions, or the desktop app's launcher.
-# Anything that is not a symlink (a script, a copied binary) belongs to someone else.
+public="${bin_dir}/t3"
+# The t3 command links to this home's command link, and upgrades switch only that one. Other
+# programs write to bin_dir too, so the public name is never replaced while it may be theirs.
+command_link="${t3_home}/runtime/t3"
+real_versions_dir="$(CDPATH='' cd -P -- "$versions_dir" && pwd)"
+real_command_link="$(CDPATH='' cd -P -- "${t3_home}/runtime" && pwd)/t3"
 # Exactly <versions>/<version>/t3 ($1 under $2), never another program inside a version.
 version_t3() {
   case "$1" in "$2"/*) ;; *) return 1 ;; esac
   case "${1#"$2"/}" in */*/*) return 1 ;; */t3) return 0 ;; *) return 1 ;; esac
 }
-slot_empty=true
-if [ -e "${bin_dir}/t3" ] || [ -L "${bin_dir}/t3" ]; then
-  slot_empty=false
-  owned=false
-  if [ -L "${bin_dir}/t3" ]; then
-    existing="$(readlink "${bin_dir}/t3" 2>/dev/null || true)"
-    case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
-    real_versions_dir="$(CDPATH='' cd -P -- "$versions_dir" && pwd)"
-    # Through a symlinked T3 home the link text names the alias; resolve its folder to compare.
-    existing_dir="$(CDPATH='' cd -P -- "$(dirname -- "$existing")" 2>/dev/null && pwd || true)"
-    # The text alone counts only without . or .. segments (a pruned version leaves a dangling link).
-    case "$existing" in
-      */./* | */../* | */. | */..) ;;
-      *)
-        if version_t3 "$existing" "$versions_dir" || version_t3 "$existing" "$real_versions_dir" ||
-          [ "$existing" = "${t3_home}/bin/t3" ]; then owned=true; fi
-        ;;
-    esac
-    if [ -n "$existing_dir" ] && version_t3 "${existing_dir}/${existing##*/}" "$real_versions_dir"; then
-      owned=true
-    fi
+# Prints what the link at $1 is to this home: current (its command link), older (a version's t3
+# or the desktop app's launcher), or nothing. Anything that is not a symlink is someone else's.
+link_kind() {
+  [ -L "$1" ] || return 0
+  existing="$(readlink "$1" 2>/dev/null || true)"
+  case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
+  # Through a symlinked T3 home the link text names the alias; resolve its folder to compare.
+  existing_dir="$(CDPATH='' cd -P -- "$(dirname -- "$existing")" 2>/dev/null && pwd || true)"
+  real_existing="${existing_dir}/${existing##*/}"
+  # The text alone counts only without . or .. segments (a pruned version leaves a dangling link).
+  case "$existing" in
+    */./* | */../* | */. | */..) ;;
+    "$command_link") echo current; return 0 ;;
+    "${t3_home}/bin/t3") echo older; return 0 ;;
+    *)
+      if version_t3 "$existing" "$versions_dir" || version_t3 "$existing" "$real_versions_dir"; then
+        echo older; return 0
+      fi
+      ;;
+  esac
+  [ -n "$existing_dir" ] || return 0
+  if [ "$real_existing" = "$real_command_link" ]; then echo current
+  elif version_t3 "$real_existing" "$real_versions_dir"; then echo older
   fi
-  "$owned" || fail "another t3 is already at ${bin_dir}/t3. Remove it and run this again, or run ${target_dir}/t3 directly."
+}
+kind=
+real_public="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
+# A bin folder of runtime itself would make the command link point at itself.
+if [ "$real_public" = "$real_command_link" ]; then
+  kind=current
+elif [ -e "$public" ] || [ -L "$public" ]; then
+  kind="$(link_kind "$public")"
+  [ -n "$kind" ] || fail "another t3 is already at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
 fi
-# An empty spot is linked without -f, so a file that appears after the check above is kept.
-if "$slot_empty"; then
-  ln -s "${target_dir}/t3" "${bin_dir}/t3" || fail "could not link ${bin_dir}/t3; something else was created there."
-else
-  ln -sfn "${target_dir}/t3" "${bin_dir}/t3"
-fi
+# Inside the T3 home, so swapping it in place cannot replace another program's file.
+rm -f "${command_link}.$$.tmp"
+ln -s "${target_dir}/t3" "${command_link}.$$.tmp" && mv -f "${command_link}.$$.tmp" "$command_link" ||
+  fail "could not link ${command_link}"
+case "$kind" in
+  # An empty spot is linked without -f, so a file that appears after the check above is kept.
+  "") ln -s "$command_link" "$public" || fail "could not link ${public}; something else was created there." ;;
+  older)
+    # Moved aside before it is checked again, so the check sees exactly what gets replaced.
+    aside="${bin_dir}/.t3.$$.old"
+    mv -f "$public" "$aside" || fail "could not replace ${public}"
+    if [ -n "$(link_kind "$aside")" ]; then
+      linked=true
+      ln -s "$command_link" "$public" || linked=false
+      rm -f "$aside"
+      "$linked" || fail "could not link ${public}; something else was created there."
+    else
+      # Another program wrote it after the check: put it back without overwriting anything newer.
+      restored=false
+      if [ -L "$aside" ]; then
+        ln -s "$(readlink "$aside")" "$public" 2>/dev/null && restored=true
+      else
+        ln "$aside" "$public" 2>/dev/null && restored=true
+      fi
+      "$restored" || fail "another program wrote ${public} during the install; its file is now at ${aside}."
+      rm -f "$aside"
+      fail "another t3 was just written at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
+    fi
+    ;;
+esac
 # Pruning keeps what this launcher points at; a background service cannot see bin_dir otherwise.
-launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
 launchers="${t3_home}/runtime/launchers"
-grep -qxF "$launcher" "$launchers" 2>/dev/null || printf '%s\n' "$launcher" >> "$launchers"
+grep -qxF "$real_public" "$launchers" 2>/dev/null || printf '%s\n' "$real_public" >> "$launchers"
 if "$interactive"; then printf '\r\033[2K' >&2; fi
 printf '  %sInstalled T3 Code %s%s\n\n' "$green" "$version" "$reset" >&2
 # The folder a shell reads its startup file from: $1 when set and safe to paste, else $2 when

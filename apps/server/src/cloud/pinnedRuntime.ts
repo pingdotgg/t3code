@@ -49,6 +49,14 @@ export function pinnedRuntimeVersionsDir(path: Path.Path, baseDir: string): stri
   return path.join(baseDir, PINNED_RUNTIME_DIR, "versions");
 }
 
+/**
+ * `<T3 home>/runtime/t3`, the link the public `t3` command points at. Upgrades switch only this
+ * link, so the public name, where other programs write too, is never replaced.
+ */
+export function pinnedRuntimeCommandLink(path: Path.Path, baseDir: string): string {
+  return path.join(baseDir, PINNED_RUNTIME_DIR, "t3");
+}
+
 export function pinnedRuntimePaths(
   path: Path.Path,
   baseDir: string,
@@ -430,6 +438,11 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
     .pipe(Effect.orElseSucceed(() => versionsDir));
   const unrecorded: Array<string> = [];
   const targets: Array<string> = [];
+  // The command link is always this home's, even when no public launcher was found.
+  const commandLink = yield* fs
+    .realPath(pinnedRuntimeCommandLink(path, baseDir))
+    .pipe(Effect.option);
+  if (Option.isSome(commandLink)) targets.push(commandLink.value);
   for (const launcher of [...recorded, ...found]) {
     const target =
       platform === "win32"

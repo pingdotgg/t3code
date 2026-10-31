@@ -165,7 +165,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
       });
       expect(upgrade.code, upgrade.output).toBe(0);
-      expect(await NodeFSP.readlink(link)).toBe(
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(root, "alias/runtime/t3"));
+      expect(await NodeFSP.readlink(NodePath.join(home, "runtime/t3"))).toBe(
         NodePath.join(root, "alias/runtime/versions/1.2.3/t3"),
       );
       expect(upgrade.output).toContain(
@@ -201,7 +202,63 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         binDir: `${binDir}/`,
       });
       expect(overDesktop.code, overDesktop.output).toBe(0);
-      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/1.2.3/t3"));
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/t3"));
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never overwrites a t3 another program writes during the install", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-race-"));
+    try {
+      const home = NodePath.join(root, "home");
+      const binDir = NodePath.join(root, "bin");
+      const link = NodePath.join(binDir, "t3");
+      const commandLink = NodePath.join(home, "runtime/t3");
+      const tools = NodePath.join(root, "tools");
+      await NodeFSP.mkdir(binDir, { recursive: true });
+      await NodeFSP.mkdir(tools);
+      // Before the installer's first `ln`, another program writes its own t3 in one rename.
+      const realLn = NodeChildProcess.execFileSync("sh", ["-c", "command -v ln"], {
+        encoding: "utf8",
+      }).trim();
+      await NodeFSP.writeFile(
+        NodePath.join(tools, "ln"),
+        `#!/bin/sh
+if [ -n "$RACE" ] && [ ! -e "$RACE.fired" ]; then
+  : > "$RACE.fired"
+  printf 'theirs\\n' > "$RACE.new" && mv -f "$RACE.new" "$RACE"
+fi
+exec ${realLn} "$@"
+`,
+        { mode: 0o755 },
+      );
+      const racing = (env: NodeJS.ProcessEnv = {}) =>
+        installOver({
+          script: "install.sh",
+          home,
+          binDir,
+          env: { PATH: `${tools}:${process.env.PATH}`, RACE: link, ...env },
+        });
+
+      // An older link straight to a version moves to the command link only if it is still ours.
+      await NodeFSP.symlink(NodePath.join(home, "runtime/versions/1.0.0/t3"), link);
+      const older = await racing();
+      expect(older.code).not.toBe(0);
+      expect(await NodeFSP.readFile(link, "utf8")).toBe("theirs\n");
+      expect(await NodeFSP.readdir(binDir)).toEqual(["t3", "t3.fired"]);
+
+      // Once linked, an upgrade switches only the command link and never writes the public name.
+      await NodeFSP.rm(link);
+      await NodeFSP.rm(`${link}.fired`);
+      await NodeFSP.symlink(commandLink, link);
+      const calm = await racing({ RACE: "" });
+      expect(calm.code, calm.output).toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(commandLink);
+      expect(await NodeFSP.readlink(commandLink)).toBe(NodePath.join(calm.target, "t3"));
+      const current = await racing();
+      expect(current.code, current.output).toBe(0);
+      expect(await NodeFSP.readFile(link, "utf8")).toBe("theirs\n");
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

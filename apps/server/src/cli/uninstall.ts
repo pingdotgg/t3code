@@ -3,6 +3,7 @@
 import * as NodeChildProcess from "node:child_process";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { replaceOwnedLink } from "@t3tools/shared/ownedLink";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -56,13 +57,10 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
       ? shimPath
       : undefined;
   }
-  const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
-  if (Option.isNone(linkTarget)) return undefined;
-  const resolved = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  return isVersionExecutable(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
+  return (yield* ownsLauncher(input.launchedAs, input.versionsDir)) ? input.launchedAs : undefined;
 });
 
-/** Whether `launcher` is a link or unedited `t3.cmd` into this home's runtime/versions. */
+/** Whether `launcher` is a link to this home's command link or a version, or an unedited `t3.cmd`. */
 const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
   launcher: string,
   versionsDir: string,
@@ -73,8 +71,9 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
+  const linkText = yield* fs.readLink(launcher).pipe(Effect.option);
   // The link's own text keeps a pruned (dangling) target; the real path sees through a
-  // symlinked T3 home.
+  // symlinked T3 home. Only a link counts: a version's own executable resolves into versions too.
   const targets =
     platform === "win32"
       ? [
@@ -83,18 +82,22 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
             Effect.orElseSucceed(() => undefined),
           ),
         ]
-      : [
-          yield* fs.readLink(launcher).pipe(
-            Effect.map((link) => path.resolve(path.dirname(launcher), link)),
-            Effect.orElseSucceed(() => undefined),
-          ),
-          yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined)),
-        ];
+      : Option.isNone(linkText)
+        ? []
+        : [
+            path.resolve(path.dirname(launcher), linkText.value),
+            yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined)),
+          ];
+  // The command link sits beside versions; a link to it may dangle after a prune.
+  const commandLinks = [versionsDir, realVersionsDir].map((dir) =>
+    path.join(path.dirname(dir), "t3"),
+  );
   return targets.some(
     (target) =>
       target !== undefined &&
       (isVersionExecutable(path, versionsDir, target) ||
-        isVersionExecutable(path, realVersionsDir, target)),
+        isVersionExecutable(path, realVersionsDir, target) ||
+        (platform !== "win32" && commandLinks.includes(target))),
   );
 });
 
@@ -246,17 +249,18 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   }
   for (const launcher of plan.launchers) {
     // The prompt can wait a long time; never delete a file that replaced the launcher meanwhile.
-    if (!(yield* ownsLauncher(launcher, plan.versionsDir))) {
-      yield* Console.log(`Left ${launcher}: it no longer runs this t3.`);
-      continue;
-    }
-    yield* fs
-      .remove(launcher, { force: true })
-      .pipe(
+    const owns = (candidate: string) => ownsLauncher(candidate, plan.versionsDir);
+    const removed =
+      (yield* owns(launcher)) &&
+      (yield* replaceOwnedLink({ link: launcher, owns }).pipe(
         Effect.mapError(
           () => new CliUninstallError({ reason: `Could not remove the launcher at ${launcher}.` }),
         ),
-      );
+      ));
+    if (!removed) {
+      yield* Console.log(`Left ${launcher}: it no longer runs this t3.`);
+      continue;
+    }
     yield* Console.log(`Removed ${launcher}.`);
   }
   if (plan.runtimeDir !== undefined) {

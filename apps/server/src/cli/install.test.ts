@@ -54,10 +54,12 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       const { root, runtimeDir, executable, link, provide } = yield* setup;
 
       const older = path.join(runtimeDir, "versions/0.0.1/t3");
+      const commandLink = path.join(runtimeDir, "t3");
       yield* fs.makeDirectory(path.dirname(link), { recursive: true });
       yield* fs.symlink(older, link);
       const installed = yield* provide(installCli());
-      assert.equal(yield* fs.readLink(link), executable);
+      assert.equal(yield* fs.readLink(link), commandLink);
+      assert.equal(yield* fs.readLink(commandLink), executable);
       assert.isFalse(installed.onPath);
       assert.include(installed.pathCommand, "$HOME/bin");
 
@@ -96,31 +98,32 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* fs.remove(link);
       yield* fs.symlink(path.join(root, ".t3/bin/t3"), link);
       yield* provide(installCli());
-      assert.equal(yield* fs.readLink(link), executable);
+      assert.equal(yield* fs.readLink(link), commandLink);
 
-      // A failed swap over our own link leaves a staging path it did not create alone.
-      yield* fs.remove(link);
-      yield* fs.symlink(older, link);
-      const staging = `${link}.${process.pid}.tmp`;
-      yield* fs.writeFileString(staging, "someone else's\n");
-      const linkFailed = yield* provide(installCli()).pipe(Effect.flip);
-      assert.include(linkFailed.message, "Could not link");
-      assert.equal(yield* fs.readFileString(staging), "someone else's\n");
-      yield* fs.remove(staging);
-
-      // An empty spot is created exclusively: a file that appears first is kept.
-      yield* fs.remove(link);
+      // Another program may write its t3 at any moment, here at the first symlink this
+      // install makes. Whether the spot was empty, held an older link, or the command
+      // link, that file is kept.
       const racing = installCli().pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
-          symlink: (target, path) =>
+          symlink: (target, to) =>
             fs
-              .writeFileString(path, "#!/bin/sh\necho raced\n")
-              .pipe(Effect.andThen(fs.symlink(target, path))),
+              .writeFileString(`${link}.new`, "#!/bin/sh\necho raced\n")
+              .pipe(
+                Effect.andThen(fs.rename(`${link}.new`, link)),
+                Effect.andThen(fs.symlink(target, to)),
+              ),
         }),
       );
-      assert.include((yield* provide(racing).pipe(Effect.flip)).message, "Could not link");
-      assert.equal(yield* fs.readFileString(link), "#!/bin/sh\necho raced\n");
+      for (const before of [undefined, older, commandLink]) {
+        yield* fs.remove(link);
+        if (before !== undefined) yield* fs.symlink(before, link);
+        const raced = yield* provide(racing).pipe(Effect.result);
+        assert.equal(yield* fs.readFileString(link), "#!/bin/sh\necho raced\n", before);
+        assert.deepStrictEqual(yield* fs.readDirectory(path.dirname(link)), ["t3"]);
+        // Nothing was replaced over the command link's own spot, so that install succeeds.
+        assert.equal(raced._tag === "Success", before === commandLink, before);
+      }
       yield* fs.remove(link);
 
       // Windows writes a t3.cmd: only over its own, and only for paths cmd can run.
@@ -231,7 +234,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* fs.writeFileString(path.join(runtimeDir, "install-prompt-declined"), "0.0\n");
       yield* offer(true);
       assert.equal(asked, 2);
-      assert.equal(yield* fs.readLink(link), executable);
+      assert.equal(yield* fs.realPath(link), yield* fs.realPath(executable));
 
       yield* fs.remove(path.join(runtimeDir, "install-prompt-declined"));
       yield* offer(true);

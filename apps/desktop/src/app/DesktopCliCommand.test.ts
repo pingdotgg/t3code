@@ -242,6 +242,41 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps a t3 another program writes while it replaces its own link", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const before = yield* commandIn({ home, baseDir: path.join(home, "old-t3") });
+      const link = (yield* before.install).installedPath!;
+      const theirs = path.join(home, "theirs");
+      yield* fs.writeFileString(theirs, "#!/bin/sh\n", { mode: 0o755 });
+      // Right after the app finds its old link, another program puts its own t3 there.
+      let raced = false;
+      const racing = FileSystem.FileSystem.of({
+        ...fs,
+        access: (target, options) =>
+          (raced
+            ? Effect.void
+            : fs
+                .symlink(theirs, `${link}.new`)
+                .pipe(
+                  Effect.andThen(fs.rename(`${link}.new`, link)),
+                  Effect.andThen(Effect.sync(() => (raced = true))),
+                )
+          ).pipe(Effect.andThen(fs.access(target, options))),
+      });
+      const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") }).pipe(
+        Effect.provideService(FileSystem.FileSystem, racing),
+      );
+      const installed = yield* after.install;
+      expect(raced).toBe(true);
+      expect(yield* fs.readLink(link)).toBe(theirs);
+      expect(installed.installedPath).toBe(path.join(home, "bin", "t3"));
+      expect(yield* fs.readDirectory(path.dirname(link))).toEqual(["t3"]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("refuses to install behind another t3 that runs first", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

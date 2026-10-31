@@ -36,29 +36,53 @@ it.effect("authenticates each release page until the requested channel is found"
 );
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
-  it.effect("repoints a symlink that lives in a runtime versions tree", () =>
+  it.effect("moves an older launcher to the command link, then switches only that link", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
       const oldExe = path.join(root, "runtime/versions/1.0.0/t3");
       const newExe = path.join(root, "runtime/versions/2.0.0/t3");
+      const newerExe = path.join(root, "runtime/versions/3.0.0/t3");
+      const commandLink = path.join(root, "runtime/t3");
       const launcher = path.join(root, "bin/t3");
-      for (const file of [oldExe, newExe]) {
+      for (const file of [oldExe, newExe, newerExe]) {
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });
         yield* fs.writeFileString(file, "");
       }
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
       yield* fs.symlink(oldExe, launcher);
+      const update = (targetEntryPath: string) =>
+        repointLauncher({
+          launchedAs: launcher,
+          versionsDir: path.join(root, "runtime/versions"),
+          targetEntryPath,
+        });
 
-      const repointed = yield* repointLauncher({
-        launchedAs: launcher,
-        versionsDir: path.join(root, "runtime/versions"),
-        targetEntryPath: newExe,
+      assert.deepStrictEqual(Option.getOrUndefined(yield* update(newExe)), launcher);
+      assert.equal(yield* fs.readLink(launcher), commandLink);
+      assert.equal(yield* fs.readLink(commandLink), newExe);
+
+      // Once linked, nothing is written in the public folder, where other programs write too.
+      const written: Array<string> = [];
+      const recording = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) =>
+          Effect.sync(() => written.push(from, to)).pipe(Effect.andThen(fs.rename(from, to))),
+        symlink: (target, to) =>
+          Effect.sync(() => written.push(to)).pipe(Effect.andThen(fs.symlink(target, to))),
+        remove: (file, options) =>
+          Effect.sync(() => written.push(file)).pipe(Effect.andThen(fs.remove(file, options))),
       });
-
-      assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
-      assert.equal(yield* fs.readLink(launcher), newExe);
+      const switched = yield* update(newerExe).pipe(
+        Effect.provideService(FileSystem.FileSystem, recording),
+      );
+      assert.deepStrictEqual(Option.getOrUndefined(switched), launcher);
+      assert.equal(yield* fs.readLink(commandLink), newerExe);
+      assert.deepStrictEqual(
+        written.filter((file) => file.startsWith(path.dirname(launcher))),
+        [],
+      );
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 

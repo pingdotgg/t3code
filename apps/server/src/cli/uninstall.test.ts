@@ -32,6 +32,17 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       yield* fs.symlink(otherExe, theirs);
 
       assert.equal(yield* findOwnedLauncher({ launchedAs: ours, versionsDir }), ours);
+      // Installs link to the command link, which points at the version.
+      const commandLink = path.join(root, "runtime/t3");
+      const viaCommandLink = path.join(root, "bin/t3-command");
+      yield* fs.symlink(exe, commandLink);
+      yield* fs.symlink(commandLink, viaCommandLink);
+      assert.equal(
+        yield* findOwnedLauncher({ launchedAs: viaCommandLink, versionsDir }),
+        viaCommandLink,
+      );
+      // A version run directly is not a launcher.
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: exe, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: theirs, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: copy, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));
@@ -61,13 +72,40 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       // Another program inside a version is not a launcher.
       const sibling = path.join(root, "bin/t3-sibling");
       yield* fs.symlink(path.join(versionsDir, "1.0.0/node"), sibling);
+      // The command link leads to a pruned version, so only its name says it is ours.
+      const otherRoot = path.join(root, "pruned-home");
+      const prunedCommand = path.join(root, "bin/t3-pruned-command");
+      yield* fs.makeDirectory(path.join(otherRoot, "runtime/versions"), { recursive: true });
+      yield* fs.symlink(
+        path.join(otherRoot, "runtime/versions/0.9.0/t3"),
+        path.join(otherRoot, "runtime/t3"),
+      );
+      yield* fs.symlink(path.join(otherRoot, "runtime/t3"), prunedCommand);
+      yield* fs.writeFileString(path.join(otherRoot, "runtime/launchers"), `${prunedCommand}\n`);
+      assert.deepStrictEqual(
+        yield* findRecordedLaunchers(path.join(otherRoot, "runtime/versions")),
+        [prunedCommand],
+      );
       yield* fs.writeFileString(
         path.join(root, "runtime/launchers"),
-        [ours, theirs, copy, throughAlias, pruned, sibling, path.join(root, "missing")].join("\n") +
-          "\n",
+        [
+          ours,
+          theirs,
+          copy,
+          viaCommandLink,
+          throughAlias,
+          pruned,
+          sibling,
+          path.join(root, "missing"),
+        ].join("\n") + "\n",
       );
       for (const dir of [versionsDir, path.join(root, "alias/runtime/versions")]) {
-        assert.deepStrictEqual(yield* findRecordedLaunchers(dir), [ours, throughAlias, pruned]);
+        assert.deepStrictEqual(yield* findRecordedLaunchers(dir), [
+          ours,
+          viaCommandLink,
+          throughAlias,
+          pruned,
+        ]);
       }
 
       // On Windows only an unedited t3.cmd is ours; a hand-edited wrapper belongs to the user.
