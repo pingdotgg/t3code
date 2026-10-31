@@ -1,4 +1,5 @@
 import { formatModelSlugName } from "@t3tools/shared/model";
+import { openSideChatTab } from "../../lib/sideChatPane";
 import { useAtomValue } from "@effect/atom-react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -49,8 +50,8 @@ import {
   EllipsisIcon,
   CornerLeftUpIcon,
   GitForkIcon,
-  MessagesSquareIcon,
   HistoryIcon,
+  MessagesSquareIcon,
   MessageSquareIcon,
   PlusIcon,
   SquareIcon,
@@ -60,6 +61,8 @@ import { useRef, useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   useProjects,
   useQuietThreadShell,
@@ -82,9 +85,19 @@ import { useEnvironmentQuery } from "../../state/query";
 import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
-import { openSideChatTab } from "../../lib/sideChatPane";
 
-import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuItemLabel,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { Spinner } from "../ui/spinner";
@@ -195,7 +208,7 @@ function relationshipThreadTitle(input: {
 }
 
 /** The full title, since the row truncates it, with what a click does. */
-function LineageTooltipContent(props: { readonly title: string; readonly hint: string }) {
+function LineageTooltipContent(props: { readonly title: string; readonly hint: ReactNode }) {
   return (
     <>
       <span className="block text-meta">{props.title}</span>
@@ -244,6 +257,7 @@ function RemoteSubagentRow(props: {
     readonly remoteChild: OrchestrationV2RemoteTaskChild;
   };
   readonly provider: ServerProvider | undefined;
+  readonly menu?: boolean;
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
@@ -255,7 +269,7 @@ function RemoteSubagentRow(props: {
     isSubagent: true,
   });
   return (
-    <li className="group relative flex items-center">
+    <li className="group relative flex h-8 items-center rounded-lg">
       <Tooltip>
         <TooltipTrigger
           delay={200}
@@ -264,6 +278,7 @@ function RemoteSubagentRow(props: {
               size="sm"
               variant="ghost"
               part="row"
+              render={props.menu ? <MenuItem /> : undefined}
               aria-disabled={environment === null || undefined}
               onClick={() => {
                 if (environment === null) return;
@@ -285,12 +300,12 @@ function RemoteSubagentRow(props: {
             status={status}
           />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-left text-label text-strong-foreground">
+            <span className="block truncate text-left text-caption text-foreground/85">
               {title}
             </span>
           </span>
           <span
-            className={`shrink-0 text-caption ${failed ? "text-destructive-foreground" : "text-dim-foreground"}`}
+            className={`shrink-0 text-meta ${failed ? "text-destructive" : "text-dim-foreground"}`}
           >
             <span className="inline-flex flex-col">
               <span>on {remoteChild.label}</span>
@@ -320,6 +335,7 @@ function RemoteSubagentRow(props: {
 function DelegatedFromRow(props: {
   readonly delegatedFrom: OrchestrationV2DelegatedFrom;
   readonly fallbackLabel: string | undefined;
+  readonly menu?: boolean;
 }) {
   const navigate = useNavigate();
   const { delegatedFrom } = props;
@@ -330,7 +346,7 @@ function DelegatedFromRow(props: {
   const label = environment?.label ?? props.fallbackLabel;
   const title = parent?.title ?? delegatedFrom.title;
   return (
-    <li className="group relative flex items-center">
+    <li className="group relative flex h-8 items-center rounded-lg">
       <Tooltip>
         <TooltipTrigger
           delay={200}
@@ -339,6 +355,7 @@ function DelegatedFromRow(props: {
               size="sm"
               variant="ghost"
               part="row"
+              render={props.menu ? <MenuItem /> : undefined}
               aria-disabled={environment === null || undefined}
               onClick={() => {
                 if (environment === null) return;
@@ -375,11 +392,9 @@ function DelegatedFromRow(props: {
   );
 }
 
-export function ThreadRelationshipsPanel(props: {
+function useThreadLineage(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly showLineage: boolean;
-  readonly showSideChats: boolean;
 }) {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const projection = useThreadProjection(ref)?.projection ?? null;
@@ -557,25 +572,10 @@ export function ThreadRelationshipsPanel(props: {
         agent.status === "running",
     ).length ?? 0;
 
-  // A linked environment's agent may have delegated this thread from there.
-  const delegatedFrom = currentThread?.delegatedFrom;
-
-  const lineageVisible =
-    props.showLineage &&
-    (related.length > 0 ||
-      active.length > 0 ||
-      previous.length > 0 ||
-      unlinkedRunningCount > 0 ||
-      remoteSubagents.length > 0 ||
-      delegatedFrom !== undefined ||
-      // Disconnect lives in this heading, so a thread with only side chats still shows it.
-      (canDetach && sideChats.length > 0));
-  const sideChatsVisible = props.showSideChats && sideChats.length > 0;
-  const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
-
-  if (!lineageVisible && !sideChatsVisible) {
-    return null;
-  }
+  const runningCount =
+    unlinkedRunningCount +
+    active.filter(({ edge }) => edge.status === "running").length +
+    remoteSubagents.filter((agent) => agent.status === "running").length;
 
   // Idle children can be omitted from the shell; opening one loads its own detail.
   const openThread = (threadId: ThreadId) => {
@@ -668,6 +668,89 @@ export function ThreadRelationshipsPanel(props: {
         ? null
         : (graph.nodes.get(mergeTargetThreadId)?.thread?.title ?? null);
 
+  return {
+    ref,
+    parentRef,
+    parentNativeStatus,
+    graph,
+    projects,
+    providers,
+    providerEntries,
+    providersByEnvironment,
+    remoteSubagents,
+    subagentsByThreadId,
+    currentThread,
+    currentProject,
+    relationshipRows,
+    groups,
+    sideChats,
+    runningCount,
+    unlinkedRunningCount,
+    mergeTargetThreadId,
+    latestMergeBackRun,
+    canMerge,
+    canDetach,
+    busyAction,
+    parentTitle,
+    openThread,
+    merge,
+    detach,
+    stoppingId,
+    workflowGroupsById,
+    canOperateWorkflow,
+    stopWorkflow,
+    stopSubagent,
+  };
+}
+
+export function ThreadRelationshipsPanel(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly showLineage?: boolean;
+  readonly showSideChats?: boolean;
+}) {
+  const {
+    ref,
+    parentRef,
+    parentNativeStatus,
+    graph,
+    projects,
+    providers,
+    providerEntries,
+    providersByEnvironment,
+    remoteSubagents,
+    subagentsByThreadId,
+    currentThread,
+    currentProject,
+    groups,
+    sideChats,
+    unlinkedRunningCount,
+    mergeTargetThreadId,
+    latestMergeBackRun,
+    canMerge,
+    canDetach,
+    busyAction,
+    parentTitle,
+    openThread,
+    merge,
+    detach,
+    stoppingId,
+    workflowGroupsById,
+    canOperateWorkflow,
+    stopWorkflow,
+    stopSubagent,
+  } = useThreadLineage(props);
+
+  const delegatedFrom = currentThread?.delegatedFrom;
+
+  const lineageVisible = (props.showLineage ?? true) && currentThread !== undefined;
+  const sideChatsVisible = (props.showSideChats ?? true) && sideChats.length > 0;
+  const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
+
+  if (!lineageVisible && !sideChatsVisible) {
+    return null;
+  }
+
   const renderRelationshipRow = ({ threadId, edge }: ThreadRelationshipWalkRow) => {
     const node = graph.nodes.get(threadId);
     const isSubagent = edge.kind === "subagent";
@@ -756,7 +839,15 @@ export function ThreadRelationshipsPanel(props: {
         childProject={project}
       />
     ) : (
-      <LineageTooltipContent title={threadTitle} hint={relationshipHint} />
+      <LineageTooltipContent
+        title={threadTitle}
+        hint={
+          <>
+            <span className="block">{relationshipHint}</span>
+            <span className="block">{threadRelationshipStatusLabel(rowStatus)}</span>
+          </>
+        }
+      />
     );
     const relationshipContent = (
       <>
@@ -824,7 +915,14 @@ export function ThreadRelationshipsPanel(props: {
               part="row"
               multiline
               className={workflowGroup ? "flex-1" : undefined}
-              render={previous.some((row) => row.threadId === threadId) ? <MenuItem /> : undefined}
+              aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus)}`}
+              render={
+                groups
+                  .find((group) => group.id === "previous")
+                  ?.rows.some((row) => row.threadId === threadId) ? (
+                  <MenuItem />
+                ) : undefined
+              }
               onClick={() => openThread(threadId)}
             />
           }
@@ -1048,5 +1146,232 @@ export function ThreadRelationshipsPanel(props: {
         </ThreadDetailsSection>
       ) : null}
     </>
+  );
+}
+function relativeCreatedLabel(createdAt: unknown, nowMs: number): string | null {
+  if (!DateTime.isDateTime(createdAt)) return null;
+  return formatRelativeTimeLabel(DateTime.formatIso(createdAt), nowMs) || null;
+}
+
+const RELATIONSHIP_BADGE_VARIANTS: Record<string, "success" | "info" | "error" | "secondary"> = {
+  completed: "success",
+  running: "info",
+  in_progress: "info",
+  failed: "error",
+  error: "error",
+  cancelled: "secondary",
+  interrupted: "secondary",
+};
+
+/**
+ * The pane header's lineage button (pen mQksj): a fork icon with the
+ * related-thread count, opening the parent thread, its forks (this thread
+ * marked), running and previous agents, and Merge back. Thread details keeps
+ * the full Lineage section with paging and the detach action.
+ */
+export function ThreadLineageHeaderControl(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const nowMinute = useNowMinute();
+  const nowMs = Date.parse(`${nowMinute}:00.000Z`);
+  const {
+    graph,
+    projects,
+    providersByEnvironment,
+    remoteSubagents,
+    subagentsByThreadId,
+    relationshipRows,
+    currentThread,
+    groups,
+    runningCount,
+    mergeTargetThreadId,
+    latestMergeBackRun,
+    canMerge,
+    busyAction,
+    parentTitle,
+    openThread,
+    merge,
+  } = useThreadLineage(props);
+  const parents = relationshipRows.filter(({ edge }) =>
+    isParentThreadRelationship(edge, props.threadId),
+  );
+  const forkParentId =
+    parents.find(({ edge }) => edge.kind === "fork")?.edge.sourceThreadId ?? null;
+  // A fork sees its siblings too, so Forks reads like the pen: every fork of
+  // the parent, this thread among them.
+  const siblingForks =
+    forkParentId === null
+      ? []
+      : immediateThreadRelationships(graph, forkParentId).filter(
+          ({ edge, threadId }) =>
+            edge.kind === "fork" &&
+            edge.sourceThreadId === forkParentId &&
+            threadId !== props.threadId,
+        );
+  const childForks = relationshipRows.filter(
+    ({ edge }) => edge.kind !== "subagent" && !isParentThreadRelationship(edge, props.threadId),
+  );
+  const activeAgents = groups.find((group) => group.id === "active")?.rows ?? [];
+  const previousAgents = groups.find((group) => group.id === "previous")?.rows ?? [];
+  const delegatedFrom = currentThread?.delegatedFrom;
+  const count =
+    relationshipRows.length +
+    siblingForks.length +
+    remoteSubagents.length +
+    (delegatedFrom === undefined ? 0 : 1);
+  if (count === 0 && runningCount === 0) return null;
+
+  const projectTitleFor = (threadId: ThreadId) => {
+    const projectId = graph.nodes.get(threadId)?.thread?.projectId;
+    return projects.find((project) => project.id === projectId)?.title ?? null;
+  };
+  const parentMeta = (threadId: ThreadId) =>
+    [
+      projectTitleFor(threadId),
+      relativeCreatedLabel(graph.nodes.get(threadId)?.thread?.createdAt, nowMs),
+    ]
+      .filter((part) => part !== null)
+      .map((part) => <span key={part}>{part}</span>);
+  const agentMeta = (threadId: ThreadId) => subagentsByThreadId.get(threadId)?.model ?? null;
+  const currentTitle = graph.nodes.get(props.threadId)?.thread?.title ?? "This thread";
+
+  const renderRow = (row: ThreadRelationshipWalkRow, meta: ReactNode) => {
+    const node = graph.nodes.get(row.threadId);
+    const isSubagent = row.edge.kind === "subagent";
+    const isParent = isParentThreadRelationship(row.edge, props.threadId);
+    const agent = isSubagent && !isParent ? subagentsByThreadId.get(row.threadId) : undefined;
+    const title = relationshipThreadTitle({
+      title: node?.thread?.title ?? agent?.title ?? row.threadId,
+      isSubagent,
+    });
+    const status = isParent ? null : threadRelationshipRowStatus(graph, row);
+    const badgeVariant = status ? RELATIONSHIP_BADGE_VARIANTS[status] : undefined;
+    const Icon = isParent ? MessagesSquareIcon : isSubagent ? BotIcon : GitForkIcon;
+    return (
+      <MenuItem
+        key={row.threadId}
+        disabled={node?.missing === true}
+        onClick={() => openThread(row.threadId)}
+      >
+        <Icon />
+        <MenuItemLabel>{title}</MenuItemLabel>
+        {meta ? (
+          <span className="flex min-w-0 flex-col items-end text-meta text-dim-foreground">
+            {meta}
+          </span>
+        ) : null}
+        {status && badgeVariant ? (
+          <Badge variant={badgeVariant} size="sm" className="ms-auto">
+            {threadRelationshipStatusLabel(status)}
+          </Badge>
+        ) : null}
+      </MenuItem>
+    );
+  };
+
+  return (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger render={<span className="flex shrink-0" />}>
+          <MenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Lineage, ${count} related ${count === 1 ? "thread" : "threads"}`}
+              />
+            }
+          >
+            <GitForkIcon />
+            <span className="tabular-nums">{count}</span>
+          </MenuTrigger>
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">
+          <span className="block">Lineage</span>
+          {runningCount > 0 ? <span className="block">{runningCount} running</span> : null}
+        </TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="end" className="w-80 max-w-(--available-width)">
+        {delegatedFrom === undefined ? null : (
+          <MenuGroup>
+            <MenuGroupLabel>Parent thread</MenuGroupLabel>
+            <DelegatedFromRow
+              delegatedFrom={delegatedFrom}
+              fallbackLabel={currentThread?.linkOrigin?.label}
+              menu
+            />
+          </MenuGroup>
+        )}
+        {parents.length > 0 ? (
+          <MenuGroup>
+            <MenuGroupLabel>{parents.length === 1 ? "Parent thread" : "Parents"}</MenuGroupLabel>
+            {parents.map((row) => renderRow(row, parentMeta(row.threadId)))}
+          </MenuGroup>
+        ) : null}
+        {forkParentId !== null || childForks.length > 0 ? (
+          <MenuGroup>
+            <MenuGroupLabel>Forks</MenuGroupLabel>
+            {forkParentId !== null ? (
+              <MenuItem selected>
+                <GitForkIcon />
+                <MenuItemLabel>{currentTitle}</MenuItemLabel>
+                <Badge variant="secondary" size="sm" className="ms-auto">
+                  This thread
+                </Badge>
+              </MenuItem>
+            ) : null}
+            {siblingForks.map((row) => renderRow(row, null))}
+            {childForks.map((row) => renderRow(row, null))}
+          </MenuGroup>
+        ) : null}
+        {activeAgents.length > 0 ? (
+          <MenuGroup>
+            <MenuGroupLabel>Agents</MenuGroupLabel>
+            {activeAgents.map((row) => renderRow(row, agentMeta(row.threadId)))}
+          </MenuGroup>
+        ) : null}
+        {previousAgents.length > 0 ? (
+          <MenuGroup>
+            <MenuGroupLabel>Previous agents</MenuGroupLabel>
+            {previousAgents.map((row) => renderRow(row, agentMeta(row.threadId)))}
+          </MenuGroup>
+        ) : null}
+        {remoteSubagents.length > 0 ? (
+          <MenuGroup>
+            <MenuGroupLabel>Linked agents</MenuGroupLabel>
+            {remoteSubagents.map((agent) => (
+              <RemoteSubagentRow
+                key={agent.id}
+                agent={agent}
+                menu
+                provider={providersByEnvironment
+                  .get(agent.remoteChild.environmentId)
+                  ?.find((entry) => entry.instanceId === agent.providerInstanceId)}
+              />
+            ))}
+          </MenuGroup>
+        ) : null}
+        {mergeTargetThreadId !== null ? (
+          <>
+            <MenuSeparator />
+            <MenuItem
+              disabled={!canMerge || busyAction !== null}
+              onClick={() => void merge()}
+              title={
+                latestMergeBackRun === null
+                  ? "Complete a run in this fork before merging it back"
+                  : undefined
+              }
+            >
+              {busyAction === "merge" ? <Spinner /> : <PullRequestGlyph.merged />}
+              <MenuItemLabel>
+                {parentTitle ? `Merge back to ${parentTitle}` : "Merge back to source conversation"}
+              </MenuItemLabel>
+            </MenuItem>
+          </>
+        ) : null}
+      </MenuPopup>
+    </Menu>
   );
 }
