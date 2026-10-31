@@ -413,6 +413,135 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("publishes a 60-second update-in-progress marker before stopping the backend", () => {
+    const now = Date.parse("2026-10-21T12:00:00.000Z");
+    let markerAtStop: string | undefined;
+    const harness = makeHarness({
+      stopBackend: Effect.sync(() => {
+        assert.isTrue(
+          harness.markerOperations.some((operation) => operation.startsWith("rename ")),
+        );
+        assert.isFalse(
+          [...harness.updateMarkerContents.keys()].some((path) => path.endsWith(".tmp")),
+        );
+        markerAtStop = [...harness.updateMarkerContents].find(([path]) =>
+          path.endsWith("/desktop-update-in-progress"),
+        )?.[1];
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(now);
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.isTrue((yield* updates.install).accepted);
+        assert.isDefined(markerAtStop, "the marker must already exist at backend stop");
+        assert.isNotEmpty(
+          markerAtStop!,
+          "an empty marker cannot tell an SSH launcher when to stop waiting",
+        );
+        const marker = JSON.parse(markerAtStop!);
+        assert.isNumber(marker.expiresAt);
+        assert.equal(marker.startedAt, now);
+        assert.equal(marker.expiresAt, now + 60_000);
+        assert.include(
+          [...harness.updateMarkerContents.values()],
+          markerAtStop!,
+          "a successful installer handoff retains the marker for reconnect",
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("cleans the temporary marker when atomic publication fails", () => {
+    const harness = makeHarness({
+      failMarkerRename: true,
+      stopBackend: Effect.sync(() => {
+        assert.isFalse(
+          [...harness.updateMarkerContents.keys()].some((path) =>
+            path.includes("desktop-update-in-progress"),
+          ),
+        );
+      }),
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.isTrue((yield* updates.install).accepted);
+        assert.isTrue(
+          harness.markerOperations.some((operation) =>
+            operation.endsWith("desktop-update-in-progress.tmp"),
+          ),
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("clears the update-in-progress marker when an install is interrupted", () =>
+    Effect.gen(function* () {
+      const stopping = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        stopBackend: Deferred.succeed(stopping, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+          const install = yield* updates.install.pipe(Effect.forkScoped);
+          yield* Deferred.await(stopping);
+          const markerPath = [...harness.updateMarkerContents.keys()].find((path) =>
+            path.endsWith("/desktop-update-in-progress"),
+          );
+          assert.isDefined(markerPath, "the install must publish its handoff before stopping");
+          yield* Fiber.interrupt(install);
+          assert.isFalse(harness.updateMarkerContents.has(markerPath!));
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect(
+    "clears the update-in-progress marker when the native installer refuses the update",
+    () => {
+      let markerAtStop: string | undefined;
+      const harness = makeHarness({
+        stopBackend: Effect.sync(() => {
+          markerAtStop = [...harness.updateMarkerContents.keys()].find((path) =>
+            path.endsWith("/desktop-update-in-progress"),
+          );
+        }),
+        quitAndInstall: Effect.fail(
+          new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+            channel: "latest",
+            isSilent: true,
+            isForceRunAfter: true,
+            cause: new Error("installer refused"),
+          }),
+        ),
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+          const result = yield* updates.install;
+          assert.equal(result.state.errorContext, "install");
+          assert.isDefined(markerAtStop, "the install must publish its handoff before stopping");
+          assert.isFalse(harness.updateMarkerContents.has(markerAtStop!));
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
+
   it.effect("records the version an install hands to the installer", () => {
     let recordsAtStop: ReadonlyArray<string> = [];
     const harness = makeHarness({
