@@ -139,7 +139,7 @@ export function classifyReachability(
   return endpoint.kind === "dns_failed"
     ? fail(
         "dns_failed",
-        "The T3 Connect address does not resolve from this machine.",
+        `The T3 Connect address${connector.hostname ? ` (${connector.hostname})` : ""} does not resolve from this machine.`,
         "After tunnel setup, allow time for DNS caches to refresh and check again. If it persists, compare DNS on this machine and another network.",
         [
           "This check cannot tell whether the public DNS record is missing or this network has a stale or filtered answer.",
