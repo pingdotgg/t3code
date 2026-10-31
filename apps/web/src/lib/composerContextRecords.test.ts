@@ -24,6 +24,7 @@ import {
   previewAnnotationFromRecord,
   pullRequestContextKindLabel,
   resolveUserMessageContext,
+  reviewCommentContextLabel,
   selectedMessageContextFragment,
   reviewCommentContextRecord,
   terminalContextRecord,
@@ -375,6 +376,25 @@ describe("pullRequestContextKindLabel", () => {
     expect(
       pullRequestContextKindLabel(comment("https://gitlab.com/acme/app/-/merge_requests/7", true)),
     ).toBe("Draft merge request");
+  });
+});
+
+describe("reviewCommentContextLabel", () => {
+  const selection = (sectionId: string) => ({
+    id: "selection",
+    sectionId,
+    sectionTitle: "Review",
+    filePath: "apps/web/src/page.tsx",
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: "+12 to +18",
+    text: "",
+    diff: "",
+  });
+
+  it("names the pull request a selection came from", () => {
+    expect(reviewCommentContextLabel(selection("pull-request:42"))).toBe("#42 page.tsx L12 to L18");
+    expect(reviewCommentContextLabel(selection("turn-diff"))).toBe("page.tsx L12 to L18");
   });
 });
 
