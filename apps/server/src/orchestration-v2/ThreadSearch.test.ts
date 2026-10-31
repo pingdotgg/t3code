@@ -1239,15 +1239,8 @@ it.effect("finds quote text after projections replay from events", () =>
   }).pipe(
     Effect.provide(
       ProjectionMaintenance.layer.pipe(
-        Layer.provideMerge(
-          Layer.mergeAll(
-            ThreadSearch.layer,
-            ProjectionStore.layer,
-            ProjectStore.layer,
-            EventStore.layer,
-          ),
-        ),
-        Layer.provideMerge(SqlitePersistence.layerMemory),
+        Layer.provideMerge(EventStore.layer),
+        Layer.provideMerge(layerTest),
       ),
     ),
   ),

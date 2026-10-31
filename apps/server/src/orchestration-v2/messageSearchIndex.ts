@@ -1,3 +1,4 @@
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
@@ -48,12 +49,18 @@ const readableText = (row: string) =>
   `COALESCE(${row}.search_text, json_extract(${row}.payload_json, '$.text'))`;
 
 /**
- * A message's text as it reads: migration 77's search_text where a quote's
- * percent-encoded link reads differently, else the stored text. `row` names
- * the message row.
+ * What search_text holds for a message: its text as it reads, a quote's
+ * percent-encoded link replaced by its words and comment. NULL when that is
+ * the stored text, so most messages store nothing extra.
  */
-export const messageSearchText = (sql: SqlClient.SqlClient, row = "messages") =>
-  sql.literal(readableText(row));
+export const readableSearchText = (text: string) => {
+  const readable = assistantCitationsToPlainText(text);
+  return readable === text ? null : readable;
+};
+
+/** A message's text as it reads, for thread search. */
+export const messageSearchText = (sql: SqlClient.SqlClient) =>
+  sql.literal(readableText("messages"));
 
 /**
  * A message's stored text with apostrophes folded, what the index held before
@@ -74,14 +81,9 @@ const indexedText = Effect.fn("MessageSearchIndex.indexedText")(function* (
     SELECT 1 FROM pragma_table_info('orchestration_v2_projection_messages')
     WHERE name = 'search_text'
   `;
-  const readable = column.length > 0;
-  return {
-    readable,
-    of: (row: string) =>
-      readable
-        ? sql.literal(foldApostrophes(readableText(row)))
-        : indexedMessageText(sql, `${row}.payload_json`),
-  };
+  return column.length > 0
+    ? (row: string) => sql.literal(foldApostrophes(readableText(row)))
+    : (row: string) => indexedMessageText(sql, `${row}.payload_json`);
 });
 
 export const createMessageSearchTriggers = Effect.fn("MessageSearchIndex.createTriggers")(
@@ -93,31 +95,29 @@ export const createMessageSearchTriggers = Effect.fn("MessageSearchIndex.createT
       WHEN ${indexedMessageCondition(sql, "new")}
       BEGIN
         INSERT INTO orchestration_v2_message_search (rowid, text)
-        SELECT new.rowid, ${text.of("new")}
+        SELECT new.rowid, ${text("new")}
         WHERE json_extract(new.payload_json, '$.text') IS NOT NULL;
       END
     `;
     // Streaming deltas rewrite the row many times a second; skip them until the
     // message settles. Upserts rewrite every column, so re-index only when what
-    // the index reads changed, search_text included for migration 77's backfill.
+    // the index stores changed; migration 77's backfill writes only search_text.
     // Deleting a rowid the index never held is a no-op.
     yield* sql`
       CREATE TRIGGER orchestration_v2_message_search_update
-      AFTER UPDATE OF payload_json, streaming, role${sql.literal(text.readable ? ", search_text" : "")}
-        ON orchestration_v2_projection_messages
+      AFTER UPDATE ON orchestration_v2_projection_messages
       WHEN (old.streaming = 0 OR new.streaming = 0)
         AND (
           old.streaming IS NOT new.streaming
           OR old.role IS NOT new.role
-          OR json_extract(old.payload_json, '$.text') IS NOT json_extract(new.payload_json, '$.text')
+          OR ${text("old")} IS NOT ${text("new")}
           OR json_extract(old.payload_json, '$.createdBy')
             IS NOT json_extract(new.payload_json, '$.createdBy')
-          ${sql.literal(text.readable ? "OR old.search_text IS NOT new.search_text" : "")}
         )
       BEGIN
         DELETE FROM orchestration_v2_message_search WHERE rowid = old.rowid AND old.streaming = 0;
         INSERT INTO orchestration_v2_message_search (rowid, text)
-        SELECT new.rowid, ${text.of("new")}
+        SELECT new.rowid, ${text("new")}
         WHERE ${indexedMessageCondition(sql, "new")}
           AND json_extract(new.payload_json, '$.text') IS NOT NULL;
       END
@@ -130,6 +130,20 @@ export const createMessageSearchTriggers = Effect.fn("MessageSearchIndex.createT
         DELETE FROM orchestration_v2_message_search WHERE rowid = old.rowid;
       END
     `;
+  },
+);
+
+/** Replaces the search triggers with their current definition, where the index exists. */
+export const recreateMessageSearchTriggers = Effect.fn("MessageSearchIndex.recreateTriggers")(
+  function* (sql: SqlClient.SqlClient) {
+    const index = yield* sql`
+      SELECT 1 FROM sqlite_master WHERE name = 'orchestration_v2_message_search'
+    `;
+    if (index.length === 0) return;
+    yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+    yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
+    yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
+    yield* createMessageSearchTriggers(sql);
   },
 );
 
@@ -157,7 +171,7 @@ export const rebuildMessageSearch = Effect.fn("MessageSearchIndex.rebuild")(func
       `;
       yield* sql`
         INSERT INTO orchestration_v2_message_search (rowid, text)
-        SELECT messages.rowid, ${text.of("messages")}
+        SELECT messages.rowid, ${text("messages")}
         FROM orchestration_v2_projection_messages AS messages
         WHERE ${indexedMessageCondition(sql)}
           AND json_extract(messages.payload_json, '$.text') IS NOT NULL

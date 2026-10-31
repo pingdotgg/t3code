@@ -5,7 +5,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { createMessageSearchTriggers } from "../../orchestration-v2/messageSearchIndex.ts";
+import { recreateMessageSearchTriggers } from "../../orchestration-v2/messageSearchIndex.ts";
 import { runMigrations } from "../Migrations.ts";
 
 const createdAt = "2026-10-01T00:00:00.000Z";
@@ -23,6 +23,14 @@ const quote = serializeAssistantCitation({
 });
 const readable =
   "A lighthouse guides ships safely through the darkness.\nComment: what are you talking about";
+const indexed = (sql: SqlClient.SqlClient, phrase: string) =>
+  sql<{ readonly message_id: string }>`
+    SELECT messages.message_id
+    FROM orchestration_v2_message_search AS search
+    INNER JOIN orchestration_v2_projection_messages AS messages
+      ON messages.rowid = search.rowid
+    WHERE orchestration_v2_message_search MATCH ${phrase}
+  `.pipe(Effect.map((rows) => rows.map((row) => row.message_id)));
 
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
   "077_ProjectionMessageSearchText",
@@ -79,18 +87,10 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
         assert.equal(searchText.get("page-500"), readable);
 
         // Messages indexed as stored are indexed again as they read.
-        const indexed = (phrase: string) =>
-          sql<{ readonly message_id: string }>`
-            SELECT messages.message_id
-            FROM orchestration_v2_message_search AS search
-            INNER JOIN orchestration_v2_projection_messages AS messages
-              ON messages.rowid = search.rowid
-            WHERE orchestration_v2_message_search MATCH ${phrase}
-          `.pipe(Effect.map((rows) => rows.map((row) => row.message_id)));
-        assert.deepEqual(yield* indexed('"résumé"'), ["accented"]);
-        assert.deepEqual(yield* indexed(`"kittiwake's"`), ["accented"]);
-        assert.deepEqual(yield* indexed('"beacon01"'), []);
-        assert.lengthOf(yield* indexed('"what are you talking about"'), 502);
+        assert.deepEqual(yield* indexed(sql, '"résumé"'), ["accented"]);
+        assert.deepEqual(yield* indexed(sql, `"kittiwake's"`), ["accented"]);
+        assert.deepEqual(yield* indexed(sql, '"beacon01"'), []);
+        assert.lengthOf(yield* indexed(sql, '"what are you talking about"'), 502);
       }),
     );
 
@@ -98,11 +98,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* runMigrations();
-        // As migration 74 does.
-        yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
-        yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
-        yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
-        yield* createMessageSearchTriggers(sql);
+        yield* recreateMessageSearchTriggers(sql);
 
         yield* sql`
           INSERT INTO orchestration_v2_projection_messages (
@@ -114,17 +110,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
             ${`${readable} lantern recreated`}
           )
         `;
-        const indexed = yield* sql<{ readonly message_id: string }>`
-          SELECT messages.message_id
-          FROM orchestration_v2_message_search AS search
-          INNER JOIN orchestration_v2_projection_messages AS messages
-            ON messages.rowid = search.rowid
-          WHERE orchestration_v2_message_search MATCH '"talking about lantern recreated"'
-        `;
-        assert.deepEqual(
-          indexed.map((row) => row.message_id),
-          ["recreated"],
-        );
+        assert.deepEqual(yield* indexed(sql, '"talking about lantern recreated"'), ["recreated"]);
       }),
     );
   },
