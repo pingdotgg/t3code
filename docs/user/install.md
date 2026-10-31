@@ -115,7 +115,9 @@ from npm, it stays as it is.
 Choose a WSL distro in **Settings → Sharing & access** to run agents and projects
 there. Install the provider CLIs inside that distro. T3 Code installs its own
 server runtime there automatically; the first launch after an app update can
-take longer.
+take longer. Browser tabs then run in a headless Chrome inside the distro, so
+your agents see the same page you do, and sign-ins from the desktop browser
+don't carry over. See [browser on a remote environment](remote-access.md#browser-on-a-remote-environment).
 
 ### Open a project from a terminal
 

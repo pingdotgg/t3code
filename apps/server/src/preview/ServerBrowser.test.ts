@@ -563,6 +563,26 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a server with no desktop channel marks its tabs headless", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+
+      expect(sessions.find((session) => session.tabId === tabId)?.headless).toBe(true);
+    }),
+  ).pipe(
+    Effect.provide(
+      ServerBrowser.layer.pipe(
+        // The test config has no desktop browser fds, like a WSL backend.
+        Layer.provideMerge(DesktopChannel.layer),
+        Layer.provideMerge(dependencies),
+      ),
+    ),
+  ),
+);
+
 it.live.each([
   { method: "goto" as const, message: { type: "navigate", url: "http://10.255.255.1/" } },
   { method: "goBack" as const, message: { type: "history", delta: -1 } },
