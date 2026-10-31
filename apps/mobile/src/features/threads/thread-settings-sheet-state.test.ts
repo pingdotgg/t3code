@@ -200,9 +200,11 @@ describe("thread settings sheet state", () => {
     const unrelatedUpdate = withHiddenModelOverrides(groups(false), environmentId, succeeded);
     expect(isHidden(unrelatedUpdate)).toBe(true);
     expect(unrelatedUpdate.overrides).toBe(succeeded);
+    expect(unrelatedUpdate.pendingHiddenKeys.has(model.key)).toBe(true);
     const confirmed = withHiddenModelOverrides(groups(true), environmentId, succeeded);
     expect(isHidden(confirmed)).toBe(true);
     expect(confirmed.overrides.size).toBe(0);
+    expect(confirmed.pendingHiddenKeys.size).toBe(0);
     const confirmedDuringWrite = withHiddenModelOverrides(groups(true), environmentId, overrides);
     expect(
       settleHiddenModelOverride(confirmedDuringWrite.overrides, key, override, true).size,

@@ -473,7 +473,13 @@ function ThreadSettingsSessionProvider(
     const baseline = environmentId
       ? registry.get(environmentServerConfigsAtom).get(environmentId)?.settings
       : undefined;
-    if (!baseline || !environmentId || !option.canHide || pendingHidden.current.has(option.key))
+    if (
+      !baseline ||
+      !environmentId ||
+      !option.canHide ||
+      pendingHidden.current.has(option.key) ||
+      visibility.pendingHiddenKeys.has(option.key)
+    )
       return;
     const overrideKey = hiddenModelOverrideKey(environmentId, option.selection);
     const override = { hidden: !option.isHidden };
@@ -635,7 +641,7 @@ function ThreadSettingsSessionProvider(
     manageHidden,
     setManageHidden,
     toggleHidden,
-    pendingHiddenKeys,
+    pendingHiddenKeys: new Set([...pendingHiddenKeys, ...visibility.pendingHiddenKeys]),
     runtimeMode: compatibleRuntimeMode,
     runtimeModeChoices,
     onUpdateRuntimeMode: props.onUpdateRuntimeMode,

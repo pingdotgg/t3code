@@ -101,7 +101,9 @@ export function withHiddenModelOverrides(
   overrides: ReadonlyMap<string, HiddenModelOverride>,
   includeHidden = true,
 ) {
-  if (!environmentId || overrides.size === 0) return { providerGroups: groups, overrides };
+  const pendingHiddenKeys = new Set<string>();
+  if (!environmentId || overrides.size === 0)
+    return { providerGroups: groups, overrides, pendingHiddenKeys };
   let reconciled: Map<string, HiddenModelOverride> | undefined;
   const providerGroups = groups
     .map((group) => ({
@@ -111,6 +113,8 @@ export function withHiddenModelOverrides(
         const override = model.canHide ? overrides.get(key) : undefined;
         if (override && override.hidden === (model.isHidden === true)) {
           (reconciled ??= new Map(overrides)).delete(key);
+        } else if (override) {
+          pendingHiddenKeys.add(model.key);
         }
         const effective =
           override && override.hidden !== (model.isHidden === true)
@@ -120,7 +124,7 @@ export function withHiddenModelOverrides(
       }),
     }))
     .filter((group) => group.models.length > 0);
-  return { providerGroups, overrides: reconciled ?? overrides };
+  return { providerGroups, overrides: reconciled ?? overrides, pendingHiddenKeys };
 }
 
 export function settleHiddenModelOverride(
