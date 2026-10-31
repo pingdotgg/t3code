@@ -1801,21 +1801,16 @@ function ImportCandidateRow({
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/40 has-disabled:cursor-default",
+        "flex cursor-pointer items-center gap-3 rounded-control border border-border surface-card px-3 py-2.5 has-disabled:cursor-default",
         nested && "pl-8",
       )}
     >
       <Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
       <Tooltip>
-        <TooltipTrigger
-          render={<span className="flex min-w-0 flex-1 items-baseline gap-2 truncate" />}
-        >
+        <TooltipTrigger render={<span className="flex min-w-0 flex-1 flex-col gap-0.5" />}>
           {label !== undefined ? <span className="truncate text-label">{label}</span> : null}
           {path !== undefined ? (
-            <ProjectPathText
-              path={path}
-              className={label === undefined ? "text-meta" : "text-caption text-muted-foreground"}
-            />
+            <ProjectPathText path={path} className="w-full text-meta text-muted-foreground" />
           ) : null}
         </TooltipTrigger>
         <TooltipPopup variant="code">{candidate.path}</TooltipPopup>
@@ -1850,22 +1845,22 @@ function ImportRowMeta({
   const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
   const age = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
   return (
-    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-meta text-muted-foreground tabular-nums">
-      {AgentSessionSource.literals.map((source) => (
-        <span key={source} className="flex size-4 items-center justify-center">
-          {sources?.includes(source) ? (
-            <span role="img" aria-label={IMPORT_SOURCE_NAMES[source]}>
-              <ProviderInstanceIcon
-                driverKind={ProviderDriverKind.make(source)}
-                displayName={IMPORT_SOURCE_NAMES[source]}
-                iconClassName="size-3"
-              />
-            </span>
-          ) : null}
+    <span className="ml-auto flex shrink-0 flex-col items-end gap-0.5 text-meta text-muted-foreground tabular-nums">
+      <span className="flex items-center gap-1">
+        {sources?.map((source) => (
+          <span key={source} role="img" aria-label={IMPORT_SOURCE_NAMES[source]}>
+            <ProviderInstanceIcon
+              driverKind={ProviderDriverKind.make(source)}
+              displayName={IMPORT_SOURCE_NAMES[source]}
+              iconClassName="size-3"
+            />
+          </span>
+        ))}
+        <span>
+          {threadCount} {threadCount === 1 ? "conversation" : "conversations"}
         </span>
-      ))}
-      <span className="text-right">{threadCount}</span>
-      <span className="text-right whitespace-nowrap">{age}</span>
+      </span>
+      <span className="text-meta text-muted-foreground">{age}</span>
     </span>
   );
 }
