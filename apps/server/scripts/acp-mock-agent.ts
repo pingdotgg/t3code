@@ -1356,19 +1356,17 @@ const program = Effect.gen(function* () {
             status: "in_progress",
           },
         });
-        if (activeToolOutcome !== undefined) {
-          yield* agent.client.sessionUpdate({
-            sessionId: requestedSessionId,
-            update: {
-              sessionUpdate: "tool_call_update",
-              toolCallId: "tool-call-pending-wait",
-              title: "Waiting for task",
-              kind: "other",
-              status: "pending",
-              rawInput: { taskId: "framer" },
-            },
-          });
-        }
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-pending-wait",
+            title: "Waiting for task",
+            kind: "other",
+            status: "pending",
+            rawInput: { taskId: "framer" },
+          },
+        });
         if (activeToolOutcome === "failed") {
           return yield* AcpError.AcpRequestError.internalError("Prompt failed with an open tool");
         }

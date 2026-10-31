@@ -3529,12 +3529,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* rearmDeferredFinalize(context);
             return;
           }
-          if (backgroundTaskId !== undefined) {
+          if (backgroundTaskId !== undefined && projectedStatus === undefined) {
             context.toolCallIdsByBackgroundTaskId.set(backgroundTaskId, toolCall.toolCallId);
             if (flavor.isPersistentBackgroundTool?.(toolCall) === true) {
               context.persistentBackgroundTaskIds.add(backgroundTaskId);
             }
-            const backgroundStatus = projectedStatus ?? toolStatus(toolCall.status);
+            const backgroundStatus = toolStatus(toolCall.status);
             yield* setBackgroundTaskRunning(
               backgroundTaskId,
               backgroundStatus === "pending" || backgroundStatus === "running",
@@ -7142,9 +7142,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (settledStatus === "completed") {
             yield* terminalizeOpenForegroundTools(context);
-          } else {
-            // Provider-side cancellation and prompt failures may omit final tool updates.
-            // Close their run-owned items before settlement so they cannot become phantom work.
+          } else if (options?.childTurnsContinue !== true) {
             yield* terminalizeOpenRunOwnedItems(context, {
               terminalizeSubagents: directStopQuarantine,
               toolStatus: settledStatus === "failed" ? "failed" : "interrupted",

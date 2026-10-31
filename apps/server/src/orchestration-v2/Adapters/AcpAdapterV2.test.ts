@@ -4982,19 +4982,36 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live.each(["cancelled", "failed", "end_turn"] as const)(
-    "closes unfinished ACP tools before a %s turn settles",
-    (outcome) =>
+  it.live.each([
+    { outcome: "cancelled", background: false },
+    { outcome: "failed", background: false },
+    { outcome: "end_turn", background: false },
+    { outcome: "cancelled", background: true },
+    { outcome: "failed", background: true },
+  ] as const)(
+    "closes unfinished ACP tools before a $outcome turn settles (background: $background)",
+    ({ outcome, background }) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const instanceId = ProviderInstanceId.make("acp-unfinished-tool");
         const threadId = ThreadId.make("thread-acp-unfinished-tool");
+        let applyMutation: AcpAdapterV2ExtensionContext["applyBackgroundTaskMutation"] | undefined;
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
+          continuationRequests: { offer: () => Effect.void },
           flavor: {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
+            enablePostSettleContinuation: background,
+            extractBackgroundTaskId: (tool) =>
+              background && tool.toolCallId === "tool-call-long-running-1"
+                ? "surviving-task"
+                : undefined,
+            registerExtensions: (context) =>
+              Effect.sync(() => {
+                applyMutation = context.applyBackgroundTaskMutation;
+              }),
             makeRuntime: makeMockRuntime({
               childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
               mockAgentPath: yield* path.fromFileUrl(
@@ -5063,6 +5080,17 @@ describe("AcpAdapterV2", () => {
           events.find((event) => event.type === "turn.terminal")?.status,
           expectedStatus,
         );
+        if (background) {
+          assert.ok(runtime.hasPendingBackgroundWork);
+          assert.ok(applyMutation);
+          assert.isTrue(yield* runtime.hasPendingBackgroundWork);
+          yield* applyMutation({
+            sessionId: "mock-session-1",
+            taskId: "surviving-task",
+            status: "completed",
+          });
+          assert.isFalse(yield* runtime.hasPendingBackgroundWork);
+        }
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
