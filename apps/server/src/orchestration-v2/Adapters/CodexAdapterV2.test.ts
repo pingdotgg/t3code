@@ -1150,6 +1150,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         transcript.scenario,
       ).pipe(Effect.orDie);
       const changes = yield* makeChangeSignal;
+      const usageLimitsUpdates: Array<
+        Parameters<NonNullable<CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"]>>[0]
+      > = [];
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
       const driver = yield* CodexReplay.makeReplayDriver(
@@ -1196,6 +1199,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         fileSystem,
         idAllocator,
         serverConfig,
+        onUsageLimits: (update) =>
+          Effect.sync(() => {
+            usageLimitsUpdates.push(update);
+          }),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -1259,6 +1266,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         threadId,
         serverConfig,
         events,
+        usageLimitsUpdates,
         continuationRequests,
         terminalEvents,
         subagentUpdates,
@@ -5440,6 +5448,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               event.turnItem.failure.resetAt === resetAt,
           );
           assert.isDefined(item);
+          if (scenario.name === "stale-read" || scenario.name === "empty-read") {
+            assert.deepEqual(
+              harness.usageLimitsUpdates
+                .at(-1)
+                ?.windows.map(({ id, usedPercent, resetsAt }) => ({ id, usedPercent, resetsAt })),
+              [
+                { id: "primary", usedPercent: 100, resetsAt: "2033-05-18T03:33:20.000Z" },
+                { id: "secondary", usedPercent: 100, resetsAt: resetAt },
+              ],
+            );
+          }
         }
         if (scenario.name === "retry") assert.equal(terminal.retry?.attempt, 1);
         if (scenario.name === "chatgpt-workspace-limit") {

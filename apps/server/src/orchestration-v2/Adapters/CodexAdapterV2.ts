@@ -5769,9 +5769,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (Option.isSome(response)) {
               const snapshot =
                 response.value.rateLimitsByLimitId?.codex ?? response.value.rateLimits;
-              yield* Ref.update(rateLimitSnapshot, (previous) =>
+              const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
                 mergeCodexRateLimits(previous, snapshot),
               );
+              const update = codexRateLimitsToUpdate(snapshot, previous);
+              if (update && adapterOptions.onUsageLimits) {
+                const checkedAt = DateTime.formatIso(yield* DateTime.now);
+                yield* adapterOptions.onUsageLimits({ ...update, checkedAt });
+              }
             }
             yield* backfillUsageLimitResetAt(
               codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
