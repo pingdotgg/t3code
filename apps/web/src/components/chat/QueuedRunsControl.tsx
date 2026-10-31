@@ -614,7 +614,7 @@ function QueuedMessage(props: {
                 Open automation
               </InlineButton>
             ) : null}
-            <span className="hidden @min-[600px]/composer-surface:inline">
+            <span className="sr-only">
               <TimelineRowTimestamp
                 createdAt={DateTime.formatIso(props.message.createdAt)}
                 timestampFormat={props.timestampFormat}
