@@ -286,8 +286,21 @@ describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");
     expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
+    expect(decodeClientSettings({}).notificationProjects).toEqual([]);
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationProjects");
+  });
+
+  it("round-trips the chosen notification projects", () => {
+    const notificationProjects = ["environment-1:project-a", "environment-2:project-a"];
+    const settings = decodeClientSettings({ notificationProjects });
+
+    expect(settings.notificationProjects).toEqual(notificationProjects);
+    expect(encodeClientSettings(settings).notificationProjects).toEqual(notificationProjects);
+    expect(decodeClientSettingsPatch({ notificationProjects: [] })).toEqual({
+      notificationProjects: [],
+    });
   });
 });
 

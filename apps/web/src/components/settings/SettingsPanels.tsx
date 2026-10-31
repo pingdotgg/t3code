@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { NotificationSettings } from "./NotificationSettings";
+import { NotificationProjectsSettings, NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -453,6 +453,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.notificationMode !== DEFAULT_UNIFIED_SETTINGS.notificationMode
       ? ["Thread notifications"]
       : []),
+    ...(settings.notificationProjects.length > 0 ? ["Notification projects"] : []),
     ...(settings.inAppNotificationsEnabled !== DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled
       ? ["In-app notifications"]
       : []),
@@ -613,6 +614,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
+      notificationProjects: DEFAULT_UNIFIED_SETTINGS.notificationProjects,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
@@ -782,6 +784,9 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        {settings.notificationMode !== "off" || settings.inAppNotificationsEnabled ? (
+          <NotificationProjectsSettings />
+        ) : null}
       </SettingsSection>
 
       <SettingsSection id="sidebar" title="Sidebar">

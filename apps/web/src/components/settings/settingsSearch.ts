@@ -524,6 +524,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
+    id: "notification-projects",
+    title: "Notification projects",
+    to: "/settings/general",
+    targetId: "thread-notifications",
+    searchTerms: ["notification sound alert toast filter only some chosen selected projects"],
+  },
+  {
     id: "in-app-notifications",
     title: "In-app notifications",
     to: "/settings/general",

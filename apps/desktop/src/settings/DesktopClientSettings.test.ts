@@ -19,6 +19,7 @@ import * as DesktopClientSettings from "./DesktopClientSettings.ts";
 const clientSettings: ClientSettings = {
   ...DEFAULT_CLIENT_SETTINGS,
   notificationMode: "notifications-and-sound",
+  notificationProjects: ["environment-1:project-a"],
   inAppNotificationsEnabled: true,
   appearanceContrast: 100,
   browserDefaultViewport: { _tag: "preset", width: 1024, height: 600, presetId: "nest-hub" },

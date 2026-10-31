@@ -11,6 +11,7 @@ import { fakeTimers, stubGlobal } from "../../test/render";
 const state = vi.hoisted(() => ({
   mode: "notifications",
   inApp: false,
+  projects: [] as ReadonlyArray<string>,
   toast: vi.fn(),
   shells: null as unknown as { set: (id: string, value: unknown) => void },
   navigate: vi.fn(),
@@ -67,6 +68,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => ({
   getClientSettings: (() => ({
     notificationMode: state.mode,
     inAppNotificationsEnabled: state.inApp,
+    notificationProjects: state.projects,
   })) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
@@ -189,6 +191,7 @@ function setup() {
   stack.defer(() => testRegistry.dispose());
   state.mode = "notifications";
   state.inApp = false;
+  state.projects = [];
   state.settingsListeners.clear();
   registry.set(environmentIdsAtom, ["one", "two"]);
   state.shells.set("one", shell());
@@ -259,4 +262,21 @@ it("holds a completion through a continuation gap and notifies once it settles",
   expect(TestNotification.sent).toEqual([]);
   await vi.advanceTimersByTimeAsync(1);
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
+});
+
+it("sounds completions only for the chosen projects", async () => {
+  await using app = setup();
+  state.mode = "sound";
+  state.projects = ["two:project"];
+  app.start();
+  using _timers = fakeTimers();
+  const completed = shell({
+    latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+  });
+  state.shells.set("one", completed);
+  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+  expect(state.sound).not.toHaveBeenCalled();
+  state.shells.set("two", completed);
+  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+  expect(state.sound).toHaveBeenCalledTimes(1);
 });

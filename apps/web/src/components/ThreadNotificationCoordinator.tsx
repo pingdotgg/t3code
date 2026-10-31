@@ -1,3 +1,4 @@
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
@@ -79,7 +80,18 @@ export function startThreadNotifications(
     kind: ThreadNotificationKind,
   ) => {
     const { thread, status } = state;
-    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const {
+      notificationMode: mode,
+      inAppNotificationsEnabled,
+      notificationProjects,
+    } = getClientSettings();
+    if (
+      notificationProjects.length > 0 &&
+      !notificationProjects.includes(
+        scopedProjectKey(scopeProjectRef(environmentId, thread.projectId)),
+      )
+    )
+      return;
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
       environmentId?: string;
       threadId?: string;
