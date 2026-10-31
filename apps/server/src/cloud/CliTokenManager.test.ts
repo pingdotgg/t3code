@@ -29,12 +29,16 @@ interface RecordedTokenRequest {
 }
 
 const TestIdTokenHeaderJson = Schema.fromJsonString(Schema.Struct({ alg: Schema.Literal("none") }));
-const TestIdTokenPayloadJson = Schema.fromJsonString(Schema.Struct({ email: Schema.String }));
+const TestIdTokenPayloadJson = Schema.fromJsonString(
+  Schema.Struct({ email: Schema.String, sub: Schema.String }),
+);
 const encodeTestIdTokenHeader = Schema.encodeSync(TestIdTokenHeaderJson);
 const encodeTestIdTokenPayload = Schema.encodeSync(TestIdTokenPayloadJson);
 const idTokenWithEmail = (() => {
   const header = Base64Url.encode(encodeTestIdTokenHeader({ alg: "none" }));
-  const payload = Base64Url.encode(encodeTestIdTokenPayload({ email: "theo@example.test" }));
+  const payload = Base64Url.encode(
+    encodeTestIdTokenPayload({ email: "theo@example.test", sub: "user_theo" }),
+  );
   return `${header}.${payload}.`;
 })();
 
@@ -107,7 +111,12 @@ const tokenRequests = (requests: ReadonlyArray<RecordedTokenRequest>) =>
   requests.filter((request) => request.url.endsWith("/oauth/token"));
 
 const expiredStoredToken = new TextEncoder().encode(
-  JSON.stringify({ accessToken: "expired", refreshToken: "refresh-token-1", expiresAtEpochMs: 0 }),
+  JSON.stringify({
+    accessToken: "expired",
+    refreshToken: "refresh-token-1",
+    expiresAtEpochMs: 0,
+    subject: "user_theo",
+  }),
 );
 
 const provideRefreshManager = (
@@ -202,6 +211,7 @@ it.effect(
         const token = Option.getOrThrow(yield* Fiber.join(reader));
         assert.equal(token.refreshToken, "rotated-refresh");
         assert.equal(token.accessToken, "rotated-access");
+        assert.equal(token.subject, "user_theo");
       }).pipe(
         Effect.ensuring(Deferred.succeed(releaseRequest, undefined)),
         Effect.ensuring(Deferred.succeed(releasePersist, undefined)),
@@ -277,6 +287,7 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
       assert.equal(token.accessToken, "access-token-1");
       assert.equal(token.refreshToken, "refresh-token-1");
       assert.equal(token.identity, "theo@example.test");
+      assert.equal(token.subject, "user_theo");
       assert.equal(identity, "theo@example.test");
 
       const authorization = server.requests[0]!;
