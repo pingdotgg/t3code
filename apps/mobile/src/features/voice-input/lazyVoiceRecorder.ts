@@ -1,4 +1,7 @@
-import type { VoiceRecorder } from "@t3tools/client-runtime/voice-input";
+import {
+  throwIfVoiceTranscriptionAborted,
+  type VoiceRecorder,
+} from "@t3tools/client-runtime/voice-input";
 
 type Subscription = { remove(): void };
 
@@ -19,7 +22,8 @@ export interface NativeVoiceRecorder<TStatus, TRecorderState> {
     listener: (status: TStatus) => void,
   ): Subscription;
   getAvailableInputs(): ReadonlyArray<VoiceRecordingInput>;
-  setInput(uid: string): void;
+  setInput(uid: string): void | Promise<void>;
+  cancelInputSelection?(): void;
   release(): void;
 }
 
@@ -50,19 +54,33 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
       if (recorder) return recorder.uri;
       return retired ? retired.uri : retiredUri;
     },
-    prepareToRecordAsync() {
+    prepareToRecordAsync(signal) {
       if (!recorder) {
         recorder = input.create();
         subscription = recorder.addListener("recordingStatusUpdate", input.onStatus);
       }
       const prepared = recorder;
       return track(
-        prepared.prepareToRecordAsync().then(() => {
+        prepared.prepareToRecordAsync().then(async () => {
+          if (signal) throwIfVoiceTranscriptionAborted(signal);
           if (!input.selectInput) return;
+          let selected: VoiceRecordingInput | null;
           try {
-            const selected = input.selectInput(prepared.getAvailableInputs());
-            if (selected) prepared.setInput(selected.uid);
-          } catch {}
+            selected = input.selectInput(prepared.getAvailableInputs());
+          } catch {
+            return;
+          }
+          if (!selected) return;
+          const abort = () => prepared.cancelInputSelection?.();
+          signal?.addEventListener("abort", abort, { once: true });
+          try {
+            try {
+              await prepared.setInput(selected.uid);
+            } catch {}
+            if (signal) throwIfVoiceTranscriptionAborted(signal);
+          } finally {
+            signal?.removeEventListener("abort", abort);
+          }
         }),
       );
     },
@@ -79,6 +97,7 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
     release() {
       const released = recorder;
       if (!released) return;
+      released.cancelInputSelection?.();
       recorder = null;
       subscription?.remove();
       subscription = null;

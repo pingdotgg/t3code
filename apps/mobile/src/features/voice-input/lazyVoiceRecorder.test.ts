@@ -26,7 +26,8 @@ function createNativeRecorder(uri: string) {
       { uid: "car", name: "CarPlay", type: "CarAudio" },
       { uid: "built-in", name: "iPhone Microphone", type: "MicrophoneBuiltIn" },
     ]),
-    setInput: vi.fn((_uid: string) => undefined),
+    setInput: vi.fn((_uid: string): void | Promise<void> => undefined),
+    cancelInputSelection: vi.fn(() => undefined),
     release: vi.fn(),
     emit: (status: Status) => listeners.forEach((listener) => listener(status)),
   };
@@ -34,12 +35,14 @@ function createNativeRecorder(uri: string) {
 
 function createHarness(
   selectInput?: (inputs: ReadonlyArray<VoiceRecordingInput>) => VoiceRecordingInput | null,
+  configure?: (native: ReturnType<typeof createNativeRecorder>) => void,
 ) {
   const created: Array<ReturnType<typeof createNativeRecorder>> = [];
   const statuses: Status[] = [];
   const recorder = createLazyVoiceRecorder({
     create: () => {
       const native = createNativeRecorder(`file:///voice-${created.length}.m4a`);
+      configure?.(native);
       created.push(native);
       return native;
     },
@@ -61,6 +64,15 @@ describe("createLazyVoiceRecorder", () => {
       throw new Error("Preferred input not found");
     });
     await expect(disconnected.recorder.prepareToRecordAsync()).resolves.toBeUndefined();
+
+    const failure = new Error("Input routing timed out");
+    const timedOut = createHarness(
+      (inputs) => inputs[1] ?? null,
+      (native) => {
+        native.setInput.mockImplementationOnce(() => Promise.reject(failure));
+      },
+    );
+    await expect(timedOut.recorder.prepareToRecordAsync()).resolves.toBeUndefined();
   });
 
   it("forwards status events until the recorder is released", async () => {
@@ -76,8 +88,12 @@ describe("createLazyVoiceRecorder", () => {
   });
 
   describe("with the voice input controller", () => {
-    function createController(granted: boolean) {
-      const harness = createHarness();
+    function createController(
+      granted: boolean,
+      selectInput?: (inputs: ReadonlyArray<VoiceRecordingInput>) => VoiceRecordingInput | null,
+      configure?: (native: ReturnType<typeof createNativeRecorder>) => void,
+    ) {
+      const harness = createHarness(selectInput, configure);
       const deleted: string[] = [];
       const controller = new VoiceInputController({
         recorder: harness.recorder,
@@ -107,6 +123,36 @@ describe("createLazyVoiceRecorder", () => {
 
       expect(controller.currentState.phase).toBe("error");
       expect(created).toHaveLength(0);
+    });
+
+    it("cancels a pending input route before recording and deletes the prepared audio", async () => {
+      const selecting = Promise.withResolvers<void>();
+      const selected = Promise.withResolvers<void>();
+      let routeActive = false;
+      const harness = createController(
+        true,
+        (inputs) => inputs[1] ?? null,
+        (native) => {
+          native.setInput.mockImplementationOnce(() => {
+            routeActive = true;
+            selecting.resolve();
+            return selected.promise;
+          });
+          native.cancelInputSelection.mockImplementation(() => {
+            routeActive = false;
+            selected.reject(new Error("Input selection canceled"));
+          });
+        },
+      );
+      const starting = harness.controller.start();
+      await selecting.promise;
+      harness.controller.cancel();
+      await starting;
+
+      expect(routeActive).toBe(false);
+      expect(harness.controller.currentState.phase).toBe("idle");
+      expect(harness.deleted).toEqual(["file:///voice-0.m4a"]);
+      harness.recorder.release();
     });
   });
 });
