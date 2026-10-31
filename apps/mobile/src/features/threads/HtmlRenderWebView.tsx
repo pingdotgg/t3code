@@ -19,13 +19,13 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import {
+  HTML_RENDER_INLINE_SCRIPT,
+  readHtmlRenderInlineMessage,
+} from "./html-render-webview-bridge";
 
 const ROW_BOTTOM_MARGIN = 8;
 const FULL_SCREEN_GUTTER = 16;
-
-export function htmlRenderRowHeight(frameHeight: number) {
-  return frameHeight + ROW_BOTTOM_MARGIN;
-}
 
 function useHtmlRenderTheme() {
   const { themeId, themeAppearance, themeVariables, systemColorsActive } =
@@ -45,31 +45,9 @@ function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
   );
 }
 
-const OVERFLOW_MESSAGE_TYPE = "t3-html-render-overflow";
-
-const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,o=x+","+y;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
-
 type Overflow = { readonly x: boolean; readonly y: boolean };
 
 const NO_OVERFLOW: Overflow = { x: false, y: false };
-
-function readOverflowMessage(data: string): Overflow | null {
-  try {
-    const message: unknown = JSON.parse(data);
-    return typeof message === "object" &&
-      message !== null &&
-      "type" in message &&
-      message.type === OVERFLOW_MESSAGE_TYPE &&
-      "x" in message &&
-      typeof message.x === "boolean" &&
-      "y" in message &&
-      typeof message.y === "boolean"
-      ? { x: message.x, y: message.y }
-      : null;
-  } catch {
-    return null;
-  }
-}
 
 const withoutFragment = (url: string) => url.split("#", 1)[0];
 
@@ -78,6 +56,7 @@ export function HtmlRenderWebView(props: {
   readonly title: string;
   readonly nested: boolean;
   readonly onLoadError?: () => void;
+  readonly onContentHeight?: (height: number | undefined) => void;
 }) {
   const theme = useHtmlRenderTheme();
   const [initialTheme] = useState(theme);
@@ -101,6 +80,7 @@ export function HtmlRenderWebView(props: {
       return;
     }
     shownTheme.current = null;
+    props.onContentHeight?.(undefined);
     setLoaded(false);
     setOverflow(NO_OVERFLOW);
     setGeneration((value) => value + 1);
@@ -152,10 +132,14 @@ export function HtmlRenderWebView(props: {
         onRenderProcessGone={restart}
         {...(props.nested
           ? {
-              injectedJavaScript: OVERFLOW_SCRIPT,
+              injectedJavaScript: HTML_RENDER_INLINE_SCRIPT,
               onMessage: (event: WebViewMessageEvent) => {
-                const next = readOverflowMessage(event.nativeEvent.data);
-                if (next !== null) setOverflow(next);
+                const next = readHtmlRenderInlineMessage(event.nativeEvent.data);
+                if (next === null) return;
+                setOverflow((current) =>
+                  current.x === next.x && current.y === next.y ? current : next,
+                );
+                props.onContentHeight?.(next.contentHeight);
               },
             }
           : {})}
@@ -178,7 +162,8 @@ export function ThreadHtmlRender(props: {
 }) {
   const navigation = useNavigation();
   const { attachmentId, title } = props.render;
-  const height = htmlRenderFrameHeight(props.render, props.frameWidth);
+  const [contentHeight, setContentHeight] = useState<number>();
+  const height = htmlRenderFrameHeight(props.render, props.frameWidth, contentHeight);
   const fileName = htmlRenderFileName(title);
   const resource = {
     _tag: "attachment" as const,
@@ -196,6 +181,7 @@ export function ThreadHtmlRender(props: {
   const [attempt, setAttempt] = useState(0);
   const retried = useRef(false);
   const handleLoadError = () => {
+    setContentHeight(undefined);
     if (retried.current) {
       setFailed(true);
       return;
@@ -218,6 +204,7 @@ export function ThreadHtmlRender(props: {
             title={title}
             nested
             onLoadError={handleLoadError}
+            onContentHeight={setContentHeight}
           />
         ) : failed || asset._tag === "Failure" ? (
           <Pressable
