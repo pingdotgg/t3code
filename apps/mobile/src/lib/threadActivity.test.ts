@@ -1549,18 +1549,23 @@ it("stops stranded thinking after a steer and follows the next thought or tool",
   expect(first.status).toBe("running");
 });
 
-it.each(["provider_error", "usage_limit"] as const)(
-  "keeps a historical %s failure and preceding work visible without disclosures",
-  (failureClass) => {
+it.each([
+  ["provider_error", null, "Provider error"],
+  ["usage_limit", "usageLimitExceeded", "Usage limit reached"],
+  ["usage_limit", "responseTooManyFailedAttempts", "Provider rate limit (HTTP 429)"],
+] as const)(
+  "keeps a historical %s / %s failure and preceding work visible without disclosures",
+  (failureClass, code, summary) => {
     const at = "2026-06-20T00:00:03.000Z";
     const error: OrchestrationV2TurnItem = {
       ...base("failure", at, 2),
       type: "error",
       status: "failed",
+      title: failureClass === "usage_limit" ? "Usage limit reached" : null,
       failure: {
         class: failureClass,
         message: "The provider stopped this turn.\nRetry later.",
-        code: null,
+        code,
         retryable: true,
       },
     };
@@ -1600,11 +1605,16 @@ it.each(["provider_error", "usage_limit"] as const)(
       "failure",
     ]);
     expect(activities.at(-1)).toMatchObject({
+      summary,
       detail: error.failure.message,
       createdAt: at,
       canExpand: false,
       prominent: true,
     });
+    const recovered = buildThreadFeed([
+      projected({ ...error, status: "completed", title: "Provider recovered" }, 0),
+    ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
+    expect(recovered[0]?.summary).toBe("Provider recovered");
   },
 );
 

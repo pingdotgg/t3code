@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
+  makeProviderRetryTurnItem,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
   ContextHandoffBudgetError,
   ContextHandoffBackgroundWorkError,
@@ -197,6 +198,48 @@ it("does not serialize arbitrary provider causes", () => {
     retryable: null,
   });
 });
+
+it.each([
+  ["usage_limit", "responseTooManyFailedAttempts", "Provider rate limit (HTTP 429)"],
+  ["usage_limit", "usageLimitExceeded", "Usage limit reached"],
+  ["usage_limit", "rateLimitExceeded", "Usage limit reached"],
+  ["provider_error", "responseTooManyFailedAttempts", "Provider error"],
+] as const)(
+  "titles %s / %s failures without changing recovery evidence",
+  (failureClass, code, title) => {
+    const failure = makeProviderFailure({
+      class: failureClass,
+      code,
+      message: "Provider explanation retained.",
+      retryable: null,
+    });
+    const occurredAt = DateTime.makeUnsafe("2026-10-28T15:03:08.000Z");
+    const base = {
+      driver: ProviderDriverKind.make("codex"),
+      threadId: ThreadId.make("thread:failure-title"),
+      runId: RunId.make("run:failure-title"),
+      nodeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:failure-title"),
+      providerTurnId: ProviderTurnId.make("provider-turn:failure-title"),
+      itemOrdinal: 1,
+      failure,
+    };
+    const terminal = makeProviderFailureTurnItem({ ...base, occurredAt });
+    const exhausted = makeProviderRetryTurnItem({
+      ...base,
+      retry: { attempt: 2, maxAttempts: null, retryDelayMs: null },
+      status: "failed",
+      startedAt: occurredAt,
+      updatedAt: occurredAt,
+    });
+    for (const item of [terminal, exhausted]) {
+      assert.equal(item.title, title);
+      assert.deepEqual(item.failure, failure);
+      assert.equal(item.status, "failed");
+      assert.isUndefined(item.failure.resetAt);
+    }
+  },
+);
 
 it.effect("keys terminal failure items by provider turn across retries and fallback paths", () =>
   Effect.gen(function* () {

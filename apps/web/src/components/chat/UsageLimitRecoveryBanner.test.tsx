@@ -9,6 +9,7 @@ const stoppedAt = new Date(2026, 9, 20, 12, 0);
 function bannerDescription(resetAt: Date, timestampFormat: TimestampFormat) {
   return usageLimitRecoveryBannerItem({
     runId: RunId.make("run-1"),
+    failureCode: "usageLimitExceeded",
     resetAt: resetAt.toISOString(),
     stoppedAt: stoppedAt.toISOString(),
     snoozedUntil: null,
@@ -19,6 +20,25 @@ function bannerDescription(resetAt: Date, timestampFormat: TimestampFormat) {
 }
 
 describe("usageLimitRecoveryBannerItem", () => {
+  it.each([
+    ["responseTooManyFailedAttempts", "Provider rate limit (HTTP 429)"],
+    ["usageLimitExceeded", "Usage limit reached"],
+  ] as const)("keeps %s manually recoverable without a reported reset", (failureCode, title) => {
+    const banner = usageLimitRecoveryBannerItem({
+      runId: RunId.make("run-1"),
+      failureCode,
+      resetAt: null,
+      stoppedAt: stoppedAt.toISOString(),
+      snoozedUntil: null,
+      recovery: null,
+      timestampFormat: "24-hour",
+      onChange: async () => {},
+    });
+    expect(banner.title).toBe(title);
+    expect(banner.description).toBe("No reset time reported; retry manually");
+    expect(banner.actions).toBeNull();
+  });
+
   it.each([
     ["12-hour", "Resets 5:30 PM"],
     ["24-hour", "Resets 17:30"],
