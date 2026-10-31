@@ -367,6 +367,7 @@ function CommandPaletteDialog(props: {
   return (
     <CommandDialogPopup
       surface={props.mode === "content" ? "dialog" : "palette"}
+      size={props.mode === "content" ? "content" : "default"}
       aria-label={
         props.mode === "files"
           ? "File picker"
