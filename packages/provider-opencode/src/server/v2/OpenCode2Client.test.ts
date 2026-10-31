@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as HttpClient from "effect/http/HttpClient";
@@ -45,3 +47,34 @@ describe("OpenCode2Client authorization", () => {
     }),
   );
 });
+
+it.effect("closes an event subscription that recovery has not started reading", () =>
+  Effect.gen(function* () {
+    const signals: Array<AbortSignal> = [];
+    const http = HttpClient.make((request, _url, signal) =>
+      Effect.sync(() => {
+        signals.push(signal);
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(": connected\n\n", {
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      }),
+    );
+    const opencode = yield* OpenCode2Client.make.pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    const connection = yield* opencode.connect({
+      baseUrl: "http://127.0.0.1:4096",
+      password: "test",
+    });
+    const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
+    yield* connection.events.pipe(Effect.provideService(Scope.Scope, scope), Effect.asVoid);
+    assert.isFalse(signals[0]!.aborted);
+    yield* Scope.close(scope, Exit.void);
+    assert.isTrue(signals[0]!.aborted);
+  }).pipe(Effect.scoped),
+);

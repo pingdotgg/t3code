@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Sse from "effect/encoding/Sse";
 import * as HttpClient from "effect/http/HttpClient";
@@ -58,7 +59,8 @@ export interface OpenCode2Api {
       OpenCode2StreamEvent,
       HttpClientError.HttpClientError | Sse.Retry | Sse.SseError | OpenCode2SilentStreamError
     >,
-    HttpClientError.HttpClientError
+    HttpClientError.HttpClientError,
+    Scope.Scope
   >;
 }
 
@@ -114,9 +116,13 @@ const undecodable = Effect.fnUntraced(function* (data: string) {
   return Result.failVoid;
 });
 
-const readEvents = HttpClient.get("/api/event", {
-  headers: { accept: "text/event-stream" },
-}).pipe(
+const readEvents = HttpClient.HttpClient.pipe(
+  // Recovery subscribes before reading history, so its stream may never be consumed.
+  Effect.flatMap((client) =>
+    HttpClient.withScope(client).get("/api/event", {
+      headers: { accept: "text/event-stream" },
+    }),
+  ),
   Effect.flatMap(HttpClientResponse.filterStatusOk),
   Effect.map((response) =>
     response.stream.pipe(
