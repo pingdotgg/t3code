@@ -117,11 +117,6 @@ export function WorkLogTarget({ children, mono = false }: { children: ReactNode;
   );
 }
 
-/** A group's one-line summary ("Read 3 files and ran 2 commands"): label type, muted. */
-export function WorkLogSummary({ children }: { children: ReactNode }) {
-  return <span className="block truncate text-label text-muted-foreground">{children}</span>;
-}
-
 const interactionClassName =
   "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
 
