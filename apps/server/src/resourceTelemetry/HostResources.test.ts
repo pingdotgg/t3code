@@ -150,4 +150,15 @@ describe("HostResources.layer", () => {
       ),
     ),
   );
+
+  it.effect("keeps host values when the cgroup has no limits", () =>
+    Effect.gen(function* () {
+      setup(0.25);
+      const snapshot = yield* read;
+
+      assert.strictEqual(snapshot.cpuCount, 8);
+      assert.closeTo(snapshot.cpuUtilization ?? Number.NaN, 0.25, 1e-9);
+      assert.strictEqual(snapshot.availableMemoryBytes, 2 * GiB);
+    }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),
+  );
 });
