@@ -233,7 +233,7 @@ function ProviderCommandArguments({
         <Button
           type="button"
           size="sm"
-          variant="outline"
+          variant="secondary"
           onClick={() => updateArguments([...rows, makeCommandArgumentDraftRow("")])}
         >
           <PlusIcon />
@@ -245,7 +245,7 @@ function ProviderCommandArguments({
         <div className="mt-3 min-w-0 space-y-2 pb-2">
           {rows.map((argument, index) =>
             managedReason !== undefined ? (
-              <code key={argument.id} className="block min-w-0 truncate text-xs">
+              <code key={argument.id} className="block min-w-0 truncate text-meta">
                 {argument.value}
               </code>
             ) : (

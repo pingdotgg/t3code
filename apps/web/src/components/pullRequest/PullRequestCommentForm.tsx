@@ -112,7 +112,7 @@ export function PullRequestCommentForm({
         {followUpAction === null ? null : (
           <Button
             size="xs"
-            variant={followUpAction === "close" ? "destructive-outline" : "outline"}
+            variant={followUpAction === "close" ? "destructive-outline" : "secondary"}
             disabled={body.trim().length === 0 || submitting !== null || actionPending}
             {...(followUpAction === "close"
               ? inlineConfirm.props("close", () => void submit("close"))
@@ -146,7 +146,7 @@ export function PullRequestCommentForm({
         )}
         <Button
           size="xs"
-          variant="outline"
+          variant="secondary"
           disabled={body.trim().length === 0 || submitting !== null || actionPending}
           onClick={() => void submit("comment")}
         >

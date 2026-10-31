@@ -279,7 +279,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               tooltipText={`Link created at ${formatAccessTimestamp(pairingLink.createdAt)}`}
               dotClassName="bg-warning"
             />
-            <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
+            <h3 className="text-sm font-medium text-strong-foreground">{primaryLabel}</h3>
           </div>
           <p className="text-xs text-muted-foreground">
             <Tooltip>
@@ -292,11 +292,11 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
           </p>
           {!credential ? (
-            <p className="text-2xs text-muted-foreground/70">
+            <p className="text-2xs text-dim-foreground">
               Create a new link to share from this client.
             </p>
           ) : shareablePairingUrl === null ? (
-            <p className="text-2xs text-muted-foreground/70">
+            <p className="text-2xs text-dim-foreground">
               Copy the token and pair from another client using this backend&apos;s reachable host.
             </p>
           ) : null}
@@ -305,7 +305,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           {shareablePairingUrl && canCopyToClipboard ? (
             <Button
               size="xs"
-              variant="outline"
+              variant="secondary"
               aria-expanded={isQrPanelOpen}
               aria-controls={qrPanelId}
               onClick={() => setIsQrPanelOpen((open) => !open)}
@@ -323,12 +323,12 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           >
             {!credential ? null : canCopyToClipboard ? (
               shareablePairingUrl ? null : (
-                <Button size="xs" variant="outline" onClick={handleCopyCode}>
+                <Button size="xs" variant="secondary" onClick={handleCopyCode}>
                   Copy code
                 </Button>
               )
             ) : (
-              <DialogTrigger render={<Button size="xs" variant="outline" />}>
+              <DialogTrigger render={<Button size="xs" variant="secondary" />}>
                 {shareablePairingUrl ? "Show link" : "Show code"}
               </DialogTrigger>
             )}
@@ -358,7 +358,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                   onClick={(event) => event.currentTarget.select()}
                 />
                 {isRevealValueUrl && isRevealValueQrShareable ? (
-                  <div className="flex justify-center rounded-xl border border-border/60 bg-muted/30 p-4">
+                  <div className="flex justify-center rounded-card border border-transparent surface-card-settings p-4">
                     <QRCodeSvg
                       value={revealValue}
                       size={132}
@@ -370,11 +370,11 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 ) : null}
               </DialogPanel>
               <DialogFooter variant="bare">
-                <Button variant="outline" onClick={() => setIsRevealDialogOpen(false)}>
+                <Button variant="secondary" onClick={() => setIsRevealDialogOpen(false)}>
                   Done
                 </Button>
                 {canCopyToClipboard ? (
-                  <Button variant="outline" onClick={handleCopyCode}>
+                  <Button variant="secondary" onClick={handleCopyCode}>
                     Copy code
                   </Button>
                 ) : null}
@@ -394,7 +394,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       {isQrPanelOpen && qrPairingUrl !== null ? (
         <div
           id={qrPanelId}
-          className="mt-3 flex flex-col gap-4 border-t border-border/50 pt-3 sm:flex-row sm:items-start sm:justify-between"
+          className="mt-3 flex flex-col gap-4 border-t border-border pt-3 sm:flex-row sm:items-start sm:justify-between"
         >
           <div className="min-w-0 flex-1 space-y-3">
             {endpointCopyOptions.length > 1 ? (
@@ -403,7 +403,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 role="radiogroup"
                 aria-label="Endpoint the pairing QR code and URL use"
               >
-                <p className="text-2xs text-muted-foreground/70">Reach this machine via</p>
+                <p className="text-2xs text-dim-foreground">Reach this machine via</p>
                 {endpointCopyOptions.map((option) => {
                   const isSelected = option.id === selectedQrOption?.id;
                   return (
@@ -415,8 +415,8 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                       className={cn(
                         "flex w-full items-baseline gap-2 rounded-lg border px-2.5 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                         isSelected
-                          ? "border-foreground/60 bg-muted/30"
-                          : "border-border/50 hover:bg-muted/20",
+                          ? "border-ring surface-selected"
+                          : "border-border hover:surface-ghost-hover",
                       )}
                       onClick={() => setQrEndpointId(option.id)}
                     >
@@ -428,7 +428,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                       >
                         {option.label}
                       </span>
-                      <span className="min-w-0 truncate text-2xs text-muted-foreground/70">
+                      <span className="min-w-0 truncate text-2xs text-dim-foreground">
                         {option.detail}
                       </span>
                     </button>
@@ -436,7 +436,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 })}
               </div>
             ) : null}
-            <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5">
+            <div className="flex items-center gap-2 rounded-control surface-well px-2.5 py-1.5">
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -471,8 +471,8 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               />
             </div>
           ) : (
-            <div className="flex size-[192px] shrink-0 items-center justify-center self-center rounded-xl border border-border/50 p-4 sm:self-start">
-              <p className="text-center text-2xs text-muted-foreground/70">
+            <div className="flex size-[192px] shrink-0 items-center justify-center self-center rounded-xl border border-border p-4 sm:self-start">
+              <p className="text-center text-2xs text-dim-foreground">
                 No QR for this endpoint. Another device scanning a loopback link would dial itself;
                 copy the URL for use on this machine instead.
               </p>
@@ -530,9 +530,9 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
               dotClassName={isLive ? "bg-success" : "bg-muted-foreground/30"}
               pingClassName={isLive ? "bg-success/60 duration-2000" : null}
             />
-            <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
+            <h3 className="text-sm font-medium text-strong-foreground">{primaryLabel}</h3>
             {clientSession.current ? (
-              <span className="text-3xs text-muted-foreground/80 rounded-md border border-border/50 bg-muted/50 px-1 py-0.5">
+              <span className="text-3xs text-dim-foreground rounded-md border border-border bg-muted/50 px-1 py-0.5">
                 This device
               </span>
             ) : null}
@@ -678,7 +678,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           </DialogHeader>
           <DialogPanel>
             <label className="block">
-              <span className="mb-1.5 block text-xs font-medium text-foreground">
+              <span className="mb-1.5 block text-xs font-medium text-strong-foreground">
                 Client label (optional)
               </span>
               <Input
@@ -692,7 +692,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
             <section className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-xs font-medium text-foreground">Permissions</h3>
+                  <h3 className="text-xs font-medium text-strong-foreground">Permissions</h3>
                   <p className="text-xs text-muted-foreground">
                     Limit what the paired client can do.
                   </p>
@@ -700,7 +700,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                 <div className="flex gap-1">
                   <Button
                     size="xs"
-                    variant="outline"
+                    variant="secondary"
                     disabled={isCreatingPairingLink}
                     onClick={() =>
                       setPairingScopes(
@@ -717,7 +717,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                   </Button>
                   <Button
                     size="xs"
-                    variant="outline"
+                    variant="secondary"
                     disabled={isCreatingPairingLink}
                     onClick={() =>
                       setPairingScopes(
@@ -731,12 +731,12 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                   </Button>
                 </div>
               </div>
-              <div className="divide-y divide-border/60 rounded-lg border border-input bg-muted/25">
+              <div className="divide-y divide-border rounded-control surface-well">
                 {PAIRING_SCOPE_OPTIONS.filter(({ scope }) => delegatableScopes.includes(scope)).map(
                   ({ scope, title, description }) => (
                     <label
                       key={scope}
-                      className="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40"
+                      className="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors hover:surface-ghost-hover"
                     >
                       <Checkbox
                         className="mt-0.5"
@@ -745,7 +745,9 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                         onCheckedChange={(checked) => togglePairingScope(scope, checked === true)}
                       />
                       <span className="min-w-0">
-                        <span className="block text-xs font-medium text-foreground">{title}</span>
+                        <span className="block text-xs font-medium text-strong-foreground">
+                          {title}
+                        </span>
                         <span className="block text-xs leading-snug text-muted-foreground">
                           {description}
                         </span>
@@ -757,7 +759,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
               {selectedScopes.length === 0 ? (
                 <p className="text-xs text-destructive">Select at least one permission.</p>
               ) : selectedScopes.includes(AuthAccessWriteScope) ? (
-                <p className="text-xs text-warning">
+                <p className="text-xs text-warning-foreground">
                   This client can create or revoke access for other devices.
                 </p>
               ) : null}
@@ -765,7 +767,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           </DialogPanel>
           <DialogFooter variant="bare">
             <Button
-              variant="outline"
+              variant="secondary"
               disabled={isCreatingPairingLink}
               onClick={() => setDialogOpen(false)}
             >
@@ -878,7 +880,7 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
       ) : null}
       <div className="flex min-h-6 min-w-0 flex-col gap-2 sm:-my-0.5 sm:flex-row sm:items-center">
         <div className="flex min-w-0 items-baseline gap-3">
-          <h3 className="shrink-0 text-sm leading-5 font-medium text-foreground">
+          <h3 className="shrink-0 text-sm leading-5 font-medium text-strong-foreground">
             {endpoint.label}
           </h3>
           {shouldShowEndpointUrl ? (
@@ -894,7 +896,7 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
             </Tooltip>
           ) : null}
           {!isAvailable ? (
-            <span className="shrink-0 rounded-md border border-border/70 px-1 py-0.5 text-3xs text-muted-foreground">
+            <span className="shrink-0 rounded-md border border-border px-1 py-0.5 text-3xs text-muted-foreground">
               Setup required
             </span>
           ) : null}
@@ -909,7 +911,7 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
             <ManagedControl reason={remoteDenial}>
               <Button
                 size="xs"
-                variant="outline"
+                variant="secondary"
                 onClick={() => onSetupTailscaleServe(endpoint)}
                 disabled={isUpdatingTailscaleServe || remoteDenial !== undefined}
               >
@@ -928,7 +930,7 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
             </Button>
           ) : null}
           {!needsTailscaleSetup && !isDefault ? (
-            <Button size="xs" variant="outline" onClick={() => onSetDefault(endpoint)}>
+            <Button size="xs" variant="secondary" onClick={() => onSetDefault(endpoint)}>
               Set as default
             </Button>
           ) : null}

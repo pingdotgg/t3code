@@ -47,7 +47,7 @@ export function SourceControlAppAccessNotice(props: {
     <div
       role="note"
       className={cn(
-        "flex items-center gap-2.5 bg-muted/40 px-4 py-2 text-xs text-muted-foreground",
+        "flex items-center gap-2.5 bg-muted/40 px-4 py-2 text-meta text-muted-foreground",
         props.className,
       )}
     >

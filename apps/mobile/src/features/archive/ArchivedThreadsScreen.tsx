@@ -154,10 +154,7 @@ function ProjectGroupLabel(props: {
         size={18}
         workspaceRoot={props.project.workspaceRoot}
       />
-      <Text
-        className="flex-1 text-xs font-t3-medium tracking-[0.5px] uppercase text-foreground-muted"
-        numberOfLines={1}
-      >
+      <Text className="flex-1 text-xs font-t3-medium text-foreground-muted" numberOfLines={1}>
         {props.project.title}
       </Text>
       {props.environmentLabel ? (

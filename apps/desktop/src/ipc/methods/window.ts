@@ -115,6 +115,22 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
+// macOS traffic lights. The renderer hides them while the sidebar is collapsed
+// when the user opts in; other platforms keep their caption buttons.
+export const setWindowButtonsVisible = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_WINDOW_BUTTONS_VISIBLE_CHANNEL,
+  payload: Schema.Boolean,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.setWindowButtonsVisible")(function* (visible, event) {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "darwin" || event === undefined) return;
+    const contents = Electron.webContents.fromId(event.sender.id);
+    const window = contents ? Electron.BrowserWindow.fromWebContents(contents) : null;
+    if (!window || window.isDestroyed()) return;
+    window.setWindowButtonVisibility(visible);
+  }),
+});
+
 export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
   result: Schema.Array(DesktopEnvironmentBootstrapSchema),
@@ -277,6 +293,16 @@ export const setTheme = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.setTheme")(function* (theme) {
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     yield* electronTheme.setSource(theme);
+  }),
+});
+
+export const setBlackChrome = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_BLACK_CHROME_CHANNEL,
+  payload: Schema.Boolean,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.setBlackChrome")(function* (enabled) {
+    const electronTheme = yield* ElectronTheme.ElectronTheme;
+    yield* electronTheme.setBlackChrome(enabled);
   }),
 });
 

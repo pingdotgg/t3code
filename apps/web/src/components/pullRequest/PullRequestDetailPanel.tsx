@@ -1282,7 +1282,7 @@ export function PullRequestDetailPanel({
       <div
         className={cn(
           "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
-          detail && "border-b border-border/60",
+          detail && "border-b border-(--detail-separator)",
           !detail && !onClose && "hidden",
         )}
       >
@@ -1552,6 +1552,7 @@ export function PullRequestDetailPanel({
                 head={
                   <PullRequestCopyableCode
                     key={detail.headBranch}
+                    className="rounded-kbd bg-secondary"
                     value={detail.headBranch}
                     target="branch name"
                     copyLabel={`Copy ${terminology.singular} branch`}
@@ -1842,8 +1843,10 @@ export function PullRequestDetailPanel({
         ) : null}
       </div>
 
+      {/* Float over the content; do not reserve a footer or padding in the PR tabs. Inset 16 on
+          both sides: the content's right line and its bottom padding. */}
       {detail ? (
-        <div className="absolute right-4 bottom-3 z-20">
+        <div className="absolute right-4 bottom-4 z-20">
           <PullRequestComposer
             key={JSON.stringify([
               environmentId,

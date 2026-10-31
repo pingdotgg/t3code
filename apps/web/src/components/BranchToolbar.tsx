@@ -45,6 +45,7 @@ import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+  THREAD_DETAILS_PANEL_META_CLASS,
 } from "./chat/threadDetailsPanelStyles";
 import { ComposerControl } from "./chat/ComposerControl";
 import {
@@ -101,6 +102,8 @@ interface BranchToolbarProps {
   trailing?: ReactNode;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  /** Panel only: where the branch picker renders the thread's PR rows. */
+  panelPrRowsContainer?: HTMLElement | null;
 }
 
 function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string) {
@@ -249,13 +252,40 @@ const RunContextSelector = memo(function RunContextSelector({
   const icon = showEnvironmentIndicator ? environmentIcon : workspaceIcon;
   const triggerContent = (
     <>
-      {icon}
+      {isPanel ? (
+        autoEnvironmentLabel ? (
+          <ScaleIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+        ) : (
+          <EnvironmentMachineIcon
+            kind={activeEnvironment?.machine ?? "server"}
+            className={THREAD_DETAILS_PANEL_ICON_CLASS}
+          />
+        )
+      ) : (
+        icon
+      )}
       <ComposerContextLabel displayMode={displayMode}>
         {autoEnvironmentLabel ??
-          (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
+          (isPanel || showEnvironmentIndicator
+            ? (activeEnvironment?.label ?? "Run on")
+            : workspaceLabel)}
       </ComposerContextLabel>
-      {/* Trailing in the panel, so every row label starts on the same edge. */}
-      {isPanel && showEnvironmentIndicator ? workspaceIcon : null}
+      {isPanel ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className={THREAD_DETAILS_PANEL_META_CLASS} />}>
+            {forceNewWorktree || effectiveEnvMode === "worktree"
+              ? "New worktree"
+              : activeWorktreePath
+                ? "Worktree"
+                : "Local"}
+          </TooltipTrigger>
+          <TooltipPopup>
+            {forceNewWorktree
+              ? "Each model starts in its own worktree."
+              : (workspacePath ?? workspaceLabel)}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
     </>
   );
 
@@ -263,9 +293,9 @@ const RunContextSelector = memo(function RunContextSelector({
     return (
       <span
         className={cn(
-          "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-foreground/70 text-sm sm:h-6 sm:text-xs dark:text-muted-foreground",
-          isPanel && "max-w-full",
-          isPanel && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+          isPanel
+            ? THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS
+            : "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-dim-foreground text-xs sm:h-6",
         )}
         onContextMenu={handleContextMenu}
         aria-label={
@@ -283,7 +313,7 @@ const RunContextSelector = memo(function RunContextSelector({
   return (
     <Menu>
       <MenuTrigger
-        render={isPanel ? <ThreadDetailsControl part="select" /> : <ComposerControl size="xs" />}
+        render={isPanel ? <ThreadDetailsControl part="choice" /> : <ComposerControl size="xs" />}
         className={isPanel ? undefined : "min-w-0 max-w-[48%] flex-initial justify-start"}
         onContextMenu={handleContextMenu}
         onMouseDownCapture={
@@ -308,7 +338,7 @@ const RunContextSelector = memo(function RunContextSelector({
       </MenuTrigger>
       <MenuPopup
         align="start"
-        side={isPanel ? "bottom" : "top"}
+        side={isPanel ? "right" : "top"}
         className={
           isPanel
             ? "w-(--anchor-width)"
@@ -618,6 +648,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   availableEnvironments,
   onEnvironmentChange,
   trailing,
+  panelPrRowsContainer,
 }: BranchToolbarProps) {
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);
   const threadRef = scopeThreadRef(environmentId, threadId);
@@ -730,6 +761,9 @@ export const BranchToolbar = memo(function BranchToolbar({
             onStartFromOriginChange={onStartFromOriginChange}
             {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
             {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+            {...(panelPrRowsContainer !== undefined
+              ? { prRowsContainer: panelPrRowsContainer }
+              : {})}
           />
         ) : null}
       </div>
@@ -740,7 +774,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     <ComposerSurface.ContextStrip
       ref={attachStrip}
       data-compact={labelsOverflow ? "" : undefined}
-      className={cn("gap-1 text-xs font-normal text-foreground/70 dark:text-muted-foreground")}
+      className={cn("gap-1 text-xs font-normal text-dim-foreground")}
     >
       {showGitControls ? (
         <div className="contents @xl/composer-surface:hidden">

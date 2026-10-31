@@ -61,7 +61,7 @@ export function RelayClientInstallDialog() {
     >
       <DialogPopup className="max-w-md" showCloseButton={isConfirming}>
         <DialogHeader>
-          <div className="flex size-9 items-center justify-center rounded-lg border border-border/70 bg-muted/60">
+          <div className="flex size-9 items-center justify-center rounded-control surface-well">
             <DownloadIcon aria-hidden className="size-4.5 text-muted-foreground" />
           </div>
           <DialogTitle>
@@ -77,7 +77,7 @@ export function RelayClientInstallDialog() {
           {isInstalling ? (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between gap-3 text-sm">
-                <p aria-live="polite" className="font-medium text-foreground">
+                <p aria-live="polite" className="font-medium text-strong-foreground">
                   {activeStep?.label}
                 </p>
                 <p className="shrink-0 tabular-nums text-muted-foreground">
@@ -95,8 +95,8 @@ export function RelayClientInstallDialog() {
               </p>
             </div>
           ) : (
-            <div className="rounded-xl border border-border/70 bg-muted/35 p-3">
-              <p className="text-sm font-medium text-foreground">Managed relay client</p>
+            <div className="rounded-card surface-panel p-3">
+              <p className="text-sm font-medium text-strong-foreground">Managed relay client</p>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
                 T3 Code will download and install version{" "}
                 {view.status === "confirming" ? view.version : ""} locally.
@@ -107,7 +107,7 @@ export function RelayClientInstallDialog() {
         {isConfirming ? (
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="secondary"
               onClick={() => respondToRelayClientInstallConfirmation(false)}
             >
               Cancel

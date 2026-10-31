@@ -285,7 +285,7 @@ function SnoozePresetList(props: {
             className="flex flex-wrap items-center gap-2"
           >
             <SnoozePresetFields preset={preset} onChange={(next) => props.onChange(index, next)} />
-            <div className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            <div className="ml-auto flex min-w-0 items-center gap-2 text-meta text-muted-foreground">
               {preview.tone === "menu" ? (
                 <span className="truncate">
                   <span className="text-foreground">{preview.label}</span>
@@ -306,7 +306,7 @@ function SnoozePresetList(props: {
           </div>
         );
       })}
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         {menuOrder.length === 0 ? "Menus offer only Custom…" : `Menu now: ${menuOrder.join(" · ")}`}
       </p>
       <div>
@@ -320,7 +320,7 @@ function SnoozePresetList(props: {
           Add option
         </Button>
         {props.presets.length >= MAX_SNOOZE_PRESETS ? (
-          <span className="ps-2 text-xs text-muted-foreground">
+          <span className="ps-2 text-meta text-muted-foreground">
             Up to {MAX_SNOOZE_PRESETS} options
           </span>
         ) : null}
@@ -374,7 +374,7 @@ function SnoozePresetFields(props: {
         />
       ) : (
         <>
-          <span className="text-xs text-muted-foreground">at</span>
+          <span className="text-meta text-muted-foreground">at</span>
           <Input
             nativeInput
             size="sm"

@@ -10,6 +10,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { SettingsNote } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const preferences = [
@@ -76,10 +77,10 @@ export function LoadBalancingSettings({
         />
       }
     >
-      <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
+      <SettingsNote>
         New threads in shared projects start on the machine with the most free CPU and memory,
         weighted by each machine's preference.
-      </p>
+      </SettingsNote>
       {environments.map((environment) => (
         <EnvironmentRow
           key={environment.environmentId}

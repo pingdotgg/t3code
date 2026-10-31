@@ -1294,7 +1294,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
           className="flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
           style={{ paddingBottom: emptyPlaceholderInset }}
         >
-          <p className="text-sm text-muted-foreground">Send a message to start the conversation.</p>
+          <p className="text-sm text-dim-foreground">Send a message to start the conversation.</p>
         </div>
       </>
     );
@@ -1356,10 +1356,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               maintainScrollAtEndThreshold={1}
               onScroll={handleScroll}
               onItemSizeChanged={handleItemSizeChanged}
-              className={cn(
-                "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
-                topFadeEnabled && "topbar-scroll-fade",
-              )}
+              className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
               ListHeaderComponent={listHeader}
               ListFooterComponent={timelineListFooter}
             />
@@ -1399,7 +1396,7 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
             disabled={props.loading}
             aria-label="Load earlier turns"
             onClick={() => props.onLoadEarlier()}
-            className="flex w-full cursor-pointer items-center gap-3 py-1.5 text-muted-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
+            className="flex w-full cursor-pointer items-center gap-3 py-1.5 text-dim-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
           >
             <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
             <span className="shrink-0">
@@ -1579,7 +1576,7 @@ function ContextCompactionTimelineRow({
         row.failed ? "text-destructive" : "text-muted-foreground",
       )}
     >
-      <span className={cn("h-px flex-1", row.failed ? "bg-destructive/30" : "bg-border/70")} />
+      <span className={cn("h-px flex-1", row.failed ? "bg-destructive/30" : "bg-border")} />
       <span
         ref={row.active ? observeVisibleAnimation : undefined}
         className="relative min-w-0 overflow-hidden"
@@ -1587,7 +1584,7 @@ function ContextCompactionTimelineRow({
         {content}
         {row.active ? <ActivityShimmerOverlay>{content}</ActivityShimmerOverlay> : null}
       </span>
-      <span className={cn("h-px flex-1", row.failed ? "bg-destructive/30" : "bg-border/70")} />
+      <span className={cn("h-px flex-1", row.failed ? "bg-destructive/30" : "bg-border")} />
     </div>
   );
 }
@@ -1654,7 +1651,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   );
 
   return (
-    <div className="group/timeline-row border-b border-border/60 pb-2 pe-0.5 pt-1">
+    <div className="group/timeline-row border-b border-(--timeline-working-rule,var(--border)) pb-2 pe-0.5 pt-1">
       <div className="relative flex items-center gap-1">
         <button
           type="button"
@@ -1662,13 +1659,16 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
           data-scroll-anchor-ignore
           onClick={toggle}
           aria-busy={loading}
-          className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm font-medium leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
         >
           <span>
             {row.label}
             {error ? ` · ${error}` : ""}
           </span>
-          <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
+          <MorphIcon
+            className="size-3 text-dim-foreground"
+            icon={row.expanded ? ChevronDown : ChevronRight}
+          />
         </button>
         <TimelineRowTimestamp
           createdAt={row.createdAt}
@@ -1696,13 +1696,13 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
         data-superseded-attempt-id={row.attemptId}
         onClick={toggle}
         aria-busy={loading}
-        className="flex w-full cursor-pointer select-none items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex w-full cursor-pointer select-none items-center gap-2 rounded-card border border-transparent surface-card px-2.5 py-2 text-left transition-colors hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <MorphIcon
           className="size-3.5 shrink-0 text-muted-foreground"
           icon={row.expanded ? ChevronDown : ChevronRight}
         />
-        <span className="text-xs font-medium text-foreground/80">
+        <span className="text-xs font-medium text-foreground">
           {row.label}
           {error ? ` · ${error}` : ""}
         </span>

@@ -134,7 +134,7 @@ function UpdateEverythingDialogContent({
         <AlertDialogDescription>
           {version !== null ? (
             <>
-              T3 Code <span className="font-mono text-xs">{version}</span>
+              T3 Code <span className="font-mono text-meta">{version}</span>
             </>
           ) : null}
           {version !== null && providerCount > 0 ? " · " : null}
@@ -146,13 +146,13 @@ function UpdateEverythingDialogContent({
       <ScrollArea scrollFade>
         <div className="flex flex-col gap-3 px-6 pb-4">
           {notes.map((note) => (
-            <p key={note} className="text-muted-foreground text-sm">
+            <p key={note} className="text-muted-foreground text-body">
               {note}
             </p>
           ))}
           {/* Machine names truncate first. Provider lists wrap between names, never inside one. */}
-          <div className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-sm">
-            <div className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs">
+          <div className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-body">
+            <div className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-meta">
               <span>Machine</span>
               <span>T3 Code</span>
               <span>Providers</span>
@@ -172,7 +172,7 @@ function UpdateEverythingDialogContent({
                     <span className="text-muted-foreground">Skipped</span>
                   ) : null}
                   {row.app === "this-app" ? (
-                    <span className="block text-muted-foreground text-xs">restarts last</span>
+                    <span className="block text-muted-foreground text-meta">restarts last</span>
                   ) : null}
                 </span>
                 <span>
@@ -193,12 +193,12 @@ function UpdateEverythingDialogContent({
           </div>
           {skipped.length > 0 ? (
             <Collapsible>
-              <CollapsibleTrigger className="flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground data-panel-open:[&_svg]:rotate-90">
+              <CollapsibleTrigger className="flex items-center gap-1 text-muted-foreground text-meta hover:text-foreground data-panel-open:[&_svg]:rotate-90">
                 <ChevronRightIcon className="size-3.5 transition-transform" aria-hidden />
                 {skipped.length} skipped
               </CollapsibleTrigger>
               <CollapsiblePanel>
-                <div className="grid grid-cols-[minmax(0,max-content)_1fr] gap-x-3 gap-y-0.5 pt-1.5 ps-4.5 text-muted-foreground text-xs">
+                <div className="grid grid-cols-[minmax(0,max-content)_1fr] gap-x-3 gap-y-0.5 pt-1.5 ps-4.5 text-muted-foreground text-meta">
                   {skipped.map((row) => (
                     <Fragment key={row.environmentId ?? "this-app"}>
                       <span className="max-w-32 min-w-0">
@@ -215,11 +215,11 @@ function UpdateEverythingDialogContent({
       </ScrollArea>
       <AlertDialogFooter>
         {disabledReason !== null ? (
-          <p className="self-center text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
+          <p className="self-center text-body max-sm:order-1 max-sm:text-center sm:mr-auto">
             {disabledReason}
           </p>
         ) : running > 0 ? (
-          <p className="self-center text-muted-foreground text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
+          <p className="self-center text-muted-foreground text-body max-sm:order-1 max-sm:text-center sm:mr-auto">
             {stopped === 0
               ? `${threads} will be interrupted and can resume after the restart.`
               : continuing === 0
@@ -227,7 +227,7 @@ function UpdateEverythingDialogContent({
                 : `${threads} will be interrupted. ${continuing} can resume after the restart.`}
           </p>
         ) : null}
-        <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
+        <AlertDialogClose ref={cancelRef} render={<Button variant="secondary" disabled={busy} />}>
           Cancel
         </AlertDialogClose>
         <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>

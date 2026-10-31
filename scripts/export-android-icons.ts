@@ -17,7 +17,6 @@ const ADAPTIVE_CANVAS = 432;
 const SPLASH_CANVAS = 1152;
 const TEXT = { x: 15.53, y: 37, width: 94.5, height: 57 };
 const WORDMARK_FRACTION = 0.48;
-const COMPOSER_CANVAS_PT = 1024;
 const SVG_DENSITY = 300;
 const OUTPUT_DIRECTORY = "apps/mobile/assets";
 const PRODUCTION_BACKGROUND_COLOR = "#000000";
@@ -116,47 +115,9 @@ const renderNightlyBackground = Effect.fn("androidIcons.renderNightlyBackground"
   repositoryRoot: string,
   size: number,
 ) {
-  // Match assets/nightly/app-icon.icon/icon.json; omit blur, which Icon Composer ignores and rasterization smears.
-  const clouds = [
-    { file: "cloud-lower-left.svg", scale: 25, translation: [-309.6375, 268.66077693836917] },
-    {
-      file: "cloud-upper-right.svg",
-      scale: 15,
-      translation: [387.9605131881942, -134.30064713259117],
-    },
-  ] as const;
-  const k = size / COMPOSER_CANVAS_PT;
-  const overlays = yield* Effect.forEach(clouds, (cloud) =>
-    Effect.gen(function* () {
-      const width = Math.round(64 * cloud.scale * k);
-      const height = Math.round(32 * cloud.scale * k);
-      const left = Math.round((COMPOSER_CANVAS_PT / 2 + cloud.translation[0]) * k - width / 2);
-      const top = Math.round((COMPOSER_CANVAS_PT / 2 + cloud.translation[1]) * k - height / 2);
-      const source = yield* readLayerSource(repositoryRoot, "nightly", cloud.file);
-      const png = yield* rasterize(
-        cloud.file,
-        source.replace(/ filter="url\(#soft\)"/, ""),
-        width,
-        height,
-      );
-      const x0 = Math.max(0, left);
-      const y0 = Math.max(0, top);
-      const x1 = Math.min(size, left + width);
-      const y1 = Math.min(size, top + height);
-      const clipped = yield* Effect.tryPromise({
-        try: () =>
-          sharp(png)
-            .extract({ left: x0 - left, top: y0 - top, width: x1 - x0, height: y1 - y0 })
-            .png()
-            .toBuffer(),
-        catch: (cause) => new AndroidIconRenderError({ layer: cloud.file, cause }),
-      });
-      return { input: clipped, left: x0, top: y0 };
-    }),
-  );
+  // Orbital Sunrise is a single full-bleed layer (assets/nightly/app-icon.icon/icon.json).
   const sky = yield* readLayerSource(repositoryRoot, "nightly", "background.svg");
-  const background = yield* rasterize("nightly-background", fullBleed(sky), size);
-  return yield* composite("nightly-background", background, overlays);
+  return yield* rasterize("nightly-background", fullBleed(sky), size);
 });
 
 const renderBackground = Effect.fn("androidIcons.renderBackground")(function* (

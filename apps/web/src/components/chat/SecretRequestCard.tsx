@@ -113,11 +113,11 @@ function PendingSecretRequestForm(props: {
       }}
     >
       <div className="flex min-w-0 flex-col gap-1">
-        <label htmlFor={inputId} className="text-sm font-medium text-foreground">
+        <label htmlFor={inputId} className="text-label text-foreground">
           {item.label}
         </label>
         {item.reason.trim() ? (
-          <p className="text-sm wrap-anywhere text-muted-foreground">{item.reason}</p>
+          <p className="text-body wrap-anywhere text-muted-foreground">{item.reason}</p>
         ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-2">
@@ -147,14 +147,14 @@ function PendingSecretRequestForm(props: {
         </Button>
       </div>
       {error !== null ? (
-        <p id={errorId} role="alert" className="text-xs text-destructive">
+        <p id={errorId} role="alert" className="text-meta text-destructive">
           {error}
         </p>
       ) : null}
       <div className="flex min-w-0 items-center justify-between gap-2">
         <p
           id={privacyId}
-          className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+          className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground"
         >
           <ShieldCheckIcon className="size-3.5 shrink-0" aria-hidden />
           {secretRequestPrivacyNote(item)}

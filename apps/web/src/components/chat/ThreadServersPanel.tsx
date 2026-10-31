@@ -94,7 +94,7 @@ export function ThreadServersPanel(props: {
   };
 
   return (
-    <ThreadDetailsSection headingId="thread-details-servers-heading" title="Servers">
+    <ThreadDetailsSection title="Servers">
       <ul className="m-0 list-none p-0">
         {servers.map((server) => {
           const key = serverKey(server);
@@ -119,10 +119,10 @@ export function ThreadServersPanel(props: {
                   <GlobeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
                   {/* The end padding keeps text clear of the stop button. */}
                   <span className={cn("flex min-w-0 flex-1 flex-col gap-0.5", stoppable && "pe-6")}>
-                    <span className="truncate text-sm font-medium leading-4 text-foreground/85">
+                    <span className="truncate text-label text-strong-foreground">
                       localhost:{server.port}
                     </span>
-                    <span className="truncate text-2xs font-normal leading-4 text-muted-foreground">
+                    <span className="truncate text-caption text-dim-foreground">
                       {[server.terminal === null ? "Agent" : "Terminal", server.processName]
                         .filter(Boolean)
                         .join(" · ")}

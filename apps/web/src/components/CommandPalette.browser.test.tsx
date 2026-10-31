@@ -26,7 +26,7 @@ describe("CommandPalette open intents", () => {
 
     openCommandPalette({ query: "acme" });
 
-    const input = page.getByPlaceholder("Search commands, projects, and threads...");
+    const input = page.getByRole("combobox");
     await expect.element(input).toHaveFocus();
     await expect.element(input).toHaveValue("acme");
   });

@@ -26,7 +26,14 @@ export class ElectronTheme extends Context.Service<
   ElectronTheme,
   {
     readonly shouldUseDarkColors: Effect.Effect<boolean>;
+    /**
+     * Whether the window chrome (native background, caption button symbols)
+     * is dark: the dark appearance, or the renderer's light, black chrome.
+     */
+    readonly shouldUseDarkChrome: Effect.Effect<boolean>;
     readonly setSource: (theme: DesktopTheme) => Effect.Effect<void, ElectronThemeSetSourceError>;
+    /** The renderer's light, black chrome appearance; notifies onUpdated listeners. */
+    readonly setBlackChrome: (enabled: boolean) => Effect.Effect<void>;
     readonly onUpdated: (listener: () => void) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@t3tools/desktop/electron/ElectronTheme") {}
@@ -38,6 +45,10 @@ type WatchSystemColorScheme = (onChange: (scheme: LinuxColorScheme) => void) => 
 export const makeWith = Effect.fn("ElectronTheme.make")(function* (
   watchSystemColorScheme: WatchSystemColorScheme | undefined,
 ) {
+  // Black chrome is renderer state, not a native theme source, so the service
+  // keeps it and fans changes out to the same listeners as native updates.
+  let blackChrome = false;
+  const blackChromeListeners = new Set<() => void>();
   let source: DesktopTheme = Electron.nativeTheme.themeSource;
   let systemScheme: LinuxColorScheme = null;
   // On Linux, Electron reads the desktop color scheme once and then ignores the settings
@@ -64,6 +75,7 @@ export const makeWith = Effect.fn("ElectronTheme.make")(function* (
 
   return ElectronTheme.of({
     shouldUseDarkColors: Effect.sync(() => Electron.nativeTheme.shouldUseDarkColors),
+    shouldUseDarkChrome: Effect.sync(() => Electron.nativeTheme.shouldUseDarkColors || blackChrome),
     setSource: Effect.fn("ElectronTheme.setSource")(function (theme) {
       return Effect.try({
         try: () => {
@@ -73,15 +85,24 @@ export const makeWith = Effect.fn("ElectronTheme.make")(function* (
         catch: (cause) => new ElectronThemeSetSourceError({ source: theme, cause }),
       });
     }),
+    setBlackChrome: Effect.fn("ElectronTheme.setBlackChrome")(function (enabled) {
+      return Effect.sync(() => {
+        if (blackChrome === enabled) return;
+        blackChrome = enabled;
+        for (const listener of blackChromeListeners) listener();
+      });
+    }),
     onUpdated: Effect.fn("ElectronTheme.onUpdated")(function (listener) {
       return Effect.acquireRelease(
         Effect.suspend(() => {
           Electron.nativeTheme.on("updated", listener);
+          blackChromeListeners.add(listener);
           return Effect.void;
         }),
         () =>
           Effect.suspend(() => {
             Electron.nativeTheme.removeListener("updated", listener);
+            blackChromeListeners.delete(listener);
             return Effect.void;
           }),
       );

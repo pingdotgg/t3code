@@ -17,10 +17,10 @@ import {
 } from "./pullRequestPresentation";
 
 export const PULL_REQUEST_ROW_CLASS =
-  "group/pr-row flex w-full items-center gap-2 rounded-md py-1 pr-1 text-left";
+  "group/pr-row flex w-full items-center gap-2 rounded-row py-1 pr-1 text-left";
 
 export const PULL_REQUEST_ROW_NUMBER_CLASS =
-  "shrink-0 font-mono text-xs tabular-nums text-muted-foreground";
+  "shrink-0 font-mono text-xs tabular-nums text-dim-foreground";
 
 export function PullRequestRowGlyph({
   state,
@@ -78,7 +78,7 @@ export function PullRequestRowLines({
     <span className="min-w-0 flex-1">
       <span className="flex min-w-0 items-center gap-1.5">
         {number}
-        <span className="min-w-0 truncate text-sm">{title}</span>
+        <span className="min-w-0 truncate text-sm font-medium text-foreground">{title}</span>
         {signals ? (
           <span className="flex shrink-0 items-center gap-1 text-2xs">{signals}</span>
         ) : null}
@@ -94,7 +94,7 @@ export function PullRequestRowLines({
       >
         {meta}
         {updatedAt ? (
-          <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums">
+          <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums text-dim-foreground">
             <RelativeTime timestamp={updatedAt} />
           </span>
         ) : null}

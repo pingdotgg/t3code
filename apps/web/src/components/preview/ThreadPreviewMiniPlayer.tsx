@@ -568,7 +568,7 @@ function MiniPlayerShell({
                 )}
               />
             </div>
-            <div className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-lg border border-border/80 bg-popover/92 p-0.5 opacity-0 shadow-lg/20 backdrop-blur-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-pill-open:pointer-events-auto group-data-pill-open:opacity-100 active:cursor-grabbing pointer-coarse:right-2.5 pointer-coarse:top-2.5">
+            <div className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-control surface-popover p-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-pill-open:pointer-events-auto group-data-pill-open:opacity-100 active:cursor-grabbing pointer-coarse:right-2.5 pointer-coarse:top-2.5">
               {recording ? (
                 <span aria-hidden className="flex size-6 shrink-0 items-center justify-center">
                   <span className="size-2 rounded-full bg-destructive motion-safe:animate-status-pulse" />
@@ -610,9 +610,9 @@ function MiniPlayerShell({
             </div>
           </div>
 
-          <div className="absolute inset-0 z-[47] rounded-[inherit] bg-muted shadow-2xl/35" />
+          <div className="absolute inset-0 z-[47] rounded-[inherit] surface-card shadow-(--popover-shadow)" />
           {children(frame)}
-          <div className="pointer-events-none absolute inset-0 z-[49] rounded-[inherit] ring-1 ring-inset ring-border/80" />
+          <div className="pointer-events-none absolute inset-0 z-[49] rounded-[inherit] ring-1 ring-inset ring-border" />
           {RESIZE_HANDLES.map(({ direction, className }) => (
             <div
               key={direction}

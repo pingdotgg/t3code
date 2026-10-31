@@ -60,14 +60,14 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
         render={
           <Button
             type="button"
-            variant="ghost"
+            variant="secondary"
             size="icon-xs"
             aria-label="Refresh workspace files"
             onClick={props.onRefresh}
           />
         }
       >
-        <RefreshIcon refreshing={props.isPending} />
+        <RefreshIcon refreshing={props.isPending} tone="muted" />
       </TooltipTrigger>
       <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
     </Tooltip>
@@ -82,7 +82,7 @@ function FileSearchField(props: {
   value: string;
 }) {
   return (
-    <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
+    <InputGroup variant="default" className="h-7 min-w-0 flex-1">
       <InputGroupInput
         type="search"
         name={props.name}
@@ -485,7 +485,7 @@ export default function FileBrowserPanel({
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
     >
       <div
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
@@ -528,7 +528,7 @@ export default function FileBrowserPanel({
         <button
           type="button"
           onClick={handleRefresh}
-          className="p-4 text-left text-xs leading-relaxed text-destructive"
+          className="p-4 text-left text-xs leading-relaxed text-error-foreground"
         >
           {error ?? pathSearch.error} Click to retry.
         </button>
@@ -552,7 +552,7 @@ export default function FileBrowserPanel({
       )}
       {hasNoSearchMatches ? (
         ready && !isPending && !pathSearch.isPending && !error && !pathSearch.error ? (
-          <div role="status" className="px-3 py-4 text-xs text-muted-foreground">
+          <div role="status" className="px-3 py-4 text-meta text-muted-foreground">
             No matching files.
           </div>
         ) : null

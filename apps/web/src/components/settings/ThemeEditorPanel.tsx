@@ -876,7 +876,7 @@ export function ThemeEditorPanel({
 
   const renderNameField = () => (
     <label className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
-      <span className="text-sm font-medium">Theme name</span>
+      <span className="text-sm font-medium text-strong-foreground">Theme name</span>
       <Input
         autoFocus
         size="sm"
@@ -909,7 +909,7 @@ export function ThemeEditorPanel({
 
   const renderAppearanceButtons = () => (
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
-      <span className="text-sm font-medium">Appearance</span>
+      <span className="text-sm font-medium text-strong-foreground">Appearance</span>
       <ToggleGroup
         aria-label="Theme appearance"
         variant="segmented"
@@ -933,7 +933,7 @@ export function ThemeEditorPanel({
   const renderColorsHeader = () => (
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-start gap-3">
       <div>
-        <h3 className="text-sm font-medium">Colors</h3>
+        <h3 className="text-sm font-medium text-strong-foreground">Colors</h3>
         {isAdvanced ? null : (
           <p className="text-xs text-muted-foreground">Two colors, rest derived</p>
         )}
@@ -949,7 +949,7 @@ export function ThemeEditorPanel({
             value={roleQuery}
           />
         ) : null}
-        <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-2 pt-0.5 text-sm font-medium">
+        <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-2 pt-0.5 text-sm font-medium text-strong-foreground">
           <span>Advanced</span>
           <Switch
             aria-label="Use advanced theme colors"
@@ -1000,7 +1000,7 @@ export function ThemeEditorPanel({
       <div className="space-y-5">
         {groups.map((group) => (
           <section className="space-y-2" key={group.id}>
-            <h4 className="text-sm font-medium text-foreground">{group.title}</h4>
+            <h4 className="text-sm font-medium text-strong-foreground">{group.title}</h4>
             {renderRoleFields(group.families, "grid gap-1")}
           </section>
         ))}
@@ -1109,7 +1109,7 @@ export function ThemeEditorPanel({
     <div
       aria-label={isEditing ? "Edit theme" : "Create theme"}
       className={cn(
-        "dialog-glass fixed z-[110] flex max-h-[min(42rem,calc(100dvh-6rem))] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border text-popover-foreground",
+        "surface-dialog fixed z-[110] flex max-h-[min(42rem,calc(100dvh-6rem))] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-card border text-popover-foreground",
         position === null && "bottom-4 right-4",
         isMinimized && "max-h-none",
       )}
@@ -1125,14 +1125,14 @@ export function ThemeEditorPanel({
       }}
     >
       <div
-        className="flex cursor-grab touch-none select-none items-center gap-1 border-b border-border/70 px-3 py-2 active:cursor-grabbing"
+        className="flex cursor-grab touch-none select-none items-center gap-1 border-b border-border/50 px-3 py-2 active:cursor-grabbing"
         onPointerCancel={endDrag}
         onPointerDown={handleDragPointerDown}
         onPointerMove={handleDragPointerMove}
         onPointerUp={endDrag}
       >
         <div className="flex min-w-0 flex-1 items-baseline gap-2">
-          <h2 className="shrink-0 truncate text-sm font-medium">
+          <h2 className="shrink-0 truncate text-sm font-medium text-strong-foreground">
             {isEditing ? "Edit theme" : "Create theme"}
           </h2>
           {isMinimized ? null : (
@@ -1203,7 +1203,7 @@ export function ThemeEditorPanel({
               {renderColorFields()}
             </div>
           </div>
-          <div className="flex items-center justify-end gap-2 border-t border-border/70 px-3 py-2">
+          <div className="flex items-center justify-end gap-2 border-t border-border/50 px-3 py-2">
             <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
@@ -1229,7 +1229,7 @@ export function ThemeEditorPanel({
           </div>
           <div
             aria-hidden
-            className="absolute bottom-0 right-0 z-10 flex size-5 cursor-se-resize touch-none select-none items-end justify-end p-1 text-muted-foreground/70"
+            className="absolute bottom-0 right-0 z-10 flex size-5 cursor-se-resize touch-none select-none items-end justify-end p-1 text-dim-foreground"
             onPointerCancel={endResize}
             onPointerDown={handleResizePointerDown}
             onPointerMove={handleResizePointerMove}

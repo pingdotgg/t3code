@@ -142,12 +142,12 @@ function LinkedEnvironmentRow({
               }
               pingClassName={null}
             />
-            <h3 className="text-sm font-medium text-foreground">{link.label}</h3>
+            <h3 className="text-label text-foreground">{link.label}</h3>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             {accessConfig[link.access].label} · {status}
           </p>
-          <p className="truncate text-xs text-muted-foreground/80">{link.urls.join(", ")}</p>
+          <p className="truncate text-meta text-muted-foreground/80">{link.urls.join(", ")}</p>
         </div>
         {canUnlink ? (
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -289,13 +289,13 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
               />
             ) : null}
             {machine?.linked ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 Already linked. Linking again renews it with the access you pick.
               </p>
             ) : null}
             {needsAddress ? (
               <label className="block space-y-1.5">
-                <span className="block text-xs font-medium text-foreground">Address</span>
+                <span className="block text-caption text-foreground">Address</span>
                 <Input
                   value={address}
                   onChange={(event) => {
@@ -310,7 +310,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                   spellCheck={false}
                 />
                 {machine !== null ? (
-                  <span className="block text-xs text-muted-foreground">
+                  <span className="block text-meta text-muted-foreground">
                     This app has no address for {machine.label} that another machine can reach.
                     Enter its https or Tailscale address.
                   </span>
@@ -319,7 +319,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
             ) : null}
             {selected === null || canMint ? null : (
               <label className="block space-y-1.5">
-                <span className="block text-xs font-medium text-foreground">Pairing code</span>
+                <span className="block text-caption text-foreground">Pairing code</span>
                 <Input
                   value={pairingCode}
                   onChange={(event) => setPairingCode(event.target.value)}
@@ -334,7 +334,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                   spellCheck={false}
                 />
                 {machine !== null ? (
-                  <span className="block text-xs text-muted-foreground">
+                  <span className="block text-meta text-muted-foreground">
                     Create a link on {machine.label}: Settings → Connections → Create link, then
                     paste its code here.
                   </span>
@@ -345,7 +345,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
-          <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
+          <DialogClose disabled={busy} render={<Button variant="secondary" type="button" />}>
             Cancel
           </DialogClose>
           <Button form={formId} type="submit" disabled={busy || !ready}>

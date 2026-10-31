@@ -114,10 +114,8 @@ function UserFileCard({
         <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium group-hover/file:underline">
-          {label}
-        </span>
-        <span className="block text-xs text-muted-foreground tabular-nums">
+        <span className="block truncate text-label group-hover/file:underline">{label}</span>
+        <span className="block text-meta text-muted-foreground tabular-nums">
           {file.downloadable === false ? (
             "Sending…"
           ) : (
@@ -144,14 +142,14 @@ function UserFileCard({
         </>
       ) : (
         <>
-          <button
-            type="button"
+          <InlineButton
+            tone="ghost"
             aria-label={`Preview ${label}`}
             onClick={() => ctx.onFileOpen(file)}
-            className="group/file focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
+            className="group/file min-w-0 flex-1 text-left"
           >
-            {identity}
-          </button>
+            <span className="flex min-w-0 flex-1 items-center gap-3">{identity}</span>
+          </InlineButton>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -203,7 +201,7 @@ function UserVideoAttachment({
           "flex aspect-[4/3] w-full items-center justify-center bg-black px-2 py-3 text-center text-2xs text-white/70",
           standalone
             ? cn(MEDIA_EDGE_CLASS_NAME, "rounded-2xl", cornerClassName)
-            : "rounded-lg border border-border/80",
+            : "rounded-lg border border-border",
         )}
       >
         {file.name}
@@ -224,13 +222,10 @@ function UserVideoAttachment({
         if (preview) ctx.onImageExpand(preview);
       }}
       className="block aspect-[4/3] w-full"
-      videoClassName={cn(
-        "aspect-auto size-full",
-        !standalone && "rounded-lg border border-border/80",
-      )}
+      videoClassName={cn("aspect-auto size-full", !standalone && "rounded-lg border border-border")}
       stateClassName={cn(
         "aspect-auto min-h-full bg-black text-white",
-        !standalone && "rounded-lg border border-border/80",
+        !standalone && "rounded-lg border border-border",
       )}
       onRetry={asset ? refreshAssetUrl : undefined}
       actionsSource={asset ? { kind: "video", name: file.name, src, asset } : undefined}
@@ -284,7 +279,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       ) : null}
       <div
         className={cn(
-          "min-w-0 max-w-[80%] rounded-2xl bg-message text-message-foreground",
+          "min-w-0 max-w-[80%] rounded-pane surface-bubble text-foreground",
           BUBBLE_CHIP_CLASS_NAME,
           expanded && "w-full",
         )}
@@ -311,13 +306,13 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       </div>
       <UserMessageProjectedStatus row={row} />
       {expanded ? (
-        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-meta tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
           <div className="flex shrink-0 items-center gap-2">
             {scheduledTaskId ? (
               <Link
                 to="/settings/scheduled-tasks"
                 search={{ environmentId: ctx.activeThreadEnvironmentId, taskId: scheduledTaskId }}
-                className="rounded-sm text-xs text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                className="rounded-sm text-meta text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
               >
                 Open automation
               </Link>
@@ -367,12 +362,13 @@ export function FoldedMessageHeader(props: {
 }) {
   const Icon = props.icon;
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="sm-multiline"
       aria-expanded={props.expanded}
       data-scroll-anchor-ignore
       onClick={props.onToggle}
-      className="flex w-full min-w-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring"
+      className="w-full min-w-0 justify-start"
     >
       <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
       <span className="max-w-1/2 shrink-0 truncate text-muted-foreground">{props.label}</span>
@@ -383,7 +379,7 @@ export function FoldedMessageHeader(props: {
           props.expanded && "rotate-180",
         )}
       />
-    </button>
+    </Button>
   );
 }
 
@@ -398,12 +394,15 @@ function UserMessageProjectedStatus({ row }: { row: Extract<TimelineRow, { kind:
     return null;
   return (
     <div className="me-1 flex items-center gap-1.5">
-      <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-3xs font-medium text-destructive">
+      <span className="rounded-badge border border-transparent bg-error-tint px-1.5 py-0.5 text-3xs font-medium text-error-foreground">
         {status}
       </span>
     </div>
   );
 }
+
+/** The "Sent by" line above a user message that someone other than the user sent. */
+const USER_MESSAGE_ATTRIBUTION_CLASS_NAME = "text-2xs text-dim-foreground";
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -695,7 +694,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                       )
                     : standaloneMedia
                       ? cn(MEDIA_EDGE_CLASS_NAME, "aspect-[4/3] overflow-hidden rounded-2xl")
-                      : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+                      : "aspect-[4/3] overflow-hidden rounded-lg border border-border",
             )}
           >
             {image.previewUrl ? (
@@ -730,7 +729,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ) : (
               <div
                 className={cn(
-                  "flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground/70",
+                  "flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-dim-foreground",
                   loneImage && "h-48 w-64 max-w-full",
                   collage && "h-full",
                 )}
@@ -772,7 +771,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </InlineButton>
       ) : null}
       <Tooltip>
-        <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+        <TooltipTrigger
+          render={<p className="text-dim-foreground font-medium text-xs tabular-nums" />}
+        >
           {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
         </TooltipTrigger>
         <TooltipPopup>
@@ -813,10 +814,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       data-user-message-attribution={folded ? "agent" : undefined}
     >
       {userMessage.attribution === "t3code" ? (
-        <p
-          className="me-1 text-2xs text-muted-foreground/70"
-          data-user-message-attribution="t3code"
-        >
+        <p className={USER_MESSAGE_ATTRIBUTION_CLASS_NAME} data-user-message-attribution="t3code">
           Sent by T3 Code
         </p>
       ) : null}
@@ -840,13 +838,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <div
         className={cn(
-          "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
+          "relative min-w-0 max-w-[80%] rounded-pane text-foreground",
           (mediaAboveText || row.groupedWithPrevious) && "rounded-tr-md",
           row.groupedWithNext && "rounded-br-md",
           BUBBLE_CHIP_CLASS_NAME,
           userMessage.attribution === "guest"
             ? guestBubbleClassName(false)
-            : !mediaOnly && !fileCardsOnly && !audioOnly && "bg-message",
+            : !mediaOnly && !fileCardsOnly && !audioOnly && "surface-bubble",
           !folded && !mediaOnly && !fileCardsOnly && !audioOnly && "p-3",
           folded && expanded && "w-full",
         )}
@@ -931,7 +929,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                       <span className="min-w-0 flex-1">
                         <span className="block truncate">{label}</span>
                         {file.downloadable === false || pastedText ? (
-                          <span className="block text-xs text-muted-foreground tabular-nums">
+                          <span className="block text-meta text-muted-foreground tabular-nums">
                             {file.downloadable === false ? "Sending…" : formatBytes(file.sizeBytes)}
                           </span>
                         ) : null}
@@ -941,15 +939,16 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   if (file.downloadable !== false) {
                     return (
                       <div key={file.id} className="flex min-w-0 items-center gap-1">
-                        <button
-                          type="button"
+                        <InlineButton
                           aria-label={`Preview ${label}`}
                           onClick={() => ctx.onFileOpen(file)}
-                          className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
+                          className="min-w-0 flex-1 text-left"
                         >
-                          {fileIdentity}
-                          <EyeIcon className="size-4 shrink-0" />
-                        </button>
+                          <span className="flex min-w-0 flex-1 items-center gap-2 py-1 text-label">
+                            {fileIdentity}
+                            <EyeIcon className="size-4 shrink-0" />
+                          </span>
+                        </InlineButton>
                         <Tooltip>
                           <TooltipTrigger
                             render={
@@ -1040,7 +1039,7 @@ function UserMessageIntentMarker({
       <TooltipTrigger
         render={
           <div
-            className="me-1 flex items-center justify-end gap-1 text-xs leading-none text-muted-foreground"
+            className="me-1 flex items-center justify-end gap-1 text-xs leading-none text-dim-foreground font-medium"
             data-user-message-intent={intent}
           />
         }
@@ -1147,7 +1146,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
               aria-expanded={expanded}
               data-scroll-anchor-ignore
               onClick={() => setExpanded((value) => !value)}
-              className="-ml-1"
+              className="-me-2"
             >
               {expanded ? "Show less" : "Show full message"}
             </Button>

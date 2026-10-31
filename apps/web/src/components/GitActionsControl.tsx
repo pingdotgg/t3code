@@ -5,6 +5,7 @@ import {
   AuthSourceControlWriteScope,
   SourceControlProviderKind,
   type ScopedThreadRef,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -20,8 +21,9 @@ import type {
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { shortcutLabelForCommand } from "~/keybindings";
 import * as Option from "effect/Option";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { useNowSecond } from "../hooks/useNowSecond";
 import { flushSync } from "react-dom";
@@ -76,7 +78,14 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
-import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuItemLabel,
+  MenuShortcut,
+  MenuPopup,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
@@ -101,13 +110,7 @@ import { vcsActionManager, vcsEnvironment, vcsStatusRevalidation } from "~/state
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import {
-  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
-  THREAD_DETAILS_PANEL_ICON_CLASS,
-  THREAD_DETAILS_PANEL_LABEL_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
-} from "./chat/threadDetailsPanelStyles";
+import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./chat/threadDetailsPanelStyles";
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -121,6 +124,7 @@ interface GitActionsControlProps {
   showActions?: boolean;
   showChanges?: boolean;
   onOpenChanges?: () => void;
+  keybindings?: ResolvedKeybindingsConfig;
 }
 
 interface PendingDefaultBranchAction {
@@ -391,7 +395,7 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
       className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] grid-rows-[1.5rem] items-center gap-x-3"
       role="status"
     >
-      <CheckIcon aria-hidden="true" className="size-3.5 shrink-0 text-success" />
+      <CheckIcon aria-hidden="true" className="size-3.5 shrink-0 text-success-foreground" />
       <p className={cn("min-w-0 truncate text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
         {success.title}
       </p>
@@ -618,7 +622,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   return (
                     <div
                       key={option.value}
-                      className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-64 dark:border-transparent dark:bg-white/[0.035]"
+                      className="relative flex cursor-not-allowed items-center gap-3 rounded-control surface-raised px-3 py-3 text-left opacity-64"
                     >
                       <option.Icon className="size-5 shrink-0 text-muted-foreground" aria-hidden />
                       <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
@@ -654,11 +658,11 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     key={option.value}
                     value={option.value}
                     className={cn(
-                      "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                      "relative flex cursor-pointer items-center gap-3 rounded-control border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
                       "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                       isSelected
-                        ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
-                        : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
+                        ? "surface-raised ring-2 ring-inset ring-ring/35"
+                        : "surface-raised hover:surface-raised-hover",
                     )}
                   >
                     <option.Icon className="size-5 shrink-0" aria-hidden />
@@ -679,8 +683,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               >
                 Repository
               </label>
-              <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-ring">
-                <span className="flex shrink-0 items-center gap-1.5 border-r border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground">
+              <div className="flex items-stretch overflow-hidden rounded-control surface-well focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-ring">
+                <span className="flex shrink-0 items-center gap-1.5 border-r border-border bg-secondary px-2.5 font-mono text-xs text-muted-foreground">
                   <currentPublishProvider.Icon className="size-3.5" />
                   {publishHost}/
                 </span>
@@ -699,7 +703,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   }}
                   placeholder={publishPathPlaceholder}
                   disabled={publishRepositoryAction.isPending}
-                  className="w-full bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+                  className="w-full bg-transparent px-3 py-2 font-mono text-sm placeholder:text-placeholder focus:outline-none"
                 />
               </div>
             </div>
@@ -740,11 +744,11 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       key={option.value}
                       value={option.value}
                       className={cn(
-                        "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                        "relative flex cursor-pointer items-center gap-3 rounded-control border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
                         "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                         isSelected
-                          ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
-                          : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
+                          ? "surface-raised ring-2 ring-inset ring-ring/35"
+                          : "surface-raised hover:surface-raised-hover",
                       )}
                     >
                       <option.Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -819,7 +823,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               <div
                 role="status"
                 aria-live="polite"
-                className="flex items-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground dark:border-transparent dark:bg-white/[0.035]"
+                className="flex items-center gap-2 rounded-control surface-raised px-3 py-2 text-xs text-muted-foreground"
               >
                 <Spinner size="sm" aria-hidden />
                 Publishing repository to {publishProviderLabel}...
@@ -828,10 +832,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
             {publishError && !publishRepositoryAction.isPending ? (
               <div
                 role="alert"
-                className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                className="rounded-control border border-error/40 bg-error/10 px-3 py-2 text-xs text-destructive-foreground"
               >
                 <p className="font-medium">Publish failed</p>
-                <p className="mt-0.5 text-destructive/90">{publishError}</p>
+                <p className="mt-0.5 text-error-foreground">{publishError}</p>
               </div>
             ) : null}
           </div>
@@ -840,7 +844,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
             {publishResult ? (
               <>
                 <div className="flex flex-col items-center gap-2 py-1 text-center">
-                  <span className="grid size-8 place-items-center rounded-full bg-success/15 text-success">
+                  <span className="grid size-8 place-items-center rounded-full bg-success/15 text-success-foreground">
                     <CheckIcon className="size-4" aria-hidden />
                   </span>
                   <h3 className="text-sm font-semibold text-foreground">
@@ -854,14 +858,14 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       : `Remote "${publishResult.remoteName}" is set up. Make a commit and push it to share your code.`}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 rounded-lg border border-input bg-muted/40 px-3 py-2 dark:border-transparent dark:bg-white/[0.035]">
+                <div className="flex items-center gap-2 rounded-control surface-raised px-3 py-2">
                   <currentPublishProvider.Icon className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
                     {publishResult.repository.nameWithOwner}
                   </span>
                 </div>
                 <Button
-                  variant="outline"
+                  variant="secondary"
                   size="sm"
                   className="w-full"
                   onClick={() => {
@@ -872,7 +876,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 </Button>
               </>
             ) : (
-              <div className="rounded-md border border-input bg-background px-3 py-2 text-xs text-muted-foreground dark:border-transparent dark:bg-white/[0.035]">
+              <div className="rounded-control surface-raised px-3 py-2 text-xs text-muted-foreground">
                 Publish result unavailable.
               </div>
             )}
@@ -885,7 +889,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
           ) : (
             <>
               <Button
-                variant="outline"
+                variant="secondary"
                 disabled={publishRepositoryAction.isPending}
                 onClick={() => {
                   if (publishWizardStep === 0) {
@@ -928,12 +932,11 @@ export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
-  compact = false,
   showActions = true,
   showChanges = true,
   onOpenChanges,
+  keybindings,
 }: GitActionsControlProps) {
-  const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread branch metadata update",
@@ -1464,7 +1467,7 @@ export default function GitActionsControl({
         </MenuItem>
       ) : null}
       {gitStatusForActions?.refName === null && (
-        <p className="px-2 py-1.5 text-xs text-warning">
+        <p className="px-2 py-1.5 text-xs text-warning-foreground">
           Detached HEAD: create and check out a branch to enable push and{" "}
           {changeRequestTerminology.singular} actions.
         </p>
@@ -1474,187 +1477,119 @@ export default function GitActionsControl({
         !gitStatusForActions.hasWorkingTreeChanges &&
         gitStatusForActions.behindCount > 0 &&
         gitStatusForActions.aheadCount === 0 && (
-          <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
+          <p className="px-2 py-1.5 text-xs text-warning-foreground">
+            Behind upstream. Pull/rebase first.
+          </p>
         )}
-      {gitStatusError && <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError}</p>}
+      {gitStatusError && (
+        <p className="px-2 py-1.5 text-xs text-destructive-foreground">{gitStatusError}</p>
+      )}
     </>
+  );
+
+  const changesSummary = (
+    <span className="ms-auto flex shrink-0 items-center gap-1 text-caption tabular-nums">
+      <span className="text-diff-addition">+{formatDiffCount(changesTotals?.insertions ?? 0)}</span>
+      <span className="text-diff-deletion">-{formatDiffCount(changesTotals?.deletions ?? 0)}</span>
+    </span>
+  );
+
+  const panelQuickAction = (
+    <ThreadDetailsControl
+      aria-disabled={quickActionDisabledReason ? "true" : undefined}
+      disabled={
+        !quickActionDisabledReason &&
+        (!canWriteSourceControl || isGitActionRunning || quickAction.disabled)
+      }
+      onClick={quickActionDisabledReason ? undefined : runQuickAction}
+    >
+      <GitQuickActionIcon quickAction={quickAction} SourceControlIcon={SourceControlIcon} />
+      <MenuItemLabel>{quickAction.label}</MenuItemLabel>
+      {showChanges ? changesSummary : null}
+    </ThreadDetailsControl>
   );
 
   if (!gitCwd) return null;
 
   return (
     <>
-      {!showActions ? null : !isRepo ? (
-        <ThreadDetailsControl
-          size="xs"
-          variant="ghost"
-          part="row"
-          panel
-          disabled={!canWriteSourceControl || initAction.isPending}
-          onClick={initializeGit}
-        >
-          <GitBranchPlusIcon className="size-3.5" aria-hidden />
-          <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-            {initAction.isPending ? "Initializing..." : "Initialize Git"}
-          </span>
-        </ThreadDetailsControl>
-      ) : quietEmptyDraft || (compact && !gitActionProgress && !visibleInlineSuccess) ? null : (
-        <div
-          role="group"
-          aria-label="Git actions"
-          ref={panelAnchorRef}
-          className={cn(
-            "shrink-0",
-            THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
-            gitActionProgress && "bg-black/[0.035] dark:bg-white/[0.055]",
-          )}
-        >
-          {gitActionProgress ? (
-            <ThreadDetailsControl
-              aria-label={
-                gitActionProgress.output
-                  ? `${gitActionProgress.status} ${gitActionProgress.output}`
-                  : gitActionProgress.status
-              }
-              part="primary"
-              panel
-              multiline
-              disabled
-              size="xs"
-              variant="ghost"
-            >
-              <GitActionProgressButtonContent progress={gitActionProgress} />
-            </ThreadDetailsControl>
+      {!isRepo ? (
+        showActions ? (
+          <ThreadDetailsControl
+            disabled={!canWriteSourceControl || initAction.isPending}
+            onClick={initializeGit}
+          >
+            <GitBranchPlusIcon aria-hidden />
+            <MenuItemLabel>
+              {initAction.isPending ? "Initializing..." : "Initialize Git"}
+            </MenuItemLabel>
+          </ThreadDetailsControl>
+        ) : null
+      ) : !showActions && (!showChanges || quietEmptyDraft) ? null : (
+        <div role="group" aria-label="Git actions">
+          {!showActions || quietEmptyDraft ? null : gitActionProgress ? (
+            <div className="flex items-start">
+              <ThreadDetailsControl
+                className="flex-1"
+                multiline
+                disabled
+                aria-label={
+                  gitActionProgress.output
+                    ? `${gitActionProgress.status} ${gitActionProgress.output}`
+                    : gitActionProgress.status
+                }
+              >
+                <GitActionProgressButtonContent progress={gitActionProgress} />
+              </ThreadDetailsControl>
+              <GitActionElapsedTime
+                startedAtMs={gitActionProgress.startedAtMs}
+                className="flex min-h-7 shrink-0 items-center pe-2 text-caption tabular-nums text-dim-foreground"
+              />
+            </div>
           ) : visibleInlineSuccess ? (
-            <ThreadDetailsControl part="primary" multiline disabled size="xs" variant="ghost">
+            <ThreadDetailsControl multiline disabled>
               <GitActionSuccessButtonContent success={visibleInlineSuccess} />
             </ThreadDetailsControl>
           ) : quickActionDisabledReason ? (
             <Popover>
-              <PopoverTrigger
-                openOnHover
-                render={
-                  <ThreadDetailsControl
-                    aria-disabled="true"
-                    part="primary"
-                    panel
-                    size="xs"
-                    variant="ghost"
-                  />
-                }
-              >
-                <GitQuickActionIcon
-                  quickAction={quickAction}
-                  SourceControlIcon={SourceControlIcon}
-                  className={THREAD_DETAILS_PANEL_ICON_CLASS}
-                />
-                <span
-                  className={cn(
-                    "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                    cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
-                  )}
-                >
-                  {quickAction.label}
-                </span>
-              </PopoverTrigger>
+              <PopoverTrigger openOnHover render={panelQuickAction} />
               <PopoverPopup tooltipStyle side="bottom" align="start">
                 {quickActionDisabledReason}
               </PopoverPopup>
             </Popover>
           ) : (
-            <ThreadDetailsControl
-              variant="ghost"
-              size="xs"
-              part="primary"
-              panel
-              disabled={!canWriteSourceControl || isGitActionRunning || quickAction.disabled}
-              onClick={runQuickAction}
-            >
-              <GitQuickActionIcon
-                quickAction={quickAction}
-                SourceControlIcon={SourceControlIcon}
-                className={THREAD_DETAILS_PANEL_ICON_CLASS}
-              />
-              <span
-                className={cn(
-                  "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                  cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
-                )}
-              >
-                {quickAction.label}
-              </span>
+            panelQuickAction
+          )}
+          {!showChanges || quietEmptyDraft ? null : (
+            <ThreadDetailsControl disabled={!onOpenChanges} onClick={onOpenChanges}>
+              <FileDiffIcon aria-hidden />
+              <MenuItemLabel>View changes</MenuItemLabel>
+              {!showActions ? changesSummary : null}
+              {keybindings && (
+                <MenuShortcut>{shortcutLabelForCommand(keybindings, "diff.toggle")}</MenuShortcut>
+              )}
             </ThreadDetailsControl>
           )}
-          {gitActionProgress ? (
-            <GitActionElapsedTime
-              startedAtMs={gitActionProgress.startedAtMs}
-              className="flex h-8 shrink-0 items-center self-start pe-2.5 text-2xs font-normal tabular-nums text-muted-foreground"
-            />
-          ) : (
-            <>
-              <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
-              <Menu
-                onOpenChange={(open) => {
-                  if (open) {
-                    requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
-                  }
-                }}
+          {showActions ? (
+            <Menu
+              onOpenChange={(open) => {
+                if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+              }}
+            >
+              <MenuTrigger
+                disabled={isGitActionRunning}
+                render={<ThreadDetailsControl part="choice" aria-label="Git action options" />}
               >
-                <MenuTrigger
-                  render={
-                    <ThreadDetailsControl
-                      aria-label="Git action options"
-                      size="sm"
-                      variant="ghost"
-                      part="secondary"
-                      panel
-                    />
-                  }
-                  disabled={isGitActionRunning}
-                >
-                  <ChevronDownIcon
-                    aria-hidden="true"
-                    className={THREAD_DETAILS_PANEL_CHEVRON_CLASS}
-                  />
-                </MenuTrigger>
-                <MenuPopup align="end" anchor={panelAnchorRef} className="w-(--anchor-width)">
-                  {gitItems}
-                </MenuPopup>
-              </Menu>
-            </>
-          )}
+                <SourceControlIcon />
+                <MenuItemLabel>Git actions</MenuItemLabel>
+              </MenuTrigger>
+              <MenuPopup side="right" align="start">
+                {gitItems}
+              </MenuPopup>
+            </Menu>
+          ) : null}
         </div>
       )}
-
-      {showChanges && isRepo && !quietEmptyDraft ? (
-        <ThreadDetailsControl
-          type="button"
-          variant="ghost"
-          size="sm"
-          part="row"
-          disabled={!onOpenChanges}
-          onClick={onOpenChanges}
-        >
-          <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          <span className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
-            <span
-              className={
-                changesTotals.insertions ? "text-diff-addition-foreground" : "text-muted-foreground"
-              }
-            >
-              +{formatDiffCount(changesTotals.insertions)}
-            </span>
-            <span
-              className={
-                changesTotals.deletions ? "text-diff-deletion-foreground" : "text-muted-foreground"
-              }
-            >
-              -{formatDiffCount(changesTotals.deletions)}
-            </span>
-          </span>
-        </ThreadDetailsControl>
-      ) : null}
 
       <Dialog
         open={isCommitDialogOpen}
@@ -1673,14 +1608,16 @@ export default function GitActionsControl({
             <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
           </DialogHeader>
           <DialogPanel>
-            <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
+            <div className="space-y-3 rounded-card bg-card p-3 text-sm ring-1 ring-border">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
                 <span className="text-muted-foreground">Branch</span>
                 <span className="flex items-center justify-between gap-2">
                   <span className="font-medium">
                     {gitStatusForActions?.refName ?? "(detached HEAD)"}
                   </span>
-                  {isDefaultRef && <span className="text-right text-warning">Default branch</span>}
+                  {isDefaultRef && (
+                    <span className="text-right text-warning-foreground">Default branch</span>
+                  )}
                 </span>
               </div>
               <div className="space-y-1">
@@ -1718,7 +1655,7 @@ export default function GitActionsControl({
                   <p className="font-medium">none</p>
                 ) : (
                   <div className="space-y-2">
-                    <div className="h-44 rounded-lg bg-card ring-1 ring-black/5 dark:bg-white/[0.025] dark:ring-white/5">
+                    <div className="h-44 rounded-control bg-background ring-1 ring-border">
                       <ScrollArea>
                         <div className="space-y-1 p-1">
                           {allFiles.map((file) => {
@@ -1726,7 +1663,7 @@ export default function GitActionsControl({
                             return (
                               <div
                                 key={file.path}
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono hover:bg-accent/50"
+                                className="flex w-full items-center gap-2 rounded-row px-2 py-1 font-mono hover:surface-ghost-hover"
                               >
                                 {isEditingFiles && (
                                   <Checkbox
@@ -1802,7 +1739,7 @@ export default function GitActionsControl({
           </DialogPanel>
           <DialogFooter variant="bare">
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => {
                 setIsCommitDialogOpen(false);
@@ -1814,7 +1751,7 @@ export default function GitActionsControl({
               Cancel
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               disabled={!canChangeThreadBranch || noneSelected}
               onClick={runDialogActionOnNewBranch}
@@ -1832,7 +1769,6 @@ export default function GitActionsControl({
         </DialogPopup>
       </Dialog>
 
-      {/* Its discovery query should stop when the Git actions row that opens it is hidden. */}
       {showActions ? (
         <PublishRepositoryDialog
           open={isPublishDialogOpen}
@@ -1856,13 +1792,13 @@ export default function GitActionsControl({
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
             {featureBranchUnavailableReason && (
-              <p className="text-xs text-muted-foreground">{featureBranchUnavailableReason}</p>
+              <p className="text-caption text-muted-foreground">{featureBranchUnavailableReason}</p>
             )}
           </DialogHeader>
           <DialogFooter variant="bare" className="sm:flex-wrap sm:items-center">
             <Button
               className="w-full sm:mr-auto sm:w-auto"
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => setPendingDefaultBranchAction(null)}
             >
@@ -1870,7 +1806,7 @@ export default function GitActionsControl({
             </Button>
             <Button
               className="w-full max-w-full sm:w-auto"
-              variant="outline"
+              variant="secondary"
               size="sm-multiline"
               onClick={() => continuePendingDefaultBranchAction(false)}
               disabled={!canWriteSourceControl}

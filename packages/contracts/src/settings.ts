@@ -122,17 +122,6 @@ export const DEFAULT_SNOOZE_PRESETS: ReadonlyArray<SnoozePresetSetting> = [
   { kind: "at", day: "monday", time: "09:00" },
 ];
 
-export const MIN_GLASS_OPACITY = 40;
-export const MAX_GLASS_OPACITY = 100;
-export const GlassOpacity = Schema.Int.check(
-  Schema.isBetween({
-    minimum: MIN_GLASS_OPACITY,
-    maximum: MAX_GLASS_OPACITY,
-  }),
-);
-export type GlassOpacity = typeof GlassOpacity.Type;
-const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
-
 export const MIN_APPEARANCE_CONTRAST = 50;
 export const MAX_APPEARANCE_CONTRAST = 200;
 export const AppearanceContrast = Schema.Int.check(
@@ -326,6 +315,22 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
+/**
+ * How buttons and the composer are painted: the pen's styles. Every style
+ * swaps the same design-system surface tokens; "gradient-rim" (the pen's
+ * "Now", toned aqua) is the design's own look.
+ */
+export const SURFACE_STYLES = [
+  "gradient-rim",
+  "flat",
+  "soft-gradient",
+  "aqua-gloss-full",
+  "aqua-blue",
+  "gradient-rim-everywhere",
+] as const;
+export const SurfaceStyle = Schema.Literals(SURFACE_STYLES);
+export type SurfaceStyle = typeof SurfaceStyle.Type;
+const DEFAULT_SURFACE_STYLE: SurfaceStyle = "gradient-rim";
 
 /** How the composer shows reasoning effort: the level's name, or rising bars. */
 export const EffortDisplay = Schema.Literals(["label", "bars"]);
@@ -362,6 +367,10 @@ export const ClientSettingsSchema = Schema.Struct({
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
+  ),
+  surfaceStyle: SurfaceStyle.pipe(
+    Schema.catchDecoding(() => Effect.succeedSome(DEFAULT_SURFACE_STYLE)),
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SURFACE_STYLE)),
   ),
   // Zero avoids per-frame layout work from width/height transitions.
   panelAnimationDurationMs: PanelAnimationDurationMs.pipe(
@@ -423,9 +432,6 @@ export const ClientSettingsSchema = Schema.Struct({
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
   ),
-  glassOpacity: GlassOpacity.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
-  ),
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
   ),
@@ -448,10 +454,6 @@ export const ClientSettingsSchema = Schema.Struct({
   onboardingCompletedAt: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  persistComposerContextStrip: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
-  ),
-
   favorites: ModelFavorites.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   providerModelPreferences: ProviderModelPreferences.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -488,6 +490,10 @@ export const ClientSettingsSchema = Schema.Struct({
   // Opt-in for the removed legacy sidebar. Still read so those users land in
   // the boring sidebar; the boring sidebar toggle clears it.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Desktop macOS only: hides the traffic lights while the sidebar is collapsed.
+  hideWindowControlsWhenSidebarCollapsed: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
@@ -1747,6 +1753,7 @@ export const ClientSettingsPatch = Schema.Struct({
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
+  surfaceStyle: Schema.optionalKey(SurfaceStyle),
   panelAnimationDurationMs: Schema.optionalKey(PanelAnimationDurationMs),
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
   browserDefaultZoomFactor: Schema.optionalKey(PreviewZoomFactor),
@@ -1768,7 +1775,6 @@ export const ClientSettingsPatch = Schema.Struct({
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
-  glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
@@ -1779,7 +1785,6 @@ export const ClientSettingsPatch = Schema.Struct({
   fontFamilySans: Schema.optionalKey(FontFamilyPreference),
   fontFamilyTerminal: Schema.optionalKey(FontFamilyPreference),
   fontSmoothing: Schema.optionalKey(Schema.Boolean),
-  persistComposerContextStrip: Schema.optionalKey(Schema.Boolean),
   favorites: Schema.optionalKey(ModelFavorites),
   providerModelPreferences: Schema.optionalKey(ProviderModelPreferences),
   pullRequestMergeMethodOverrides: Schema.optionalKey(
@@ -1798,6 +1803,7 @@ export const ClientSettingsPatch = Schema.Struct({
   threadDetailsUsageEnabled: Schema.optionalKey(Schema.Boolean),
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
+  hideWindowControlsWhenSidebarCollapsed: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(

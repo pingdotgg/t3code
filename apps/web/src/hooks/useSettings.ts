@@ -527,6 +527,11 @@ export function useEnvironmentModelPreferences(environmentId: EnvironmentId | nu
   return resolveModelPreferences(settings ?? DEFAULT_SERVER_SETTINGS, legacy);
 }
 
+/** Whether macOS hides the traffic lights while the sidebar is collapsed. */
+export function useHideWindowControlsWhenSidebarCollapsed(): boolean {
+  return useClientSettings((settings) => settings.hideWindowControlsWhenSidebarCollapsed);
+}
+
 export function useEnvironmentSettings<T = UnifiedSettings>(
   environmentId: EnvironmentId,
   selector?: (settings: UnifiedSettings) => T,

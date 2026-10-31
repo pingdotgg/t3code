@@ -133,11 +133,22 @@ export function SidebarSectionHeader(props: {
         role="treeitem"
         tabIndex={-1}
         data-sidebar-row={`shelf:${shelf}`}
+        // A click must not focus the toggle: Chromium shows the focus ring on
+        // a clicked button once any key is pressed, even a lone modifier.
+        onPointerDown={(event) => event.preventDefault()}
         onClick={props.toggle.onToggle}
         expanded={props.toggle.expanded}
-        tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}
+        tone={
+          props.isDropTarget
+            ? "accent"
+            : props.dragging
+              ? "emphasized"
+              : shelf === "snoozed"
+                ? "info"
+                : "settled"
+        }
         data-testid={`sidebar-${shelf}-shelf-toggle`}
-        accessory={<span className="font-normal tabular-nums">{props.count}</span>}
+        accessory={<span className="text-meta tabular-nums">{props.count}</span>}
       >
         {props.label}
       </CollapsibleSectionHeader>

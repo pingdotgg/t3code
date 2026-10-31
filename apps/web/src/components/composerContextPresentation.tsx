@@ -298,7 +298,7 @@ function previewAnnotationTooltip(annotation: PreviewAnnotationPayload): string 
 
 function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentContext }) {
   return (
-    <div className="space-y-2 overflow-hidden rounded-lg border border-border/70 bg-background/70 p-3">
+    <div className="space-y-2 overflow-hidden rounded-card border border-border bg-popover p-3">
       <div className="space-y-1">
         <div className="truncate text-xs font-medium text-foreground">{comment.filePath}</div>
         <div className="text-secondary-label text-2xs">
@@ -325,7 +325,7 @@ function ComposerPreviewAnnotationDetails({
   const summary = previewAnnotationTooltip(annotation);
   const screenshotUrl = annotation.screenshot?.dataUrl || screenshot?.previewUrl;
   return (
-    <div className="overflow-hidden rounded-lg border border-border/70 bg-background/70">
+    <div className="overflow-hidden rounded-card border border-border bg-popover">
       {screenshotUrl ? (
         <img
           src={screenshotUrl}
@@ -333,7 +333,7 @@ function ComposerPreviewAnnotationDetails({
           className="max-h-64 w-full border-border/70 border-b bg-muted object-contain"
         />
       ) : (
-        <div className="border-border/70 border-b bg-muted/40 px-3 py-2 text-secondary-label text-xs">
+        <div className="border-border border-b bg-muted px-3 py-2 text-secondary-label text-xs">
           Screenshot unavailable
         </div>
       )}
