@@ -11,6 +11,7 @@ import Migration72 from "./Migrations/072_WaitingLinkRequestIndex.ts";
 import Migration73 from "./Migrations/073_ActiveTurnItemIndexes.ts";
 import Migration74 from "./Migrations/074_ExcludeAttachmentPlaceholdersFromSearch.ts";
 import Migration75 from "./Migrations/075_SubagentDeliveryState.ts";
+import Migration76 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
 
 // These unmerged preview builds used main's next slots. Recognize their exact
 // histories and schemas; never reinterpret an unknown build's migration ledger.
@@ -53,6 +54,7 @@ const upstream = [
   [73, "ActiveTurnItemIndexes", Migration73],
   [74, "ExcludeAttachmentPlaceholdersFromSearch", Migration74],
   [75, "SubagentDeliveryState", Migration75],
+  [76, "ProjectionProjectsPinArchive", Migration76],
 ] as const;
 const normalize = (sql: string) => sql.trim().replace(/\s+/g, " ").toLowerCase();
 const badState = () =>
@@ -73,8 +75,7 @@ export const reconcilePluginPreviewMigrations = Effect.fn("reconcilePluginPrevie
         SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
       `;
         const preview = history.find(
-          (row) =>
-            row.name === legacyNames[0] && (row.migration_id === 67 || row.migration_id === 69),
+          (row) => row.name === legacyNames[0] && [67, 69, 76].includes(row.migration_id),
         );
         if (!preview) return [];
         const start = preview.migration_id;
@@ -122,6 +123,7 @@ export const reconcilePluginPreviewMigrations = Effect.fn("reconcilePluginPrevie
           }
         }
         if (
+          start < 76 &&
           schema.some((row) =>
             [
               "orchestration_v2_message_search",
@@ -137,7 +139,12 @@ export const reconcilePluginPreviewMigrations = Effect.fn("reconcilePluginPrevie
         const subagentColumns = yield* sql<{
           readonly name: string;
         }>`PRAGMA table_info(orchestration_v2_projection_subagents)`;
-        if (subagentColumns.some((row) => row.name === "completion_delivery_state"))
+        if (start < 76 && subagentColumns.some((row) => row.name === "completion_delivery_state"))
+          return yield* badState();
+        const projectColumns = yield* sql<{
+          readonly name: string;
+        }>`PRAGMA table_info(projection_projects)`;
+        if (projectColumns.some((row) => row.name === "pinned_at" || row.name === "archived_at"))
           return yield* badState();
         const taskColumns = yield* sql<{
           readonly name: string;
