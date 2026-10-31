@@ -85,49 +85,6 @@ export function collectDirectoryPaths(paths: ReadonlyArray<string>): ReadonlyArr
   return [...directories];
 }
 
-export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap<string, number> {
-  const positions = new Map<string, number>();
-  paths.forEach((path, index) => {
-    positions.set(path, index);
-    let directory = "";
-    for (const segment of path.split("/").slice(0, -1)) {
-      directory += `${segment}/`;
-      if (!positions.has(directory)) positions.set(directory, index);
-    }
-  });
-  return positions;
-}
-
-// A flat list in tree order: each directory stays contiguous, siblings ranked as
-// compareDiffFileTreeEntries ranks them, so the list never disagrees with the tree.
-export function orderDiffFilesLikeTree(
-  files: ReadonlyArray<FileDiffMetadata>,
-): ReadonlyArray<FileDiffMetadata> {
-  const paths = files.map(resolveFileDiffPath);
-  const positions = diffFileTreePositions(paths);
-  const keys = paths.map((path) => {
-    const key: number[] = [];
-    let directory = "";
-    for (const segment of path.split("/").slice(0, -1)) {
-      directory += `${segment}/`;
-      key.push(positions.get(directory)!);
-    }
-    key.push(positions.get(path)!);
-    return key;
-  });
-  return files
-    .map((file, index) => ({ file, key: keys[index]! }))
-    .toSorted((left, right) => {
-      const length = Math.min(left.key.length, right.key.length);
-      for (let index = 0; index < length; index++) {
-        const difference = left.key[index]! - right.key[index]!;
-        if (difference !== 0) return difference;
-      }
-      return left.key.length - right.key.length;
-    })
-    .map(({ file }) => file);
-}
-
 export function compareDiffFileTreeEntries(
   getPositions: () => ReadonlyMap<string, number>,
 ): FileTreeSortComparator {
