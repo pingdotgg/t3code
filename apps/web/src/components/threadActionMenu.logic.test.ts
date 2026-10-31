@@ -74,4 +74,17 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
+
+  it("offers projects as destinations and disables moving while the thread is running", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      isRunning: true,
+      moveProjectOptions: [{ id: "project-1", title: "Build plan" }],
+    });
+    const move = items.find((item) => item.id === "move-to-project");
+    expect(move?.disabled).toBe(true);
+    expect(move?.children?.map((item) => [item.id, item.label])).toEqual([
+      ["move-to-project:project-1", "Build plan"],
+    ]);
+  });
 });

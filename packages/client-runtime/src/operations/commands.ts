@@ -84,6 +84,10 @@ export interface ThreadCommandInput extends CommandMetadata {
   readonly threadId: ThreadId;
 }
 
+export interface MoveThreadToProjectInput extends ThreadCommandInput {
+  readonly projectId: ProjectId;
+}
+
 export interface DeleteThreadInput extends ThreadCommandInput {
   /** The server deletes only a thread with no runs and no messages. */
   readonly onlyIfUnused?: boolean;
@@ -644,6 +648,17 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
     return result ?? { sequence: 0 };
   },
 );
+
+export const moveThreadToProject = Effect.fn("EnvironmentCommands.moveThreadToProject")(function* (
+  input: MoveThreadToProjectInput,
+) {
+  return yield* dispatch({
+    type: "thread.project.move",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    projectId: input.projectId,
+  });
+});
 
 export const setThreadRuntimeMode = Effect.fn("EnvironmentCommands.setThreadRuntimeMode")(
   function* (input: SetThreadRuntimeModeInput) {

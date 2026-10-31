@@ -3112,6 +3112,12 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: ModelSelection,
   }),
   Schema.Struct({
+    type: Schema.Literal("thread.project.move"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    projectId: ProjectId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
     commandId: CommandId,
     threadId: ThreadId,

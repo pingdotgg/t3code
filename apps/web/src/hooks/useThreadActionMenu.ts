@@ -10,6 +10,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  ProjectId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -90,6 +91,9 @@ export function useThreadActionMenu(input: {
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const moveToProject = useOrchestrationCommand(threadEnvironment.moveToProject, {
+    reportFailure: false,
+  });
   const handleNewThread = useNewThreadHandler();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -148,6 +152,14 @@ export function useThreadActionMenu(input: {
         snoozePresets,
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+        moveProjectOptions: projects
+          .filter(
+            (project) =>
+              project.environmentId === thread.environmentId &&
+              project.id !== thread.projectId &&
+              !project.archivedAt,
+          )
+          .map((project) => ({ id: project.id, title: project.title })),
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -176,6 +188,23 @@ export function useThreadActionMenu(input: {
         const result = await snoozeThread(threadRef, preset.snoozedUntil);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
+        }
+        return;
+      }
+      if (action.startsWith("move-to-project:")) {
+        const projectId = action.slice("move-to-project:".length);
+        const result = await moveToProject({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, projectId: ProjectId.make(projectId) },
+        });
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          failureToast("Failed to move thread", squashAtomCommandFailure(result));
+        } else if (result._tag === "Success") {
+          toastManager.add({
+            type: "success",
+            title: "Thread moved",
+            description: "The thread is now in the selected project.",
+          });
         }
         return;
       }
