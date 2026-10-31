@@ -70,7 +70,9 @@ const svgDocumentAtom = Atom.family((uri: string) =>
     if (cached !== null) return Effect.succeed(cached);
     return Effect.tryPromise({
       try: async (signal): Promise<SvgDocument> => {
-        const ast = parse(await readSvgXml(uri, signal));
+        const xml = await readSvgXml(uri, signal);
+        signal.throwIfAborted();
+        const ast = parse(xml);
         if (!ast) throw new Error("SVG has no root element");
         return { ast, size: resolveSvgImageSize(ast.props) };
       },

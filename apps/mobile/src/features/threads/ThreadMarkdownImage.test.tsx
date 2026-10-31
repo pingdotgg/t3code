@@ -118,3 +118,45 @@ it("fetches a failed SVG again on the next mount but keeps a parsed one", async 
     registry.dispose();
   }
 });
+
+it("does not parse an obsolete SVG response after its last reader unmounts", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const registry = AtomRegistry.make({
+    scheduleTask: (task) => {
+      queueMicrotask(task);
+      return () => {};
+    },
+  });
+  const root = createRoot(document.createElement("div"));
+  const fetchSvg = vi.mocked(fetch);
+  const parseSvg = vi.mocked(parse);
+  fetchSvg.mockReset();
+  parseSvg.mockClear();
+  const body = Promise.withResolvers<string>();
+  fetchSvg.mockResolvedValue({ ok: true, status: 200, text: () => body.promise } as never);
+  try {
+    await act(async () =>
+      root.render(
+        <RegistryContext.Provider value={registry}>
+          <ThreadMarkdownImageView
+            uri="https://example.test/obsolete.svg"
+            sourceKey="attachment:obsolete"
+            unavailable={false}
+            alt={null}
+            format="svg"
+            onPressPreview={() => {}}
+          />
+        </RegistryContext.Provider>,
+      ),
+    );
+    expect(fetchSvg).toHaveBeenCalledOnce();
+    const signal = fetchSvg.mock.calls[0]![1]!.signal!;
+    await act(async () => root.render(null));
+    expect(signal.aborted).toBe(true);
+    await act(async () => body.resolve("<svg />"));
+    expect(parseSvg).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => root.unmount());
+    registry.dispose();
+  }
+});
