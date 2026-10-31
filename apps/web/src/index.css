@@ -2408,7 +2408,7 @@ code {
 
 /* Let the sortable rows open label clearance before painting the dividers.
    This runs once per pickup; rows retain dnd-kit's normal 200ms transitions. */
-.sidebar-drag-boundary-label {
+.sidebar-drag-boundary-label:not([data-persistent]) {
   animation: sidebar-drag-label-reveal 200ms step-end;
 }
 

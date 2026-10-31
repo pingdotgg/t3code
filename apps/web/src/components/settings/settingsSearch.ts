@@ -444,6 +444,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "sidebar-section-dividers",
+    title: "Always show thread section dividers",
+    to: "/settings/general",
+    searchTerms: ["sidebar pinned active labels lines separators dragging"],
+  },
+  {
     id: "boring-sidebar",
     title: "Boring sidebar (group by project)",
     to: "/settings/labs",

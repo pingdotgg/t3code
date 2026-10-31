@@ -886,6 +886,33 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          {...searchableSetting("sidebar-section-dividers")}
+          description="Keep the Pinned and Active labels and lines visible when you're not dragging a thread."
+          resetAction={
+            settings.sidebarSectionDividersEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarSectionDividersEnabled ? (
+              <SettingResetButton
+                label="thread section dividers"
+                onClick={() =>
+                  updateSettings({
+                    sidebarSectionDividersEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarSectionDividersEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarSectionDividersEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarSectionDividersEnabled: Boolean(checked) })
+              }
+              aria-label="Always show thread section dividers"
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection id="confirmations" title="Confirmations">
