@@ -63,7 +63,7 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   });
 }
 
-function rehypePreserveBareAnchorPlaceholders() {
+export function rehypePreserveBareAnchorPlaceholders() {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
     let rawTextTag: string | undefined;
@@ -255,6 +255,11 @@ function rehypeRawWhenPresent(this: Processor) {
   return (tree: MarkdownImageHastNode, file: unknown) =>
     needsHtmlParser(tree, TOP_SCOPE) ? transform(tree, file) : undefined;
 }
+
+/** Sanitizes one tree with the chat's schema, as the last rehype plugin does. */
+export const sanitizeChatHast = rehypeSanitize(CHAT_MARKDOWN_SANITIZE_SCHEMA) as unknown as (
+  tree: MarkdownImageHastNode,
+) => MarkdownImageHastNode;
 
 export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
   rehypePreserveBareAnchorPlaceholders,

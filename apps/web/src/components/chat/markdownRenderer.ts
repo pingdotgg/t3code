@@ -1,4 +1,5 @@
 import type { Element, Nodes, Root } from "hast";
+import type { Root as MdastRoot } from "mdast";
 import { toJsxRuntime, type Components } from "hast-util-to-jsx-runtime";
 import { urlAttributes } from "html-url-attributes";
 import type { ReactElement } from "react";
@@ -8,13 +9,19 @@ import remarkRehype from "remark-rehype";
 import { type PluggableList, unified } from "unified";
 import { VFile } from "vfile";
 
+import { remarkFastParse } from "../../markdown/remarkFastParse";
 import { remarkParseWithoutUnusedSyntax } from "./markdownSyntaxGates";
+
+// VITE_T3_MARKDOWN_PARSER=remark measures against micromark and the rehype plugins.
+const FAST_PARSE = import.meta.env?.VITE_T3_MARKDOWN_PARSER !== "remark";
 
 export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string;
 
 interface MarkdownRendererOptions {
   readonly remarkPlugins: PluggableList;
   readonly rehypePlugins: PluggableList;
+  /** Builds what `rehypePlugins` would, or null to run them. */
+  readonly directHast?: ((tree: MdastRoot) => Root | null) | undefined;
   readonly components: Partial<Components>;
   readonly urlTransform: MarkdownUrlTransform;
 }
@@ -23,7 +30,11 @@ interface MarkdownRendererOptions {
 // reuses one instead of parsing again. Parsing is most of the cost of rendering markdown.
 // An element and the hast it keeps hold about 20 bytes per source character, so ~10 MB.
 const MAX_CACHED_CHARS = 500_000;
-const rendered = new Map<string, ReactElement>();
+interface Rendered {
+  readonly tree: Root;
+  element?: ReactElement;
+}
+const rendered = new Map<string, Rendered>();
 let cachedChars = 0;
 let nextRendererId = 0;
 
@@ -31,10 +42,10 @@ let nextRendererId = 0;
 const ENTRY_OVERHEAD_CHARS = 200;
 const entrySize = (key: string) => key.length + ENTRY_OVERHEAD_CHARS;
 
-function remember(key: string, element: ReactElement) {
+function remember(key: string, entry: Rendered) {
   // One huge message would otherwise evict everything else.
   if (entrySize(key) > MAX_CACHED_CHARS / 4) return;
-  rendered.set(key, element);
+  rendered.set(key, entry);
   cachedChars += entrySize(key);
   for (const oldest of rendered.keys()) {
     if (cachedChars <= MAX_CACHED_CHARS) break;
@@ -49,14 +60,22 @@ export function createMarkdownRenderer({
   rehypePlugins,
   components,
   urlTransform,
+  directHast,
 }: MarkdownRendererOptions) {
-  const processor = unified()
+  const remark = unified()
     .use(remarkParse)
     .use(remarkParseWithoutUnusedSyntax)
+    .use(FAST_PARSE ? [remarkFastParse] : [])
     .use(remarkPlugins)
+    .freeze();
+  const rehype = unified()
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(rehypePlugins)
     .freeze();
+  const toHast = (file: VFile): Root => {
+    const mdast = remark.runSync(remark.parse(file), file) as MdastRoot;
+    return (FAST_PARSE && directHast?.(mdast)) || (rehype.runSync(mdast as never, file) as Root);
+  };
   const keyPrefix = `${nextRendererId++}\u0000`;
 
   // Literal raw HTML that survived the rehype plugins, and URL attributes, as react-markdown treats them.
@@ -82,7 +101,7 @@ export function createMarkdownRenderer({
     }
   };
 
-  return (text: string, cache: boolean): ReactElement => {
+  const parse = (text: string, cache: boolean): Rendered => {
     const key = keyPrefix + text;
     const cached = rendered.get(key);
     if (cached !== undefined) {
@@ -92,18 +111,27 @@ export function createMarkdownRenderer({
       return cached;
     }
     const file = new VFile(text);
-    const tree = processor.runSync(processor.parse(file), file) as Root;
+    const tree = toHast(file);
     prepare(tree);
-    const element = toJsxRuntime(tree, {
-      Fragment,
-      components,
-      ignoreInvalidStyle: true,
-      jsx,
-      jsxs,
-      passKeys: true,
-      passNode: true,
-    });
-    if (cache) remember(key, element);
-    return element;
+    const entry: Rendered = { tree };
+    if (cache) remember(key, entry);
+    return entry;
+  };
+
+  return {
+    /** The sanitized tree; cached trees are shared, so callers must not change them. */
+    tree: (text: string, cache: boolean): Root => parse(text, cache).tree,
+    render: (text: string, cache: boolean): ReactElement => {
+      const entry = parse(text, cache);
+      return (entry.element ??= toJsxRuntime(entry.tree, {
+        Fragment,
+        components,
+        ignoreInvalidStyle: true,
+        jsx,
+        jsxs,
+        passKeys: true,
+        passNode: true,
+      }));
+    },
   };
 }

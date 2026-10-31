@@ -39,10 +39,38 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
   return target ? `${target.path}${target.hash}` : null;
 }
 
+// Every message resolves its links and code spans more than once while rendering.
+const MAX_MEMOIZED = 4_000;
+const inlineCodeMetas = new Map<string, MarkdownFileLinkMeta | null>();
+const linkMetas = new Map<string, MarkdownFileLinkMeta | null>();
+
+function memoized(
+  cache: Map<string, MarkdownFileLinkMeta | null>,
+  key: string,
+  resolve: () => MarkdownFileLinkMeta | null,
+): MarkdownFileLinkMeta | null {
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  if (cache.size >= MAX_MEMOIZED) cache.clear();
+  const meta = resolve();
+  cache.set(key, meta);
+  return meta;
+}
+
 export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
   baseDir: string | undefined = cwd,
+): MarkdownFileLinkMeta | null {
+  return memoized(inlineCodeMetas, `${cwd ?? ""}\u0000${baseDir ?? ""}\u0000${codeText}`, () =>
+    resolveInlineCodeFileLinkMetaUncached(codeText, cwd, baseDir),
+  );
+}
+
+function resolveInlineCodeFileLinkMetaUncached(
+  codeText: string,
+  cwd: string | undefined,
+  baseDir: string | undefined,
 ): MarkdownFileLinkMeta | null {
   const candidate = inlineCodeFilePathCandidate(codeText);
   if (candidate === null) return null;
@@ -69,6 +97,17 @@ export function resolveMarkdownFileLinkMeta(
   href: string | undefined,
   cwd?: string,
   baseDir: string | undefined = cwd,
+): MarkdownFileLinkMeta | null {
+  if (href === undefined) return null;
+  return memoized(linkMetas, `${cwd ?? ""}\u0000${baseDir ?? ""}\u0000${href}`, () =>
+    resolveMarkdownFileLinkMetaUncached(href, cwd, baseDir),
+  );
+}
+
+function resolveMarkdownFileLinkMetaUncached(
+  href: string | undefined,
+  cwd: string | undefined,
+  baseDir: string | undefined,
 ): MarkdownFileLinkMeta | null {
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
   if (!targetPath) return null;

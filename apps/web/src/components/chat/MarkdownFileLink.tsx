@@ -14,6 +14,7 @@ import type { markdownFileCopyPaths } from "../../markdownFileHostPath";
 import { documentChipKindForFileName } from "../../pierre-icons";
 import { ContextChip } from "../ContextChip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { useSharedTooltip, withSharedTooltip } from "../ui/shared-tooltip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { FileTagChipContent } from "./FileTagChip";
 import {
@@ -323,65 +324,67 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   });
   const chipKind = documentChipKindForFileName(iconPath) ?? "mention";
 
+  const tooltipContent = (
+    <div className="overflow-x-auto whitespace-nowrap scrollbar-thumb-border/78 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/78 [&::-webkit-scrollbar-track]:bg-transparent">
+      <WorkspaceEntryTooltip path={iconPath} label={targetPath} environmentId={environmentId} />
+    </div>
+  );
+  const sharedTooltip = useSharedTooltip({ render: () => tooltipContent, variant: "code" });
+  const chip = hasPrimaryAction ? (
+    <ContextChip
+      kind={chipKind}
+      dir="ltr"
+      render={<a href={href} />}
+      className={MARKDOWN_FILE_LINK_CLASS_NAME}
+      data-markdown-copy={copyMarkdown}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
+          handleOpenInEditor();
+          return;
+        }
+        if (useBrowserPrimaryAction) {
+          handleOpenInBrowser();
+          return;
+        }
+        handleOpenInFilePreview();
+      }}
+      onContextMenu={handleContextMenu}
+    >
+      <FileTagChipContent
+        path={iconPath}
+        environmentId={environmentId}
+        label={label}
+        theme={theme}
+      />
+    </ContextChip>
+  ) : (
+    <ContextChip
+      kind={chipKind}
+      dir="ltr"
+      render={<button type="button" />}
+      aria-label={`File options for ${label}`}
+      aria-haspopup="menu"
+      className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
+      data-markdown-copy={copyMarkdown}
+      onClick={handleContextMenu}
+      onContextMenu={handleContextMenu}
+    >
+      <FileTagChipContent
+        path={iconPath}
+        environmentId={environmentId}
+        label={label}
+        theme={theme}
+      />
+    </ContextChip>
+  );
+  if (sharedTooltip) return withSharedTooltip(chip, sharedTooltip);
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          hasPrimaryAction ? (
-            <ContextChip
-              kind={chipKind}
-              dir="ltr"
-              render={<a href={href} />}
-              className={MARKDOWN_FILE_LINK_CLASS_NAME}
-              data-markdown-copy={copyMarkdown}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
-                  handleOpenInEditor();
-                  return;
-                }
-                if (useBrowserPrimaryAction) {
-                  handleOpenInBrowser();
-                  return;
-                }
-                handleOpenInFilePreview();
-              }}
-              onContextMenu={handleContextMenu}
-            >
-              <FileTagChipContent
-                path={iconPath}
-                environmentId={environmentId}
-                label={label}
-                theme={theme}
-              />
-            </ContextChip>
-          ) : (
-            <ContextChip
-              kind={chipKind}
-              dir="ltr"
-              render={<button type="button" />}
-              aria-label={`File options for ${label}`}
-              aria-haspopup="menu"
-              className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
-              data-markdown-copy={copyMarkdown}
-              onClick={handleContextMenu}
-              onContextMenu={handleContextMenu}
-            >
-              <FileTagChipContent
-                path={iconPath}
-                environmentId={environmentId}
-                label={label}
-                theme={theme}
-              />
-            </ContextChip>
-          )
-        }
-      />
+      <TooltipTrigger render={chip} />
       <TooltipPopup side="top" variant="code">
-        <div className="overflow-x-auto whitespace-nowrap scrollbar-thumb-border/78 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/78 [&::-webkit-scrollbar-track]:bg-transparent">
-          <WorkspaceEntryTooltip path={iconPath} label={targetPath} environmentId={environmentId} />
-        </div>
+        {tooltipContent}
       </TooltipPopup>
     </Tooltip>
   );

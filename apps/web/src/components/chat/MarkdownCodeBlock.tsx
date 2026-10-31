@@ -19,7 +19,7 @@ import {
 } from "../../pierre-icons";
 import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { HighlightedCodeLines } from "./HighlightedCodeLines";
 import {
   createHighlightCacheKey,
@@ -115,16 +115,14 @@ function MarkdownCodeBlockTitleContent({
     return <span className="truncate">{language}</span>;
   }
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex shrink-0 rounded-sm" aria-label={`Language: ${language}`} />
-        }
-      >
-        <PierreEntryIcon pathValue={fileName} kind="file" theme={theme} className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{language}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      label={language}
+      render={
+        <span className="inline-flex shrink-0 rounded-sm" aria-label={`Language: ${language}`} />
+      }
+    >
+      <PierreEntryIcon pathValue={fileName} kind="file" theme={theme} className="size-3.5" />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -181,22 +179,20 @@ export function MarkdownCodeBlock({
   const handleCopy = () => copyToClipboard(code);
 
   const copyButton = (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost-muted"
-            size="icon-xs"
-            onClick={handleCopy}
-            aria-label={copyLabel}
-          />
-        }
-      >
-        <MorphIcon className="size-3" icon={copied ? Check : Copy} />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{copyLabel}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      label={copyLabel}
+      render={
+        <Button
+          type="button"
+          variant="ghost-muted"
+          size="icon-xs"
+          onClick={handleCopy}
+          aria-label={copyLabel}
+        />
+      }
+    >
+      <MorphIcon className="size-3" icon={copied ? Check : Copy} />
+    </SharedTooltipTrigger>
   );
 
   if (diagram) {
@@ -221,41 +217,39 @@ export function MarkdownCodeBlock({
       actions={
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
           {canWrap ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant={wrapped ? "secondary" : "ghost-muted"}
-                    size="icon-xs"
-                    aria-pressed={wrapped}
-                    onClick={() => setWrapped((value) => !value)}
-                    aria-label={wrapLabel}
-                  />
-                }
-              >
-                <WrapTextIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              label={wrapLabel}
+
+              render={
+                <Button
+                  type="button"
+                  variant={wrapped ? "secondary" : "ghost-muted"}
+                  size="icon-xs"
+                  aria-pressed={wrapped}
+                  onClick={() => setWrapped((value) => !value)}
+                  aria-label={wrapLabel}
+                />
+              }
+            >
+              <WrapTextIcon className="size-3" />
+            </SharedTooltipTrigger>
           ) : null}
           {canRun ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost-muted"
-                    size="icon-xs"
-                    onClick={() => onRunShellCommand(command)}
-                    aria-label="Run in terminal"
-                  />
-                }
-              >
-                <PlayIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">Run in terminal</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              label="Run in terminal"
+
+              render={
+                <Button
+                  type="button"
+                  variant="ghost-muted"
+                  size="icon-xs"
+                  onClick={() => onRunShellCommand(command)}
+                  aria-label="Run in terminal"
+                />
+              }
+            >
+              <PlayIcon className="size-3" />
+            </SharedTooltipTrigger>
           ) : null}
           {viewToggle}
           {copyButton}

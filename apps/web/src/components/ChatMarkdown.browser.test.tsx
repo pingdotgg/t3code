@@ -17,14 +17,14 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   filesystemMetadata: vi.fn(),
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
-vi.mock(import("mdast-util-from-markdown"), async (original) => {
+vi.mock(import("../markdown/parseMarkdown"), async (original) => {
   const actual = await original();
   return {
     ...actual,
-    fromMarkdown: ((source: string, ...rest: never[]) => {
-      parsedSources.push(String(source));
-      return (actual.fromMarkdown as (...args: unknown[]) => unknown)(source, ...rest);
-    }) as typeof actual.fromMarkdown,
+    parseMarkdown: (source, options) => {
+      parsedSources.push(source);
+      return actual.parseMarkdown(source, options);
+    },
   };
 });
 
@@ -198,6 +198,45 @@ describe("ChatMarkdown favicon privacy", () => {
     await rerender(markdown("https://github.com/pingdotgg/t3code/pull/1"));
     expect(container.querySelectorAll("img")).toHaveLength(0);
     expect(container.querySelector("a svg")).not.toBeNull();
+  });
+});
+
+describe("ChatMarkdown link tooltips", () => {
+  it("shows each link's address on one shared tooltip as the pointer moves between links", async () => {
+    setup();
+    await using screen = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text="[First](https://example.com/a) and [Second](https://example.org/b)"
+      />,
+    );
+    await userEvent.hover(screen.getByRole("link", { name: /First/ }));
+    await expect.element(page.getByText("https://example.com/a")).toBeVisible();
+    await userEvent.hover(screen.getByRole("link", { name: /Second/ }));
+    await expect.element(page.getByText("https://example.org/b")).toBeVisible();
+    expect(document.querySelectorAll('[data-slot="tooltip-popup"]')).toHaveLength(1);
+  });
+});
+
+describe("ChatMarkdown details", () => {
+  it("opens collapsed details by click, and by keyboard without losing focus", async () => {
+    setup();
+    await using screen = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={
+          "<details><summary>First</summary>\n\nHidden one\n\n</details>\n\n<details><summary>Second</summary>\n\nHidden two\n\n</details>"
+        }
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "First" }));
+    await expect.element(screen.getByText("Hidden one")).toBeVisible();
+    await userEvent.tab();
+    const second = screen.getByRole("button", { name: "Second" });
+    await expect.element(second).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByText("Hidden two")).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Second" })).toHaveFocus();
   });
 });
 
