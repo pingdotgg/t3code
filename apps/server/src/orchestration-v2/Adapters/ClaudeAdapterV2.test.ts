@@ -2865,7 +2865,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
-    readonly interrupt?: Effect.Effect<void>;
+    readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
     readonly applyFlagSettings?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"];
     readonly stopTask?: (
@@ -8792,6 +8792,62 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
+      ),
+    ),
+  );
+
+  it.effect("Stop after the session scope closed its query does not write to the closed CLI", () =>
+    Effect.gen(function* () {
+      const sessionScope = yield* Scope.make();
+      let queryClosed = false;
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) =>
+          Effect.sync(() => {
+            queryClosed = true;
+          }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+        interrupt: Effect.suspend(() =>
+          queryClosed
+            ? Effect.fail(
+                new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                  method: "interrupt",
+                  cause: new Error("ProcessTransport is not ready for writing"),
+                }),
+              )
+            : Effect.void,
+        ),
+      }).pipe(Scope.provide(sessionScope));
+      const now = yield* DateTime.now;
+      const attemptId = RunAttemptId.make("attempt-claude-closed-scope-stop");
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId,
+          text: "Hand this thread off to a worktree.",
+          attachments: [],
+        }),
+      );
+      // A workspace handoff detaches the session, closing its scope while the turn streams.
+      yield* Scope.close(sessionScope, Exit.void);
+      assert.isTrue(queryClosed);
+
+      const interrupted = yield* Effect.exit(
+        harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          requestRuntimeRestart: true,
+        }),
+      );
+
+      assert.isTrue(Exit.isSuccess(interrupted), String(interrupted));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
     ),
   );
