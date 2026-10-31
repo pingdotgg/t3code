@@ -1627,6 +1627,10 @@ export const layerCloudflareBindings = (
               getConfiguration: (tunnelId) =>
                 gate(tunnelClient.getConfiguration(tunnelId)).pipe(
                   Effect.map(({ config }) => ({ ingress: config?.ingress ?? [] })),
+                  // Cloudflare reports a tunnel without remote configuration as code 1055, not 404.
+                  Effect.catchTags({
+                    TunnelConfigurationNotFound: () => Effect.succeed({ ingress: [] }),
+                  }),
                   Effect.mapError(
                     (cause) =>
                       new ManagedEndpointTunnelClientError({

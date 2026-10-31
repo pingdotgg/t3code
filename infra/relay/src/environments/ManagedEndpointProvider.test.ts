@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as ZeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -798,6 +799,44 @@ describe("ManagedEndpointProvider", () => {
         expect(listCalls).toBe(1);
       }).pipe(Effect.provide(layer));
     });
+  });
+
+  it.effect("reads a tunnel without remote configuration as having no ingress", () => {
+    const tunnelClient = {
+      getConfiguration: () =>
+        Effect.fail(
+          new ZeroTrust.TunnelConfigurationNotFound({
+            code: 1055,
+            message: "Tunnel configuration not found",
+          }),
+        ),
+    } as unknown as Cloudflare.Tunnel.ReadWriteTunnelClient;
+    const layer = ManagedEndpointProvider.layerCloudflareBindings(
+      tunnelClient,
+      {} as Cloudflare.DNS.ReadWriteDnsClient,
+      {} as Alchemy.BaseRuntimeContext,
+    ).pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(RelayConfiguration.layer(config)),
+      Layer.provide(
+        Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, makeAllocations()),
+      ),
+      Layer.provide(Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, makeTunnelLimits())),
+      Layer.provide(
+        Layer.succeed(
+          CloudflareApiPause.CloudflareApiPause,
+          CloudflareApiPause.CloudflareApiPause.of({
+            pausedUntilMillis: Effect.succeed(0),
+            pauseUntil: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const tunnels = yield* ManagedEndpointProvider.ManagedEndpointTunnelClient;
+      expect(yield* tunnels.getConfiguration("tunnel-id")).toEqual({ ingress: [] });
+    }).pipe(Effect.provide(layer));
   });
 
   it.effect("does not hide non-not-found checkpoint update failures", () => {
