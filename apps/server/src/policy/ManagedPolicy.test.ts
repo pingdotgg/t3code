@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { DEFAULT_SERVER_SETTINGS, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ManagedPolicy from "./ManagedPolicy.ts";
@@ -202,7 +206,9 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
           Effect.map(
             policyOn(platform),
             (policy) =>
-              policy.providers.applyLimits(settings).providerInstances[codex]?.environment,
+              policy.providers.applyLimits(settings).providerInstances[
+                ProviderInstanceId.make("codex")
+              ]?.environment,
           );
         const gateway = variable("Https_Proxy", "http://gateway");
         assert.deepEqual(yield* environmentOn("win32"), [gateway]);
