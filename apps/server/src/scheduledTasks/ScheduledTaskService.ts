@@ -411,8 +411,6 @@ export const layer = Layer.effect(
     const webhookPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
       new Map(),
     );
-    // Include creation time so late deliveries cannot decrement a recreated task's count.
-    const webhookQueued = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
     const webhookRateWindows = yield* Ref.make<ReadonlyMap<ScheduledTaskId, RateWindow>>(new Map());
     const webhookRejectedRateWindows = yield* Ref.make<ReadonlyMap<ScheduledTaskId, RateWindow>>(
       new Map(),
@@ -1403,7 +1401,7 @@ export const layer = Layer.effect(
     ) =>
       sql<WebhookDeliveryRow>`
         SELECT d.*, EXISTS (SELECT 1 FROM scheduled_task_webhook_pending p
-          WHERE p.delivery_id = d.delivery_id AND p.state IN ('pending', 'dispatching')) AS pending_window
+          WHERE p.delivery_id = d.delivery_id AND p.coalesce_key <> '' AND p.state IN ('pending', 'dispatching')) AS pending_window
         FROM scheduled_task_webhook_deliveries d WHERE task_id = ${input.id}
         ORDER BY received_at DESC, rowid DESC
       `.pipe(
@@ -1425,7 +1423,7 @@ export const layer = Layer.effect(
     )(function* (input) {
       const rows = yield* sql<WebhookDeliveryRow>`
           SELECT d.*, EXISTS (SELECT 1 FROM scheduled_task_webhook_pending p
-            WHERE p.delivery_id = d.delivery_id AND p.state IN ('pending', 'dispatching')) AS pending_window
+            WHERE p.delivery_id = d.delivery_id AND p.coalesce_key <> '' AND p.state IN ('pending', 'dispatching')) AS pending_window
           FROM scheduled_task_webhook_deliveries d WHERE task_id = ${input.id} AND delivery_id = ${input.deliveryId}
         `.pipe(
         NodeSqliteClient.readOnly,
@@ -1652,6 +1650,10 @@ export const layer = Layer.effect(
           yield* sql`DELETE FROM scheduled_task_webhook_relay_deliveries WHERE relay_delivery_id = ${deliveryId.slice("delivery:relay:".length)}`.pipe(
             Effect.mapError(dedupeError),
           );
+        // A redelivery admitted by this release must not meet the old row.
+        yield* sql`DELETE FROM scheduled_task_webhook_pending WHERE delivery_id = ${deliveryId}`.pipe(
+          Effect.mapError(dedupeError),
+        );
       },
       (effect) => sql.withTransaction(effect).pipe(Effect.mapError(dedupeError)),
     );
@@ -1717,6 +1719,71 @@ export const layer = Layer.effect(
         ),
       );
     });
+
+    // Waits on the task's permit, then drains its persisted rows in order.
+    const drainPendingWebhooks = Effect.fnUntraced(
+      function* (taskId: ScheduledTaskId) {
+        const permit = yield* webhookPermit(taskId);
+        const dispatch = Effect.gen(function* () {
+          while (true) {
+            // A delete-and-recreate swaps the permit; the new incarnation's drain owns its rows.
+            if ((yield* Ref.get(webhookPermits)).get(taskId) !== permit) return;
+            const [entry] = yield* sql<{
+              delivery_id: string;
+              task_json: string;
+              request_json: string;
+              state: string;
+            }>`
+              SELECT delivery_id, task_json, request_json, state FROM scheduled_task_webhook_pending
+              WHERE task_id = ${taskId} AND state IN ('dispatching', 'running', 'completed', 'failed') ORDER BY due_at, rowid LIMIT 1
+            `.pipe(NodeSqliteClient.readOnly);
+            if (entry === undefined) return;
+            // Failures drop their row as they release it; a redelivery may already reuse its id.
+            const remove = sql`DELETE FROM scheduled_task_webhook_pending WHERE delivery_id = ${entry.delivery_id} AND state = 'completed'`;
+            if (entry.state === "completed") {
+              yield* remove;
+              continue;
+            }
+            if (entry.state === "failed") {
+              yield* markDeliveryFailed(entry.delivery_id, "The run failed to start.");
+              yield* releaseFailedDelivery(entry.delivery_id);
+              continue;
+            }
+            const prepared = yield* Effect.gen(function* () {
+              const task = yield* decodePendingTask(entry.task_json);
+              const request = yield* decodePendingRequest(entry.request_json);
+              const frameId = Buffer.from(yield* crypto.randomBytes(6)).toString("hex");
+              return { task, rendered: renderWebhookPrompt(task.prompt, request, frameId) };
+            }).pipe(Effect.exit);
+            if (Exit.isFailure(prepared)) {
+              if (Cause.hasInterruptsOnly(prepared.cause))
+                return yield* Effect.failCause(prepared.cause);
+              yield* markDeliveryFailed(
+                entry.delivery_id,
+                "The pending webhook payload could not be prepared.",
+              );
+              yield* releaseFailedDelivery(entry.delivery_id);
+              continue;
+            }
+            const { task, rendered } = prepared.value;
+            if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+              yield* markDeliveryFailed(entry.delivery_id, PROMPT_TOO_LONG);
+              yield* releaseFailedDelivery(entry.delivery_id);
+            } else {
+              yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
+              if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt))) return;
+            }
+            yield* remove;
+          }
+        });
+        yield* dispatch.pipe(
+          permit.withPermits(1),
+          Effect.catch((cause) => Effect.logWarning("Pending webhook dispatch failed", { cause })),
+        );
+      },
+      (effect) =>
+        effect.pipe(Effect.withSpan("ScheduledTaskService.dispatchPendingWebhook", { root: true })),
+    );
 
     // Delivery attributes belong to the enclosing triggerWebhook span.
     const observeDelivery = Effect.fnUntraced(function* (
@@ -1953,16 +2020,12 @@ export const layer = Layer.effect(
           const reserve = takeRateSlot(task.id, DateTime.toEpochMillis(now)).pipe(
             Effect.flatMap((slot) => (slot === "allowed" ? Effect.void : Effect.fail(slot))),
           );
-          const queueKey = `${task.id}\u0000${task.createdAt}`;
           const checkCapacity = Effect.gen(function* () {
             const [row] = yield* sql<{
               count: number;
             }>`SELECT COUNT(*) AS count FROM scheduled_task_webhook_pending
               WHERE task_id = ${task.id} AND state IN ('pending', 'dispatching', 'running')`;
-            if (
-              (row?.count ?? 0) + ((yield* Ref.get(webhookQueued)).get(queueKey) ?? 0) >=
-              WEBHOOK_MAX_QUEUED_PER_TASK
-            )
+            if ((row?.count ?? 0) >= WEBHOOK_MAX_QUEUED_PER_TASK)
               return yield* Effect.fail("queue_full" as const);
           }).pipe(
             Effect.mapError((cause) => (cause === "queue_full" ? cause : dedupeError(cause))),
@@ -2054,27 +2117,8 @@ export const layer = Layer.effect(
           // Bound the deliveries one task holds, so steady traffic to a stuck
           // task cannot pile up parked fibers.
           yield* refundRejectionSlot;
-          let queueReserved = false;
-          const release = Effect.suspend(() => {
-            if (!queueReserved) return Effect.void;
-            queueReserved = false;
-            return Ref.update(webhookQueued, (counts) => {
-              const next = new Map(counts);
-              const count = (next.get(queueKey) ?? 1) - 1;
-              if (count <= 0) next.delete(queueKey);
-              else next.set(queueKey, count);
-              return next;
-            });
-          });
           // Serialize immediate reservations with persisted window admission.
-          const reserveImmediate = Effect.gen(function* () {
-            yield* checkCapacity;
-            yield* reserve;
-            yield* Ref.update(webhookQueued, (counts) =>
-              new Map(counts).set(queueKey, (counts.get(queueKey) ?? 0) + 1),
-            );
-            queueReserved = true;
-          });
+          const reserveImmediate = Effect.andThen(checkCapacity, reserve);
           const admitted = yield* admit(
             Effect.gen(function* () {
               const outcome = yield* acceptImmediateWebhookDedupe(
@@ -2095,9 +2139,8 @@ export const layer = Layer.effect(
                 });
               return outcome;
             }),
-          ).pipe(Effect.onError(() => release));
+          );
           if (typeof admitted !== "string") {
-            yield* release;
             if (admitted.log) yield* log("rate_limited");
             yield* observe(admitted.outcome);
             return yield* releaseClaim({
@@ -2106,7 +2149,6 @@ export const layer = Layer.effect(
             } as const);
           }
           if (admitted === "duplicate") {
-            yield* release;
             yield* observe("duplicate");
             return yield* releaseClaim({
               _tag: "accepted",
@@ -2115,12 +2157,8 @@ export const layer = Layer.effect(
             } as const);
           }
           yield* observe("accepted");
-          const permit = yield* webhookPermit(task.id);
-          yield* runWebhookDelivery(task, deliveryId, rendered.prompt).pipe(
-            permit.withPermits(1),
-            Effect.ensuring(release),
-            Effect.forkIn(serviceScope),
-          );
+          // Start now instead of on the next tick; the permit keeps per-task order.
+          yield* drainPendingWebhooks(task.id).pipe(Effect.forkIn(serviceScope));
           // Dispatch owns the accepted delivery now; retries must keep its claim.
           claimAcquired = false;
           return { _tag: "accepted" as const, deliveryId, outcome: "accepted" as const };
@@ -2163,64 +2201,8 @@ export const layer = Layer.effect(
                 : ([true, new Set(active).add(taskId)] as const),
             );
             if (!reserved) return;
-            const permit = yield* webhookPermit(taskId);
-            // One worker per task waits on its permit, then drains persisted rows in order.
-            // Other tasks remain independent and ticks never reload an active task's payloads.
-            const dispatch = Effect.gen(function* () {
-              while (true) {
-                const [entry] = yield* sql<{
-                  delivery_id: string;
-                  task_json: string;
-                  request_json: string;
-                  state: string;
-                }>`
-              SELECT delivery_id, task_json, request_json, state FROM scheduled_task_webhook_pending
-              WHERE task_id = ${taskId} AND state IN ('dispatching', 'running', 'completed', 'failed') ORDER BY due_at, rowid LIMIT 1
-            `.pipe(NodeSqliteClient.readOnly);
-                if (entry === undefined) return;
-                const remove = sql`DELETE FROM scheduled_task_webhook_pending WHERE delivery_id = ${entry.delivery_id}`;
-                if (entry.state === "completed" || entry.state === "failed") {
-                  if (entry.state === "failed") {
-                    yield* markDeliveryFailed(entry.delivery_id, "The run failed to start.");
-                    yield* releaseFailedDelivery(entry.delivery_id);
-                  }
-                  yield* remove;
-                  continue;
-                }
-                const prepared = yield* Effect.gen(function* () {
-                  const task = yield* decodePendingTask(entry.task_json);
-                  const request = yield* decodePendingRequest(entry.request_json);
-                  const frameId = Buffer.from(yield* crypto.randomBytes(6)).toString("hex");
-                  return { task, rendered: renderWebhookPrompt(task.prompt, request, frameId) };
-                }).pipe(Effect.exit);
-                if (Exit.isFailure(prepared)) {
-                  if (Cause.hasInterruptsOnly(prepared.cause))
-                    return yield* Effect.failCause(prepared.cause);
-                  yield* markDeliveryFailed(
-                    entry.delivery_id,
-                    "The pending webhook payload could not be prepared.",
-                  );
-                  yield* releaseFailedDelivery(entry.delivery_id);
-                  yield* remove;
-                  continue;
-                }
-                const { task, rendered } = prepared.value;
-                if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
-                  yield* markDeliveryFailed(entry.delivery_id, PROMPT_TOO_LONG);
-                  yield* releaseFailedDelivery(entry.delivery_id);
-                } else {
-                  yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
-                  if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt)))
-                    return;
-                }
-                yield* remove;
-              }
-            });
-            yield* dispatch.pipe(
-              permit.withPermits(1),
-              Effect.catch((cause) =>
-                Effect.logWarning("Pending webhook dispatch failed", { cause }),
-              ),
+            // One tick worker per task; ticks never reload an active task's payloads.
+            yield* drainPendingWebhooks(taskId).pipe(
               Effect.ensuring(
                 Ref.update(pendingInFlight, (active) => {
                   const next = new Set(active);
@@ -2228,7 +2210,6 @@ export const layer = Layer.effect(
                   return next;
                 }),
               ),
-              Effect.withSpan("ScheduledTaskService.dispatchPendingWebhook", { root: true }),
               Effect.forkIn(serviceScope),
             );
           }),
