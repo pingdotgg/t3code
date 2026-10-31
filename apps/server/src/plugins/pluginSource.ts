@@ -1,19 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Digesting opens every file with O_NOFOLLOW, which Effect's FileSystem cannot ask for.
-/**
- * Digest of a plugin directory's exact bytes, which consent binds to.
- *
- * Every regular file under the directory counts, by relative path and
- * content, so an edit, addition, removal, or rename changes the digest. No
- * name is exempt: the entry or anything it imports may live under any path,
- * hidden ones included. Symbolic links, special files, and trees past the
- * limits are refused rather than skipped: a digest that silently left
- * something out would not describe what runs. A plugin developed in a git
- * checkout should be added from a build directory, since `.git` counts too.
- *
- * The directory stays writable by its owner, so a digest describes the bytes
- * at the moment it was taken. Code the plugin loads from outside its
- * directory is not covered.
- */
+// Consent covers every regular file, including hidden paths; links, special files and oversized trees are refused.
+// The digest is a snapshot: later edits and code loaded outside the directory are outside its guarantee.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
