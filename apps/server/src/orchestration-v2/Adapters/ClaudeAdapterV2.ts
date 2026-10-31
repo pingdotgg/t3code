@@ -5439,7 +5439,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (wakeStart === -1) return current;
             const messages = buffered.messages.filter(
               (entry, index) =>
-                index < wakeStart || (entry.type === "system" && "task_id" in entry),
+                index < wakeStart ||
+                (entry.type === "system" && "task_id" in entry) ||
+                parentToolUseIdFromSdkMessage(entry) !== null,
             );
             const updated = new Map(current);
             if (messages.length === 0) updated.delete(nativeThreadId);
