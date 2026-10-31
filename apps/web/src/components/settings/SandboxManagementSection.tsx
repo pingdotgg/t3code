@@ -1,11 +1,4 @@
-import {
-  BoxIcon,
-  ChevronDownIcon,
-  LayersIcon,
-  PlayIcon,
-  SquareIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { ChevronDownIcon, LayersIcon, PlayIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import {
   isAtomCommandInterrupted,
@@ -33,6 +26,7 @@ import {
   SandboxStartConfirmation,
   useSandboxStartCheck,
 } from "./SandboxStartLimits";
+import { SandboxProviderLogo } from "./SandboxProviderLogo";
 import { SandboxTemplateList, SaveSandboxTemplateDialog } from "./SandboxTemplates";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -338,7 +332,7 @@ function SandboxRow({
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background text-muted-foreground">
-            <BoxIcon aria-hidden className="size-4" />
+            <SandboxProviderLogo kind={sandbox.provider} />
           </span>
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
