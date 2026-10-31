@@ -2574,17 +2574,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* sdkRun.wait.pipe(
               Effect.flatMap((result) =>
                 Effect.gen(function* () {
-                  if (context !== null && context.compaction !== null) {
-                    if (result.result !== undefined && result.result.length > 0) {
-                      context.compaction.summary = result.result;
-                    }
-                    if (context.compaction.status === "running") {
-                      context.compaction.status =
-                        result.status === "finished" ? "completed" : "failed";
-                      context.compaction.failed = result.status !== "finished";
-                      yield* emitCompactionItem(context);
-                    }
-                  } else if (
+                  if (
                     context !== null &&
                     context.assistant.nextSegment === 0 &&
                     // Text from a resume that made no progress is not the turn's answer.
@@ -2881,6 +2871,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                         result.status === "finished" ? "completed" : "failed";
                       context.compaction!.failed = result.status !== "finished";
                       yield* emitCompactionItem(context);
+                    } else if (result.result !== undefined && result.result.length > 0) {
+                      yield* emitCompactionItem(context);
                     }
                     yield* finalizeTurn({
                       context,
@@ -2890,7 +2882,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                             failure: makeProviderFailure({
                               cause: result.error,
                               message: result.error?.message,
-                              class: "provider_error",
+                              class: CursorAgentSdk.isCursorUsageLimitError(result.error)
+                                ? "usage_limit"
+                                : "provider_error",
                             }),
                           }
                         : {}),
@@ -2916,7 +2910,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                                 message: CursorAgentSdk.isCursorAgentSdkRunnerError(cause)
                                   ? CursorAgentSdk.cursorSdkFailureMessage(cause)
                                   : undefined,
-                                class: "transport_error",
+                                class: CursorAgentSdk.isCursorUsageLimitError(cause)
+                                  ? "usage_limit"
+                                  : "transport_error",
                               }),
                             }),
                       });
