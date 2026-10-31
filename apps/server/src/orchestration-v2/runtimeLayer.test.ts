@@ -39,6 +39,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -169,7 +170,7 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
     listInstances: Effect.succeed([providerInstance, alternateProviderInstance]),
     listUnavailable: Effect.succeed([]),
     streamChanges: Stream.empty,
-    subscribeChanges: Effect.never,
+    subscribeChanges: PubSub.unbounded<void>().pipe(Effect.flatMap(PubSub.subscribe)),
   },
 );
 

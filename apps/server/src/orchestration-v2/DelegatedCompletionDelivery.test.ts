@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as PubSub from "effect/PubSub";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
@@ -104,7 +105,7 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
     listInstances: Effect.succeed([providerInstance]),
     listUnavailable: Effect.succeed([]),
     streamChanges: Stream.empty,
-    subscribeChanges: Effect.never,
+    subscribeChanges: PubSub.unbounded<void>().pipe(Effect.flatMap(PubSub.subscribe)),
   },
 );
 
