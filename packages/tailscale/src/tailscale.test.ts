@@ -10,7 +10,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   ensureTailscaleServe,
   parseTailscaleExitNode,
-  parseTailscaleServePortsProxyingTo,
+  parseTailscaleServeMountsProxyingTo,
   parseTailscaleSshEnabled,
   parseTailscaleStatus,
   readTailscaleSshEnabled,
@@ -95,28 +95,36 @@ function layerMockSpawner(
 }
 
 describe("tailscale", () => {
-  it("finds the Serve ports that forward to a local port, and only those", () => {
+  it("finds the Serve handlers that forward to a local port, and only those", () => {
     const status = JSON.stringify({
       TCP: { "443": { HTTPS: true }, "8443": { HTTPS: true }, "9443": { HTTPS: true } },
       Web: {
-        "box.tailnet.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } } },
+        "box.tailnet.ts.net:443": {
+          Handlers: {
+            "/t3": { Proxy: "http://127.0.0.1:3773" },
+            "/dashboard": { Proxy: "http://127.0.0.1:9000" },
+          },
+        },
         "box.tailnet.ts.net:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:5173" } } },
         "box.tailnet.ts.net:9443": { Handlers: { "/": { Proxy: "http://[::1]:3773" } } },
       },
     });
-    assert.deepEqual(parseTailscaleServePortsProxyingTo(status, 3773), [443, 9443]);
+    assert.deepEqual(parseTailscaleServeMountsProxyingTo(status, 3773), [
+      { servePort: 443, mount: "/t3" },
+      { servePort: 9443, mount: "/" },
+    ]);
     assert.deepEqual(
-      parseTailscaleServePortsProxyingTo(
+      parseTailscaleServeMountsProxyingTo(
         JSON.stringify({
           Web: { "box:443": { Handlers: { "/": { Proxy: "http://127.0.0.1" } } } },
         }),
         80,
       ),
-      [443],
+      [{ servePort: 443, mount: "/" }],
     );
-    assert.deepEqual(parseTailscaleServePortsProxyingTo("{}", 3773), []);
-    assert.deepEqual(parseTailscaleServePortsProxyingTo("null", 3773), []);
-    assert.isUndefined(parseTailscaleServePortsProxyingTo("not json", 3773));
+    assert.deepEqual(parseTailscaleServeMountsProxyingTo("{}", 3773), []);
+    assert.deepEqual(parseTailscaleServeMountsProxyingTo("null", 3773), []);
+    assert.isUndefined(parseTailscaleServeMountsProxyingTo("not json", 3773));
   });
 
   it.effect("parses status facts", () =>

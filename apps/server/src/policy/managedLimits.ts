@@ -11,7 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   disableTailscaleServe,
-  readTailscaleServePortsProxyingTo,
+  readTailscaleServeMountsProxyingTo,
   type TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
@@ -91,17 +91,17 @@ const NOTHING_TO_CLOSE: ReadonlySet<TailscaleStderrDiagnostic | undefined> = new
 ]);
 
 /**
- * Turns off Tailscale Serve that forwards to `port`, such as one `t3 pair --tailscale` left from
- * before the policy. Runs before the server binds, and fails when such a mapping stays on or
- * Tailscale's answer cannot be read. Without the CLI, or with Tailscale down or logged out,
- * nothing forwards, so nothing is closed.
+ * Turns off the Tailscale Serve routes that forward to `port`, such as one `t3 pair --tailscale`
+ * left from before the policy, and keeps any other route on the same port. Runs before the server
+ * binds, and fails unless a fresh read shows no route here, since `off` can exit 0 and leave it.
+ * Without the CLI, or with Tailscale down or logged out, nothing forwards, so nothing is closed.
  */
 export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServeTo")(function* (
   policy: PolicyDocument,
   port: number,
 ) {
   if (allowsRemoteClients(policy)) return;
-  const servePorts = yield* readTailscaleServePortsProxyingTo(port).pipe(
+  const readMounts = readTailscaleServeMountsProxyingTo(port).pipe(
     Effect.catchTags({
       // Only a CLI that is not there; one that will not run might still front a daemon.
       TailscaleCommandSpawnError: (error) =>
@@ -120,19 +120,30 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
       ),
     ),
   );
-  for (const servePort of servePorts) {
-    yield* disableTailscaleServe({ servePort }).pipe(
-      Effect.mapError(() =>
-        refuseRemoteClients(
-          policy,
-          `so Tailscale Serve on port ${servePort}, which forwards here, must be turned off first`,
-        ),
+  const mounts = yield* readMounts;
+  if (mounts.length === 0) return;
+  for (const mount of mounts) {
+    yield* disableTailscaleServe(mount).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Tailscale Serve route could not be turned off", { ...mount, cause }),
       ),
     );
-    yield* Effect.logInfo("Turned off Tailscale Serve the managed policy does not allow", {
-      servePort,
-    });
   }
+  const left = yield* readMounts;
+  if (left.length > 0) {
+    return yield* refuseRemoteClients(
+      policy,
+      `so the server does not start while Tailscale Serve forwards ${left
+        .map(
+          ({ servePort, mount }) =>
+            `port ${servePort} at ${mount} here; turn it off with "tailscale serve --https=${servePort} --set-path=${mount} off"`,
+        )
+        .join(", and ")}`,
+    );
+  }
+  yield* Effect.logInfo("Turned off Tailscale Serve the managed policy does not allow", {
+    mounts,
+  });
 });
 
 export const refuseRemoteClients = (policy: PolicyDocument, detail?: string) =>

@@ -120,29 +120,59 @@ it.effect("tells clients Connect is off when the policy leaves out remote client
 );
 
 it.effect(
-  "turns off Tailscale Serve that forwards here, and refuses to start if it stays on",
+  "turns off only the Tailscale Serve routes that forward here, and refuses to start if one stays",
   () => {
-    const forwardsHere = JSON.stringify({
-      Web: { "box.tailnet.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } } } },
-    });
+    type Web = Record<string, Record<string, string>>;
     interface Answers {
+      /** Serve handlers by host:port, then mount, to proxy target. */
+      readonly web?: Web;
       readonly status?: {
         readonly stdout: string;
         readonly exitCode: number;
         readonly stderr?: string;
       };
       readonly offExitCode?: number;
+      /** `off` exits as told but leaves the config alone. */
+      readonly offIgnored?: boolean;
     }
-    // `tailscale serve status` answers with `status`; turning a port off exits with `offExitCode`.
-    const close = (answers: Answers, offCalls: Array<ReadonlyArray<string>> = []) =>
-      ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+    // Acts as the real CLI: `serve status --json` prints the config, and `serve --https=<port> off`
+    // drops every handler on that port unless `--set-path` names one (serve_v2.go removeWebServe).
+    const close = (answers: Answers, offCalls: Array<ReadonlyArray<string>> = []) => {
+      const web: Web = answers.web ?? {
+        "box.tailnet.ts.net:443": { "/": "http://127.0.0.1:3773" },
+      };
+      return ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make((command) => {
             const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
             const isStatus = args.includes("status");
-            if (!isStatus) offCalls.push(args);
-            const status = answers.status ?? { stdout: forwardsHere, exitCode: 0 };
+            if (!isStatus) {
+              offCalls.push(args);
+              const port = args.find((arg) => arg.startsWith("--https="))?.slice(8);
+              const mount = args.find((arg) => arg.startsWith("--set-path="))?.slice(11);
+              const site = Object.entries(web).find(([hostPort]) => hostPort.endsWith(`:${port}`));
+              if (site !== undefined && answers.offIgnored !== true) {
+                for (const handler of Object.keys(site[1])) {
+                  if (mount === undefined || mount === handler) delete site[1][handler];
+                }
+              }
+            }
+            const status = answers.status ?? {
+              stdout: JSON.stringify({
+                Web: Object.fromEntries(
+                  Object.entries(web).map(([hostPort, handlers]) => [
+                    hostPort,
+                    {
+                      Handlers: Object.fromEntries(
+                        Object.entries(handlers).map(([mount, proxy]) => [mount, { Proxy: proxy }]),
+                      ),
+                    },
+                  ]),
+                ),
+              }),
+              exitCode: 0,
+            };
             const text = (value: string | undefined) =>
               value === undefined ? Stream.empty : Stream.make(new TextEncoder().encode(value));
             return Effect.succeed(
@@ -167,12 +197,31 @@ it.effect(
           }),
         ),
       );
+    };
     return Effect.gen(function* () {
-      const offCalls: Array<ReadonlyArray<string>> = [];
-      yield* close({}, offCalls);
-      assert.deepEqual(offCalls, [["serve", "--https=443", "off"]]);
-      const stuck = yield* close({ offExitCode: 1 }).pipe(Effect.flip);
-      assert.include(stuck.message, "Tailscale Serve on port 443");
+      // A route that shares the port with this server's stays.
+      for (const mount of ["/t3", "/"]) {
+        const web: Web = {
+          "box.tailnet.ts.net:443": {
+            [mount]: "http://127.0.0.1:3773",
+            "/dashboard": "http://127.0.0.1:9000",
+          },
+        };
+        const offCalls: Array<ReadonlyArray<string>> = [];
+        yield* close({ web }, offCalls);
+        assert.deepEqual(web, {
+          "box.tailnet.ts.net:443": { "/dashboard": "http://127.0.0.1:9000" },
+        });
+        assert.deepEqual(offCalls, [["serve", "--https=443", `--set-path=${mount}`, "off"]]);
+      }
+      // Only a fresh read confirms the route is gone, whatever `off` exits with.
+      for (const answers of [{ offIgnored: true }, { offIgnored: true, offExitCode: 1 }]) {
+        const stuck = yield* close(answers).pipe(Effect.flip);
+        assert.include(
+          stuck.message,
+          'Tailscale Serve forwards port 443 at / here; turn it off with "tailscale serve --https=443 --set-path=/ off"',
+        );
+      }
       // An answer that cannot be read might hide a mapping, so the server does not start.
       const dialFailure = (reason: string) =>
         `Failed to connect to local Tailscale daemon for /localapi/v0/serve-config; not running? Error: dial unix /var/run/tailscale/tailscaled.sock: connect: ${reason}`;

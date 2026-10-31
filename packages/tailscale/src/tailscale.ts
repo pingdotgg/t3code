@@ -445,14 +445,20 @@ export const ensureTailscaleServe = (input: {
   return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT);
 };
 
+/**
+ * Removes the Serve handler at `mount` on `servePort`, the root one `ensureTailscaleServe` adds by
+ * default. Naming the path matters: without it the CLI removes every handler on the port, and
+ * answers its own confirmation prompt with yes when nobody is there to answer.
+ */
 export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe")(function* (
   input: {
     readonly servePort?: number;
+    readonly mount?: string;
   } = {},
 ): Effect.fn.Return<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> {
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   return yield* runTailscaleCommand(
-    ["serve", `--https=${servePort}`, "off"],
+    ["serve", `--https=${servePort}`, `--set-path=${input.mount ?? "/"}`, "off"],
     TAILSCALE_SERVE_TIMEOUT,
   );
 });
@@ -475,36 +481,44 @@ const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
 );
 const LOOPBACK_SERVE_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
+/** A Serve web handler: the HTTPS port it listens on and the path it is mounted at. */
+export interface TailscaleServeMount {
+  readonly servePort: number;
+  readonly mount: string;
+}
+
 /**
- * The HTTPS ports whose Serve handlers proxy to `localPort` on this machine's loopback, or
- * undefined when the status cannot be read.
+ * The Serve handlers that proxy to `localPort` on this machine's loopback, or undefined when the
+ * status cannot be read.
  */
-export const parseTailscaleServePortsProxyingTo = (
+export const parseTailscaleServeMountsProxyingTo = (
   rawServeStatusJson: string,
   localPort: number,
-): ReadonlyArray<number> | undefined => {
+): ReadonlyArray<TailscaleServeMount> | undefined => {
   const status = decodeTailscaleServeStatusJson(rawServeStatusJson);
   if (Option.isNone(status)) return undefined;
   return Object.entries(status.value?.Web ?? {}).flatMap(([hostPort, site]) => {
     const servePort = Number(hostPort.slice(hostPort.lastIndexOf(":") + 1));
-    const proxiesHere = Object.values(site.Handlers ?? {}).some((handler) => {
-      if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return false;
+    if (!Number.isInteger(servePort)) return [];
+    return Object.entries(site.Handlers ?? {}).flatMap(([mount, handler]) => {
+      if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return [];
       const target = new URL(handler.Proxy);
       const port = target.port || (target.protocol === "https:" ? "443" : "80");
-      return LOOPBACK_SERVE_HOSTS.has(target.hostname) && port === String(localPort);
+      return LOOPBACK_SERVE_HOSTS.has(target.hostname) && port === String(localPort)
+        ? [{ servePort, mount }]
+        : [];
     });
-    return proxiesHere && Number.isInteger(servePort) ? [servePort] : [];
   });
 };
 
-/** The HTTPS Serve ports that forward to `localPort` on this machine. */
-export const readTailscaleServePortsProxyingTo = (localPort: number) =>
+/** The HTTPS Serve handlers that forward to `localPort` on this machine. */
+export const readTailscaleServeMountsProxyingTo = (localPort: number) =>
   readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
     Effect.flatMap((status) => {
-      const ports = parseTailscaleServePortsProxyingTo(status, localPort);
-      return ports === undefined
+      const mounts = parseTailscaleServeMountsProxyingTo(status, localPort);
+      return mounts === undefined
         ? Effect.fail(new TailscaleStatusParseError({ cause: "unreadable serve status" }))
-        : Effect.succeed(ports);
+        : Effect.succeed(mounts);
     }),
   );
 
