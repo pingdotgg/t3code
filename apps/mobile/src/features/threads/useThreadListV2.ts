@@ -27,6 +27,14 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
+/** The React Compiler memoizes on arguments, so an unused version would not re-observe. */
+function observeInboxReturns(
+  threads: Parameters<typeof threadListInboxReturns.observe>[0],
+  _version: number,
+) {
+  return threadListInboxReturns.observe(threads);
+}
+
 /**
  * Home's and the thread sidebar's thread list. Its result is one value a screen only reads:
  * built inline, the list's inputs stayed open to mutation across the screen's other hooks, so
@@ -62,8 +70,7 @@ export function useThreadListV2(input: {
     threadListInboxReturns.getSnapshot,
   );
   const inbox = useMemo(
-    () => threadListInboxReturns.observe(workingShelfEnabled ? threads : null),
-    // oxlint-disable-next-line react/memo-dependencies -- the version signals an expired grace
+    () => observeInboxReturns(workingShelfEnabled ? threads : null, inboxVersion),
     [threads, workingShelfEnabled, inboxVersion],
   );
   // Up/down menu availability for every card, computed once per section per
