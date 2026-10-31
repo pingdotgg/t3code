@@ -1,5 +1,21 @@
 import type { Processor } from "unified";
+import {
+  protectSpacedWindowsDestinations,
+  restoreWindowsDestinationSpaces,
+} from "./markdownLinks.ts";
 import { isWindowsAbsolutePath } from "./path.ts";
+
+interface RestorableNode {
+  value?: unknown;
+  url?: unknown;
+  children?: RestorableNode[];
+}
+
+function restoreTreeDestinationSpaces(node: RestorableNode) {
+  if (typeof node.url === "string") node.url = restoreWindowsDestinationSpaces(node.url);
+  if (typeof node.value === "string") node.value = restoreWindowsDestinationSpaces(node.value);
+  node.children?.forEach(restoreTreeDestinationSpaces);
+}
 
 interface DestinationCompileContext {
   readonly stack: ReadonlyArray<{ readonly type: string; url?: string }>;
@@ -64,4 +80,13 @@ export function remarkKeepWindowsPaths(this: Processor) {
       characterEscape: keepWindowsPathEscape,
     },
   });
+  const parse = this.parser;
+  if (!parse) return;
+  // Restore before returning, so parsers that cache this tree (streaming) keep the real spaces.
+  this.parser = (document, file) => {
+    const protectedDocument = protectSpacedWindowsDestinations(document);
+    const tree = parse(protectedDocument, file);
+    if (protectedDocument !== document) restoreTreeDestinationSpaces(tree as RestorableNode);
+    return tree;
+  };
 }
