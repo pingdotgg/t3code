@@ -373,10 +373,11 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const environmentId = entry.target.environmentId;
           const scope = yield* Scope.fork(registryScope);
+          const initiallyDesired = shouldConnect(entry, yield* SubscriptionRef.get(focusAllowlist));
           const supervisor = yield* EnvironmentSupervisor.make(entry, {
             // Seed the intent to avoid publishing a false switched-off state
             // before an enabled, compatible environment starts connecting.
-            initiallyDesired: shouldConnect(entry, yield* SubscriptionRef.get(focusAllowlist)),
+            initiallyDesired,
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
@@ -390,6 +391,11 @@ export const make = Effect.gen(function* () {
             next.set(environmentId, { entry, supervisor, scope });
             return next;
           });
+          // setFocusAllowlist skips supervisors that are not published yet.
+          const desired = shouldConnect(entry, yield* SubscriptionRef.get(focusAllowlist));
+          if (desired !== initiallyDesired) {
+            yield* desired ? supervisor.connect : supervisor.disconnect;
+          }
           yield* SubscriptionRef.changes(supervisor.state).pipe(
             Stream.runForEach((state) =>
               state.phase === "blocked" && state.lastFailure?.reason === "unsupported"
