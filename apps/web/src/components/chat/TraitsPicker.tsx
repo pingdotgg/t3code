@@ -609,7 +609,7 @@ export function TraitsPicker({
         </TooltipTrigger>
         <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="start">
+      <MenuPopup spacing="relaxed" align="start">
         <TraitsMenuContent {...props} />
       </MenuPopup>
     </Menu>
