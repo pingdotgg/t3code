@@ -148,6 +148,33 @@ function press(target: Element = document.body) {
 }
 
 describe("root reopen shortcut", () => {
+  it.each(["dialog", "alert-dialog", "app"])("yields to an open %s modal", async (kind) => {
+    setup();
+    const entry = useClosedViewStore
+      .getState()
+      .remember({ kind: "browser", threadRef: ref, snapshot });
+    state.openPreview.mockResolvedValue(AsyncResult.success({ ...snapshot, tabId: "new-tab" }));
+    await using view = await renderShortcut();
+    const modal = view.append(document.createElement("div"));
+    if (kind === "app") modal.setAttribute("data-app-modal", "");
+    else {
+      modal.setAttribute("data-slot", `${kind}-popup`);
+      modal.setAttribute("data-open", "");
+    }
+    await act(() => {
+      press(modal);
+      menuAction?.("view.reopenClosed");
+    });
+    expect(state.openPreview).not.toHaveBeenCalled();
+    expect(useClosedViewStore.getState().entries.map((item) => item.id)).toEqual([entry]);
+    modal.remove();
+    await act(() => {
+      press();
+    });
+    expect(state.openPreview).toHaveBeenCalledOnce();
+    expect(useClosedViewStore.getState().entries).toEqual([]);
+  });
+
   it("serializes deliberate presses while a browser restore waits for RPC", async () => {
     setup();
     useClosedViewStore
