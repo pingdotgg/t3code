@@ -269,8 +269,7 @@ it.effect(
       for (const status of ["preparing", "starting", "running", "waiting"] as const) {
         yield* createRun(yield* createThread(status), status);
       }
-      const queued = yield* createThread("queued");
-      yield* createRun(queued, "queued");
+      yield* createRun(yield* createThread("queued"), "queued");
       const blocked = yield* createThread("blocked");
       yield* store.apply({
         id: EventId.make("event:settlement:request"),
@@ -362,7 +361,7 @@ it.effect(
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
-        new Set([idle, completed, queued, background, persistent, rolledBack]),
+        new Set([idle, completed, background, persistent, rolledBack]),
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),

@@ -220,32 +220,40 @@ describe("isAutoSettlementCandidate", () => {
 });
 
 describe("resolveAutoSettlementAt", () => {
-  it.each(["merged", "closed", "inactivity"] as const)(
-    "keeps a failed run visible instead of settling on %s",
-    (reason) => {
-      const input = {
-        thread: shell({ status: "failed", latestRunCompletedAt: at(-4 * DAY_MS) }),
-        pullRequest:
-          reason === "inactivity"
-            ? null
-            : {
-                state: reason,
-                mergedAt: DateTime.formatIso(at(-1)),
-                closedAt: DateTime.formatIso(at(-1)),
-              },
-        nowMs: NOW_MS,
-        autoSettleAfterDays: reason === "inactivity" ? 3 : null,
-        autoSettleOnMerge: true,
-      };
-      expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
-      expect(
-        ThreadSettlementService.resolveAutoSettlementAt({
-          ...input,
-          thread: { ...input.thread, status: "completed" },
-        }),
-      ).toEqual(at(-4 * DAY_MS));
-    },
-  );
+  it.each(
+    (["failed", "queued"] as const).flatMap((status) =>
+      (["merged", "closed", "inactivity"] as const).map((reason) => ({ status, reason })),
+    ),
+  )("keeps a $status run visible instead of settling on $reason", ({ status, reason }) => {
+    const input = {
+      thread: shell({
+        status,
+        latestRunId: RunId.make("run-1"),
+        latestRunRequestedAt: at(-4 * DAY_MS),
+        latestRunCompletedAt: status === "failed" ? at(-4 * DAY_MS) : null,
+        latestUserMessageAt: at(-4 * DAY_MS),
+        latestUserAuthoredMessageAt: at(-4 * DAY_MS),
+      }),
+      pullRequest:
+        reason === "inactivity"
+          ? null
+          : {
+              state: reason,
+              mergedAt: DateTime.formatIso(at(-1)),
+              closedAt: DateTime.formatIso(at(-1)),
+            },
+      nowMs: NOW_MS,
+      autoSettleAfterDays: reason === "inactivity" ? 3 : null,
+      autoSettleOnMerge: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: { ...input.thread, status: "completed", latestRunCompletedAt: at(-4 * DAY_MS) },
+      }),
+    ).toEqual(at(-4 * DAY_MS));
+  });
 
   it("keeps threads with a PR from inactivity settlement only when asked", () => {
     const input = {
