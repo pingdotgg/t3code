@@ -371,6 +371,9 @@ patchedDependencies:
   expo-sharing@58.0.19: patches/expo-sharing@58.0.19.patch
   expo-widgets@58.0.20: patches/expo-widgets@58.0.20.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
+  # Web: rows keep item order in the DOM before paint (and once a user scroll settles), so
+  # screen readers read the timeline in order (MessagesTimeline.browser.test.tsx).
+  "@legendapp/list@3.7.1": patches/@legendapp__list@3.7.1.patch
   # Exports the dependency-light subpaths mobile and the web diff parser import, and keeps
   # measured wrapped-row heights above an edit (fileEditorVirtualization.test.ts).
   "@pierre/diffs@1.6.1": patches/@pierre%2Fdiffs@1.6.1.patch
