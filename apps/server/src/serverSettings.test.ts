@@ -2337,13 +2337,15 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
       const claudeId = ProviderInstanceId.make("claudeAgent");
       const codexId = ProviderInstanceId.make("codex");
       const userVariable = { name: "MY_FLAG", value: "on", sensitive: false };
+      // Windows reads a variable name without regard to case, so a lock covers every spelling.
+      const respelled = { ...bedrock, name: "Claude_Code_Use_Bedrock", value: "0" };
       yield* fs.writeFileString(
         config.settingsPath,
         JSON.stringify({
           providerInstances: {
             [claudeId]: {
               driver: claude,
-              environment: [{ ...bedrock, value: "0" }, userVariable, { ...bedrock, value: "2" }],
+              environment: [respelled, userVariable, { ...bedrock, value: "2" }],
               config: { binaryPath: "/usr/local/bin/claude" },
             },
           },
@@ -2396,7 +2398,7 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
       assert.deepEqual(stored.providerInstances[claudeId], {
         driver: claude,
         displayName: "Claude (work)",
-        environment: [{ ...bedrock, value: "0" }, { ...bedrock, value: "2" }, userVariable],
+        environment: [respelled, { ...bedrock, value: "2" }, userVariable],
         config: { binaryPath: "/usr/local/bin/claude" },
       });
       assert.isUndefined(stored.providerInstances[codexId]);

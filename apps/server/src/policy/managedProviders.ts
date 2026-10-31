@@ -198,6 +198,9 @@ interface DriverRule {
   readonly environment: "all" | "locked" | "fill";
 }
 
+// Windows reads a variable name without regard to case, so a lock covers every spelling.
+const variableKey = (name: string) => name.toUpperCase();
+
 const pinnedValue = (pin: ManagedProviderInstance | undefined, field: string): unknown =>
   pin === undefined ? undefined : (pin as Record<string, unknown>)[field];
 
@@ -219,20 +222,23 @@ const overlayInstance = (
     value: variable.value,
     sensitive: false,
   }));
-  const pinnedByName = new Map(pinnedEnvironment.map((variable) => [variable.name, variable]));
+  const pinnedByName = new Map(
+    pinnedEnvironment.map((variable) => [variableKey(variable.name), variable]),
+  );
   const environment: Array<NonNullable<ProviderInstanceConfig["environment"]>[number]> =
     rule.environment === "all" ? pinnedEnvironment : [];
   if (rule.environment !== "all") {
     const seen = new Set<string>();
     // The last entry for a name wins at launch, so a lock replaces every entry with that name.
     for (const variable of instance.environment ?? []) {
-      const pinned = rule.environment === "locked" ? pinnedByName.get(variable.name) : undefined;
+      const key = variableKey(variable.name);
+      const pinned = rule.environment === "locked" ? pinnedByName.get(key) : undefined;
       if (pinned === undefined) environment.push(variable);
-      else if (!seen.has(variable.name)) environment.push(pinned);
-      seen.add(variable.name);
+      else if (!seen.has(key)) environment.push(pinned);
+      seen.add(key);
     }
     for (const pinned of pinnedEnvironment) {
-      if (!seen.has(pinned.name)) environment.push(pinned);
+      if (!seen.has(variableKey(pinned.name))) environment.push(pinned);
     }
   }
   const { config: _config, environment: _environment, ...envelope } = instance;
@@ -273,7 +279,7 @@ export function makeManagedProviders(
         reason: `the ${known.label} provider has no ${unsupported} setting`,
       };
     }
-    const names = (pin.environment ?? []).map((variable) => variable.name);
+    const names = (pin.environment ?? []).map((variable) => variableKey(variable.name));
     if (new Set(names).size !== names.length) {
       return { _tag: "Invalid", reason: `instances.${driver}.environment repeats a variable` };
     }
@@ -371,7 +377,7 @@ export function makeManagedProviders(
       } => {
     const pinned = rule.pin?.environment ?? [];
     const storedVariable = (name: string) =>
-      stored?.environment?.find((existing) => existing.name === name);
+      stored?.environment?.find((existing) => variableKey(existing.name) === variableKey(name));
     const storedUnchanged = (variable: ProviderInstanceEnvironmentVariable) =>
       (stored?.environment ?? []).some((existing) => sameVariable(variable, existing));
     const echoed = (variable: ProviderInstanceEnvironmentVariable) =>
@@ -387,16 +393,18 @@ export function makeManagedProviders(
     }
     let environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> = next.environment ?? [];
     for (const variable of pinned) {
-      const sent = environment.find((existing) => existing.name === variable.name);
+      const sent = environment.find(
+        (existing) => variableKey(existing.name) === variableKey(variable.name),
+      );
       const kept = storedVariable(variable.name);
       if ((sent !== undefined && echoed(sent)) || sameVariable(sent, kept)) {
         // Put the user's own entries back where it was sent, or drop the echoed policy value.
         const storedEntries = (stored?.environment ?? []).filter(
-          (existing) => existing.name === variable.name,
+          (existing) => variableKey(existing.name) === variableKey(variable.name),
         );
         let restored = false;
         environment = environment.flatMap((existing) => {
-          if (existing.name !== variable.name) return [existing];
+          if (variableKey(existing.name) !== variableKey(variable.name)) return [existing];
           if (restored) return [];
           restored = true;
           return storedEntries;
