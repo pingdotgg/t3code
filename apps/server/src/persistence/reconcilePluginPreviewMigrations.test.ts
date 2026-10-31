@@ -87,54 +87,67 @@ describe("plugin preview upgrade", () => {
       }),
     ),
   );
-  it.effect.each([[67, 67], [68, 67], [69, 69], [70, 69]] as const)(
-    "preserves preview %s data and timestamps and is reentrant",
-    ([through, start]) =>
-      memory(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          yield* seed(through, start);
-          const before = (yield* snapshot).data.filter(
-            ([name]) => name !== "effect_sql_migrations",
-          );
-          yield* runMigrations();
-          yield* assertCurrent;
-          const after = yield* snapshot;
-          // A later canonical build can add tables, but existing rows stay byte-for-byte identical.
-          for (const table of before)
-            assert.deepStrictEqual(
-              after.data.find(([name]) => name === table[0]),
-              table,
-            );
+  it.effect.each([
+    [67, 67],
+    [68, 67],
+    [69, 69],
+    [70, 69],
+  ] as const)("preserves preview %s data and timestamps and is reentrant", ([through, start]) =>
+    memory(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* seed(through, start);
+        const before = (yield* snapshot).data.filter(([name]) => name !== "effect_sql_migrations");
+        yield* runMigrations();
+        yield* assertCurrent;
+        const after = yield* snapshot;
+        // A later canonical build can add tables, but existing rows stay byte-for-byte identical.
+        for (const table of before)
           assert.deepStrictEqual(
-            yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id BETWEEN 76 AND ${76 + through - start}`,
-            Array.from({ length: through - start + 1 }, () => ({ created_at: "2026-10-01 00:00:00" })),
+            after.data.find(([name]) => name === table[0]),
+            table,
           );
-          assert.deepStrictEqual(yield* runMigrations(), []);
-          assert.deepStrictEqual(yield* snapshot, after);
-        }),
-      ),
+        assert.deepStrictEqual(
+          yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id BETWEEN 76 AND ${76 + through - start}`,
+          Array.from({ length: through - start + 1 }, () => ({
+            created_at: "2026-10-01 00:00:00",
+          })),
+        );
+        assert.deepStrictEqual(yield* runMigrations(), []);
+        assert.deepStrictEqual(yield* snapshot, after);
+      }),
+    ),
   );
-  it.effect.each(["unknown-history", "unknown-schema", "partial-upstream", "partial-search", "partial-target"])(
-    "rejects %s unchanged",
-    (variant) =>
-      memory(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          yield* seed(67);
-          if (variant === "unknown-history")
-            yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (68, 'UnknownFork')`;
-          if (variant === "unknown-schema")
-            yield* sql`ALTER TABLE plugin_installations ADD COLUMN unknown TEXT`;
-          if (variant === "partial-upstream")
-            yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN last_run_webhook_delivery_id TEXT`;
-          if (variant === "partial-search")
-            yield* sql`CREATE TABLE orchestration_v2_message_search (text TEXT)`;
-          const before = yield* snapshot;
-          assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations(variant === "partial-target" ? { toMigrationInclusive: 75 } : {}))));
-          assert.deepStrictEqual(yield* snapshot, before);
-        }),
-      ),
+  it.effect.each([
+    "unknown-history",
+    "unknown-schema",
+    "partial-upstream",
+    "partial-search",
+    "partial-target",
+  ])("rejects %s unchanged", (variant) =>
+    memory(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* seed(67);
+        if (variant === "unknown-history")
+          yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (68, 'UnknownFork')`;
+        if (variant === "unknown-schema")
+          yield* sql`ALTER TABLE plugin_installations ADD COLUMN unknown TEXT`;
+        if (variant === "partial-upstream")
+          yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN last_run_webhook_delivery_id TEXT`;
+        if (variant === "partial-search")
+          yield* sql`CREATE TABLE orchestration_v2_message_search (text TEXT)`;
+        const before = yield* snapshot;
+        assert.ok(
+          Exit.isFailure(
+            yield* Effect.exit(
+              runMigrations(variant === "partial-target" ? { toMigrationInclusive: 75 } : {}),
+            ),
+          ),
+        );
+        assert.deepStrictEqual(yield* snapshot, before);
+      }),
+    ),
   );
   it.effect("rolls back ledger moves and upstream schema on SQL failure, then retries", () =>
     memory(

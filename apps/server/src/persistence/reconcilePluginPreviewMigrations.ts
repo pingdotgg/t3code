@@ -4,6 +4,13 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import WebhookDedupe from "./Migrations/067_WebhookDedupe.ts";
 import ShellStopRequestIndex from "./Migrations/068_ShellStopRequestIndex.ts";
+import Migration69 from "./Migrations/069_ThreadMessageSearch.ts";
+import Migration70 from "./Migrations/070_PeerLinks.ts";
+import Migration71 from "./Migrations/071_PeerLinkFence.ts";
+import Migration72 from "./Migrations/072_WaitingLinkRequestIndex.ts";
+import Migration73 from "./Migrations/073_ActiveTurnItemIndexes.ts";
+import Migration74 from "./Migrations/074_ExcludeAttachmentPlaceholdersFromSearch.ts";
+import Migration75 from "./Migrations/075_SubagentDeliveryState.ts";
 
 // These unmerged preview builds used main's next slots. Recognize their exact
 // histories and schemas; never reinterpret an unknown build's migration ledger.
@@ -36,6 +43,17 @@ const legacySchemas = [
     ],
   ],
 ] as const;
+const upstream = [
+  [67, "WebhookDedupe", WebhookDedupe],
+  [68, "ShellStopRequestIndex", ShellStopRequestIndex],
+  [69, "ThreadMessageSearch", Migration69],
+  [70, "PeerLinks", Migration70],
+  [71, "PeerLinkFence", Migration71],
+  [72, "WaitingLinkRequestIndex", Migration72],
+  [73, "ActiveTurnItemIndexes", Migration73],
+  [74, "ExcludeAttachmentPlaceholdersFromSearch", Migration74],
+  [75, "SubagentDeliveryState", Migration75],
+] as const;
 const normalize = (sql: string) => sql.trim().replace(/\s+/g, " ").toLowerCase();
 const badState = () =>
   new Migrator.MigrationError({
@@ -54,29 +72,29 @@ export const reconcilePluginPreviewMigrations = Effect.fn("reconcilePluginPrevie
         const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
         SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
       `;
-        const tail = history.filter((row) => row.migration_id >= 67);
-        if (
-          !tail.some(
-            (row) =>
-              legacyNames.includes(row.name as (typeof legacyNames)[number]) &&
-              row.migration_id < 69,
-          )
-        )
-          return [];
+        const preview = history.find(
+          (row) =>
+            row.name === legacyNames[0] && (row.migration_id === 67 || row.migration_id === 69),
+        );
+        if (!preview) return [];
+        const start = preview.migration_id;
+        const canonical = manifest.find(([, name]) => name === legacyNames[0])?.[0];
+        if (canonical === undefined) return yield* badState();
+        const tail = history.filter((row) => row.migration_id >= start);
         const available = legacyNames.filter((name, offset) =>
-          manifest.some(([id, found]) => id === 69 + offset && found === name),
+          manifest.some(([id, found]) => id === canonical + offset && found === name),
         );
         if (
           tail.length === 0 ||
           tail.length > available.length ||
           tail.some(
-            (row, offset) => row.migration_id !== 67 + offset || row.name !== available[offset],
+            (row, offset) => row.migration_id !== start + offset || row.name !== available[offset],
           ) ||
-          (throughId !== undefined && throughId < 68 + tail.length)
+          (throughId !== undefined && throughId < canonical + tail.length - 1)
         )
           return yield* badState();
-        const earlier = history.filter((row) => row.migration_id < 67);
-        const expected = manifest.filter(([id]) => id < 67);
+        const earlier = history.filter((row) => row.migration_id < start);
+        const expected = manifest.filter(([id]) => id < start);
         if (
           earlier.length !== expected.length ||
           earlier.some(
@@ -103,31 +121,51 @@ export const reconcilePluginPreviewMigrations = Effect.fn("reconcilePluginPrevie
             } else if (objects.length !== 0) return yield* badState();
           }
         }
-        const taskColumns = yield* sql<{
-          readonly name: string;
-        }>`PRAGMA table_info(scheduled_tasks)`;
         if (
-          taskColumns.some((row) => row.name === "last_run_webhook_delivery_id") ||
           schema.some((row) =>
             [
-              "scheduled_task_webhook_replay_keys",
-              "scheduled_task_webhook_pending",
-              "orchestration_v2_projection_turn_items_stop_request_idx",
+              "orchestration_v2_message_search",
+              "peer_environment_links",
+              "orchestration_v2_projection_turn_items_waiting_link_idx",
+              "orchestration_v2_projection_turn_items_active_ordinal_idx",
+              "orchestration_v2_projection_turn_items_active_run_idx",
+              "orchestration_v2_projection_subagents_settled_idx",
             ].includes(row.name),
           )
         )
           return yield* badState();
-        // Descending moves free 69 before moving 67 there, preserving timestamps.
+        const subagentColumns = yield* sql<{
+          readonly name: string;
+        }>`PRAGMA table_info(orchestration_v2_projection_subagents)`;
+        if (subagentColumns.some((row) => row.name === "completion_delivery_state"))
+          return yield* badState();
+        const taskColumns = yield* sql<{
+          readonly name: string;
+        }>`PRAGMA table_info(scheduled_tasks)`;
+        if (
+          start === 67 &&
+          (taskColumns.some((row) => row.name === "last_run_webhook_delivery_id") ||
+            schema.some((row) =>
+              [
+                "scheduled_task_webhook_replay_keys",
+                "scheduled_task_webhook_pending",
+                "orchestration_v2_projection_turn_items_stop_request_idx",
+              ].includes(row.name),
+            ))
+        )
+          return yield* badState();
+        // Move the preview ledger before filling main's slots; the transaction preserves both on failure.
         for (let offset = tail.length - 1; offset >= 0; offset--) {
-          yield* sql`UPDATE effect_sql_migrations SET migration_id = ${69 + offset} WHERE migration_id = ${67 + offset} AND name = ${legacyNames[offset]}`;
+          yield* sql`UPDATE effect_sql_migrations SET migration_id = ${canonical + offset} WHERE migration_id = ${start + offset} AND name = ${legacyNames[offset]}`;
         }
-        yield* WebhookDedupe;
-        yield* ShellStopRequestIndex;
-        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (67, 'WebhookDedupe'), (68, 'ShellStopRequestIndex')`;
-        return [
-          [67, "WebhookDedupe"],
-          [68, "ShellStopRequestIndex"],
-        ] as const;
+        const executed: Array<readonly [number, string]> = [];
+        for (const [id, name, migration] of upstream) {
+          if (id < start) continue;
+          yield* migration;
+          yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${id}, ${name})`;
+          executed.push([id, name]);
+        }
+        return executed;
       }),
     );
   },
