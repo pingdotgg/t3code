@@ -146,6 +146,34 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("asks GitLab for the labels, author and draft state it can filter on", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(1, 1))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.listMergeRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+        filters: {
+          labels: [["bug"], ["size:S", "size:XS"], ["a,b"], ["None"]],
+          excludedLabels: ["wontfix", "stale", "any"],
+          author: "@me",
+          draft: "only",
+        },
+      });
+
+      const params = new URLSearchParams((argsOfCall(0)[1] ?? "").split("?")[1]);
+      expect(params.get("labels")).toBe("bug");
+      expect(params.get("not[labels]")).toBe("wontfix,stale");
+      expect(params.get("author_username")).toBe("bilal");
+      expect(params.get("wip")).toBe("yes");
+    }),
+  );
+
   it.effect("carries on from the number of rows already delivered", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(3, 1))));
@@ -161,8 +189,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
         cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 10 },
       });
 
-      // GitLab's timestamp filter has no tie-breaker, so an offset is what advances through a
-      // boundary shared by more rows than one page can hold.
       const path = argsOfCall(0)[1] ?? "";
       expect(path).not.toContain("updated_before=");
       expect(path).toContain("order_by=updated_at");
@@ -856,8 +882,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
           head_sha: "head",
           start_sha: "start",
           position_type: "text",
-          // A renamed file is the only case the two differ, and GitLab cannot place a
-          // position that names the same path on both sides of the rename.
           old_path: "src/a.ts",
           new_path: "src/b.ts",
           old_line: 4,
@@ -978,8 +1002,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
         requested: true,
       });
 
-      // GitLab replaces the whole set, so the reviewer already on the merge request has to be
-      // sent back with the new one or the request would take them off it.
       expect(argsOfCall(1)).toContain("PUT");
       expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [5, 9] });
     }),
@@ -1160,6 +1182,94 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.strictEqual(revisions.size, 150);
       assert.strictEqual(revisions.get("src/149.ts"), "oid-src/149.ts");
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
+    }),
+  );
+
+  it.effect(
+    "reads line counts a hundred at a time per project, keeping the reads that answered",
+    () =>
+      Effect.gen(function* () {
+        const variablesOf = (stdin: string | undefined) =>
+          (
+            JSON.parse(stdin ?? "{}") as {
+              readonly variables: {
+                readonly fullPath: string;
+                readonly iids: ReadonlyArray<string>;
+              };
+            }
+          ).variables;
+        mockedExecute.mockImplementation((request) => {
+          const { fullPath, iids } = variablesOf(request.stdin);
+          // GitLab answers only what it has (iid 3 is missing), and one project's read fails.
+          const nodes = iids
+            .filter((iid) => iid !== "3")
+            .map((iid) => ({ iid, diffStatsSummary: { additions: Number(iid), deletions: 1 } }));
+          return Effect.succeed(
+            output(
+              JSON.stringify(
+                fullPath === "acme/api"
+                  ? { errors: [{ message: "Query timed out" }] }
+                  : { data: { project: { mergeRequests: { nodes } } } },
+              ),
+            ),
+          );
+        });
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const stats = yield* cli.listMergeRequestStats({
+          cwd: "/w",
+          changeRequests: [
+            ...Array.from({ length: 150 }, (_, index) => ({
+              repository: "acme/web",
+              number: index + 1,
+            })),
+            { repository: "acme/api", number: 9 },
+          ],
+        });
+
+        expect(stats).toHaveLength(149);
+        expect(stats).toContainEqual({
+          repository: "acme/web",
+          number: 150,
+          additions: 150,
+          deletions: 1,
+        });
+        expect(stats.some((stat) => stat.number === 3 || stat.repository === "acme/api")).toBe(
+          false,
+        );
+        expect(
+          mockedExecute.mock.calls.map(([request]) => {
+            const { fullPath, iids } = variablesOf(request.stdin);
+            return [fullPath, iids.length];
+          }),
+        ).toEqual([
+          ["acme/web", 100],
+          ["acme/web", 50],
+          ["acme/api", 1],
+        ]);
+      }),
+  );
+  it.effect.each([
+    GitLabCli.GitLabCliUnavailableError,
+    GitLabCli.GitLabCliAuthenticationError,
+    GitLabCli.GitLabCliRateLimitError,
+  ])("propagates unusable CLI and account failures from stats (%s)", (ErrorType) =>
+    Effect.gen(function* () {
+      const error = new ErrorType({
+        operation: "execute",
+        command: "glab",
+        cwd: "/w",
+        cause: null,
+      });
+      mockedExecute.mockReturnValueOnce(Effect.fail(error));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const result = yield* Effect.result(
+        cli.listMergeRequestStats({
+          cwd: "/w",
+          changeRequests: [{ repository: "acme/web", number: 7 }],
+        }),
+      );
+      expect(result).toMatchObject({ _tag: "Failure", failure: error });
     }),
   );
 });

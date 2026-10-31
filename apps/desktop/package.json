@@ -1,14 +1,13 @@
 {
   "name": "@t3tools/desktop",
-  "version": "0.1.2",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "main": "dist-electron/boot.cjs",
   "scripts": {
     "ensure:electron": "node scripts/ensure-electron-runtime.mjs",
     "start": "node scripts/start-electron.mjs",
-    "test": "vp test run --passWithNoTests",
-    "smoke-test": "node scripts/smoke-test.mjs"
+    "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
     "@clerk/electron": "catalog:",
@@ -23,7 +22,7 @@
     "@t3tools/tailscale": "workspace:*",
     "dbus-next": "0.10.2",
     "effect": "catalog:",
-    "electron": "44.9.3",
+    "electron": "44.10.0",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.9",
     "electron-webauthn": "catalog:",
