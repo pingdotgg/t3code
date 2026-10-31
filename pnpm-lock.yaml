@@ -910,6 +910,9 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      ffi-rs:
+        specifier: 1.3.2
+        version: 1.3.2
       jose:
         specifier: 'catalog:'
         version: 6.2.2
