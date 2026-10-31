@@ -12,7 +12,8 @@ the desktop app, a browser, or the mobile app.
 3. Deploy the policy to each machine with your device management tool, in
    [one of the supported places](#where-the-policy-goes).
 4. Restart T3 Code on the machine. The server reads the policy only when it starts.
-5. Run `t3 policy show` on the machine to [check what the server loaded](#check-what-the-server-loaded).
+5. Run `t3 policy show` on the machine to
+   [check what the server loaded](#check-what-the-server-loaded).
 
 The desktop app includes the `t3` command; see [The `t3` command](./install.md#the-t3-command).
 
@@ -198,16 +199,16 @@ desktop app, keep `desktop` in the list, or the app cannot start.
 Without `remote`, the server listens only on a loopback address, creates no pairing links, and
 signs out devices that paired earlier. It does not start with a host other than a loopback
 address or `localhost`. The [background service](./background-service.md) listens on private
-networks by default, so set `T3CODE_HOST=127.0.0.1` in its `service.env`. The desktop app starts with network access and Tailscale Serve off,
-whatever the user chose. That also turns off T3 Connect. To keep other remote access but turn off
-T3 Connect alone, set `"connect": false`.
+networks by default, so set `T3CODE_HOST=127.0.0.1` in its `service.env`. The desktop app starts
+with network access and Tailscale Serve off, whatever the user chose. That also turns off
+T3 Connect. To keep other remote access but turn off T3 Connect alone, set `"connect": false`.
 
 When it starts, the server also turns off each Tailscale Serve route, HTTPS or TCP, that forwards
-to it, such as one `t3 pair --tailscale` set up, and leaves other routes alone. It does not start while
-such a route stays on, or while Tailscale's answer cannot be read; the error names the command
-that turns the route off. It does start when Tailscale is not installed, not running, or logged
-out, since nothing forwards then; a route Tailscale kept returns when Tailscale runs again, so
-restart T3 Code after that.
+to it, such as one `t3 pair --tailscale` set up, and leaves other routes alone. It does not start
+while such a route stays on, or while Tailscale's answer cannot be read; the error names the
+command that turns the route off. It does start when Tailscale is not installed, not running, or
+logged out, since nothing forwards then; a route Tailscale kept returns when Tailscale runs again,
+so restart T3 Code after that.
 
 ### Other capabilities
 

@@ -157,7 +157,7 @@ describe("readManagedPolicy", () => {
             "the registry cannot be read (Windows error 5)",
           );
         }
-        assert.include(yield* win32({}, {}), "T3 Code cannot read the registry on this machine");
+        assert.include(yield* win32({}, {}), "cannot load its registry reader; reinstall T3 Code");
         assert.include(
           yield* win32({}, { code: 1630 }),
           "its Policy value is not a string (REG_SZ)",

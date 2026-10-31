@@ -294,7 +294,7 @@ const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platfor
                 cause.code === ERROR_UNSUPPORTED_TYPE
                   ? "its Policy value is not a string (REG_SZ)"
                   : cause.code === undefined
-                    ? "T3 Code cannot read the registry on this machine"
+                    ? "this T3 Code install cannot load its registry reader; reinstall T3 Code"
                     : `the registry cannot be read (${cause.message})`,
               cause,
             }),
