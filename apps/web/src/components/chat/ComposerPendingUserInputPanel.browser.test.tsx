@@ -5,6 +5,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import type { PendingUserInput } from "../../session-logic";
+import { Select, SelectTrigger } from "../ui/select";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -60,6 +61,15 @@ it.each<{ focus: string; control: ReactNode; toggles: boolean }>([
       <select aria-label="Focused">
         <option>One</option>
       </select>
+    ),
+    toggles: false,
+  },
+  {
+    focus: "a closed select menu",
+    control: (
+      <Select>
+        <SelectTrigger aria-label="Focused" />
+      </Select>
     ),
     toggles: false,
   },
