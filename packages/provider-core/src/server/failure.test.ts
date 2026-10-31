@@ -2,6 +2,8 @@ import { assert, it } from "@effect/vitest";
 import {
   NodeId,
   ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSetupError,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -83,8 +85,16 @@ it("does not expose arbitrary cause messages and preserves explicit messages", (
   }
 });
 
-it("preserves actionable handoff errors wrapped by turn startup", () => {
-  for (const error of [new ContextHandoffBudgetError(), new ContextHandoffBackgroundWorkError()]) {
+it("preserves actionable T3 errors wrapped by turn startup", () => {
+  for (const error of [
+    new ContextHandoffBudgetError(),
+    new ContextHandoffBackgroundWorkError(),
+    new ProviderSetupError({
+      instanceId: ProviderInstanceId.make("codex"),
+      operation: "runtime",
+      detail: "Codex 0.144.3 does not work with this T3 Code release.",
+    }),
+  ]) {
     const cause = new ProviderAdapter.ProviderAdapterTurnStartError({
       driver: ProviderDriverKind.make("codex"),
       threadId: ThreadId.make("thread:handoff-error"),
