@@ -1,3 +1,4 @@
+import { PullRequestComment } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -87,6 +88,7 @@ const decodePullRequestActivityJson = through(
   toPullRequestActivityPage,
 );
 const decodePullRequestCoreJson = through(PullRequestCore.result, toPullRequestCore);
+const decodePullRequestComment = Schema.decodeUnknownSync(PullRequestComment);
 type Json = Record<string, any>;
 const LAST_PAGE = { hasNextPage: false, endCursor: null };
 const nodesIn = (connection: Json | null | undefined): ReadonlyArray<Json> =>
@@ -449,6 +451,8 @@ describe("pull request detail decoding", () => {
               nodes: ((raw["comments"] ?? []) as ReadonlyArray<Record<string, unknown>>).map(
                 (comment) => ({
                   lastEditedAt: null,
+                  isMinimized: false,
+                  minimizedReason: null,
                   url: "https://github.com/c",
                   author: null,
                   ...comment,
@@ -580,6 +584,32 @@ describe("pull request detail decoding", () => {
     const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
     expect(detail.comments.map((comment) => comment.id)).toEqual(["r1", "c1", "r2"]);
     expect(detail.comments.at(-1)?.reviewState).toBe("APPROVED");
+  });
+
+  it.each([
+    [true, "RESOLVED"],
+    [true, null],
+    [false, null],
+  ])("preserves conversation comment minimization (%s, %s)", (isMinimized, minimizedReason) => {
+    const detail = expectSuccess(
+      activity({
+        comments: [
+          {
+            id: "hidden",
+            body: "Superseded information",
+            createdAt: "2026-07-04T00:00:00Z",
+            isMinimized,
+            minimizedReason,
+          },
+        ],
+      }),
+    );
+    expect(decodePullRequestComment(detail.comments[0])).toMatchObject({
+      id: "hidden",
+      body: "Superseded information",
+      isMinimized,
+      minimizedReason,
+    });
   });
 
   it("drops the bodyless review GitHub opens to hold line comments", () => {

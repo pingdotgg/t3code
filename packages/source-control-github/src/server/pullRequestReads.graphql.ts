@@ -724,6 +724,15 @@ export const NodesIssueComment = Schema.Struct({
   createdAt: Shared.DateTime,
   /** The moment the editor made the last edit */
   lastEditedAt: Schema.NullOr(Shared.DateTime),
+  /** Returns whether or not a comment has been minimized. */
+  isMinimized: Schema.Boolean,
+  /**
+   * Returns why the comment was minimized. One of `abuse`, `off-topic`,
+   * `outdated`, `resolved`, `duplicate`, `spam`, and `low-quality`. Note that the
+   * case and formatting of these values differs from the inputs to the
+   * `MinimizeComment` mutation.
+   */
+  minimizedReason: Schema.NullOr(Schema.String),
   /** The HTTP URL for this issue comment */
   url: Shared.URI,
   /** The actor who authored the comment. */
@@ -811,7 +820,7 @@ export const PullRequestActivity = GraphQL.query("PullRequestActivity", {
       { name: "reviewsAfter", body: "String" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){author@include(if:$", "head", "){__typename login avatarUrl...on User{name}}commits(last:100)@include(if:$", "head", "){nodes{commit{id oid messageHeadline committedDate parents(first:1){totalCount}authors(first:10){nodes{name email user{login}}}}}}comments(first:100 after:$", "commentsAfter", ")@include(if:$", "withComments", "){pageInfo{hasNextPage endCursor}nodes{id body createdAt lastEditedAt url author{__typename login avatarUrl...on User{name}}}}reviews(first:100 after:$", "reviewsAfter", ")@include(if:$", "withReviews", "){pageInfo{hasNextPage endCursor}nodes{id body state submittedAt lastEditedAt url author{__typename login avatarUrl...on User{name}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){author@include(if:$", "head", "){__typename login avatarUrl...on User{name}}commits(last:100)@include(if:$", "head", "){nodes{commit{id oid messageHeadline committedDate parents(first:1){totalCount}authors(first:10){nodes{name email user{login}}}}}}comments(first:100 after:$", "commentsAfter", ")@include(if:$", "withComments", "){pageInfo{hasNextPage endCursor}nodes{id body createdAt lastEditedAt isMinimized minimizedReason url author{__typename login avatarUrl...on User{name}}}}reviews(first:100 after:$", "reviewsAfter", ")@include(if:$", "withReviews", "){pageInfo{hasNextPage endCursor}nodes{id body state submittedAt lastEditedAt url author{__typename login avatarUrl...on User{name}}}}}}"] }
     ],
     fragments: []
   },
