@@ -3,9 +3,12 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 
 import {
   canCheckForUpdate,
+  type DesktopHostedEnvironmentWork,
+  desktopUpdateInstallNeedsConfirmation,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
+  isDesktopHostedEnvironmentIdle,
   resolveDesktopUpdateButtonAction,
 } from "./desktopUpdate.logic";
 
@@ -88,5 +91,47 @@ describe("canCheckForUpdate", () => {
         downloadedVersion: "1.1.0",
       }),
     ).toBe(true);
+  });
+});
+
+describe("desktop update install confirmation", () => {
+  const idleThread = {
+    status: "completed",
+    activityRunStatus: null,
+    pendingRuntimeRequest: null,
+    pendingBackgroundTasks: [],
+  } as const;
+  const idle: DesktopHostedEnvironmentWork = {
+    shellLive: true,
+    threads: [idleThread],
+    terminals: [{ hasRunningSubprocess: false }],
+  };
+
+  it.each<[string, DesktopHostedEnvironmentWork, boolean]>([
+    ["no running thread or terminal command", idle, true],
+    [
+      "a thread waiting on the user",
+      { ...idle, threads: [{ ...idleThread, status: "waiting" }] },
+      false,
+    ],
+    [
+      "a terminal running a command",
+      { ...idle, terminals: [{ hasRunningSubprocess: true }] },
+      false,
+    ],
+    ["a cached or resyncing thread list", { ...idle, shellLive: false }, false],
+    ["terminals not loaded yet", { ...idle, terminals: null }, false],
+  ])("treats an environment with %s as idle: %s", (_case, environment, expected) => {
+    expect(isDesktopHostedEnvironmentIdle(environment)).toBe(expected);
+  });
+
+  it.each<[string, ReadonlyArray<string> | null, ReadonlyArray<string> | null, boolean]>([
+    ["every running backend is idle", ["primary", "wsl"], ["primary", "wsl"], false],
+    ["a hosted environment is busy or unknown", null, ["primary"], true],
+    ["a running backend has no idle environment", ["primary"], ["primary", "wsl"], true],
+    ["the running backends cannot be read", ["primary"], null, true],
+    ["no running backend is reported", ["primary"], [], true],
+  ])("asks when %s: %s", (_case, idleBackendIds, runningBackendIds, expected) => {
+    expect(desktopUpdateInstallNeedsConfirmation(idleBackendIds, runningBackendIds)).toBe(expected);
   });
 });

@@ -1,4 +1,9 @@
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import {
+  isLiveSubagentShell,
+  type DesktopUpdateActionResult,
+  type DesktopUpdateState,
+  type TerminalSummary,
+} from "@t3tools/contracts";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
@@ -125,6 +130,36 @@ export function getDesktopUpdateInstallConfirmationMessage(
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
   return `Install update${version ? ` ${version}` : ""} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
+}
+
+export interface DesktopHostedEnvironmentWork {
+  /** The thread list reflects the server now, not a cache or a resync in flight. */
+  readonly shellLive: boolean;
+  readonly threads: ReadonlyArray<Parameters<typeof isLiveSubagentShell>[0]>;
+  /** Null until the environment's terminal list has loaded. */
+  readonly terminals: ReadonlyArray<Pick<TerminalSummary, "hasRunningSubprocess">> | null;
+}
+
+export function isDesktopHostedEnvironmentIdle(environment: DesktopHostedEnvironmentWork): boolean {
+  return (
+    environment.shellLive &&
+    environment.terminals !== null &&
+    !environment.threads.some(isLiveSubagentShell) &&
+    !environment.terminals.some((terminal) => terminal.hasRunningSubprocess)
+  );
+}
+
+/** Installing stops every backend this app runs, so only skip the prompt when each is known idle. */
+export function desktopUpdateInstallNeedsConfirmation(
+  idleBackendIds: ReadonlyArray<string> | null,
+  runningBackendIds: ReadonlyArray<string> | null,
+): boolean {
+  return (
+    idleBackendIds === null ||
+    runningBackendIds === null ||
+    runningBackendIds.length === 0 ||
+    runningBackendIds.some((id) => !idleBackendIds.includes(id))
+  );
 }
 
 export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): string | null {
