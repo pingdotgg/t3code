@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadDetailSnapshot,
+  type ReceivedOrchestrationV2ThreadDetailSnapshot,
   type ServerConfig,
   type ThreadId,
   type VcsListRefsResult,
@@ -91,7 +92,7 @@ export class EnvironmentCacheStore extends Context.Service<
       environmentId: EnvironmentId,
       threadId: ThreadId,
     ) => Effect.Effect<
-      Option.Option<OrchestrationV2ThreadDetailSnapshot>,
+      Option.Option<ReceivedOrchestrationV2ThreadDetailSnapshot>,
       ConnectionPersistenceError
     >;
     readonly saveThread: (

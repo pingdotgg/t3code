@@ -7,6 +7,7 @@ import {
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
   isUnknownUnionMember,
+  knownUnionMembers,
   TrimmedNonEmptyString,
   UnknownUnionMember,
 } from "./baseSchemas.ts";
@@ -85,13 +86,36 @@ describe("ForwardCompatibleUnionArray", () => {
 
   const decode = fromWire(ForwardCompatibleUnionArray(members, "kind"));
 
-  it("drops members a newer server added and keeps the rest", () => {
+  it("keeps members a newer server added as unknown until a reader drops them", () => {
     const decoded = decode([
       { kind: "triangle" },
       { kind: "circle", radius: 1, at },
       { kind: "square", side: 2 },
     ]);
-    expect(decoded.map((shape) => shape.kind)).toEqual(["circle", "square"]);
+    expect(decoded[0]).toEqual(new UnknownUnionMember("kind", "triangle"));
+    expect(knownUnionMembers(decoded).map((shape) => shape.kind)).toEqual(["circle", "square"]);
+  });
+
+  it("returns the same array when every member is known", () => {
+    const decoded = decode([{ kind: "square", side: 2 }]);
+    expect(knownUnionMembers(decoded)).toBe(decoded);
+  });
+
+  it("validates each known member once", () => {
+    let checks = 0;
+    const Counted = Schema.Struct({
+      kind: Schema.Literal("counted"),
+      value: Schema.Number.check(
+        Schema.makeFilter(() => {
+          checks++;
+          return true;
+        }),
+      ),
+    });
+    const wire = [{ kind: "counted", value: 1 }, { kind: "future" }, { kind: "counted", value: 2 }];
+    const decoded = fromWire(ForwardCompatibleUnionArray([Counted], "kind"))(wire);
+    expect(checks).toBe(2);
+    expect(decoded).toHaveLength(3);
   });
 
   it("fails when a known member is broken, so real bugs stay visible", () => {

@@ -4,6 +4,7 @@ import {
   CommandId,
   CheckpointId,
   CheckpointScopeId,
+  knownThreadProjection,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2CheckpointUnavailableError,
   WS_METHODS,
@@ -278,7 +279,9 @@ const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
 const getProjection = (threadId: ThreadId) =>
-  request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
+  request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId }).pipe(
+    Effect.map(knownThreadProjection),
+  );
 
 const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(function* (
   threadId: ThreadId,
