@@ -14,6 +14,12 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { afterEach, vi } from "vite-plus/test";
 
+// The tests must not depend on Tailscale running on the machine that runs them.
+vi.mock("@t3tools/tailscale", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/tailscale")>()),
+  readTailscaleStatus: () => Effect.fail("Tailscale is not running in tests"),
+}));
+
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { upsertServiceEnv } from "./service.ts";
@@ -261,6 +267,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       installs: 0,
       restarts: 0,
       envAfter: "T3CODE_LAN=true\n",
+    },
+    {
+      label: "Tailscale down here keeps its settings while another route changes",
+      installed: true,
+      env: "T3CODE_LAN=true\nT3CODE_TAILSCALE_SIGN_IN=true\n",
+      args: ["--no-lan"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\n",
+    },
+    {
+      label: "turning Tailscale off stops Serve too",
+      installed: true,
+      env: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=true\n",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\n",
     },
     {
       label: "the old default is kept",

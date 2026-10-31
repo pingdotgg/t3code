@@ -18,7 +18,6 @@ import {
   mapRemoteEnvironmentError,
 } from "../connection/errors.ts";
 import type { TailnetConnectionCredential } from "../connection/catalog.ts";
-import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
@@ -141,12 +140,8 @@ export const make = Effect.gen(function* () {
   const deviceIdentity = yield* ClientCapabilities.RelayDeviceIdentity;
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const tokenStore = yield* TokenStore.RemoteDpopAccessTokenStore;
-  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const httpClient = yield* HttpClient.HttpClient;
-  const tailnet = makeTailnetSessions({
-    credentials,
-    signer,
-    httpClient,
+  const tailnet = yield* makeTailnetSessions({
     clientMetadata: presentation.metadata,
     scope: serviceScope,
   });
@@ -607,9 +602,11 @@ export const make = Effect.gen(function* () {
     signInTailnet: Effect.fn("clientRuntime.connection.remote.signInTailnet")(function* (input) {
       return yield* signInOverTailnet({
         httpBaseUrl: input.httpBaseUrl,
-        signer,
         clientMetadata: presentation.metadata,
-      }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+      }).pipe(
+        Effect.provideService(ManagedRelay.ManagedRelayDpopSigner, signer),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
     }),
     authorizeTailnet,
     authorizeTailnetHttp: Effect.fn("clientRuntime.connection.remote.authorizeTailnetHttp")(

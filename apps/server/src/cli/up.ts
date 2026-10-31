@@ -254,6 +254,9 @@ const formatNextSteps = (routes: Routes, serviceInstalled: boolean) =>
         ]),
   ].join("\n");
 
+// Serve only runs with Tailscale on in `t3 up`, so turning Tailscale off stops it too.
+const TAILSCALE_OFF = { T3CODE_TAILSCALE_SIGN_IN: undefined, T3CODE_TAILSCALE_SERVE: undefined };
+
 const interactiveTerminal = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
 interface Owner {
@@ -410,14 +413,16 @@ const tailscaleEntries = Effect.fn("cli.up.tailscale_entries")(function* (
   const { entries, path: serviceEnvPath } = yield* CliService.readServiceEnv(config.baseDir);
   const tagged = tailscale.status.selfTags.length > 0;
   // With grants required, the policy names who gets in, so the box needs no owner.
-  const owner = requireGrant
-    ? null
-    : yield* resolveOwner(
-        tailscale.status,
-        flags.owner,
-        entries.T3CODE_TAILSCALE_OWNER,
-        !flags.yes && interactiveTerminal(),
-      );
+  // A requested owner is saved even when grants decide who gets in.
+  const owner =
+    requireGrant && Option.isNone(flags.owner)
+      ? null
+      : yield* resolveOwner(
+          tailscale.status,
+          flags.owner,
+          entries.T3CODE_TAILSCALE_OWNER,
+          !flags.yes && interactiveTerminal(),
+        );
   const configuredPort = entries.T3CODE_PORT;
   const port = Number(configuredPort ?? ServerConfig.DEFAULT_PORT);
   const net = yield* NetService.NetService;
@@ -586,12 +591,17 @@ const setUp = Effect.fn("cli.up")(function* (
     }
     yield* CliService.writeServiceEnv(config.baseDir, {
       ...(current.lan ? { T3CODE_LAN: "false" } : {}),
-      ...(current.tailscale ? { T3CODE_TAILSCALE_SIGN_IN: undefined } : {}),
+      ...(current.tailscale ? TAILSCALE_OFF : {}),
     });
     return yield* Console.log(formatNextSteps(routes, false));
   }
-  if (routes.tailscale && !tailscale.ok) {
+  // Tailscale left on while it is down here keeps its settings; turning it on needs it.
+  const tailscaleKept = routes.tailscale && current.tailscale && Option.isNone(flags.tailscale);
+  if (routes.tailscale && !tailscale.ok && !tailscaleKept) {
     return yield* upError(`${tailscale.reason} Then run t3 up again.`);
+  }
+  if (tailscaleKept && !tailscale.ok && !(plan.ask.length > 0 && interactive)) {
+    yield* Console.log(`${tailscale.reason} Tailscale settings stay as they are.`);
   }
 
   const requireGrant = flags.requireGrant || before.requireGrant;
@@ -601,7 +611,7 @@ const setUp = Effect.fn("cli.up")(function* (
       : null;
   const writes: Readonly<Record<string, string | undefined>> = {
     T3CODE_LAN: String(routes.lan),
-    ...(signIn?.entries ?? (current.tailscale ? { T3CODE_TAILSCALE_SIGN_IN: undefined } : {})),
+    ...(routes.tailscale ? (signIn?.entries ?? {}) : current.tailscale ? TAILSCALE_OFF : {}),
   };
   const planned = Object.fromEntries(
     Object.entries({ ...before.entries, ...writes }).flatMap(([key, value]) =>

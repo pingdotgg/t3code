@@ -8,7 +8,7 @@ import type * as Scope from "effect/Scope";
 import * as HttpClient from "effect/http/HttpClient";
 
 import { TailnetConnectionCredential } from "../connection/catalog.ts";
-import type * as ConnectionCredentialStore from "../connection/credentialStore.ts";
+import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
 import { credentialMissingError, mapRemoteEnvironmentError } from "../connection/errors.ts";
 import {
   ConnectionBlockedError,
@@ -17,7 +17,7 @@ import {
 } from "../connection/model.ts";
 import { tailnetRefusalError } from "../connection/tailnet.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
-import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiGroupClient } from "../rpc/http.ts";
 import { exchangeRemoteDpopAccessToken } from "./remote.ts";
 
@@ -39,12 +39,12 @@ const proofError = () =>
 export const signInOverTailnet = Effect.fn("clientRuntime.authorization.signInOverTailnet")(
   function* (input: {
     readonly httpBaseUrl: string;
-    readonly signer: ManagedRelayDpopSigner["Service"];
     readonly clientMetadata?: AuthClientPresentationMetadata;
   }) {
-    const thumbprint = yield* input.signer.thumbprint.pipe(Effect.mapError(proofError));
+    const signer = yield* ManagedRelayDpopSigner;
+    const thumbprint = yield* signer.thumbprint.pipe(Effect.mapError(proofError));
     const signInUrl = environmentEndpointUrl(input.httpBaseUrl, "/api/auth/tailnet");
-    const signInProof = yield* input.signer
+    const signInProof = yield* signer
       .createProof({ method: "POST", url: signInUrl })
       .pipe(Effect.mapError(proofError));
     const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "tailnet");
@@ -67,7 +67,7 @@ export const signInOverTailnet = Effect.fn("clientRuntime.authorization.signInOv
         answer.refused.suggestedGrant,
       );
     }
-    const tokenProof = yield* input.signer
+    const tokenProof = yield* signer
       .createProof({
         method: "POST",
         url: environmentEndpointUrl(input.httpBaseUrl, "/oauth/token"),
@@ -94,67 +94,69 @@ export const signInOverTailnet = Effect.fn("clientRuntime.authorization.signInOv
  * again at its pinned address, before expiry or after a rejection, so every
  * host check runs again. Concurrent callers share one sign-in.
  */
-export const makeTailnetSessions = (input: {
-  readonly credentials: ConnectionCredentialStore.ConnectionCredentialStore["Service"];
-  readonly signer: ManagedRelayDpopSigner["Service"];
-  readonly httpClient: HttpClient.HttpClient;
-  readonly clientMetadata: AuthClientPresentationMetadata;
-  readonly scope: Scope.Scope;
-}) => {
-  const renewals = new Map<
-    string,
-    {
-      readonly id: object;
-      readonly fiber: Fiber.Fiber<TailnetConnectionCredential, ConnectionAttemptError>;
-    }
-  >();
+export const makeTailnetSessions = Effect.fn("clientRuntime.authorization.makeTailnetSessions")(
+  function* (input: {
+    readonly clientMetadata: AuthClientPresentationMetadata;
+    readonly scope: Scope.Scope;
+  }) {
+    const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+    const signer = yield* ManagedRelayDpopSigner;
+    const httpClient = yield* HttpClient.HttpClient;
+    const renewals = new Map<
+      string,
+      {
+        readonly id: object;
+        readonly fiber: Fiber.Fiber<TailnetConnectionCredential, ConnectionAttemptError>;
+      }
+    >();
 
-  const renew = Effect.fn("clientRuntime.authorization.tailnet.renew")(function* (
-    credentialId: string,
-    current: TailnetConnectionCredential,
-  ) {
-    const pending = renewals.get(credentialId);
-    if (pending !== undefined) return yield* Fiber.join(pending.fiber);
-    const id = {};
-    const fiber = yield* signInOverTailnet({
-      httpBaseUrl: current.signInBaseUrl,
-      signer: input.signer,
-      clientMetadata: input.clientMetadata,
-    }).pipe(
-      Effect.tap((fresh) => input.credentials.put(credentialId, fresh)),
-      Effect.provideService(HttpClient.HttpClient, input.httpClient),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (renewals.get(credentialId)?.id === id) renewals.delete(credentialId);
-        }),
-      ),
-      // One caller's interruption must not cancel the renewal others wait on.
-      Effect.forkIn(input.scope),
-    );
-    renewals.set(credentialId, { id, fiber });
-    return yield* Fiber.join(fiber);
-  });
-
-  /** The stored session, or a fresh one when it is missing a key match, near expiry, or rejected. */
-  const session = Effect.fn("clientRuntime.authorization.tailnet.session")(function* (
-    credentialId: string,
-    rejectedAccessToken?: string,
-  ) {
-    const stored = Option.getOrUndefined(yield* input.credentials.get(credentialId));
-    if (stored === undefined || !isTailnetCredential(stored)) {
-      return yield* credentialMissingError(credentialId);
-    }
-    const thumbprint = yield* input.signer.thumbprint.pipe(Effect.mapError(proofError));
-    const now = yield* Clock.currentTimeMillis;
-    if (
-      stored.dpopThumbprint === thumbprint &&
-      stored.expiresAtEpochMs > now + DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS &&
-      stored.accessToken !== rejectedAccessToken
+    const renew = Effect.fn("clientRuntime.authorization.tailnet.renew")(function* (
+      credentialId: string,
+      current: TailnetConnectionCredential,
     ) {
-      return stored;
-    }
-    return yield* renew(credentialId, stored);
-  });
+      const pending = renewals.get(credentialId);
+      if (pending !== undefined) return yield* Fiber.join(pending.fiber);
+      const id = {};
+      const fiber = yield* signInOverTailnet({
+        httpBaseUrl: current.signInBaseUrl,
+        clientMetadata: input.clientMetadata,
+      }).pipe(
+        Effect.tap((fresh) => credentials.put(credentialId, fresh)),
+        Effect.provideService(ManagedRelayDpopSigner, signer),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (renewals.get(credentialId)?.id === id) renewals.delete(credentialId);
+          }),
+        ),
+        // One caller's interruption must not cancel the renewal others wait on.
+        Effect.forkIn(input.scope),
+      );
+      renewals.set(credentialId, { id, fiber });
+      return yield* Fiber.join(fiber);
+    });
 
-  return { session };
-};
+    /** The stored session, or a fresh one when it is missing a key match, near expiry, or rejected. */
+    const session = Effect.fn("clientRuntime.authorization.tailnet.session")(function* (
+      credentialId: string,
+      rejectedAccessToken?: string,
+    ) {
+      const stored = Option.getOrUndefined(yield* credentials.get(credentialId));
+      if (stored === undefined || !isTailnetCredential(stored)) {
+        return yield* credentialMissingError(credentialId);
+      }
+      const thumbprint = yield* signer.thumbprint.pipe(Effect.mapError(proofError));
+      const now = yield* Clock.currentTimeMillis;
+      if (
+        stored.dpopThumbprint === thumbprint &&
+        stored.expiresAtEpochMs > now + DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS &&
+        stored.accessToken !== rejectedAccessToken
+      ) {
+        return stored;
+      }
+      return yield* renew(credentialId, stored);
+    });
+
+    return { session };
+  },
+);
