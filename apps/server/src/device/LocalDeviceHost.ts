@@ -806,6 +806,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         timeout: Duration.millis(options?.timeoutMs ?? 20_000),
         timeoutBehavior: "timedOutResult",
         ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
+        ...(options?.maxOutputBytes === undefined
+          ? {}
+          : { maxOutputBytes: options.maxOutputBytes }),
       })
       .pipe(
         Effect.map((result) => ({
