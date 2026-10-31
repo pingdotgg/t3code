@@ -2781,23 +2781,30 @@ export default function ChatView(props: ChatViewProps) {
       if (activeThread) setThreadError(activeThread.id, message);
     },
   });
+  // A maximized panel covers the terminal drawer the command runs in.
+  const runSideChatShellCommandStable = useStableCallback((command: string) => {
+    if (activeThreadRef) useRightPanelStore.getState().setMaximized(activeThreadRef, false);
+    runShellCommandStable(command);
+  });
   // Main-thread surfaces show this reason; `/side` sent anyway gets it as a toast.
   const sideChatDisabledReason =
     activeThread?.lineage.sideChat === true
       ? "Side chats cannot start side chats."
       : isSubagentThread
         ? "Subagent threads cannot start side chats."
-        : serverConfig !== null && serverConfig.environment.capabilities.sideChats !== true
-          ? "Update this environment's T3 Code server to use side chats."
-          : sideChatsOffered && !isServerThread
-            ? "Side chats start after the first message."
-            : sideChat.available &&
-                orchestrationV2WorktreePending(
-                  activeThread?.worktreePath ?? null,
-                  serverProjection?.runs ?? [],
-                )
-              ? "Available once the thread's worktree is set up."
-              : null;
+        : serverConfig === null
+          ? "Side chats are not ready yet. Try again in a moment."
+          : serverConfig.environment.capabilities.sideChats !== true
+            ? "Update this environment's T3 Code server to use side chats."
+            : sideChatsOffered && !isServerThread
+              ? "Side chats start after the first message."
+              : sideChat.available &&
+                  orchestrationV2WorktreePending(
+                    activeThread?.worktreePath ?? null,
+                    serverProjection?.runs ?? [],
+                  )
+                ? "Available once the thread's worktree is set up."
+                : null;
   const openSideChatStable = useStableCallback(() => void sideChat.open());
   const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
   const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =
@@ -3206,7 +3213,7 @@ export default function ChatView(props: ChatViewProps) {
       onCloseSurface={closeRightPanelSurface}
       sideChatParentPanel={{
         openToolDiff: onOpenToolDiffStable,
-        runShellCommand: runShellCommandStable,
+        runShellCommand: runSideChatShellCommandStable,
       }}
       terminal={{
         launchContext: activeTerminalLaunchContext ?? null,
