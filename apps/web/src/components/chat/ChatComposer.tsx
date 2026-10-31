@@ -3253,7 +3253,6 @@ export function ChatComposer(props: ChatComposerProps) {
   const requestCard =
     !isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
       <ComposerPendingUserInputPanel
-        actionsInComposer
         pendingUserInputs={pendingUserInputs}
         cwd={gitCwd ?? undefined}
         threadRef={routeThreadRef}
@@ -3633,7 +3632,7 @@ export function ChatComposer(props: ChatComposerProps) {
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   canOperateThread={canOperateThread}
-                  pendingAction={pendingPrimaryAction}
+                  pendingAction={requestCard && requestCardHost ? null : pendingPrimaryAction}
                   isRunning={phase === "running"}
                   canInterrupt={canInterrupt}
                   followUpBehavior={followUpBehavior}
