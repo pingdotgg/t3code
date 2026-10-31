@@ -88,7 +88,10 @@ it.effect("starts over after a failed first scan", () =>
     const calls = yield* Ref.make(0);
     const read = yield* makeStaleWhileRevalidate(
       Ref.updateAndGet(calls, (count) => count + 1).pipe(
-        Effect.filterOrElse((call) => call !== 1, () => Effect.die("probe crashed")),
+        Effect.filterOrElse(
+          (call) => call !== 1,
+          () => Effect.die("probe crashed"),
+        ),
       ),
       "60 seconds",
     );
@@ -108,13 +111,18 @@ it.effect("abandons a hung refresh so a later call can start another", () =>
       Ref.updateAndGet(calls, (count) => count + 1).pipe(
         Effect.flatMap((call) =>
           call === 2
-            ? Effect.fiber.pipe(Effect.flatMap((fiber) => Deferred.succeed(started, fiber))).pipe(
+            ? Effect.fiber.pipe(
+                Effect.flatMap((fiber) => Deferred.succeed(started, fiber)),
                 Effect.andThen(Effect.never),
                 Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
               )
             : Effect.succeed(call).pipe(
                 Effect.tap(() =>
-                  call === 3 ? Effect.fiber.pipe(Effect.flatMap((fiber) => Deferred.succeed(refreshed, fiber))) : Effect.void,
+                  call === 3
+                    ? Effect.fiber.pipe(
+                        Effect.flatMap((fiber) => Deferred.succeed(refreshed, fiber)),
+                      )
+                    : Effect.void,
                 ),
               ),
         ),
@@ -149,10 +157,11 @@ it.effect("interrupts a background refresh when the owning scope closes", () =>
       Ref.updateAndGet(calls, (count) => count + 1).pipe(
         Effect.filterOrElse(
           (call) => call === 1,
-          () => Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Effect.never),
-            Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
-          ),
+          () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+            ),
         ),
       ),
       "60 seconds",
