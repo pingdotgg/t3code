@@ -34,7 +34,7 @@ function decodeCodePoint(codePoint: number, entity: string): string {
   return String.fromCodePoint(codePoint);
 }
 
-function decodeHtmlEntities(value: string): string {
+export function decodeHtmlEntities(value: string): string {
   return value.replace(
     /&(?:#(\d+)|#x([0-9a-f]+)|amp|apos|gt|lt|nbsp|quot);/gi,
     (entity, decimal: string | undefined, hexadecimal: string | undefined) => {
