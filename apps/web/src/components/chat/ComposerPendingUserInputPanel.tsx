@@ -25,6 +25,7 @@ export interface PendingUserInputPrimaryAction {
 }
 
 interface PendingUserInputPanelProps {
+  actionsInComposer?: boolean;
   pendingUserInputs: PendingUserInput[];
   cwd: string | undefined;
   threadRef: ScopedThreadRef;
@@ -46,6 +47,7 @@ interface PendingUserInputPanelProps {
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
+  actionsInComposer = false,
   pendingUserInputs,
   cwd,
   threadRef,
@@ -69,6 +71,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   return (
     <ComposerPendingUserInputCard
       key={activePrompt.requestId}
+      actionsInComposer={actionsInComposer}
       prompt={activePrompt}
       cwd={cwd}
       threadRef={threadRef}
@@ -89,6 +92,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 });
 
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
+  actionsInComposer,
   prompt,
   cwd,
   threadRef,
@@ -105,6 +109,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onPrevious,
   onWriteAnswer,
 }: {
+  actionsInComposer: boolean;
   prompt: PendingUserInput;
   cwd: string | undefined;
   threadRef: ScopedThreadRef;
@@ -391,7 +396,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               Skip
             </Button>
           ) : null}
-          {onPrevious && questionIndex > 0 ? (
+          {!actionsInComposer && onPrevious && questionIndex > 0 ? (
             <Button
               size="sm"
               variant="secondary"
@@ -401,7 +406,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               Previous
             </Button>
           ) : null}
-          {onSubmit ? (
+          {!actionsInComposer && onSubmit ? (
             <Button
               size="sm"
               variant="default"
