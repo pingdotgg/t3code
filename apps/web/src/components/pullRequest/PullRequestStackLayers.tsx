@@ -5,7 +5,7 @@ import { RelativeTime } from "~/components/RelativeTime";
 import { MenuItem, MenuGroupLabel, MenuSeparator } from "../ui/menu";
 import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 
-/** The stack's layers, bottom first as the stack is read, then when it was last synced. */
+/** The stack's layers, top first for navigation, then when it was last synced. */
 export function PullRequestStackLayers({
   stack,
   terminology,
@@ -24,8 +24,8 @@ export function PullRequestStackLayers({
 }) {
   return (
     <>
-      <div className="max-h-80 overflow-y-auto">
-        {stack.layers.map((layer, index) => {
+      <div className="max-h-96 overflow-y-auto">
+        {stack.layers.toReversed().map((layer, index) => {
           const current = layer.number === reference.number;
           return (
             <MenuItem
@@ -34,12 +34,13 @@ export function PullRequestStackLayers({
                 onSelect?.({ ...reference, number: layer.number });
               }}
               disabled={!onSelect || pending}
+              selected={current}
               aria-current={current ? "true" : undefined}
             >
               <PullRequestStackLayerContent
                 layer={layer}
                 terminology={terminology}
-                position={index + 1}
+                position={stack.layers.length - index}
                 size={stack.layers.length}
                 base={stack.base}
                 current={current}
@@ -48,6 +49,9 @@ export function PullRequestStackLayers({
           );
         })}
       </div>
+      <MenuGroupLabel>
+        <span className="pl-6 font-mono text-meta">{stack.base}</span>
+      </MenuGroupLabel>
       {syncedAt !== undefined && syncedAt > 0 ? (
         <>
           <MenuSeparator />
