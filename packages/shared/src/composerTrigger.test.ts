@@ -7,6 +7,8 @@ describe("detectComposerTrigger", () => {
     ["Run /tmp/build.sh", "Run /tmp/build.sh".length],
     ["/etc/hosts", "/etc/hosts".length],
     ["Use /etc/hosts now", "Use /et".length],
+    ["cmd /foo\\bar", "cmd /foo\\bar".length],
+    ["/Windows\\System32", "/Windows\\System32".length],
   ])("keeps the path in %j out of the slash menu", (text, cursor) => {
     expect(detectComposerTrigger(text, cursor)).toBeNull();
   });
