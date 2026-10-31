@@ -716,7 +716,10 @@ export function BranchToolbarBranchSelector({
           : {}),
         align: "start",
         side: displayMode === "panel" ? "right" : "top",
-        className: cn("flex flex-col", displayMode === "panel" ? "w-(--anchor-width)" : "w-90"),
+        className: cn(
+          "flex flex-col",
+          displayMode === "panel" ? "w-(--anchor-width)" : "min-w-0 w-90",
+        ),
         ...(displayMode === "toolbar" ? composerFloatingLayerProps : {}),
       }}
     >
