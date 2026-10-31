@@ -6,7 +6,10 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
@@ -135,5 +138,52 @@ it.effect.each(
     const observer = yield* RunFinalization.RunFinalizationObserver;
     yield* observer.refresh({ cwd: "/repo", threadId, runId });
     assert.deepEqual(refreshed, [...scenario.expected]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("returns from the post-turn refresh without waiting for the PR lookup", () => {
+  const threadId = ThreadId.make("thread-slow-forge");
+  const runId = RunId.make("completed-run");
+  const layer = RunFinalization.layerObserver.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(PullRequestService.PullRequestService)({
+          refreshAfterTurn: () => Effect.void,
+        }),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+          refreshLocalStatus: () =>
+            Effect.succeed({
+              isRepo: true,
+              hasPrimaryRemote: true,
+              isDefaultRef: false,
+              refName: "feature",
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            }),
+          refreshPullRequestStatus: () => Effect.never,
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () =>
+            Effect.succeed({
+              id: threadId,
+              branch: "feature",
+              activeRunId: null,
+            } as OrchestrationV2ThreadShell),
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const observer = yield* RunFinalization.RunFinalizationObserver;
+    const refresh = yield* observer
+      .refresh({ cwd: "/repo", threadId, runId })
+      .pipe(Effect.timeoutOption("1 minute"), Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("1 minute");
+    const result = yield* Fiber.join(refresh);
+    assert.isTrue(
+      Option.isSome(result),
+      "turn finalization waited on the forge PR lookup, blocking the thread's next turn",
+    );
   }).pipe(Effect.provide(layer));
 });
