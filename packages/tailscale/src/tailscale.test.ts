@@ -101,6 +101,7 @@ describe("tailscale", () => {
         "443": { HTTPS: true },
         "7000": { TCPForward: "127.0.0.1:3773" },
         "7001": { TCPForward: "127.0.0.2:3773" },
+        "80": { TCPForward: "unix:/run/app.sock" },
       },
       Web: {
         "box.tailnet.ts.net:443": {
@@ -129,6 +130,9 @@ describe("tailscale", () => {
             "/k": { Proxy: "http://box.1:3773" },
             "/l": { Proxy: "http://127.1:3773" },
             "/m": { Proxy: "unix:/run/app.sock" },
+            // Credentials before the host, and IPv6 written out in full, still dial here.
+            "/n": { Proxy: "http://user:pass@127.0.0.1:3773" },
+            "/o": { Proxy: "http://[0:0:0:0:0:ffff:7f00:1]:3773" },
           },
         },
       },
@@ -158,6 +162,8 @@ describe("tailscale", () => {
           ["/j", "ip6-localhost"],
           ["/k", "box.1"],
           ["/l", "127.1"],
+          ["/n", undefined],
+          ["/o", undefined],
         ] as const
       ).map(([mount, ambiguous]) => ({
         servePort: 10000,

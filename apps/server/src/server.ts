@@ -208,6 +208,7 @@ import {
   disableTailscaleServe,
   ensureTailscaleServe,
   readTailscaleServeRoutesTo,
+  readTailscaleStatus,
 } from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
 
@@ -904,21 +905,26 @@ const layerMakeServer = Layer.unwrap(
             }),
             (configured) =>
               configured
-                ? readTailscaleServeRoutesTo({
-                    host: configured.localHost,
-                    port: configured.localPort,
-                  }).pipe(
-                    // Another service may have taken the root route since; only ours is removed.
-                    Effect.map((routes) =>
+                ? Effect.all([
+                    readTailscaleServeRoutesTo({
+                      host: configured.localHost,
+                      port: configured.localPort,
+                    }),
+                    readTailscaleStatus,
+                  ]).pipe(
+                    // Another service may hold the root route by now, or it may sit under a
+                    // former name, where `off` would act on the current one; only ours goes.
+                    Effect.map(([routes, status]) =>
                       routes.some(
                         (route) =>
                           route.servePort === configured.servePort &&
                           route.mount === "/" &&
                           route.owner === undefined &&
-                          route.ambiguous === undefined,
+                          route.ambiguous === undefined &&
+                          route.host?.toLowerCase() === status.magicDnsName?.toLowerCase(),
                       ),
                     ),
-                    Effect.orElseSucceed(() => true),
+                    Effect.orElseSucceed(() => false),
                     Effect.flatMap((ours) =>
                       ours
                         ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
@@ -929,7 +935,7 @@ const layerMakeServer = Layer.unwrap(
                             ),
                           )
                         : Effect.logInfo(
-                            "Tailscale Serve left on; its root route is no longer ours",
+                            "Tailscale Serve left on; its root route is not known to be ours",
                             {
                               servePort: configured.servePort,
                             },

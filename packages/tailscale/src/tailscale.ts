@@ -530,6 +530,10 @@ const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
  */
 const reaches = (hostname: string, bindHost: string): "exact" | "either" | undefined => {
   let address = normalizeHostname(hostname);
+  // Compare IPv6 by value: 0:0:0:0:0:ffff:7f00:1 is ::ffff:7f00:1.
+  if (address.includes(":") && URL.canParse(`http://[${address}]`)) {
+    address = normalizeHostname(new URL(`http://[${address}]`).hostname);
+  }
   // An IPv4-mapped address can be written as hex, such as ::ffff:7f00:1 for 127.0.0.1.
   const mapped = /^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/u.exec(address);
   if (mapped !== null) {
@@ -564,7 +568,7 @@ const expandProxy = (proxy: string) =>
  * URL, which rejects `box.1` and rewrites `127.1`; none for a Unix socket.
  */
 const dialedHostPort = (url: string) => {
-  const match = /^(https?|tcp):\/\/(\[[^\]]*\]|[^/?#:]*)(?::(\d*))?/iu.exec(url);
+  const match = /^(https?|tcp):\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^/?#:]*)(?::(\d*))?/iu.exec(url);
   if (match === null) return undefined;
   const [, scheme = "", host = "", port] = match;
   return { host, port: port || (scheme.toLowerCase() === "https" ? "443" : "80") };
@@ -599,7 +603,9 @@ export const parseTailscaleServeRoutesTo = (
     };
     const tcp = Object.entries(config?.TCP ?? {}).flatMap(([port, handler]) => {
       const reach =
-        handler.TCPForward === undefined ? undefined : reached(`tcp://${handler.TCPForward}`);
+        handler.TCPForward === undefined || handler.TCPForward.startsWith("unix:")
+          ? undefined
+          : reached(`tcp://${handler.TCPForward}`);
       return reach !== undefined && Number.isInteger(Number(port))
         ? [{ servePort: Number(port), ...reach, ...scope }]
         : [];
