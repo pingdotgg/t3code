@@ -22,6 +22,7 @@ const browserDefaultsMocks = vi.hoisted(() => ({
 
 vi.mock("~/browser/browserDefaults", () => ({
   resolveBrowserDefaults: browserDefaultsMocks.resolve,
+  browserDefaultOpenRendering: () => ({}),
 }));
 
 const linkTargetMocks = vi.hoisted(() => ({

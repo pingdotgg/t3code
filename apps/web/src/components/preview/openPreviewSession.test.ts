@@ -50,7 +50,7 @@ afterEach(() => {
 
 describe("openPreviewSession", () => {
   it.each(["session", "link"] as const)(
-    "does not open a %s with unread settings and uses the saved profile on retry",
+    "does not open a %s with unread settings and uses the saved defaults on retry",
     async (entryPoint) => {
       const failure = new Error("Settings read failed");
       vi.spyOn(browserDefaults, "resolveBrowserDefaults").mockRejectedValueOnce(failure);
@@ -58,6 +58,8 @@ describe("openPreviewSession", () => {
       __setClientSettingsForTests({
         ...DEFAULT_CLIENT_SETTINGS,
         browserDefaultViewport: viewport,
+        browserDefaultZoomFactor: 0.8,
+        browserDefaultAppearance: "dark",
         browserDefaultProfileId: "work",
         browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
       });
@@ -84,6 +86,8 @@ describe("openPreviewSession", () => {
           url: input.url,
           viewport,
           profileId: "work",
+          zoomFactor: 0.8,
+          colorScheme: "dark",
         },
       });
     },

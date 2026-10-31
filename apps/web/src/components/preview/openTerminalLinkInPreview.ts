@@ -2,7 +2,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 
-import { resolveBrowserDefaults } from "~/browser/browserDefaults";
+import { browserDefaultOpenRendering, resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { isWebUrl, resolveBrowserLinkTargetPreference } from "~/browser/browserLinkTarget";
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { isPreviewAvailableFor, previewRuntimeFor } from "~/browser/previewRuntime";
@@ -64,6 +64,7 @@ export async function openTerminalLinkInPreview<E>(
       url: input.url,
       viewport: defaults.viewport,
       profileId: defaults.profileId,
+      ...browserDefaultOpenRendering(defaults),
       ...(runtime === undefined ? {} : { runtime }),
     },
   });
