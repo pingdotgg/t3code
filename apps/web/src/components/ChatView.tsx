@@ -3556,7 +3556,6 @@ export default function ChatView(props: ChatViewProps) {
                 usageLimit={timelineUsageLimit}
                 threadErrorMessage={timelineThreadError}
                 onFocusComposer={focusComposerAtEndStable}
-                onInterrupt={canInterruptRunningThread ? onInterruptStable : null}
                 awaitingUser={
                   activePendingApproval !== null
                     ? "approval"
