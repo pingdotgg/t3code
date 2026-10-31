@@ -51,7 +51,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
             </Tooltip>
           </p>
         </div>
-        <p className="shrink-0 text-2xs leading-4 text-dim-foreground">
+        <p className="shrink-0 text-caption text-dim-foreground">
           {mobileClientUpdatedAtLabel(device.updatedAt)}
         </p>
       </div>
@@ -62,7 +62,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
         />
         <MobileClientStatusBadge enabled={device.liveActivities.enabled} label="Live Activities" />
       </div>
-      <p className="mt-1.5 text-xs leading-4.5 text-dim-foreground">
+      <p className="mt-1.5 text-meta text-dim-foreground">
         {mobileClientNotificationDetail(device)}
       </p>
     </ClerkUserProfileRow>
@@ -129,14 +129,14 @@ export function MobileClientsUserProfilePage() {
       <div>
         {devicesState.error ? (
           <div
-            className="mb-4 flex flex-col gap-3 border-t border-destructive/35 py-3 text-xs sm:flex-row sm:items-center sm:justify-between"
+            className="mb-4 flex flex-col gap-3 border-t border-destructive/35 py-3 sm:flex-row sm:items-center sm:justify-between"
             role="alert"
           >
             <div>
-              <p className="font-medium text-destructive-foreground">
+              <p className="text-label text-destructive-foreground">
                 Could not load mobile clients
               </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{devicesState.error}</p>
+              <p className="mt-0.5 text-meta text-muted-foreground">{devicesState.error}</p>
             </div>
             <Button size="xs" variant="secondary" onClick={devicesState.refresh}>
               Try again
