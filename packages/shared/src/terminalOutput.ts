@@ -389,22 +389,22 @@ class Terminal {
 
   csi(params: string, final: string): void {
     if (/^[?>=]/u.test(params)) return; // Mode switches (cursor visibility, bracketed paste).
+    if (final === "m") {
+      const key = `${this.pen}|${params}`;
+      let pen = penTransitions.get(key);
+      if (pen === undefined) {
+        const attributes = parsePen(this.pen);
+        applySgr(attributes, params === "" ? [] : csiParams(params));
+        pen = formatPen(attributes);
+        if (penTransitions.size >= 512) penTransitions.clear();
+        penTransitions.set(key, pen);
+      }
+      this.pen = pen;
+      return;
+    }
     const numbers = params === "" ? [] : csiParams(params);
     const count = Math.max(1, numbers[0] || 1);
     switch (final) {
-      case "m": {
-        const key = `${this.pen}|${params}`;
-        let pen = penTransitions.get(key);
-        if (pen === undefined) {
-          const attributes = parsePen(this.pen);
-          applySgr(attributes, numbers);
-          pen = formatPen(attributes);
-          if (penTransitions.size >= 512) penTransitions.clear();
-          penTransitions.set(key, pen);
-        }
-        this.pen = pen;
-        return;
-      }
       case "A":
         return this.moveTo(this.row - count, this.col);
       case "B":
