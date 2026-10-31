@@ -55,10 +55,10 @@ vi.mock("~/state/entities", () => ({
   useQuietThreadShell: () => null,
   // No projects, so rows offer no project-scoped fast actions.
   useProjects: () => [],
-  // Only environment-new supports linked pull requests.
+  // The other environment has no connected server configuration.
   useServerConfigs: () =>
     new Map(
-      ["environment-new", "environment-old"].map((environmentId) => [
+      ["environment-new"].map((environmentId) => [
         environmentId,
         {
           environment: {

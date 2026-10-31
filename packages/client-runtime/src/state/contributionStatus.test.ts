@@ -71,6 +71,7 @@ const makeEnvironment = Effect.fn("makeEnvironment")(function* (id: string, supp
       client,
       initialConfig: Effect.succeed(config(supported)),
       subscribeServerConfig: () => Stream.never,
+      inboundFrames: Effect.succeed(0),
       ready: Effect.void,
       probe: Effect.void,
       closed: Effect.never,
