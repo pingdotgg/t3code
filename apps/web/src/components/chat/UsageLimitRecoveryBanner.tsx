@@ -5,16 +5,24 @@ import {
 } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { deadlineStore } from "@t3tools/client-runtime/clock";
+import {
+  CHATGPT_USAGE_LIMIT_CODE,
+  CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
+} from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
 import { useState } from "react";
 import { useDeadlinePassed } from "../../hooks/useDeadline";
+import { OpenAI } from "../Icons";
+import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { Button } from "../ui/button";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
+import { copyAdminRequest } from "./ThreadErrorBanner";
 
 type RecoveryProps = {
   runId: RunId;
+  errorCode: string | null;
   resetAt: string | null;
   stoppedAt: string;
   snoozedUntil: string | null;
@@ -24,17 +32,47 @@ type RecoveryProps = {
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, resetAt, stoppedAt, timestampFormat } = props;
+  const { runId, errorCode, resetAt, stoppedAt, timestampFormat } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
+  const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
+  const recoveryActions = canSchedule ? (
+    <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
+  ) : null;
+  const resetDescription = resetAt
+    ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
+    : "Reset time unavailable; retry manually";
+  if (!chatGptLimit) {
+    return {
+      id: `usage-limit-recovery:${runId}`,
+      variant: "warning",
+      icon: <GaugeIcon />,
+      title: "Usage limit reached",
+      description: resetDescription,
+      actions: recoveryActions,
+    };
+  }
+  // OpenAI's partner guidelines specify this ChatGPT notice and its actions.
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
-    icon: <GaugeIcon />,
-    title: "Usage limit reached",
-    description: resetAt
-      ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
-      : "Reset time unavailable; retry manually",
-    actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
+    icon: <OpenAI aria-hidden="true" />,
+    title: "ChatGPT usage limit reached",
+    description: workspaceLimit
+      ? "You've reached your workspace's limit for using your ChatGPT plan in other apps."
+      : resetDescription,
+    actions: (
+      <>
+        {recoveryActions}
+        {workspaceLimit ? (
+          <Button size="xs" variant="ghost" onClick={copyAdminRequest}>
+            Copy request for admin
+          </Button>
+        ) : (
+          <ChatGptUsageButton size="xs" variant="ghost" />
+        )}
+      </>
+    ),
   };
 }
 
