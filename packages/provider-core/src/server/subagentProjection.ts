@@ -61,8 +61,10 @@ export function makeSubagentChildThread(input: {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
+  // Only the pipeline runner's own launches are a run's steps.
+  const { pipeline: _pipeline, ...parentThread } = input.parentThread;
   return {
-    ...input.parentThread,
+    ...parentThread,
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,

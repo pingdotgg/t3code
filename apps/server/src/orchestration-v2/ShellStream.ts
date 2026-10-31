@@ -138,6 +138,30 @@ function hiddenChildAncestorIds(
   return ancestorIds;
 }
 
+type PipelineTrimRow = Pick<OrchestrationV2ThreadShell, "lineage" | "pipeline">;
+
+/**
+ * Keeps a pipeline's parent while the trims keep any of its steps. Clients list steps under their
+ * parent and show a step without one as its own thread, so a finished run's steps would otherwise
+ * crowd the list once the parent ages out of the newest settled threads.
+ */
+function keepPipelineParentsOfKeptSteps<T extends PipelineTrimRow>(
+  rows: ReadonlyArray<T>,
+  kept: (row: T) => boolean,
+): (row: T) => boolean {
+  const runIds = new Set<string>();
+  for (const row of rows) {
+    if (
+      row.pipeline?.stepId != null &&
+      row.lineage.relationshipToParent !== "subagent" &&
+      kept(row)
+    ) {
+      runIds.add(row.pipeline.runId);
+    }
+  }
+  return (row) => kept(row) || (row.pipeline?.stepId === null && runIds.has(row.pipeline.runId));
+}
+
 function omitIdleSubagentShellsWith(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
   facts: Pick<ShellTrimFacts, "subagentParentIds">,
@@ -165,12 +189,15 @@ function omitOlderSettledShellsWith(
   const beforeMs = facts.olderSettledBeforeMs ?? nowMs;
   const ancestorIds = hiddenChildAncestorIds(input.threads);
   const threads = input.threads.filter(
-    (thread) =>
-      !isOlderSettledThreadShell(thread, beforeMs) ||
-      thread.pinnedAt != null ||
-      (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
-      isLiveSubagentShell(thread) ||
-      ancestorIds.has(thread.id),
+    keepPipelineParentsOfKeptSteps(
+      input.threads,
+      (thread) =>
+        !isOlderSettledThreadShell(thread, beforeMs) ||
+        thread.pinnedAt != null ||
+        (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
+        isLiveSubagentShell(thread) ||
+        ancestorIds.has(thread.id),
+    ),
   );
   return {
     threads,
@@ -214,8 +241,7 @@ export function activeShellRowsForSubscriber(
 /**
  * Opted-in snapshots keep the 25 newest settled top-level threads (and ties) and count the rest per
  * project in `olderSettled`; clients page them with `getOlderSettledThreads`. Older rows stay while
- * pinned, snoozed, live, or above a kept subagent or side chat, so walks over shell rows still find
- * them.
+ * pinned, snoozed, live, above a kept subagent or side chat, or the parent of a kept pipeline step.
  */
 export function omitOlderSettledShells(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
@@ -269,21 +295,18 @@ function shellSubscriberThreadIds(
   ]);
   const keptSubagentIds = new Set(subagents.map((entry) => entry.id));
   const beforeMs = facts.olderSettledBeforeMs;
-  return index.flatMap((entry) =>
+  const kept = keepPipelineParentsOfKeptSteps(index, (entry) =>
     entry.lineage.relationshipToParent === "subagent"
       ? keptSubagentIds.has(entry.id)
-        ? [entry.id]
-        : []
       : !options.omitOlderSettled ||
-          beforeMs === undefined ||
-          !isOlderSettledThreadShell(entry, beforeMs) ||
-          entry.pinnedAt != null ||
-          entry.snoozedUntil != null ||
-          entry.mayBeLive ||
-          ancestorIds.has(entry.id)
-        ? [entry.id]
-        : [],
+        beforeMs === undefined ||
+        !isOlderSettledThreadShell(entry, beforeMs) ||
+        entry.pinnedAt != null ||
+        entry.snoozedUntil != null ||
+        entry.mayBeLive ||
+        ancestorIds.has(entry.id),
   );
+  return index.flatMap((entry) => (kept(entry) ? [entry.id] : []));
 }
 
 /**

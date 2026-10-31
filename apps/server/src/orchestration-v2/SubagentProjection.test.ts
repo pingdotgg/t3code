@@ -10,6 +10,7 @@ import {
   TurnItemId,
   type OrchestrationV2Run,
   type OrchestrationV2AppThread,
+  PipelineRunId,
   ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
@@ -82,10 +83,11 @@ function makeParentThread(): OrchestrationV2AppThread {
   };
 }
 
-it("keeps a subagent child awake when its parent thread is snoozed", () => {
-  const parentThread: OrchestrationV2AppThread = {
+it("keeps a subagent child awake when its parent thread is snoozed, and out of its pipeline", () => {
+  const parentThread = {
     ...makeParentThread(),
     titleRegeneration: { requestId: CommandId.make("command:parent-title"), startedAt: snoozedAt },
+    pipeline: { runId: PipelineRunId.make("pipeline-run:subagent-parent"), stepId: "build" },
   };
   const childProviderThreadId = ProviderThreadId.make("provider-thread:subagent-awake-child");
   const parentNodeId = NodeId.make("node:subagent-parent");
@@ -105,6 +107,7 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
   assert.isNull(childThread.snoozedUntil);
   assert.isNull(childThread.snoozedAt);
   assert.isNull(childThread.titleRegeneration);
+  assert.isUndefined(childThread.pipeline);
   assert.equal(childThread.projectId, parentThread.projectId);
   assert.equal(childThread.runtimeMode, parentThread.runtimeMode);
   assert.equal(childThread.interactionMode, parentThread.interactionMode);

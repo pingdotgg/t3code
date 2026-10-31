@@ -5,7 +5,7 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { PipelineRunId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -277,7 +277,7 @@ describe("omitOlderSettledShells", () => {
     expect(result.olderSettled.counts).toEqual([]);
   });
 
-  it("keeps older rows that are snoozed, live, or above a kept subagent or side chat, and still counts them", () => {
+  it("keeps older rows that are snoozed, live, above a kept subagent or side chat, or a kept step's pipeline, and still counts them", () => {
     const threads = [
       ...newest,
       row("snoozed", 30, { snoozedUntil: DateTime.makeUnsafe(101 * DAY) }),
@@ -304,6 +304,12 @@ describe("omitOlderSettledShells", () => {
           sideChat: true,
         },
       }),
+      row("run", 30, { pipeline: { runId: PipelineRunId.make("run"), stepId: null } }),
+      row("run-step", null, { pipeline: { runId: PipelineRunId.make("run"), stepId: "build" } }),
+      row("done-run", 30, { pipeline: { runId: PipelineRunId.make("done"), stepId: null } }),
+      row("done-run-step", 30, {
+        pipeline: { runId: PipelineRunId.make("done"), stepId: "build" },
+      }),
     ];
     const result = omit(threads);
     expect(result.threads.map((thread) => thread.id).slice(25)).toEqual([
@@ -313,8 +319,10 @@ describe("omitOlderSettledShells", () => {
       "child",
       "side-chat-parent",
       "side-chat",
+      "run",
+      "run-step",
     ]);
-    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 5 }]);
+    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 8 }]);
   });
 });
 
