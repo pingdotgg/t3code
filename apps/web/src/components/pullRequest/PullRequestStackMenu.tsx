@@ -116,7 +116,7 @@ export function PullRequestStackMenu({
           squashAtomCommandFailure(result),
           action === "merge"
             ? "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting."
-            : "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work.",
+            : "The host refused the rebase. A rebase stops at the first commit that does not apply cleanly.",
         ),
       });
     } else {
