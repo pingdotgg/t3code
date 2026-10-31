@@ -296,6 +296,12 @@ export function createQuestionHistoryProjector<
     const { visibleTurnItems: rows, runtimeRequests: requests } = projection;
     if (rows === previousRows && requests === previousRequests && previousResult)
       return previousResult;
+    if (requests.length === 0) {
+      previousRows = rows;
+      previousRequests = requests;
+      previousResult = rows;
+      return rows;
+    }
     const byId = new Map(requests.map((request) => [request.id, request]));
     let result: Row[] | undefined;
     for (const [index, row] of rows.entries()) {
