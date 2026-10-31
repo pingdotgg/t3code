@@ -1,3 +1,4 @@
+import "@t3tools/client-runtime/assembly-highlighting";
 import {
   getSharedHighlighter,
   type DiffsHighlighter,
