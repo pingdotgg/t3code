@@ -290,14 +290,15 @@ export function createFileMetadataAtoms<R, E>(
     );
   });
 
-  const seedAfterRead = <A, ReadError, ReadServices>(
-    read: Effect.Effect<A, ReadError, ReadServices>,
-    seed: (
-      result: A,
-      isCurrent: (session: RpcSession) => boolean,
-    ) => Effect.Effect<void, never, EnvironmentSupervisor.EnvironmentSupervisor>,
-  ) =>
-    Effect.gen(function* () {
+  const seedAfterRead =
+    /* Metadata seeding runs on every file read and is covered by the read operation. */
+    Effect.fnUntraced(function* <A, ReadError, ReadServices>(
+      read: Effect.Effect<A, ReadError, ReadServices>,
+      seed: (
+        result: A,
+        isCurrent: (session: RpcSession) => boolean,
+      ) => Effect.Effect<void, never, EnvironmentSupervisor.EnvironmentSupervisor>,
+    ) {
       const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
       const session = yield* SubscriptionRef.get(supervisor.session);
       const version = session._tag === "Some" ? (invalidationVersions.get(session.value) ?? 0) : 0;

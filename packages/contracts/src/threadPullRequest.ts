@@ -24,9 +24,7 @@ export const ThreadLinkedPullRequest = Schema.Struct({
 });
 export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
 
-/** `stack-dismissed` is a tombstone
- * for a native-stack member the user unlinked, so the sync reactor does not
- * re-add it; clients hide it. */
+/** stack-dismissed hides an unlinked native member and prevents sync from re-adding it. */
 export const ThreadPullRequestLinkSource = Schema.Literals([
   "manual",
   "created",
@@ -89,24 +87,33 @@ export const ThreadPullRequestWatch = Schema.Struct({
   passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /** Checks still pending when required ones passed early, owed one wake once all settle. */
+  owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   remarksThrough: IsoDateTime,
-  /** Remarks created exactly at `remarksThrough` that were reported, so a late one still counts. */
+  /** Reported remarks at remarksThrough, so late arrivals at that timestamp still count. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
-  /** Comment-only wakes in a row. Watching stops at a limit, so bots cannot loop it. */
+  /** Consecutive comment-only wakes; limited to prevent bot loops. */
   wakes: NonNegativeInt,
+  /**
+   * When the head was first read without any check, until a check shows up or the agent is told
+   * none did. Null once either happened; absent on watches saved before it existed.
+   */
+  checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 
 export const ThreadPullRequestLink = Schema.Struct({
   ...ThreadPullRequestKey.fields,
   url: TrimmedNonEmptyString,
+  /** An actual browser or clone URL; older agent display URLs may be synthesized. */
+  repositoryWebUrl: Schema.optional(TrimmedNonEmptyString),
   source: ThreadPullRequestLinkSource,
   linkedAt: IsoDateTime,
   snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
   stack: Schema.NullOr(ThreadPullRequestStack),
   watch: Schema.optional(ThreadPullRequestWatch),
-  /** The last watch as it ended. Watching again starts from it, so the thread is not told twice. */
+  /** Resume from the ended watch to avoid duplicate notifications. */
   endedWatch: Schema.optional(ThreadPullRequestWatch),
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;

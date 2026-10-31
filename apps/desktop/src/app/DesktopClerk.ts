@@ -14,6 +14,7 @@ import { receiveCodexAuthCallback, CodexAuthCallbackError } from "./CodexAuthCal
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
+import { readPairingAppLink } from "@t3tools/shared/remote";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -21,6 +22,7 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -84,9 +86,13 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
-function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
+function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean, userDataPath: string) {
   return createClerkBridge({
-    storage: storage({ path: stateDir }),
+    storage: openClerkTokenStorage(
+      stateDir,
+      (directory) => storage({ path: directory }),
+      userDataPath,
+    ),
     manageSingleInstanceLock: false,
     passkeys: true,
     renderer: {
@@ -96,7 +102,7 @@ function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
   });
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const electronApp = yield* ElectronApp.ElectronApp;
@@ -106,14 +112,12 @@ export const make = Effect.gen(function* () {
   const userDataPath = yield* DesktopUserData.resolveUserDataPath(environment);
   yield* electronApp.setPath("userData", userDataPath);
 
-  // T3 owns the profile-scoped lock on every platform; Clerk skips it on macOS.
-  // Quit is asynchronous, so interrupt before the application runtime is built.
+  // Clerk skips the profile lock on macOS. Interrupt before runtime construction because quit is asynchronous.
   if (!(yield* electronApp.requestSingleInstanceLock)) {
     yield* electronApp.quit;
     return yield* Effect.interrupt;
   }
 
-  // Retain launch arguments while asynchronous startup builds the application runtime.
   const pendingSecondInstances: Array<readonly string[]> = [];
   let handleSecondInstance = (argv: readonly string[]) => {
     pendingSecondInstances.push(argv);
@@ -121,10 +125,38 @@ export const make = Effect.gen(function* () {
   yield* electronApp.on("second-instance", (_event: unknown, argv: readonly string[]) => {
     handleSecondInstance(argv);
   });
+  // macOS delivers launch events before shell probing and configure finish.
+  const pendingLinks: string[] = [];
+  let receiveLink = (url: string) => {
+    pendingLinks.push(url);
+  };
+  const providerAuthDestination = (value: string | undefined) => {
+    const destination = providerAuthReturnUrl(value);
+    const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
+    return destination?.startsWith(`${expectedOrigin}/`) ? destination : undefined;
+  };
+  yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
+    if (
+      !readCodexAuthHandoff(url, environment.isDevelopment) &&
+      !providerAuthDestination(url) &&
+      !DesktopWebLinks.isWebLink(url) &&
+      promptLinkAppPath(url) === null &&
+      readPairingAppLink(url) === null
+    )
+      return;
+    event.preventDefault();
+    receiveLink(url);
+  });
+  yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
+    if (!DesktopWebLinks.isWebPageFile(path)) return;
+    event.preventDefault();
+    receiveLink(NodeURL.pathToFileURL(path).href);
+  });
 
   yield* Effect.acquireRelease(
     Effect.try({
-      try: () => createDesktopClerkBridge(environment.stateDir, environment.isDevelopment),
+      try: () =>
+        createDesktopClerkBridge(environment.stateDir, environment.isDevelopment, userDataPath),
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,
@@ -143,33 +175,6 @@ export const make = Effect.gen(function* () {
           }),
       }).pipe(Effect.orDie),
   );
-
-  // macOS delivers launch events before shell probing and configure finish.
-  const pendingLinks: string[] = [];
-  let receiveLink = (url: string) => {
-    pendingLinks.push(url);
-  };
-  const providerAuthDestination = (value: string | undefined) => {
-    const destination = providerAuthReturnUrl(value);
-    const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
-    return destination?.startsWith(`${expectedOrigin}/`) ? destination : undefined;
-  };
-  yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
-    if (
-      !readCodexAuthHandoff(url, environment.isDevelopment) &&
-      !providerAuthDestination(url) &&
-      !DesktopWebLinks.isWebLink(url) &&
-      promptLinkAppPath(url) === null
-    )
-      return;
-    event.preventDefault();
-    receiveLink(url);
-  });
-  yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
-    if (!DesktopWebLinks.isWebPageFile(path)) return;
-    event.preventDefault();
-    receiveLink(NodeURL.pathToFileURL(path).href);
-  });
 
   return DesktopClerk.of({
     configure: Effect.gen(function* () {
@@ -233,7 +238,8 @@ export const make = Effect.gen(function* () {
         return true;
       };
       const openAppLink = (value: string | undefined) => {
-        if (!value || promptLinkAppPath(value) === null) return false;
+        if (!value || (promptLinkAppPath(value) === null && readPairingAppLink(value) === null))
+          return false;
         void runPromise(webLinks.receive(value));
         return true;
       };

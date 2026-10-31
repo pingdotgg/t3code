@@ -37,6 +37,24 @@ const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
   failed: "bg-destructive",
 };
 
+function taskScheduleLine(task: ScheduledTask) {
+  return (
+    <>
+      {scheduleLabel(task.schedule)}
+      {task.enabled && task.nextRunAt !== null ? (
+        <>
+          {" · next "}
+          <ScheduledRelativeLabel value={task.nextRunAt} />
+        </>
+      ) : task.enabled ? (
+        ""
+      ) : (
+        " · paused"
+      )}
+    </>
+  );
+}
+
 export function ThreadAutomationsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -79,8 +97,6 @@ export function ThreadAutomationsPanel(props: {
     )
       return;
     setBusyTaskId(task.id);
-    // Partial update: only the enabled flag changes, so a toggle can never
-    // revert concurrent edits made to the task elsewhere.
     const result = await setTaskEnabled({
       environmentId: props.environmentId,
       input: { id: task.id, enabled },
@@ -137,12 +153,6 @@ export function ThreadAutomationsPanel(props: {
         </Tooltip>
       }
     >
-      {tasksQuery.error !== null ? (
-        <p className="px-2.5 py-1.5 text-2xs text-destructive">
-          Could not load automations: {tasksQuery.error}
-        </p>
-      ) : null}
-
       <ul className="m-0 list-none p-0">
         {boundTasks.map((task) => (
           <li
@@ -162,24 +172,18 @@ export function ThreadAutomationsPanel(props: {
                 aria-hidden
               />
             </span>
-            <div className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-foreground/80">
-                {task.title}
-              </span>
-              <p className="truncate text-2xs text-muted-foreground">
-                {scheduleLabel(task.schedule)}
-                {task.enabled && task.nextRunAt !== null ? (
-                  <>
-                    {" · next "}
-                    <ScheduledRelativeLabel value={task.nextRunAt} />
-                  </>
-                ) : task.enabled ? (
-                  ""
-                ) : (
-                  " · paused"
-                )}
-              </p>
-            </div>
+            <Tooltip>
+              <TooltipTrigger render={<div className="min-w-0 flex-1" />}>
+                <span className="block truncate text-sm font-medium text-foreground/80">
+                  {task.title}
+                </span>
+                <p className="truncate text-2xs text-muted-foreground">{taskScheduleLine(task)}</p>
+              </TooltipTrigger>
+              <TooltipPopup side="left">
+                <p className="font-medium">{task.title}</p>
+                <p className="text-muted-foreground">{taskScheduleLine(task)}</p>
+              </TooltipPopup>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -201,7 +205,7 @@ export function ThreadAutomationsPanel(props: {
               />
               <TooltipPopup>Edit automation</TooltipPopup>
             </Tooltip>
-            {/* A webhook task runs from its URL; there is no request to run it with. */}
+            {/* Webhook tasks need a request from their URL. */}
             {task.schedule.type === "webhook" ? null : (
               <Tooltip>
                 <TooltipTrigger
@@ -232,6 +236,12 @@ export function ThreadAutomationsPanel(props: {
           </li>
         ))}
       </ul>
+      {/* Kept last: the details card treats a section whose last child is empty as empty. */}
+      {tasksQuery.error !== null ? (
+        <p className="px-2.5 py-1.5 text-2xs text-destructive">
+          Could not load automations: {tasksQuery.error}
+        </p>
+      ) : null}
     </ThreadDetailsSection>
   );
 }

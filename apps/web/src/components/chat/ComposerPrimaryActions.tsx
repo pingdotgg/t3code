@@ -4,7 +4,7 @@ import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { formatContextWindowTokens } from "~/lib/contextWindow";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { useShortcutModifierState } from "../../shortcutModifierState";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
@@ -38,7 +38,6 @@ interface ComposerPrimaryActionsProps {
   promptHasText: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
-  isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
@@ -93,7 +92,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   promptHasText,
   isSendBusy,
   sendDisabledReason,
-  isConnecting,
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
@@ -124,9 +122,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     }) === "queue";
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
-  const stageBackdropVariant = useSidebarStageBackdropVariant(
-    environmentIdentificationMode === "artwork",
-  );
+  const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <Tooltip key="interrupt">
@@ -212,9 +208,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           type="submit"
           className={cn(messageActionPillClassName, "h-9 sm:h-8", compact ? "px-3" : "px-4")}
           {...pointerFocusProps}
-          disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+          disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
         >
-          {isConnecting || isSendBusy ? "Sending..." : "Refine"}
+          {isSendBusy ? "Sending..." : "Refine"}
         </button>
       );
     }
@@ -225,9 +221,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           type="submit"
           className={cn(messageActionPillClassName, "h-9 rounded-r-none px-4 sm:h-8")}
           {...pointerFocusProps}
-          disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+          disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
         >
-          {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+          {isSendBusy ? "Sending..." : "Implement"}
         </button>
         <Menu>
           <MenuTrigger
@@ -239,8 +235,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                   "h-9 rounded-l-none border-l border-message-action-foreground/20 px-2 sm:h-8",
                 )}
                 aria-label="Implementation actions"
-                {...pointerFocusProps}
-                disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+                onMouseDown={
+                  preserveComposerFocusOnPointerDown ? (event) => event.preventDefault() : undefined
+                }
+                disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
               />
             }
           >
@@ -248,7 +246,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           </MenuTrigger>
           <MenuPopup align="end" side="top" {...composerFloatingLayerProps}>
             <MenuItem
-              disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+              disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
               onClick={() => {
                 if (canOperateThread) onImplementPlanInNewThread();
               }}
@@ -287,38 +285,35 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
     : (sendDisabledReason ??
-      (isConnecting
-        ? "Connecting"
-        : isPreparingWorktree
-          ? "Preparing worktree"
-          : isSendBusy
-            ? isEditingQueuedMessage
-              ? "Updating queued message"
-              : "Submitting message"
-            : null));
+      (isPreparingWorktree
+        ? "Preparing worktree"
+        : isSendBusy
+          ? isEditingQueuedMessage
+            ? "Updating queued message"
+            : "Submitting message"
+          : null));
   const submitTooltip =
     submitStatus ??
     (compactsBeforeSend
       ? `Summarize ${compactTokens} tokens of history, then send`
       : isRunning && !isEditingQueuedMessage && canSteer
-        ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
+        ? `Click to ${followUpBehavior}, ${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl"}-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
         : submitLabel);
 
   const sendButton = (
     <button
       type={showResume ? "button" : "submit"}
       className={cn(
-        "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-control-highlight hover:scale-105 active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:opacity-64 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none",
+        "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-control-highlight hover:scale-105 active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none",
         stageBackdropVariant
-          ? "bg-transparent text-white enabled:shadow-black/24 enabled:hover:brightness-110"
-          : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
+          ? "bg-transparent text-white enabled:shadow-black/24 enabled:hover:brightness-110 disabled:opacity-64"
+          : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover disabled:bg-foreground/12 disabled:text-muted-foreground",
       )}
       {...pointerFocusProps}
       onClick={showResume ? onResume : onSubmitMessage}
       disabled={
         isSendBusy ||
         isSendDisabled ||
-        isConnecting ||
         isEnvironmentUnavailable ||
         (!hasSendableContent && !showResume)
       }
@@ -329,7 +324,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <StageBackdropButtonArt variant={stageBackdropVariant} />
         </span>
       ) : null}
-      {isConnecting || isSendBusy ? (
+      {isSendBusy ? (
         <Spinner size="sm" aria-hidden="true" />
       ) : showResume ? (
         <PlayIcon className="size-4 fill-current" aria-hidden="true" />
@@ -366,12 +361,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           render={
             <button
               type="button"
-              className={cn(
-                "flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:h-8 [&_svg]:pointer-events-none [&_svg]:size-3.5",
-                keepFullHistory
-                  ? "border-border text-muted-foreground hover:text-foreground"
-                  : "border-warning/40 text-warning hover:bg-warning/8",
-              )}
+              className="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-(--control-radius) px-2 font-medium text-base text-foreground/80 tabular-nums outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:text-sm aria-pressed:bg-accent/60 aria-pressed:text-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:text-muted-foreground"
               {...pointerFocusProps}
               aria-pressed={!keepFullHistory}
               aria-label={`Compact ${compactTokens} tokens of history before sending`}
@@ -381,13 +371,18 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           }
         >
           <Minimize2Icon aria-hidden="true" />
-          {keepFullHistory ? "Full" : "Compact"}
-          <span>{compactTokens}</span>
+          <span className="@max-[480px]/composer-surface:hidden">
+            {keepFullHistory ? "Keep" : "Compact"}
+          </span>
+          <span className="text-muted-foreground">{compactTokens}</span>
         </TooltipTrigger>
         <TooltipPopup>
-          {keepFullHistory
-            ? `Next send keeps all ${compactTokens} tokens. Click to compact first`
-            : `Next send compacts ${compactTokens} tokens first. Click to keep full history`}
+          <div>
+            {keepFullHistory
+              ? `Next send keeps all ${compactTokens} tokens.`
+              : `Next send compacts ${compactTokens} tokens first.`}
+          </div>
+          <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
         </TooltipPopup>
       </Tooltip>
       {submit}

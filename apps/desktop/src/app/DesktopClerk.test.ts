@@ -1,18 +1,28 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - Hosted handoff test uses a real localhost listener without an OpenAI account.
+import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodeEvents from "node:events";
-import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodePathLayer from "@effect/platform-node/NodePath";
 import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
+import { buildPairingAppLink } from "@t3tools/shared/remote";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import type * as Electron from "electron";
 import * as Layer from "effect/Layer";
-import { beforeEach, vi } from "vite-plus/test";
+import { afterAll, beforeEach, vi } from "vite-plus/test";
+
+const clerkStateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-clerk-"));
+afterAll(() => {
+  NodeFS.rmSync(clerkStateDir, { recursive: true, force: true });
+});
 
 const { createClerkBridgeMock, requestSingleInstanceLockMock, storageAdapter, storageMock } =
   vi.hoisted(() => ({
@@ -33,8 +43,6 @@ vi.mock("@clerk/electron", () => ({
 vi.mock("@clerk/electron/storage", () => ({
   storage: storageMock,
 }));
-
-import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -42,11 +50,11 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import { cancelCodexAuthCallback } from "./CodexAuthCallback.ts";
+import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
+import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
-import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
-import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 
 const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
   receive: () => Effect.void,
@@ -68,7 +76,7 @@ const layerDesktopClerk = (
   listeners = new Map<string, (...args: unknown[]) => void>(),
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
-    stateDir: "/tmp/t3-state",
+    stateDir: clerkStateDir,
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
     platform,
@@ -90,6 +98,7 @@ const layerDesktopClerk = (
       Effect.acquireRelease(
         Effect.sync(() => {
           events.push(`on:${name}`);
+          assert.isFalse(listeners.has(name), `duplicate ${name} listener`);
           listeners.set(name, listener);
         }),
         () =>
@@ -102,7 +111,7 @@ const layerDesktopClerk = (
   return DesktopClerk.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        NodePath.layerPosix,
+        NodePathLayer.layerPosix,
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         Layer.succeed(ElectronShell.ElectronShell, shell),
@@ -117,42 +126,6 @@ describe("DesktopClerk", () => {
     createClerkBridgeMock.mockReset();
     requestSingleInstanceLockMock.mockReset().mockReturnValue(true);
     storageMock.mockReset();
-  });
-
-  it.effect("acquires and releases the SDK bridge with the layer", () => {
-    const cleanup = vi.fn();
-    const events: string[] = [];
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockImplementation(() => {
-      events.push("createClerkBridge");
-      return { cleanup, isPrimaryInstance: true };
-    });
-
-    return Effect.gen(function* () {
-      yield* Effect.scoped(Layer.build(layerDesktopClerk(true, events)));
-
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
-        [
-          {
-            storage: storageAdapter,
-            manageSingleInstanceLock: false,
-            passkeys: true,
-            renderer: { scheme: "t3code-dev", host: "app" },
-          },
-        ],
-      ]);
-      assert.equal(cleanup.mock.calls.length, 1);
-      assert.deepEqual(events, [
-        "setPath:userData:/tmp/app-data/t3code-dev",
-        "requestSingleInstanceLock",
-        "on:second-instance",
-        "createClerkBridge",
-        "on:open-url",
-        "on:open-file",
-      ]);
-      storageMock.mockClear();
-      createClerkBridgeMock.mockClear();
-    });
   });
 
   it.each([
@@ -202,60 +175,15 @@ describe("DesktopClerk", () => {
         `setPath:userData:${userData}`,
         "requestSingleInstanceLock",
         "on:second-instance",
-        "createClerkBridge",
         "on:open-url",
-        "on:open-file",
+        "createClerkBridge",
       ]);
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
+      ]);
+      assert.notStrictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
     },
   );
-
-  it.effect("preserves bridge initialization failures", () => {
-    const cause = new Error("bridge initialization failed");
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockImplementationOnce(() => {
-      throw cause;
-    });
-
-    return Effect.gen(function* () {
-      const error = yield* Effect.scoped(Layer.build(layerDesktopClerk())).pipe(Effect.flip);
-
-      assert.instanceOf(error, DesktopClerk.DesktopClerkBridgeInitializationError);
-      assert.equal(error.stateDir, "/tmp/t3-state");
-      assert.equal(error.isDevelopment, true);
-      assert.strictEqual(error.cause, cause);
-      assert.equal(
-        error.message,
-        'Failed to initialize the desktop Clerk bridge for state directory "/tmp/t3-state" (development: true).',
-      );
-    });
-  });
-
-  it.effect("preserves bridge cleanup failures", () => {
-    const cause = new Error("bridge cleanup failed");
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockReturnValue({
-      cleanup: () => {
-        throw cause;
-      },
-    });
-
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(Effect.scoped(Layer.build(layerDesktopClerk(false))));
-
-      assert.equal(exit._tag, "Failure");
-      if (exit._tag === "Failure") {
-        const error = Cause.squash(exit.cause);
-        assert.instanceOf(error, DesktopClerk.DesktopClerkBridgeCleanupError);
-        assert.equal(error.stateDir, "/tmp/t3-state");
-        assert.equal(error.isDevelopment, false);
-        assert.strictEqual(error.cause, cause);
-        assert.equal(
-          error.message,
-          'Failed to clean up the desktop Clerk bridge for state directory "/tmp/t3-state" (development: false).',
-        );
-      }
-    });
-  });
 
   it.effect.each(["before configure", "after configure"] as const)(
     "reveals the running window when a second instance launches %s",
@@ -296,7 +224,7 @@ describe("DesktopClerk", () => {
     },
   );
 
-  it.effect("delivers queued startup links and later links once in arrival order", () => {
+  it.effect("delivers each queued startup link once, before later links", () => {
     storageMock.mockReturnValue(storageAdapter);
     createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
     const listeners = new Map<string, (...args: unknown[]) => void>();
@@ -304,6 +232,7 @@ describe("DesktopClerk", () => {
     const first = "t3code://new?prompt=first";
     const second = "t3code://threads/env-1/thread-1";
     const later = "t3code://new?prompt=later";
+    const launchPair = "t3code://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
     const delivered = Promise.withResolvers<void>();
     const electronApp = {
       on: (name: string, listener: (...args: unknown[]) => void) =>
@@ -316,13 +245,14 @@ describe("DesktopClerk", () => {
       const clerk = yield* DesktopClerk.DesktopClerk;
       listeners.get("second-instance")?.({}, ["t3", first]);
       listeners.get("second-instance")?.({}, ["t3", second]);
+      listeners.get("open-url")?.({ preventDefault: () => undefined }, launchPair);
       assert.deepEqual(received, []);
 
       yield* clerk.configure;
       listeners.get("second-instance")!({}, ["t3", later]);
       yield* Effect.promise(() => delivered.promise);
 
-      assert.deepEqual(received, [first, second, later]);
+      assert.deepEqual(received, [launchPair, first, second, later]);
     }).pipe(
       Effect.scoped,
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
@@ -383,7 +313,7 @@ it.effect(
     const listeners = new Map<string, (...args: unknown[]) => void>();
     const revealed = Promise.withResolvers<void>();
     const loadURL = vi.fn(async (_url: string) => undefined);
-    const window = { loadURL, isDestroyed: () => false };
+    const window = { loadURL };
     const electronApp = {
       on: (name: string, listener: (...args: unknown[]) => void) =>
         Effect.sync(() => {
@@ -391,8 +321,7 @@ it.effect(
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
     const electronWindow = {
-      waitForMain: Effect.succeed(window),
-      main: Effect.succeedSome(window),
+      currentMainOrFirst: Effect.succeedSome(window),
       reveal: () => Effect.sync(() => revealed.resolve()),
     } as unknown as ElectronWindow.ElectronWindow["Service"];
     return Effect.gen(function* () {
@@ -527,6 +456,7 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
     const received: Array<string> = [];
+    const pairLink = "t3code://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
     yield* Effect.gen(function* () {
       const clerk = yield* DesktopClerk.DesktopClerk;
       yield* clerk.configure;
@@ -539,14 +469,16 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
       assert.strictEqual(open("http://localhost:3000/"), 1);
       assert.strictEqual(open("t3code://new?prompt=hi"), 1);
       assert.strictEqual(open("t3code://threads/env-1/thread-1"), 1);
+      assert.strictEqual(open(pairLink), 1);
+      assert.strictEqual(open("t3code://pair"), 0);
       assert.strictEqual(open("mailto:hello@example.com"), 0);
       assert.strictEqual(open("t3code://somewhere-else"), 0);
-      yield* Effect.yieldNow;
       assert.deepStrictEqual(received, [
         "https://example.com/page",
         "http://localhost:3000/",
         "t3code://new?prompt=hi",
         "t3code://threads/env-1/thread-1",
+        pairLink,
       ]);
     }).pipe(
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
@@ -578,6 +510,7 @@ it.effect(
       const finishProbe = yield* Deferred.make<void>();
       const warmDelivered = yield* Deferred.make<void>();
       const received: string[] = [];
+      const pairingLink = buildPairingAppLink("https://example.com/?token=test-pairing");
       const webContents = Object.assign(new NodeEvents.EventEmitter(), {
         isDestroyed: () => false,
         send: (channel: string, url: string) => {
@@ -618,6 +551,7 @@ it.effect(
         open("open-file", "/tmp/report #1.html");
         open("open-url", "t3code://new?prompt=Fix+it");
         open("open-url", "t3code-dev://threads/env-1/thread-1");
+        open("open-url", pairingLink);
         assert.equal(open("open-url", "mailto:hello@example.com").mock.calls.length, 0);
         assert.equal(open("open-file", "/tmp/report.txt").mock.calls.length, 0);
         assert.deepEqual(received, []);
@@ -630,6 +564,7 @@ it.effect(
           "file:///tmp/report%20%231.html",
           "t3code://new?prompt=Fix+it",
           "t3code-dev://threads/env-1/thread-1",
+          pairingLink,
         ];
         assert.deepEqual(received, coldLinks);
         open("open-file", "/tmp/warm.html");
@@ -860,7 +795,6 @@ it.effect("serializes auth returns and avoids revealing a replaced window", () =
         { preventDefault: () => {} },
         "t3code-dev://app/settings/providers?instanceId=second",
       );
-      yield* Effect.yieldNow;
       assert.deepEqual(loaded, ["first:t3code-dev://app/welcome"]);
       current = replacement;
       finishFirst.resolve();

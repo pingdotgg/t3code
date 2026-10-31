@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   EnvironmentId,
   type AuthSessionState,
 } from "@t3tools/contracts";
@@ -110,4 +111,26 @@ it("uses exact new-server permissions and keeps old-server grants usable", () =>
   expect(readEnvironmentScope(primary, AuthOrchestrationOperateScope)).toBe(true);
   appAtomRegistry.set(source(primary), AsyncResult.success(session(true)));
   expect(useEnvironmentScope(primary, AuthOrchestrationOperateScope)).toBe(true);
+});
+
+it("limits provider accounts to environments granting provider management", () => {
+  const environments = [{ environmentId: primary }, { environmentId: secondary }];
+  const permitted = () => useEnvironmentsWithScope(environments, AuthProvidersManageScope);
+  appAtomRegistry.set(
+    source(primary),
+    AsyncResult.success({ ...session(true), permissions: [AuthOrchestrationOperateScope] }),
+  );
+  expect(permitted()).toEqual(new Set());
+  appAtomRegistry.set(
+    source(secondary),
+    AsyncResult.success({ ...session(false), permissions: [AuthProvidersManageScope] }),
+  );
+  expect(permitted()).toEqual(new Set([secondary]));
+  appAtomRegistry.set(source(primary), AsyncResult.success(session(true)));
+  expect(permitted()).toEqual(new Set([primary, secondary]));
+  appAtomRegistry.set(
+    source(secondary),
+    AsyncResult.success({ ...session(true), scopes: [AuthProvidersManageScope], permissions: [] }),
+  );
+  expect(permitted()).toEqual(new Set([primary]));
 });
