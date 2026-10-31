@@ -51,6 +51,7 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
       <ComposerRequestCard.Footer>
         <ComposerPendingApprovalActions
           designLabels
+          showShortcutHints={false}
           alwaysAllow={alwaysAllow}
           onAlwaysAllowChange={setAlwaysAllow}
           requestId={approval.requestId}
