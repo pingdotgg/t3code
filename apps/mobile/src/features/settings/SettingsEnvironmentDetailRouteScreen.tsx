@@ -348,7 +348,8 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                           {provider.versionAdvisory?.status === "behind_latest" &&
                           !provider.versionAdvisory.canUpdate ? (
                             <Text className="text-sm text-foreground-muted">
-                              Update this provider on the environment's machine.
+                              {provider.versionAdvisory.message ??
+                                "Update this provider on the environment's machine."}
                             </Text>
                           ) : null}
                         </View>
