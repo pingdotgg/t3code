@@ -310,7 +310,7 @@ it.effect.each(
         }
         if (timing === "after delivery") yield* worker.drain();
         const delivery =
-          timing === "during delivery" ? yield* worker.runOnce.pipe(Effect.forkScoped) : null;
+          timing === "during delivery" ? yield* worker.runOnce().pipe(Effect.forkScoped) : null;
         if (delivery !== null) yield* Deferred.await(steerEntered);
         const completed = yield* watch(
           (event) =>
