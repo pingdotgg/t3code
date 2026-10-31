@@ -126,6 +126,8 @@ import {
   AGENTCAST_MCP_SERVER,
   agentcastCodexApprovals,
   agentcastStdioServer,
+  resolveAgentcastLauncher,
+  type AgentcastLauncher,
 } from "../../provider/agentcastMcp.ts";
 import {
   MCP_APP_EXTENSION_ID,
@@ -1328,8 +1330,9 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 function codexAgentcastConfig(
   threadId: string,
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
+  launcher: AgentcastLauncher | undefined,
 ): Record<string, Schema.Json> {
-  const agentcast = agentcastStdioServer(threadId);
+  const agentcast = agentcastStdioServer(threadId, launcher);
   if (agentcast === undefined) return {};
   return {
     [`mcp_servers.${AGENTCAST_MCP_SERVER}`]: {
@@ -1350,8 +1353,9 @@ function codexAgentcastConfig(
 function codexAgentcastApprovalsKey(
   mcpSession: McpProviderSession.McpProviderSessionConfig | undefined,
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
+  launcher: AgentcastLauncher | undefined,
 ): string | undefined {
-  if (mcpSession === undefined || agentcastStdioServer(mcpSession.threadId) === undefined) {
+  if (mcpSession === undefined || launcher === undefined) {
     return undefined;
   }
   return JSON.stringify(agentcastCodexApprovals(runtimePolicy));
@@ -1359,6 +1363,7 @@ function codexAgentcastApprovalsKey(
 
 function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
+  readonly agentcast: AgentcastLauncher | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }): {
@@ -1383,7 +1388,7 @@ function codexThreadRuntimeParams(input: {
                 Authorization: mcpSession.authorizationHeader,
               },
             },
-            ...codexAgentcastConfig(mcpSession.threadId, input.runtimePolicy),
+            ...codexAgentcastConfig(mcpSession.threadId, input.runtimePolicy, input.agentcast),
           }),
     },
   };
@@ -1663,6 +1668,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
   const { clientFactory, crypto, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  const agentcastLauncher = yield* resolveAgentcastLauncher();
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -1871,7 +1877,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           mcpSession: McpProviderSession.McpProviderSessionConfig | undefined,
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
         ) => {
-          const key = codexAgentcastApprovalsKey(mcpSession, runtimePolicy);
+          const key = codexAgentcastApprovalsKey(mcpSession, runtimePolicy, agentcastLauncher);
           if (key === undefined) agentcastApprovalsByThread.delete(nativeThreadId);
           else agentcastApprovalsByThread.set(nativeThreadId, key);
         };
@@ -6682,7 +6688,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             mcpSession: McpProviderSession.McpProviderSessionConfig | undefined,
             runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
           ) {
-            const wanted = codexAgentcastApprovalsKey(mcpSession, runtimePolicy);
+            const wanted = codexAgentcastApprovalsKey(mcpSession, runtimePolicy, agentcastLauncher);
             if (wanted === undefined || agentcastApprovalsByThread.get(nativeThreadId) === wanted) {
               return false;
             }
@@ -6708,6 +6714,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 threadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
+                  agentcast: agentcastLauncher,
                   mcpSession,
                   modelSelection: turnInput.modelSelection,
                   runtimePolicy: turnInput.runtimePolicy,
@@ -7031,6 +7038,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   .request(
                     "thread/start",
                     codexThreadRuntimeParams({
+                      agentcast: agentcastLauncher,
                       mcpSession,
                       modelSelection: threadInput.modelSelection,
                       runtimePolicy: threadInput.runtimePolicy,
@@ -7088,6 +7096,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 threadId: nativeThreadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
+                  agentcast: agentcastLauncher,
                   mcpSession,
                   ...(threadInput.modelSelection === undefined
                     ? {}
@@ -7877,6 +7886,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   threadId,
                   excludeTurns: true,
                   ...codexThreadRuntimeParams({
+                    agentcast: agentcastLauncher,
                     mcpSession,
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
@@ -7931,6 +7941,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ? {}
                       : { lastTurnId: boundary.lastTurnId }),
                     ...codexThreadRuntimeParams({
+                      agentcast: agentcastLauncher,
                       mcpSession,
                       ...(threadInput.modelSelection === undefined
                         ? {}

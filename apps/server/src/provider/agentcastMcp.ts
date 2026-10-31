@@ -1,4 +1,6 @@
+import * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
+import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 
 /**
  * agentcast gives agents remote Windows desktops (UI trees, background input, a lock gate and
@@ -27,33 +29,59 @@ export interface AgentcastStdioServer {
   readonly env: Readonly<Record<string, string>>;
 }
 
+/** How to start `agentcast mcp`: the same for every thread, resolved once per adapter. */
+export interface AgentcastLauncher {
+  readonly node: string;
+  readonly main: string;
+  readonly env: Readonly<Record<string, string>>;
+}
+
 // MCP stdio clients start servers with a short default environment. agentcast needs the ssh
 // agent socket for its SSH keys, and its own host settings.
 const PASSED_THROUGH = ["SSH_AUTH_SOCK", "AGENTCAST_HOSTS", "AGENTCAST_HOSTS_JSON"] as const;
 
 /**
- * The stdio command for one thread, or undefined when agentcast is not configured.
- * `AGENTCAST_CLIENT` names the thread in each host's journal and gives it its own engine session.
+ * The launcher, or undefined when agentcast is off or no Node runtime is found. A packaged T3
+ * binary cannot run agentcast's CLI itself, so this finds Node as the device tools do.
+ */
+export const resolveAgentcastLauncher = Effect.fn("agentcastMcp.resolveAgentcastLauncher")(
+  function* (env: NodeJS.ProcessEnv = process.env) {
+    // The opt-in switch. Set it only on machines with agentcast hosts: the tool list costs about
+    // 9k tokens in every session.
+    const main = env.T3CODE_AGENTCAST_MAIN;
+    if (!main) return undefined;
+    const node = yield* resolveNodeExecutable("Remote desktops", env).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("agentcast is configured but no Node.js runtime was found", {
+          cause,
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
+    if (node === undefined) return undefined;
+    const passed = Object.fromEntries(
+      PASSED_THROUGH.flatMap((name) => (env[name] ? [[name, env[name]]] : [])),
+    );
+    return { node, main, env: passed } satisfies AgentcastLauncher;
+  },
+);
+
+/**
+ * The stdio command for one thread, or undefined without a launcher. `AGENTCAST_CLIENT` names the
+ * thread in each host's journal and gives it its own engine session.
  */
 export function agentcastStdioServer(
   threadId: string,
-  env: NodeJS.ProcessEnv = process.env,
+  launcher: AgentcastLauncher | undefined,
 ): AgentcastStdioServer | undefined {
-  // The opt-in switch. Set it only on machines with agentcast hosts: the tool list costs about
-  // 9k tokens in every session.
-  const main = env.T3CODE_AGENTCAST_MAIN;
-  if (!main) return undefined;
-  const passed = Object.fromEntries(
-    PASSED_THROUGH.flatMap((name) => (env[name] ? [[name, env[name]]] : [])),
-  );
+  if (launcher === undefined) return undefined;
   return {
-    command: process.execPath,
-    args: [main, "mcp"],
+    command: launcher.node,
+    args: [launcher.main, "mcp"],
     env: {
-      ...passed,
+      ...launcher.env,
       AGENTCAST_CLIENT: `t3:${threadId}`,
-      // Inside the packaged app, process.execPath is Electron: run it as Node.
-      ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+      // In the desktop app the runtime is Electron's binary: run it as Node. Node ignores this.
+      ELECTRON_RUN_AS_NODE: "1",
     },
   };
 }

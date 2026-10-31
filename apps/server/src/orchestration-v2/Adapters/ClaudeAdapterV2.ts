@@ -27,6 +27,8 @@ import {
   AGENTCAST_MCP_SERVER,
   AGENTCAST_READ_ONLY_TOOLS,
   agentcastStdioServer,
+  resolveAgentcastLauncher,
+  type AgentcastLauncher,
 } from "../../provider/agentcastMcp.ts";
 import {
   type CanUseTool,
@@ -1723,6 +1725,7 @@ export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly readOnlySandbox: boolean;
   /** agentcast's write tools are pre-approved only in full-access; elsewhere canUseTool asks. */
+  readonly agentcast?: AgentcastLauncher | undefined;
   readonly fullAccess?: boolean;
   readonly allowedTools?: ReadonlyArray<string>;
 }): {
@@ -1736,7 +1739,7 @@ export function claudeMcpQueryOverrides(input: {
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
-  const agentcast = agentcastStdioServer(session.threadId);
+  const agentcast = agentcastStdioServer(session.threadId, input.agentcast);
   const agentcastAllowedTools =
     agentcast === undefined
       ? []
@@ -4524,6 +4527,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
+  const agentcastLauncher = yield* resolveAgentcastLauncher();
   const subagentModelCatalog = scopeClaudeModelCatalog(
     BUNDLED_CLAUDE_MODEL_CATALOG,
     adapterOptions.settings.customModels,
@@ -10115,6 +10119,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const queryPolicy = yield* queryPolicyForTurn(turnInput);
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const mcpOverrides = claudeMcpQueryOverrides({
+            agentcast: agentcastLauncher,
             mcpSession,
             readOnlySandbox:
               sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
