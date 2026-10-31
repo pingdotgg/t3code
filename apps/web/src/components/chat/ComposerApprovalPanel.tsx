@@ -1,6 +1,7 @@
 import { ShieldIcon } from "lucide-react";
-import { use, useEffect, useEffectEvent, useState } from "react";
+import { use, useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import type { ProviderApprovalDecision, RuntimeRequestId } from "@t3tools/contracts";
 import type { PendingApproval } from "../../session-logic";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -11,6 +12,27 @@ import {
   DEFAULT_APPROVAL_OPTIONS,
   resolveApprovalPrimaryDecision,
 } from "./ComposerPendingApprovalActions";
+
+function keepsApprovalKeys(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(
+      'input, textarea, select, button, a[href], [role="button"], [role="link"], summary, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"]',
+    ) !== null
+  );
+}
+
+function subscribeApprovalFocus(listener: () => void) {
+  const onFocusOut = () => queueMicrotask(listener);
+  document.addEventListener("focusin", listener);
+  document.addEventListener("focusout", onFocusOut);
+  return () => {
+    document.removeEventListener("focusin", listener);
+    document.removeEventListener("focusout", onFocusOut);
+  };
+}
+
+const approvalKeysAvailable = () => !keepsApprovalKeys(document.activeElement);
 
 export function ComposerApprovalPanel({
   approval,
@@ -26,6 +48,8 @@ export function ComposerApprovalPanel({
   onRespond: (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>;
 }) {
   const backgroundThread = use(BackgroundThreadContext);
+  const paneFocusedRef = useLayoutPaneFocusedRef();
+  const showShortcutHints = useSyncExternalStore(subscribeApprovalFocus, approvalKeysAvailable);
   const [expanded, setExpanded] = useState(true);
   const [alwaysAllow, setAlwaysAllow] = useState(false);
   const canRespond =
@@ -41,6 +65,7 @@ export function ComposerApprovalPanel({
   useEffect(() => {
     if (!canRespond || backgroundThread) return;
     const handler = (event: KeyboardEvent) => {
+      if (!paneFocusedRef.current) return;
       if (
         (event.key !== "Escape" && event.key !== "Enter") ||
         event.defaultPrevented ||
@@ -51,20 +76,14 @@ export function ComposerApprovalPanel({
         event.shiftKey
       )
         return;
-      if (
-        event.target instanceof Element &&
-        event.target.closest(
-          'input, textarea, select, button, a[href], [role="button"], [role="link"], summary, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"]',
-        )
-      )
-        return;
+      if (keepsApprovalKeys(event.target)) return;
       if (!(event.key === "Enter" ? primary : decline)) return;
       event.preventDefault();
       respondFromShortcut(event.key);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [canRespond, primary, decline, backgroundThread]);
+  }, [canRespond, primary, decline, backgroundThread, paneFocusedRef]);
   const title =
     approval.requestKind === "command"
       ? "Command approval"
@@ -131,6 +150,7 @@ export function ComposerApprovalPanel({
         <ComposerRequestCard.Footer>
           <ComposerPendingApprovalActions
             designLabels
+            showShortcutHints={showShortcutHints && canRespond && !backgroundThread}
             requestId={approval.requestId}
             disabled={disabled}
             isResponding={isResponding}
