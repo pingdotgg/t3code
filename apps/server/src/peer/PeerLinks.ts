@@ -28,7 +28,13 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
-import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import {
+  isLocalLoopbackHost,
+  isSharedAddressSpaceHost,
+  isTailnetHost,
+} from "@t3tools/shared/hostClassification";
+import { readTailnetAddresses } from "@t3tools/tailscale";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -126,36 +132,6 @@ const failStorage = (cause: unknown) =>
     ),
   );
 
-/**
- * The base URL a peer is reached at, normalised to its origin. The pairing
- * code and then the link's token travel to it, so plain http is accepted only
- * where the network already encrypts: this machine, or a Tailscale address.
- */
-const peerOrigin = (url: string) => {
-  const parsed = URL.parse(url);
-  if (parsed === null || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
-    return Effect.fail(
-      new PeerLinkError({
-        reason: "unreachable",
-        message: `${url} is not an http or https address.`,
-      }),
-    );
-  }
-  if (
-    parsed.protocol === "http:" &&
-    !isLocalLoopbackHost(parsed.hostname) &&
-    !isTailnetHost(parsed.hostname)
-  ) {
-    return Effect.fail(
-      new PeerLinkError({
-        reason: "unreachable",
-        message: `${url} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
-      }),
-    );
-  }
-  return Effect.succeed(parsed.origin);
-};
-
 /** Whether a peer holds a linked agent to its limits and keeps its work within its link. */
 const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapabilities }) =>
   peer.capabilities.mcpModeLimitHeader === true && peer.capabilities.linkFence === true;
@@ -167,10 +143,45 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
+
+  const isTailnetAddress = (host: string) =>
+    readTailnetAddresses.pipe(
+      Effect.map((addresses) => addresses.has(host)),
+      Effect.orElseSucceed(() => false),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+  /**
+   * A peer's base URL as its origin. Its pairing code and token travel there, so
+   * plain http only where the network encrypts: this machine, or Tailscale. WARP
+   * and CGNAT share 100.64.0.0/10, so those count only where Tailscale lists them.
+   */
+  const peerOrigin = Effect.fn("PeerLinks.peerOrigin")(function* (url: string) {
+    const parsed = URL.parse(url);
+    if (parsed === null || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
+      return yield* new PeerLinkError({
+        reason: "unreachable",
+        message: `${url} is not an http or https address.`,
+      });
+    }
+    if (
+      parsed.protocol === "http:" &&
+      !isLocalLoopbackHost(parsed.hostname) &&
+      !isTailnetHost(parsed.hostname) &&
+      !(isSharedAddressSpaceHost(parsed.hostname) && (yield* isTailnetAddress(parsed.hostname)))
+    ) {
+      return yield* new PeerLinkError({
+        reason: "unreachable",
+        message: `${url} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
+      });
+    }
+    return parsed.origin;
+  });
 
   /** A fresh name for one link's token; the row records it. */
   const newSecretName = crypto.randomBytes(16).pipe(
@@ -558,15 +569,18 @@ const make = Effect.gen(function* () {
         });
       }
       // The token goes only to an address that proves it is this peer, so a
-      // reused LAN address or a moved hostname never receives it.
+      // reused LAN address or a moved hostname never receives it. Its transport
+      // is checked again: a 100.x address is trusted only while Tailscale runs.
       let fenced = true;
       const url = yield* Effect.findFirst(link.urls, (candidate) =>
-        describe(candidate).pipe(
+        peerOrigin(candidate).pipe(
+          Effect.flatMap(describe),
           Effect.map((found) => {
             if (Option.isNone(found) || found.value.environmentId !== environmentId) return false;
             fenced = linkLimitsHold(found.value);
             return true;
           }),
+          Effect.orElseSucceed(() => false),
         ),
       );
       if (Option.isNone(url)) {
