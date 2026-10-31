@@ -1,0 +1,11 @@
+.settings-sidebar {
+  --sidebar: light-dark(#f2f2f2, #0f0f0f);
+  --sidebar-content-inset: 12px;
+  --sidebar-icon-color: var(--muted-foreground);
+  background: var(--sidebar);
+  border-color: light-dark(#0000000f, #ffffff0d);
+}
+
+:root[data-theme-id] .settings-sidebar {
+  --sidebar: var(--background);
+}
