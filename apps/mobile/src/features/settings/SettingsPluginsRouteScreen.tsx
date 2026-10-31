@@ -101,6 +101,7 @@ function usePluginCatalog(environmentId: EnvironmentId, environment: SettingsTar
 /** Calls `refresh` when `key` changes from one known value to another; never on a timer. */
 function useRefreshOnChange(key: string | null, refresh: () => void) {
   const last = useRef(key);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate the external npm query cache when catalogue provenance changes.
   useEffect(() => {
     const previous = last.current;
     last.current = key;
