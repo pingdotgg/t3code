@@ -2,19 +2,26 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
-  type OrchestrationV2ThreadProjection,
+  ProviderThreadId,
+  RunId,
+  type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import { shouldCompactBeforeSend } from "./contextWindow.ts";
+import type { ThreadStructure } from "./models.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
 const claude = ProviderInstanceId.make("claudeAgent");
+const claudeWork = ProviderInstanceId.make("claude_work");
+const claudeOtherHome = ProviderInstanceId.make("claude_other_home");
+const codex = ProviderInstanceId.make("codex");
 const lastTurnAt = "2026-10-30T14:23:02.000Z";
 const returnedAt = "2026-10-30T23:03:21.000Z";
 
@@ -24,7 +31,9 @@ function sendInput(
     readonly promptCacheTtlMs?: number;
     readonly now?: string;
     readonly settings?: Partial<ServerSettings>;
-    readonly driver?: string;
+    readonly source?: ProviderInstanceId;
+    readonly selected?: ProviderInstanceId;
+    readonly onlyEarlierConversationUsage?: boolean;
     readonly slashCommands?: ReadonlyArray<string>;
     readonly dismissed?: boolean;
     readonly heldQueue?: boolean;
@@ -34,10 +43,57 @@ function sendInput(
     readonly threadIdle?: boolean;
   } = {},
 ) {
+  const source = overrides.source ?? claude;
+  const sourceSelection = {
+    instanceId: source,
+    model: source === codex ? "gpt-5.4" : "claude-opus-4-6",
+  };
+  const providers = [
+    { instanceId: claude, driver: "claudeAgent", groupKey: "claude:~/.claude" },
+    { instanceId: claudeWork, driver: "claudeAgent", groupKey: "claude:~/.claude" },
+    { instanceId: claudeOtherHome, driver: "claudeAgent", groupKey: "claude:~/.claude-other" },
+    { instanceId: codex, driver: "codex", groupKey: "codex:~/.codex" },
+  ].map(({ instanceId, driver, groupKey }) => ({
+    instanceId,
+    driver: ProviderDriverKind.make(driver),
+    continuation: { groupKey },
+    slashCommands: (overrides.slashCommands ?? ["compact"]).map((name) => ({ name })),
+  })) as unknown as ReadonlyArray<ServerProvider>;
+  const providerThread = (id: string) => ({
+    id: ProviderThreadId.make(id),
+    driver: providers.find((provider) => provider.instanceId === source)!.driver,
+    providerInstanceId: source,
+    contextUsage: null,
+    updatedAt: DateTime.makeUnsafe(lastTurnAt),
+  });
+  const visibleTurnItems = [
+    {
+      item: {
+        type: "user_message",
+        text: overrides.onlyCompactMessages === true ? "/compact" : "Fix the build",
+        attachments: [],
+      },
+    },
+  ];
   const projection = {
     ...v2Projection,
+    thread: {
+      ...v2Projection.thread,
+      providerInstanceId: source,
+      modelSelection: sourceSelection,
+      activeProviderThreadId: ProviderThreadId.make("provider-thread-current"),
+    },
+    providerThreads: [
+      providerThread("provider-thread-earlier"),
+      providerThread("provider-thread-current"),
+    ],
     providerTurns: [
       {
+        providerThreadId: ProviderThreadId.make(
+          overrides.onlyEarlierConversationUsage === true
+            ? "provider-thread-earlier"
+            : "provider-thread-current",
+        ),
         tokenUsage: {
           usedTokens: overrides.usedTokens ?? 293_611,
           updatedAt: lastTurnAt,
@@ -47,8 +103,20 @@ function sendInput(
         },
       },
     ],
-    runs:
-      overrides.heldQueue === true ? [{ id: "queued-run", status: "queued", queueHeld: true }] : [],
+    runs: [
+      {
+        id: RunId.make("run-1"),
+        ordinal: 1,
+        providerInstanceId: source,
+        modelSelection: sourceSelection,
+        status: "completed",
+        startedAt: "2026-10-30T14:20:00.000Z",
+        contextHandoffId: null,
+      },
+      ...(overrides.heldQueue === true
+        ? [{ id: RunId.make("queued-run"), status: "queued", queueHeld: true, startedAt: null }]
+        : []),
+    ],
     runtimeRequests: [
       ...(overrides.dismissed === true
         ? [
@@ -66,23 +134,17 @@ function sendInput(
         : []),
       ...(overrides.pendingRequest === true ? [{ kind: "approval", status: "pending" }] : []),
     ],
-  } as unknown as OrchestrationV2ThreadProjection;
+    visibleTurnItems,
+  } as unknown as ThreadStructure;
+  const selected = overrides.selected ?? claude;
   return {
     projection,
-    visibleTurnItems: [
-      {
-        item: {
-          type: "user_message",
-          text: overrides.onlyCompactMessages === true ? "/compact" : "Fix the build",
-          attachments: [],
-        },
-      },
-    ] as never,
-    provider: {
-      instanceId: claude,
-      driver: ProviderDriverKind.make(overrides.driver ?? "claudeAgent"),
-      slashCommands: (overrides.slashCommands ?? ["compact"]).map((name) => ({ name })),
+    visibleTurnItems: visibleTurnItems as never,
+    selection: {
+      instanceId: selected,
+      model: selected === codex ? "gpt-5.4" : "claude-opus-4-6",
     },
+    providers,
     settings: { ...DEFAULT_SERVER_SETTINGS, ...overrides.settings },
     text: overrides.text ?? "back again",
     threadIdle: overrides.threadIdle ?? true,
@@ -120,7 +182,28 @@ describe("shouldCompactBeforeSend", () => {
       },
       expected: false,
     },
-    { name: "on a Codex thread", driver: "codex", expected: false },
+    { name: "on a Codex thread", source: codex, selected: codex, expected: false },
+    {
+      name: "after switching a stale Codex thread to Claude",
+      source: codex,
+      selected: claude,
+      expected: false,
+    },
+    {
+      name: "after switching to a Claude instance that continues the conversation",
+      selected: claudeWork,
+      expected: true,
+    },
+    {
+      name: "after switching to a Claude instance with another home",
+      selected: claudeOtherHome,
+      expected: false,
+    },
+    {
+      name: "when only an earlier conversation reported usage",
+      onlyEarlierConversationUsage: true,
+      expected: false,
+    },
     { name: "for a provider without /compact", slashCommands: [], expected: false },
     {
       name: "after Claude's resume dialog was answered Don't ask again",

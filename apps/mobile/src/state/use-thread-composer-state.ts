@@ -662,11 +662,11 @@ export function useThreadComposerState() {
       selectedEnvironmentRuntime?.connectionState === "connected" &&
       selectedThreadProjection !== null &&
       serverConfig != null &&
-      provider !== undefined &&
       shouldCompactBeforeSend({
         projection: selectedThreadProjection.projection,
         visibleTurnItems: selectedThreadVisibleTurnItems,
-        provider,
+        selection: modelSelection,
+        providers: serverConfig.providers,
         settings: serverConfig.settings,
         text,
         threadIdle:

@@ -1,9 +1,9 @@
 import {
   resolveIdleCompaction,
+  type ModelSelection,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2ProviderTurnTokenUsage,
   type OrchestrationV2ProviderThread,
-  type OrchestrationV2ThreadProjection,
   type ServerProvider,
   type ServerSettings,
   type ThreadTokenUsageSnapshot,
@@ -15,6 +15,7 @@ import {
 } from "@t3tools/shared/claudeCompaction";
 import * as DateTime from "effect/DateTime";
 
+import { resolvePendingHandoff } from "../handoff.ts";
 import type { ThreadStructure, ThreadStructureTurnItem } from "./models.ts";
 
 // Fallback TTL: Claude's 1h cache plus slack.
@@ -234,15 +235,23 @@ export function shouldOfferResumeCompaction(input: {
 
 /**
  * Whether a plain send into an idle thread compacts it first, as web's composer does under
- * "When you return". Web reads the same state for its "Compact and send" button.
+ * "When you return". Web reads the same state for its "Compact and send" button. A send that
+ * hands off to another conversation starts that one fresh, so only the resumed one counts.
  */
 export function shouldCompactBeforeSend(input: {
   readonly projection: Pick<
-    OrchestrationV2ThreadProjection,
-    "thread" | "contextTransfers" | "providerThreads" | "providerTurns" | "runtimeRequests" | "runs"
+    ThreadStructure,
+    | "thread"
+    | "contextTransfers"
+    | "providerThreads"
+    | "providerTurns"
+    | "runtimeRequests"
+    | "runs"
+    | "visibleTurnItems"
   >;
   readonly visibleTurnItems: ReadonlyArray<{ readonly item: ThreadStructureTurnItem }>;
-  readonly provider: Pick<ServerProvider, "instanceId" | "driver" | "slashCommands">;
+  readonly selection: ModelSelection;
+  readonly providers: ReadonlyArray<ServerProvider>;
   readonly settings: Pick<
     ServerSettings,
     "providerInstances" | "compactIdleThreads" | "idleCompaction"
@@ -252,11 +261,14 @@ export function shouldCompactBeforeSend(input: {
   readonly now: string;
 }): boolean {
   const { projection } = input;
+  const provider = input.providers.find((entry) => entry.instanceId === input.selection.instanceId);
   if (
+    provider === undefined ||
     !input.threadIdle ||
     COMPACT_COMMAND_PATTERN.test(input.text) ||
-    resolveIdleCompaction(input.settings, input.provider.instanceId) === "off" ||
-    !input.provider.slashCommands.some((command) => command.name === "compact") ||
+    resolveIdleCompaction(input.settings, provider.instanceId) === "off" ||
+    !provider.slashCommands.some((command) => command.name === "compact") ||
+    resolvePendingHandoff(projection, input.selection, input.providers) !== null ||
     projection.runtimeRequests.some((request) => request.status === "pending") ||
     projection.runs.some((run) => run.status === "queued" && run.queueHeld === true) ||
     !input.visibleTurnItems.some(
@@ -272,11 +284,12 @@ export function shouldCompactBeforeSend(input: {
   ) {
     return false;
   }
+  const activeProviderThreadId = projection.thread.activeProviderThreadId;
   const providerThread = projection.providerThreads.find(
-    (thread) => thread.id === projection.thread.activeProviderThreadId,
+    (thread) => thread.id === activeProviderThreadId,
   );
   const liveUsage = latestProviderTurnTokenUsage(
-    projection.providerTurns,
+    projection.providerTurns.filter((turn) => turn.providerThreadId === activeProviderThreadId),
     projection,
     providerThread,
   );
@@ -288,7 +301,7 @@ export function shouldCompactBeforeSend(input: {
   return (
     contextWindow !== null &&
     shouldOfferResumeCompaction({
-      provider: input.provider.driver,
+      provider: provider.driver,
       usedTokens: contextWindow.usedTokens,
       updatedAt: contextWindow.updatedAt,
       promptCacheTtlMs: liveUsage?.promptCacheTtlMs,
