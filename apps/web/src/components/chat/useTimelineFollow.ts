@@ -12,6 +12,7 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  readTimelineTopInset,
   timelineContentOverflowsViewport,
   readTimelinePosition,
   observeTimelineRun,
@@ -169,7 +170,6 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const {
     legendListRef,
     composerTimelineInset,
-    routeThreadKey,
     activeThreadKey,
     isServerThread,
     serverProjection,
@@ -188,7 +188,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   if (visit.threadKey !== activeThreadKey) {
     visit = {
       threadKey: activeThreadKey,
-      followEnd: readTimelinePosition(routeThreadKey)?.atEnd !== false,
+      followEnd: !activeThreadKey || readTimelinePosition(activeThreadKey)?.atEnd !== false,
     };
     setVisit(visit);
   }
@@ -299,8 +299,11 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const timelineRealContentOverflowsViewport = () =>
     timelineContentOverflowsViewport(legendListRef.current?.getState(), {
       composerInset: composerTimelineInset,
-      anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
+      anchorOffset:
+        CHAT_TIMELINE_ANCHOR_OFFSET +
+        readTimelineTopInset(legendListRef.current?.getScrollableNode()),
     });
+
   const pageScrollControllerRef = useRef<ReturnType<typeof createPageScrollController> | null>(
     null,
   );
@@ -431,7 +434,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
             index: anchorIndex,
             animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
             viewPosition: 0,
-            viewOffset: CHAT_LIST_ANCHOR_OFFSET,
+            viewOffset: CHAT_LIST_ANCHOR_OFFSET + readTimelineTopInset(list.getScrollableNode()),
           })
           .then(() => {
             if (legendListRef.current === list && isPositioning()) {

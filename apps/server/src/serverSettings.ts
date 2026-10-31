@@ -1,5 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  ForwardCompatibleOptional,
+  LayoutSettings,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -69,7 +71,11 @@ export {
 } from "@t3tools/shared/serverSettings";
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
-const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));
+const encodeServerSettingsJson = Schema.encodeUnknownEffect(
+  fromJsonStringPretty(
+    Schema.Struct({ ...ServerSettings.fields, layout: ForwardCompatibleOptional(LayoutSettings) }),
+  ),
+);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
@@ -231,6 +237,7 @@ export class ServerSettingsService extends Context.Service<
     /** The administrator's policy as clients see it; absent when unmanaged. */
     readonly managedPolicy?: ManagedPolicySummary | undefined;
 
+    /** Read current server settings. */
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly updateSettings: (
@@ -351,8 +358,10 @@ const PersistedServerSettings = Schema.Struct({
 // Parse first and decode second, so a managed policy can fill its defaults in between.
 const decodeSettingsFileJsonExit = Schema.decodeUnknownExit(fromLenientJson(Schema.Unknown));
 const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(PersistedServerSettings);
+/** Retired keys feed source-control migration and the read-only client layout migration. */
 const LegacyProviderSettingsJson = fromLenientJson(
   Schema.Struct({
+    layout: ForwardCompatibleOptional(LayoutSettings),
     providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
     bitbucket: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
     github: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
@@ -668,6 +677,7 @@ const make = Effect.gen(function* () {
     );
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
+  const legacyLayoutRef = yield* Ref.make<LayoutSettings | undefined>(undefined);
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
@@ -708,14 +718,19 @@ const make = Effect.gen(function* () {
 
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
+      // Preserve the read-only layout on disk so each client can migrate independently.
+      const legacyLayout = yield* Ref.get(legacyLayoutRef);
       const stripped = stripDefaultServerSettings(settings, managed.defaults) ?? {};
-      const sparseSettingsJson = yield* encodeServerSettingsJson(
+      const sparseSettings =
         managed.keepStored === undefined
           ? stripped
           : managed.keepStored(stripped, settings, yield* readStoredSettings, (key) =>
               ATOMIC_SETTINGS_KEYS.has(key),
-            ),
-      );
+            );
+      const sparseSettingsJson = yield* encodeServerSettingsJson({
+        ...(typeof sparseSettings === "object" && sparseSettings !== null ? sparseSettings : {}),
+        ...(legacyLayout === undefined ? {} : { layout: legacyLayout }),
+      });
 
       return yield* writeFileStringAtomically({
         filePath: settingsPath,
@@ -767,6 +782,7 @@ const make = Effect.gen(function* () {
 
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = managed.defaults;
+    yield* Ref.set(legacyLayoutRef, undefined);
     let legacyProviders: Readonly<Record<string, unknown>> | undefined;
     let legacySourceControl: Parameters<typeof migrateLegacySourceControlSettings>[1] = {};
     let parseFailure = Option.none<unknown>();
@@ -779,6 +795,7 @@ const make = Effect.gen(function* () {
         : decodePersistedServerSettingsExit(managed.withDefaults(parsed.value));
       const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
       if (legacySettings._tag === "Success") {
+        yield* Ref.set(legacyLayoutRef, legacySettings.value.layout);
         legacyProviders = legacySettings.value.providers;
         legacySourceControl = {
           bitbucket: legacySettings.value.bitbucket,
@@ -1317,7 +1334,15 @@ const make = Effect.gen(function* () {
     managedPolicy,
     start,
     ready: Deferred.await(startedDeferred),
-    getSettings: getMaterializedSettings,
+    getSettings: getMaterializedSettings.pipe(
+      Effect.flatMap((settings) =>
+        Ref.get(legacyLayoutRef).pipe(
+          Effect.map((legacyLayout) =>
+            legacyLayout === undefined ? settings : { ...settings, layout: legacyLayout },
+          ),
+        ),
+      ),
+    ),
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(

@@ -44,7 +44,8 @@ export function DeviceControlsRail(props: {
   onScreenshot: () => void;
   toolsOpen: boolean;
   onTools: () => void;
-  onFloat: () => void;
+  /** Absent where there is no chat to float over (a threadless surface). */
+  onFloat?: (() => void) | undefined;
   onClose: () => void;
   onPowerOff: () => void;
 }) {
@@ -218,10 +219,12 @@ export function DeviceControlsRail(props: {
             <MoreHorizontal />
           </MenuTrigger>
           <MenuPopup side={popupSide} align="end">
-            <MenuItem onClick={props.onFloat}>
-              <PictureInPicture2 />
-              Float device over chat
-            </MenuItem>
+            {props.onFloat ? (
+              <MenuItem onClick={props.onFloat}>
+                <PictureInPicture2 />
+                Float device over chat
+              </MenuItem>
+            ) : null}
             <MenuItem onClick={props.onClose}>
               <X />
               Close device panel
