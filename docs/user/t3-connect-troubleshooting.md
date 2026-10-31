@@ -108,7 +108,8 @@ T3 Connect does not have an active link between your account and the host.
   On the host, open **Settings > Sharing & access** and turn **T3 Connect** on, or
   run `t3 connect`.
 - **The host was deregistered from your account, or T3 Code was reinstalled on
-  it.** If it was only deregistered, turn **T3 Connect** on again on the host.
+  it.** If it was only deregistered, turn **T3 Connect** on again on the host, then
+  retry on this device.
   A reinstalled host links under a new identity, so remove the old entry from
   this device and add the host again from the T3 Connect list.
 - **The host was linked, but the server did not apply the link yet.** Run
