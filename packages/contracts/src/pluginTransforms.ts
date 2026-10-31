@@ -1,43 +1,6 @@
 /**
- * PluginTransforms - Context a trusted local plugin adds to a run before the
- * provider sees it.
- *
- * A plugin declares the transform in `t3-plugin.json`, next to the
- * `transforms` capability and `proposedApi: true`, so consent covers it:
- *
- * ```json
- * "capabilities": ["transforms"],
- * "proposedApi": true,
- * "transforms": { "enrich": { "timeoutSeconds": 5 } }
- * ```
- *
- * and registers the handler the host calls:
- *
- * ```js
- * context.proposed.handle("t3.transform.enrich", async ({ message }) => ({
- *   context: [{ title: "Team conventions", text: await lookUp(message.text) }],
- * }));
- * ```
- *
- * After a run's message is saved and before the provider turn starts, the
- * server calls `t3.transform.enrich` once per run on the first
- * `maxPluginsPerRun` enabled plugins (in catalogue order) that declare it.
- * Only a turn the user started (sent or queued) is enriched, and not a
- * command typed with `/`: steering input, including steering that restarts a
- * run, and wakes the agent, server or app prompts (notifications, delegated
- * task results, restart continuations) are never enriched. Each answer
- * is saved as an item in the run's timeline before the provider starts, and
- * the provider receives exactly the saved items, delimited, ahead of the
- * message text. A plugin is never called twice for one run: a retried or
- * replayed start reuses what was saved, and a call that was cut off is
- * recorded as not added.
- *
- * Enrichment fails open. A plugin that is slow, crashes, is disabled during
- * the call, or answers with something outside the bounds below adds nothing;
- * its timeline item says so and the run proceeds. Return `null` or an empty
- * `context` to add nothing.
- *
- * @module PluginTransforms
+ * Proposed transforms require explicit capability consent and add bounded context before provider startup.
+ * Saved outcomes are reused on retries; slow or invalid answers fail open without context.
  */
 import * as Schema from "effect/Schema";
 

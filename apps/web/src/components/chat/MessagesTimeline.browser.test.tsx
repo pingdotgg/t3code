@@ -133,43 +133,6 @@ function message(
   };
 }
 
-function work(id: string, entry: Record<string, unknown>): Entry {
-  return {
-    id,
-    kind: "work",
-    createdAt: CREATED_AT,
-    entry: { id, createdAt: CREATED_AT, ...entry },
-  } as Entry;
-}
-
-function v2Item(type: string, fields: Record<string, unknown>) {
-  const id = (fields.id as string | undefined) ?? type;
-  return {
-    position: 0,
-    visibility: "local",
-    sourceThreadId: "thread-1",
-    sourceItemId: id,
-    item: {
-      id,
-      threadId: "thread-1",
-      runId: "run-1",
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 0,
-      status: "completed",
-      title: null,
-      startedAt: null,
-      completedAt: null,
-      updatedAt: {},
-      type,
-      ...fields,
-    },
-  } as never;
-}
-
 async function renderElement(element: ReactElement, options: { router?: false } = {}) {
   const container = document.createElement("div");
   container.style.cssText = "height: 1200px; width: 900px; display: flex; flex-direction: column;";
