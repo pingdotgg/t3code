@@ -916,6 +916,35 @@ it.live("naming a machine that is already linked returns the link at once, with 
   ),
 );
 
+it.live("a retry naming a machine linked meanwhile closes the card it left as linked", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      yield* a.call({ url: b.url, clientRequestId: "link-box" });
+      yield* pendingCard(a);
+      // Linked from Settings meanwhile, not through the card.
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      const retried = yield* a.call({
+        environmentId: box.environmentId,
+        clientRequestId: "link-box",
+      });
+      expect(retried.structuredContent).toEqual({
+        status: "linked",
+        environmentId: box.environmentId,
+        label: "Box",
+        access: "auto",
+      });
+      expect(yield* cardOf(a)).toMatchObject({
+        linkStatus: "linked",
+        linkedEnvironmentId: box.environmentId,
+      });
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
+    }),
+  ),
+);
+
 it.live("a link that expired goes through the card, so the user can link it again", () =>
   withBoth((a, b) =>
     Effect.gen(function* () {
