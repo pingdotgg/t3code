@@ -100,6 +100,7 @@ import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -125,6 +126,7 @@ import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
+import { registerCommands } from "../shortcuts/dispatcher";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useBoringSidebarEnabled, useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -242,6 +244,7 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { isAppModalPage } from "./sidebar/mainAppLocation";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -890,7 +893,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, open: sidebarOpen, setOpen: setSidebarOpen, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -999,6 +1002,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const headerSearchRef = useRef<HTMLDivElement | null>(null);
   // Safari may click after Ctrl+click opens settings; suppress that selection until the picker reopens.
   const suppressNextScopeChangeRef = useRef(false);
+  const projectScopeReturnFocusRef = useRef<HTMLElement | null>(null);
   const highlightedProjectScopeKeyRef = useRef<string | null>(null);
   // Hold dropped rows until server placement is confirmed; block another pickup from replacing the hold.
   const [optimisticDrop, setOptimisticDrop] = useState<SidebarOptimisticDrop | null>(null);
@@ -2890,10 +2894,64 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     openCommandPalette({ open: "new-thread-in" });
   };
 
+  // A programmatic open never reaches onOpenChange, so every open goes through here.
+  function setProjectScopeMenuOpen(open: boolean, returnFocusTo: HTMLElement | null = null) {
+    if (open) {
+      suppressNextScopeChangeRef.current = false;
+      projectScopeReturnFocusRef.current = returnFocusTo;
+    }
+    dispatchProjectScopeMenu({ type: "open-changed", open });
+  }
+
+  const onFilterByProjectShortcut = useStableCallback((event: KeyboardEvent) => {
+    if (projectGroups.length === 0) return false;
+    if (isAppModalPage(router.state.location.pathname)) return false;
+    if (isCommandPaletteOpen() || isModelPickerOpen()) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+    const collapsed = !isMobile && !sidebarOpen;
+    if (collapsed) setSidebarOpen(true);
+    if (projectScopeMenuState.open) {
+      if (!collapsed) setProjectScopeMenuOpen(false);
+      return;
+    }
+    const activeElement = document.activeElement;
+    setProjectScopeMenuOpen(
+      true,
+      activeElement instanceof HTMLElement && activeElement !== document.body
+        ? activeElement
+        : null,
+    );
+  });
+  const readRoutePanelsOpen = useStableCallback(() => ({
+    terminalOpen: routeTerminalOpen,
+    previewOpen:
+      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, routeThreadRef) ===
+      "preview",
+  }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the capture-phase project filter shortcut while the sidebar is mounted
+  useEffect(
+    () =>
+      registerCommands(
+        { "sidebar.filterByProject": onFilterByProjectShortcut },
+        { capture: true, context: readRoutePanelsOpen },
+      ),
+    [onFilterByProjectShortcut, readRoutePanelsOpen],
+  );
+
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
     (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
+  const projectFilterShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "sidebar.filterByProject",
+  );
+  const projectFilterLabel =
+    scopedProjectGroups.length > 0
+      ? `Filter threads by project: ${scopedProjectGroups.map((project) => project.displayName).join(", ")}`
+      : "Filter threads by project";
   return (
     <>
       <ThreadContextDragGhost />
@@ -2915,8 +2973,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   open={projectScopeMenuState.open}
                   onOpenChange={(open, eventDetails) => {
                     if (eventDetails.isCanceled) return;
-                    if (open) suppressNextScopeChangeRef.current = false;
-                    dispatchProjectScopeMenu({ type: "open-changed", open });
+                    setProjectScopeMenuOpen(open);
                   }}
                   onItemHighlighted={(item) => {
                     highlightedProjectScopeKeyRef.current = item?.value ?? null;
@@ -2945,10 +3002,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   <ComboboxTrigger
                     render={
                       <SidebarHeaderIconButton
-                        label={
-                          scopedProjectGroups.length > 0
-                            ? `Filter threads by project: ${scopedProjectGroups.map((project) => project.displayName).join(", ")}`
-                            : "Filter threads by project"
+                        label={projectFilterLabel}
+                        tooltip={
+                          projectFilterShortcutLabel
+                            ? `${projectFilterLabel} (${projectFilterShortcutLabel})`
+                            : projectFilterLabel
                         }
                       />
                     }
@@ -2975,6 +3033,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     align="start"
                     anchor={headerSearchRef}
                     className="max-w-[min(18rem,var(--available-width))] overflow-hidden"
+                    finalFocus={() => {
+                      const element = projectScopeReturnFocusRef.current;
+                      projectScopeReturnFocusRef.current = null;
+                      return element?.isConnected ? element : true;
+                    }}
                   >
                     <ComboboxSearchInput
                       aria-label="Search projects"
