@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   documentUri: "file:///documents",
   pickFile: vi.fn(),
   pickMedia: vi.fn(),
+  takePhoto: vi.fn(),
+  requestCamera: vi.fn(),
   copy: vi.fn(),
   delete: vi.fn(),
   open: vi.fn(),
@@ -80,7 +82,11 @@ vi.mock("expo-file-system", () => {
   };
 });
 
-vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: mocks.pickMedia }));
+vi.mock("expo-image-picker", () => ({
+  launchImageLibraryAsync: mocks.pickMedia,
+  launchCameraAsync: mocks.takePhoto,
+  requestCameraPermissionsAsync: mocks.requestCamera,
+}));
 vi.mock("expo-document-picker", () => ({ getDocumentAsync: mocks.pickFile }));
 vi.mock("expo-image-manipulator", () => ({
   SaveFormat: { JPEG: "jpeg", PNG: "png", WEBP: "webp" },
@@ -477,6 +483,22 @@ describe("composer file attachments", () => {
       expect(result.error).toBe("You can attach up to 100 attachments per message.");
       expect(mocks.pickMedia).toHaveBeenCalledWith(expect.objectContaining({ selectionLimit: 1 }));
       expect(mocks.copy).not.toHaveBeenCalled();
+    });
+
+    it("attaches a camera photo only after camera access is granted", async () => {
+      mocks.requestCamera.mockResolvedValueOnce({ granted: false });
+      await expect(pickComposerMedia({ existingCount: 0, source: "camera" })).resolves.toEqual({
+        attachments: [],
+        error: "Allow camera access in Settings to take photos.",
+      });
+      expect(mocks.takePhoto).not.toHaveBeenCalled();
+
+      mocks.requestCamera.mockResolvedValueOnce({ granted: true });
+      mocks.takePhoto.mockResolvedValueOnce({ canceled: false, assets: [image] });
+      const result = await pickComposerMedia({ existingCount: 0, source: "camera" });
+
+      expect(result.attachments).toEqual([expect.objectContaining({ type: "image" })]);
+      expect(mocks.pickMedia).not.toHaveBeenCalled();
     });
 
     it("reports a native video retrieval error and ends the foreground handoff", async () => {

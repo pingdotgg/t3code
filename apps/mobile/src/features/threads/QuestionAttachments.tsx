@@ -125,7 +125,7 @@ export function QuestionAttachments(props: {
     props.question.id,
   );
   const attachments = drafts[key]?.attachments ?? [];
-  const pick = async (kind: "media" | "files") => {
+  const pick = async (kind: "media" | "files", source?: "library" | "camera") => {
     const scope = pickerScope.current;
     changeQuestionAttachmentPreparation(key, 1);
     const picked = await settlePromise(async () => {
@@ -139,6 +139,7 @@ export function QuestionAttachments(props: {
           : await pickComposerMedia({
               existingCount,
               maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
+              source,
             });
       const picked = "files" in result ? result.files : result.attachments;
       // Resolution on another client clears the reservation while the picker is open.
@@ -165,7 +166,7 @@ export function QuestionAttachments(props: {
         <ComposerAttachmentButton
           disabled={props.disabled}
           supportsFiles
-          onPickMedia={() => pick("media")}
+          onPickMedia={(source) => pick("media", source)}
           onPickFiles={() => pick("files")}
         />
       ) : null}

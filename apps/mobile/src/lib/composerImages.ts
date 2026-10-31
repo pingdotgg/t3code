@@ -377,6 +377,7 @@ export async function pickComposerImages(input: { readonly existingCount: number
 export async function pickComposerMedia(input: {
   readonly existingCount: number;
   readonly maxVideoBytes?: number;
+  readonly source?: "library" | "camera";
 }): Promise<{
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
@@ -403,19 +404,34 @@ export async function pickComposerMedia(input: {
   const endHandoff = beginForegroundHandoff();
   let result: Awaited<ReturnType<typeof imagePicker.launchImageLibraryAsync>>;
   try {
-    result = await imagePicker.launchImageLibraryAsync({
-      mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
-      allowsMultipleSelection: true,
-      selectionLimit: remainingSlots,
-      // Base64 makes iOS decode all full-size photos and stalls JS with large strings; read bytes only as needed.
-      base64: false,
-      quality: 1,
-      shouldDownloadFromNetwork: true,
-    });
+    if (input.source === "camera") {
+      const permission = await imagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        return {
+          attachments: [],
+          error: "Allow camera access in Settings to take photos.",
+        };
+      }
+      result = await imagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 1 });
+    } else {
+      result = await imagePicker.launchImageLibraryAsync({
+        mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
+        allowsMultipleSelection: true,
+        selectionLimit: remainingSlots,
+        // Base64 makes iOS decode all full-size photos and stalls JS with large strings; read bytes only as needed.
+        base64: false,
+        quality: 1,
+        shouldDownloadFromNetwork: true,
+      });
+    }
   } catch (error) {
+    const fallback =
+      input.source === "camera"
+        ? "Could not open the camera."
+        : "Could not open the photo library.";
     return {
       attachments: [],
-      error: error instanceof Error ? error.message : "Could not open the photo library.",
+      error: error instanceof Error ? error.message : fallback,
     };
   } finally {
     endHandoff();
