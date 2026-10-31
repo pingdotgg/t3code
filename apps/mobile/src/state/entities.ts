@@ -7,17 +7,31 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import type {
+import {
   EnvironmentId,
-  ScopedProjectRef,
-  ScopedThreadRef,
-  ServerConfig,
   ThreadId,
+  type ComposerContextRecord,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+  type ServerConfig,
 } from "@t3tools/contracts";
-import { hasThreadLinks, relabelThreadLinks } from "@t3tools/shared/threadLinks";
-import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  guessThreadLinkRef,
+  hasThreadLinks,
+  parseThreadLinkHref,
+  relabelThreadLinks,
+  threadLinkCandidates,
+  threadLinkRefs,
+  type ThreadLink,
+} from "@t3tools/shared/threadLinks";
+import * as Schema from "effect/Schema";
+import { AsyncResult, Atom } from "effect/reactivity";
 
+import { threadChipTargets } from "../lib/enrichedLinkPresentation";
+import { resolveProjectChipIcon } from "../lib/projectIcon";
+import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIconImages";
+import { projectFaviconUrlAtom } from "./assets";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
@@ -34,23 +48,97 @@ const EMPTY_SERVER_CONFIG_ATOM = Atom.make<ServerConfig | null>(null).pipe(
 const EMPTY_THREAD_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("mobile-thread:empty"),
 );
-const EMPTY_THREAD_TITLES: ReadonlyMap<ThreadId, string> = new Map();
-const EMPTY_THREAD_TITLES_ATOM = Atom.make(EMPTY_THREAD_TITLES).pipe(
-  Atom.withLabel("mobile-thread-titles:empty"),
+const EMPTY_THREAD_LINK_TITLES_ATOM = Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(
+  Atom.withLabel("mobile-thread-link-titles:empty"),
 );
 
-const threadTitlesAtom = Atom.family((environmentId: EnvironmentId) => {
-  let previous = EMPTY_THREAD_TITLES;
+const decodeThreadKey = Schema.decodeUnknownSync(Schema.Tuple([EnvironmentId, ThreadId]));
+const threadKey = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, ref.threadId]);
+
+// Null when this client doesn't know the thread. Keyed, so a link never walks an environment's threads.
+const threadTitleAtom = Atom.family((key: string) => {
+  const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
+  return Atom.make((get) => get(environmentThreadShells.threadShellAtom(ref))?.title ?? null).pipe(
+    Atom.withLabel(`mobile-thread-title:${key}`),
+  );
+});
+
+const decodeThreadKeys = Schema.decodeUnknownSync(Schema.Array(Schema.String));
+
+const threadLinkTitlesAtom = Atom.family((key: string) => {
+  const refKeys = decodeThreadKeys(JSON.parse(key));
   return Atom.make((get) => {
-    const index = get(environmentThreadShells.environmentThreadIndexAtom(environmentId));
-    const unchanged =
-      index.size === previous.size &&
-      Array.from(index).every(([threadId, shell]) => previous.get(threadId) === shell.title);
-    if (!unchanged) {
-      previous = new Map(Array.from(index, ([threadId, shell]) => [threadId, shell.title]));
+    const titles = new Map<string, string>();
+    for (const refKey of refKeys) {
+      const title = get(threadTitleAtom(refKey));
+      if (title !== null) titles.set(refKey, title);
     }
-    return previous;
-  }).pipe(Atom.withLabel(`mobile-thread-titles:${environmentId}`));
+    return titles;
+  }).pipe(Atom.withLabel(`mobile-thread-link-titles:${key}`));
+});
+
+const decodeThreadChipTargets = Schema.decodeUnknownSync(
+  Schema.Array(
+    Schema.Struct({
+      href: Schema.String,
+      environmentId: EnvironmentId,
+      threadId: ThreadId,
+      link: Schema.Boolean,
+    }),
+  ),
+);
+
+const threadProjectChipIconAtom = Atom.family((key: string) => {
+  const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
+  return Atom.make((get): string | null => {
+    const shell = get(environmentThreadShells.threadShellAtom(ref));
+    const project = shell
+      ? get(
+          environmentProjects.projectAtom({
+            environmentId: ref.environmentId,
+            projectId: shell.projectId,
+          }),
+        )
+      : null;
+    const icon = resolveProjectChipIcon(
+      project,
+      get(serverEnvironment.configValueAtom(ref.environmentId))?.scratchWorkspaceRoot,
+      () =>
+        project
+          ? get(
+              projectFaviconUrlAtom({
+                environmentId: ref.environmentId,
+                cwd: project.workspaceRoot,
+                faviconPath: project.faviconPath,
+              }),
+            )
+          : null,
+    );
+    if (!icon) return null;
+    if (icon.kind === "favicon") return icon.uri;
+    return AsyncResult.getOrElse(get(projectGlyphImageAtom(projectGlyphKey(icon))), () => null);
+  }).pipe(Atom.withLabel(`mobile-thread-project-chip-icon:${key}`));
+});
+
+const EMPTY_THREAD_CHIP_ICONS: ReadonlyMap<string, string> = new Map();
+const EMPTY_THREAD_CHIP_ICONS_ATOM = Atom.make(EMPTY_THREAD_CHIP_ICONS).pipe(
+  Atom.withLabel("mobile-thread-chip-icons:empty"),
+);
+
+const threadChipIconsAtom = Atom.family((key: string) => {
+  const targets = decodeThreadChipTargets(JSON.parse(key));
+  return Atom.make((get) => {
+    const icons = new Map<string, string>();
+    for (const target of targets) {
+      const link = target.link ? parseThreadLinkHref(target.href) : null;
+      const ref =
+        (link ? resolveThreadLink(get, link, target.environmentId) : null) ??
+        scopeThreadRef(target.environmentId, target.threadId);
+      const icon = get(threadProjectChipIconAtom(threadKey(ref)));
+      if (icon) icons.set(target.href, icon);
+    }
+    return icons;
+  }).pipe(Atom.withLabel(`mobile-thread-chip-icons:${key}`));
 });
 
 export function waitForProject(
@@ -112,14 +200,38 @@ export function useChildThreadInputs(ref: ScopedThreadRef) {
 
 export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
   const titles = useAtomValue(
-    hasThreadLinks(markdown) ? threadTitlesAtom(environmentId) : EMPTY_THREAD_TITLES_ATOM,
+    hasThreadLinks(markdown)
+      ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
+      : EMPTY_THREAD_LINK_TITLES_ATOM,
   );
-  return useMemo(
-    () =>
-      titles.size === 0
-        ? markdown
-        : relabelThreadLinks(markdown, (threadId) => titles.get(threadId)),
-    [markdown, titles],
+  return relabelThreadLinks(markdown, environmentId, (ref) => titles.get(threadKey(ref)));
+}
+
+/** Keyed reads; every thread is read only to place a v1 link its message's environment lacks. */
+export function resolveThreadLink(
+  read: <A>(atom: Atom.Atom<A>) => A,
+  link: ThreadLink,
+  messageEnvironmentId: EnvironmentId,
+): ScopedThreadRef | null {
+  const known = threadLinkCandidates(link, messageEnvironmentId).find(
+    (ref) => read(threadTitleAtom(threadKey(ref))) !== null,
+  );
+  if (known) return known;
+  return link.environmentId === null
+    ? guessThreadLinkRef(link, read(environmentThreadShells.threadRefsAtom))
+    : null;
+}
+
+export function useThreadChipIcons(
+  environmentId: EnvironmentId,
+  markdown: string,
+  records?: ReadonlyArray<ComposerContextRecord>,
+): ReadonlyMap<string, string> {
+  const targets = threadChipTargets(environmentId, markdown, records);
+  return useAtomValue(
+    targets.length === 0
+      ? EMPTY_THREAD_CHIP_ICONS_ATOM
+      : threadChipIconsAtom(JSON.stringify(targets)),
   );
 }
 

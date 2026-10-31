@@ -8,6 +8,8 @@ import {
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
+  decodeMergeRequestFileStatsJson,
+  decodeMergeRequestStatsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
 } from "./gitLabMergeRequestJson.ts";
@@ -159,7 +161,6 @@ describe("decodeMergeRequestDetailJson", () => {
     const sha = "afce4da4d5fe7d2fd0647b5b864526ea0a2827cb";
 
     expect(headSha({ sha })).toBe(sha);
-    // A new merge request can report its head before GitLab has computed `diff_refs`.
     expect(headSha({ sha, diff_refs: null })).toBe(sha);
     expect(headSha({ sha, merge_commit_sha: "0".repeat(40) })).toBe(sha);
     expect(headSha({})).toBeUndefined();
@@ -619,5 +620,61 @@ describe("decodeRepositoryBlobsJson", () => {
         ),
       ),
     ).toEqual(new Map());
+  });
+});
+
+describe("decodeMergeRequestStatsJson", () => {
+  it("keys the counts by merge request number", () => {
+    const stats = expectSuccess(
+      decodeMergeRequestStatsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              mergeRequests: {
+                nodes: [
+                  { iid: "7", diffStatsSummary: { additions: 12, deletions: 3 } },
+                  { iid: "8", diffStatsSummary: null },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    // A merge request without a summary is left out rather than shown as zero lines changed.
+    expect([...stats]).toEqual([[7, { additions: 12, deletions: 3 }]]);
+  });
+
+  it("answers nothing for a project the token cannot see", () => {
+    const stats = expectSuccess(
+      decodeMergeRequestStatsJson(JSON.stringify({ data: { project: null } })),
+    );
+
+    expect(stats.size).toBe(0);
+  });
+
+  it("reports a file list shorter than the summary as truncated", () => {
+    const read = (fileCount: number) =>
+      expectSuccess(
+        decodeMergeRequestFileStatsJson(
+          JSON.stringify({
+            data: {
+              project: {
+                mergeRequest: {
+                  diffStatsSummary: { fileCount },
+                  diffStats: [{ path: "src/a.ts", additions: 2, deletions: 1 }],
+                },
+              },
+            },
+          }),
+        ),
+      );
+
+    expect(read(1)).toEqual({
+      files: [{ path: "src/a.ts", additions: 2, deletions: 1 }],
+      truncated: false,
+    });
+    expect(read(2).truncated).toBe(true);
   });
 });

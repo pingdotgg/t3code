@@ -6,11 +6,8 @@ import { assertSemanticProjectionIntegrity, projectionFor } from "../shared.ts";
 import { CLAUDE_COMPACT_FIRST_PROMPT } from "../claude_compact_after_peer_turn/input.ts";
 import { claudeCompactRuns } from "../claude_compact_after_peer_turn/output.ts";
 
-// The resumed process has not echoed yet, but it acknowledged the `/compact`
-// prompt's uuid, so the wake's unechoed result is another turn's: it must not
-// end `/compact` before its compaction. The wake reply streamed before the
-// echo could place it, so it stays on the `/compact` run, as on a CLI that
-// echoes only on the result.
+// The acknowledged prompt uuid proves the unechoed wake result is foreign; it must not settle /compact.
+// Already streamed wake text remains on the /compact run.
 export function assertClaudeCompactAfterResumeWakeOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
