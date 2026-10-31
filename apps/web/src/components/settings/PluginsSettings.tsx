@@ -185,9 +185,10 @@ function useRefreshOnChange(key: string | null, refresh: () => void) {
   const last = useRef(key);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate the external npm query cache when catalogue provenance changes.
   useEffect(() => {
+    if (key === null) return;
     const previous = last.current;
     last.current = key;
-    if (previous !== null && key !== null && previous !== key) refresh();
+    if (previous !== null && previous !== key) refresh();
   }, [key, refresh]);
 }
 

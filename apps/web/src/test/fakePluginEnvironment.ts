@@ -42,14 +42,20 @@ export function makeFakePluginEnvironment(input: {
   const calls: Array<HeldCall> = [];
   const taken = new Set<HeldCall>();
   const waiters = new Set<() => void>();
-  const catalog = Effect.runSync(SubscriptionRef.make<ReadonlyArray<PluginInstallation>>([]));
+  const catalog = Effect.runSync(
+    SubscriptionRef.make<ReadonlyArray<PluginInstallation> | Error>([]),
+  );
   const client = new Proxy(
     {},
     {
       get: (_target, method: string) => (request: unknown) => {
         if (method === WS_METHODS.pluginsSubscribe)
           return SubscriptionRef.changes(catalog).pipe(
-            Stream.map((installations) => ({ installations })),
+            Stream.mapEffect((installations) =>
+              installations instanceof Error
+                ? Effect.fail(installations)
+                : Effect.succeed({ installations }),
+            ),
           );
         return Effect.callback<unknown, Error>((resume) => {
           const call = {
@@ -136,6 +142,7 @@ export function makeFakePluginEnvironment(input: {
     /** Replaces the catalogue the server reports. */
     publish: (installations: ReadonlyArray<PluginInstallation>) =>
       Effect.runSync(SubscriptionRef.set(catalog, installations)),
+    failCatalog: (error: Error) => Effect.runSync(SubscriptionRef.set(catalog, error)),
     reset: () => {
       calls.length = 0;
       taken.clear();

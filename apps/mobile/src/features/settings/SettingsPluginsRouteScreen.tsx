@@ -62,10 +62,7 @@ export function supportsPlugins(target: SettingsTarget): boolean {
   return target.serverConfig.environment.capabilities.plugins === true;
 }
 
-/**
- * Mobile always pairs with standard scopes, so it never has the access:write that
- * plugin management needs; it shows plugins without controls.
- */
+// Mobile plugin management is intentionally view-only.
 const PLUGINS_VIEW_ONLY =
   "Plugins are view-only on mobile. Add, install, approve, enable, update, or remove them from an administrative web or desktop connection.";
 
@@ -92,9 +89,10 @@ function useRefreshOnChange(key: string | null, refresh: () => void) {
   const last = useRef(key);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate the external npm query cache when catalogue provenance changes.
   useEffect(() => {
+    if (key === null) return;
     const previous = last.current;
     last.current = key;
-    if (previous !== null && key !== null && previous !== key) refresh();
+    if (previous !== null && previous !== key) refresh();
   }, [key, refresh]);
 }
 

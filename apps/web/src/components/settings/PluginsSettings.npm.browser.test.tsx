@@ -288,6 +288,31 @@ describe("reviewing an npm download", () => {
   });
 });
 describe("updating an npm plugin", () => {
+  it("refreshes provenance after a catalogue failure recovers with changed files", async () => {
+    using _setup = await setup();
+    // This test drives the plugin queries directly, without navigation.
+    await using screen = await renderScreen(null, { router: false });
+    await mount(screen, [approved], { packages: [npmPackage()] });
+    await act(async () => fake().failCatalog(new Error("Catalogue unavailable")));
+    await until(catalogAtom, (result) => result._tag === "Failure");
+    await expect.element(screen.getByText("Catalogue unavailable")).toBeVisible();
+    const updated = [
+      installation({ ...approved, generation: 2, source: { ...approved.source!, digest: STAGED } }),
+    ];
+    fake().publish(updated);
+    await click(button("Retry"));
+    await until(
+      catalogAtom,
+      (result) =>
+        result._tag === "Success" &&
+        result.value._tag === "available" &&
+        result.value.installations === updated,
+    );
+    await expect.element(screen.getByText("Notifier", { exact: true })).toBeVisible();
+    expect(fake().calls(WS_METHODS.pluginsNpmList)).toHaveLength(2);
+    await answerList(await nextCall(WS_METHODS.pluginsNpmList), { packages: [npmPackage()] });
+  });
+
   it("checks what is installed after a failed download, even when a list arrived during it", async () => {
     using _setup = await setup();
     await using screen = await renderScreen(null, { router: false });
