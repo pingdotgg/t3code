@@ -209,17 +209,29 @@ export interface BootServiceManager {
   readonly finalize: ReadonlyArray<BootServiceStep>;
 }
 
+const systemdUnitPath = (path: Path.Path, homeDir: string) =>
+  path.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
+
+const launchdPlistPath = (path: Path.Path, homeDir: string) =>
+  path.join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE);
+
+/** Where this platform's service manager keeps the unit, whether or not one is installed. */
+export function bootServiceUnitPath(input: {
+  readonly path: Path.Path;
+  readonly platform: NodeJS.Platform;
+  readonly homeDir: string;
+}): string | undefined {
+  if (input.homeDir === "") return undefined;
+  if (input.platform === "linux") return systemdUnitPath(input.path, input.homeDir);
+  if (input.platform === "darwin") return launchdPlistPath(input.path, input.homeDir);
+  return undefined;
+}
+
 function systemdManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
 }): BootServiceManager {
-  const unitPath = input.path.join(
-    input.homeDir,
-    ".config",
-    "systemd",
-    "user",
-    BOOT_SERVICE_UNIT_FILE,
-  );
+  const unitPath = systemdUnitPath(input.path, input.homeDir);
   const prepareActivation = [
     {
       step: "reloading systemd user units",
@@ -291,12 +303,7 @@ function launchdManager(input: {
   readonly uid: number;
   readonly environmentPath: string;
 }): BootServiceManager {
-  const unitPath = input.path.join(
-    input.homeDir,
-    "Library",
-    "LaunchAgents",
-    BOOT_SERVICE_PLIST_FILE,
-  );
+  const unitPath = launchdPlistPath(input.path, input.homeDir);
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
   // Unloaded jobs may reject bootout/enable. Bootstrap starts RunAtLoad/KeepAlive jobs; kickstart would restart them.

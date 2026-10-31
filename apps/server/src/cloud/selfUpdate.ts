@@ -35,6 +35,7 @@ import {
   PinnedRuntimePreflightBlockedError,
   prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
+import { bootServiceProgramOf, bootServiceUnitPath } from "./bootService.ts";
 import { decodeServicePreflightResult } from "./servicePreflight.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { isExactServiceVersion, SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
@@ -83,9 +84,28 @@ export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on
     if (!input.managed && executablePath !== entryPath && executablePath !== realEntryPath) {
       return [];
     }
+    const unitPath = bootServiceUnitPath({
+      path,
+      platform,
+      homeDir: yield* HostProcess.HomeDirectory,
+    });
+    // A stopped service's unit still names the launcher runtime it will start.
+    const unit =
+      unitPath === undefined
+        ? Option.none<string>()
+        : yield* fs.readFileString(unitPath).pipe(Effect.option);
+    const program = Option.flatMapNullishOr(unit, bootServiceProgramOf);
+    // The unit may name it through another spelling of a symlinked T3 home.
+    const references = Option.isNone(program)
+      ? []
+      : [
+          program.value,
+          yield* fs.realPath(program.value).pipe(Effect.orElseSucceed(() => program.value)),
+        ];
     const removed = yield* prunePinnedRuntimes({
       baseDir: input.baseDir,
       keep: [packageJson.version],
+      references,
     });
     if (removed.length > 0) {
       yield* Effect.logInfo("Removed unused t3 runtimes.", { versions: removed });
