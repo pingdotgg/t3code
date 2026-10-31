@@ -190,6 +190,36 @@ describe("browser recording", () => {
     expect(stopTrack).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["video/mp4;codecs=avc3", ["video/mp4;codecs=avc3"]],
+    ["video/webm;codecs=vp9", []],
+  ])(
+    "records %s over avc1 and saves the recorder's actual format",
+    async (expected, extraTypes) => {
+      FakeMediaRecorder.supportedTypes = new Set([
+        "video/mp4;codecs=avc1",
+        "video/mp4;codecs=avc1.42e01e",
+        "video/webm;codecs=vp9",
+        "video/webm;codecs=av1",
+        ...extraTypes,
+      ]);
+      FakeMediaRecorder.outputMimeType = "video/webm;codecs=av01";
+
+      await startBrowserRecording("recording-tab");
+      await stopBrowserRecording("recording-tab");
+
+      expect(FakeMediaRecorder.instances[0]?.options).toEqual({
+        mimeType: expected,
+        videoBitsPerSecond: 3_110_400,
+      });
+      expect(save).toHaveBeenCalledWith(
+        "recording-tab",
+        "video/webm;codecs=av01",
+        expect.any(Uint8Array),
+      );
+    },
+  );
+
   it("releases the native capture lease when stream acquisition fails", async () => {
     const cause = new Error("capture failed");
     cause.name = "NotReadableError";
