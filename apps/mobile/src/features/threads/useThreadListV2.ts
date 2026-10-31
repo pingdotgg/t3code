@@ -14,18 +14,7 @@ import {
   threadListInboxReturns,
 } from "./threadListV2";
 import { computeThreadMoveAvailability } from "./threadOrder";
-
-/**
- * Screens' select handlers read the content-only key set; a fresh one per list rebuild gave
- * every row a new handler whenever any thread shell changed. Keyed by a string, the set keeps
- * its identity until its keys change.
- */
-function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
-  return useMemo(
-    () => new Set(newlineSeparatedKeys.length === 0 ? [] : newlineSeparatedKeys.split("\n")),
-    [newlineSeparatedKeys],
-  );
-}
+import { useKeySet } from "./useKeySet";
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
@@ -71,9 +60,7 @@ export function useThreadListV2(input: {
   const disconnectedEnvironmentIds = useKeySet(
     useWorkspaceEnvironments()
       .filter((environment) => isThreadListV2EnvironmentDisconnected(environment.connectionState))
-      .map((environment) => environment.environmentId)
-      .sort()
-      .join("\n"),
+      .map((environment) => environment.environmentId),
   );
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
@@ -141,7 +128,7 @@ export function useThreadListV2(input: {
     ),
   });
   useOlderSettledShelfGrowth(olderSettledShelf, layout.listedSettledThreads);
-  const contentOnlyThreadKeys = useKeySet([...layout.contentOnlyThreadKeys].sort().join("\n"));
+  const contentOnlyThreadKeys = useKeySet([...layout.contentOnlyThreadKeys]);
   const scopedProjectKeys =
     input.projectRefs == null
       ? null
