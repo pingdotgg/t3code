@@ -2,6 +2,7 @@ import * as NodeOS from "node:os";
 
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -198,6 +199,46 @@ const resolveResourceMonitorPath = Effect.fn(
 
   return Option.none<string>();
 });
+
+// macOS files every descendant under its responsible app, so bundle-less browsers that agents
+// start check in as T3 Code. The launcher disclaims responsibility and execs the accessory
+// Helper in place, keeping the PID and descriptors the backend manager owns.
+const resolveBackendExecutable = Effect.fn("desktop.backendConfiguration.resolveBackendExecutable")(
+  function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const executablePath = yield* HostProcess.ExecutablePath;
+    const direct = { executablePath, leadingArgs: [] as ReadonlyArray<string> };
+    if (environment.platform !== "darwin") return direct;
+
+    const { path } = environment;
+    const launcherPath = environment.isPackaged
+      ? path.join(environment.resourcesPath, "backend-launcher", "t3-backend-launcher")
+      : path.join(
+          environment.rootDir,
+          "native/backend-launcher/build",
+          environment.processArch,
+          "t3-backend-launcher",
+        );
+    // Electron and electron-builder name the generic helper after the main executable.
+    const executableName = path.basename(executablePath);
+    const helperPath = path.join(
+      path.dirname(executablePath),
+      "../Frameworks",
+      `${executableName} Helper.app/Contents/MacOS/${executableName} Helper`,
+    );
+    const exists = (file: string) =>
+      fileSystem.exists(file).pipe(Effect.orElseSucceed(() => false));
+    if ((yield* exists(launcherPath)) && (yield* exists(helperPath))) {
+      return { executablePath: launcherPath, leadingArgs: [helperPath] };
+    }
+    yield* Effect.logWarning(
+      "macOS backend launcher or Helper is missing; processes the backend starts will be attributed to T3 Code.",
+      { launcherPath, helperPath },
+    );
+    return direct;
+  },
+);
 
 const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -486,6 +527,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       readonly resourceMonitorPath: Option.Option<string>;
       readonly cliPath: Option.Option<string>;
       readonly shellEnvironmentPrepared: boolean;
+      readonly backendExecutable: {
+        readonly executablePath: string;
+        readonly leadingArgs: ReadonlyArray<string>;
+      };
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -519,9 +564,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
     };
 
     return {
-      executablePath: process.execPath,
+      executablePath: input.backendExecutable.executablePath,
       // Packaged builds have a separate cache; --require prevents cache settings leaking to provider subprocesses.
       args: [
+        ...input.backendExecutable.leadingArgs,
         ...(environment.isPackaged ? ["--require", environment.compileCachePath] : []),
         environment.backendEntryPath,
         "--bootstrap-fd",
@@ -783,11 +829,16 @@ export const make = Effect.gen(function* () {
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
     const shellEnvironmentPrepared = yield* shellEnvironment.installIntoProcess;
+    const backendExecutable = yield* resolveBackendExecutable().pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+    );
     return yield* resolvePrimaryStartConfig({
       ...shared,
       resourceMonitorPath,
       cliPath,
       shellEnvironmentPrepared,
+      backendExecutable,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
