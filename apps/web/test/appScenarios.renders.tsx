@@ -72,11 +72,7 @@ const SIDE_CHAT = { ...threadWithHistory("thread-side", HISTORY_TURNS), sideChat
 installFakeEnvironment([...THREADS, SIDE_CHAT]);
 // Desktop-sized, so the sidebar, composer and right panel lay out as they do in the app.
 await page.viewport(1400, 900);
-// A returning user: the first-run gate would otherwise wait on onboarding evidence.
-__setClientSettingsForTests({
-  ...DEFAULT_CLIENT_SETTINGS,
-  onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-});
+__setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
 
 async function quiet() {
   let seen = -1;
@@ -282,7 +278,7 @@ it("app-switch-thread", async () => {
 // Through the diff.toggle shortcut, the same handler as the header's diff button.
 const toggleDiff = (to: "open" | "close") => async () => {
   await userEvent.keyboard("{Control>}d{/Control}");
-  const diff = page.getByRole("group", { name: "Diff layout" });
+  const diff = page.getByRole("button", { name: /^(Stacked|Split) diff view$/ });
   if (to === "open") await expect.element(diff).toBeVisible();
   else await expect.element(diff).not.toBeInTheDocument();
 };
