@@ -3759,14 +3759,17 @@ function providerFailureFromResult(
   usageLimited = false,
 ): OrchestrationV2ProviderFailure | null {
   const gatewayLimit =
-    failureHint === undefined &&
-    message.subtype === "success" &&
-    message.is_error &&
-    message.terminal_reason === "api_error" &&
-    message.api_error_status === 503
-      ? /^API Error: 503 \[[^\]\r\n]+\] \[429\]: \{"type":"error","error":\{"type":"rate_limit_error",[^\r\n]*\} \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
-          message.result,
-        )
+    message.subtype === "success" && message.is_error && message.terminal_reason === "api_error"
+      ? message.api_error_status === 503 && failureHint === undefined
+        ? /^API Error: 503 \[[^\]\r\n]+\] \[429\]: \{"type":"error","error":\{"type":"rate_limit_error",[^\r\n]*\} \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
+            message.result,
+          )
+        : message.api_error_status === 429
+          ? // CLIProxyAPI rejects every request until its credentials' cooldown ends.
+            /^API Error: [^\r\n]*\(429\)[^\r\n]* are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
+              message.result,
+            )
+          : null
       : null;
   if (gatewayLimit) {
     const seconds =
