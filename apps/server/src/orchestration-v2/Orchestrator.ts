@@ -158,6 +158,7 @@ import {
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import { withPullRequestWatchNote } from "./DelegatedPullRequestWatchNote.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
@@ -691,19 +692,6 @@ function legacyPullRequestLink(
 }
 
 const DELEGATED_RESULT_INLINE_BYTES = 16_000;
-
-/** A child that still watches a PR reports again on its wakes, so this result is not its last. */
-function withPullRequestWatchNote(
-  result: string,
-  child: Pick<OrchestrationV2AppThread, "pullRequests">,
-): string {
-  const watched = (child.pullRequests ?? []).flatMap((link) =>
-    link.watch === undefined ? [] : [link.url],
-  );
-  return watched.length === 0
-    ? result
-    : `${result}\n\nT3 Code: this child still watches ${watched.join(", ")}. Its results after pull request updates arrive as new delegated tasks, so this one is not final.`;
-}
 
 function delegatedCompletionWakeDetail(
   taskIds: ReadonlyArray<string>,

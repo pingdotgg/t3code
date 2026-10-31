@@ -83,6 +83,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { withPullRequestWatchNote } from "../orchestration-v2/DelegatedPullRequestWatchNote.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -1533,7 +1534,10 @@ const make = Effect.gen(function* () {
       task.result !== null
         ? task.result
         : taskResultRun !== undefined && isTerminalTaskStatus(status)
-          ? subagentResultForRun(childProjection, taskResultRun).text
+          ? withPullRequestWatchNote(
+              subagentResultForRun(childProjection, taskResultRun).text,
+              childControls.thread,
+            )
           : null;
     const resultTransfers = parentProjection.contextTransfers.filter(
       (transfer) =>
