@@ -18,7 +18,6 @@ import { appAtomRegistry } from "./rpc/atomRegistry";
 import { pluginActionEnvironment, readPluginActions } from "./state/pluginActions";
 import { readEnvironmentScope } from "./state/session";
 
-// Environment and target are fixed when picked; permission is checked again at execution so navigation cannot redirect an action.
 export function threadMenuPluginActions(threadRef: ScopedThreadRef, projectId: ProjectId) {
   const entries = pluginActionsAt(readPluginActions(threadRef.environmentId), "thread-menu", {
     threadId: threadRef.threadId,
