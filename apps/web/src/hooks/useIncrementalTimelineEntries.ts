@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import {
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   type TimelineEntriesInput,
@@ -21,17 +21,23 @@ export function useIncrementalTimelineEntries(
   threadKey: string | null,
   input: TimelineEntriesInput,
 ): TimelineEntriesProjection["entries"] {
-  const [state, setState] = useState(() => ({
-    threadKey,
-    projection: deriveTimelineEntriesFromVisibleTurnItemsWithState(input),
-  }));
-  if (state.threadKey === threadKey && sameInput(state.projection.input, input)) {
-    return state.projection.entries;
-  }
-  const projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(
-    input,
-    state.threadKey === threadKey ? state.projection : null,
-  );
-  setState({ threadKey, projection });
+  const committed = useRef<{
+    threadKey: string | null;
+    projection: TimelineEntriesProjection;
+  } | null>(null);
+  // This ref is only an identity-reuse cache: deriving without it produces the
+  // same timeline. Read the last commit, and publish only after this one commits.
+  /* oxlint-disable react/refs -- Previous projections optimize identity reuse, not rendered content. */
+  const previous = committed.current?.threadKey === threadKey ? committed.current.projection : null;
+  const projection =
+    previous !== null && sameInput(previous.input, input)
+      ? previous
+      : deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);
+  // Inputs may be freshly allocated each render. Cache committed projections
+  // without scheduling another render, and never retain an abandoned render.
+  useLayoutEffect(() => {
+    committed.current = { threadKey, projection };
+  });
   return projection.entries;
+  /* oxlint-enable react/refs */
 }
