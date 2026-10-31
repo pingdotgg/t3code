@@ -53,12 +53,31 @@ export function syncDocumentWindowControlsOverlayClass(): () => void {
   }
 
   const overlay = getWindowControlsOverlay();
+  const root = document.documentElement;
+  // Windows empties the overlay while minimized, and that layout would flash on restore.
+  const keepsGeometry = isElectron && isWindowsPlatform(navigator.platform);
   const update = () => {
-    document.documentElement.classList.toggle(WCO_CLASS_NAME, overlay !== null && overlay.visible);
+    const visible = overlay !== null && overlay.visible;
+    if (!keepsGeometry) {
+      root.classList.toggle(WCO_CLASS_NAME, visible);
+    } else if (visible) {
+      root.classList.add(WCO_CLASS_NAME);
+      const { height, right } = overlay.getTitlebarAreaRect();
+      root.style.setProperty("--wco-height", `${height}px`);
+      root.style.setProperty("--wco-controls-width", `${window.innerWidth - right}px`);
+    }
   };
 
   update();
-  return onWindowControlsOverlayGeometryChange(update);
+  if (keepsGeometry) {
+    // Maximizing reports the new overlay rect before innerWidth catches up.
+    window.addEventListener("resize", update);
+  }
+  const stopGeometryListener = onWindowControlsOverlayGeometryChange(update);
+  return () => {
+    window.removeEventListener("resize", update);
+    stopGeometryListener();
+  };
 }
 
 function subscribeTitlebarArea(listener: () => void): () => void {

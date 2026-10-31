@@ -151,16 +151,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* --wco-* hold the last overlay geometry for when env() goes undefined in a minimized window. */
 .wco {
-  --native-titlebar-height: env(titlebar-area-height, 0px);
-  --workspace-topbar-height: max(40px, env(titlebar-area-height, 52px));
+  --native-titlebar-height: env(titlebar-area-height, var(--wco-height, 0px));
+  --workspace-topbar-height: max(40px, env(titlebar-area-height, var(--wco-height, 52px)));
   --workspace-controls-top: env(titlebar-area-y, 0px);
   --workspace-controls-left: calc(env(titlebar-area-x, 0px) + 0.75rem);
   --workspace-controls-right: calc(
-    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
+    100vw - env(titlebar-area-width, calc(100vw - var(--wco-controls-width, 0px))) -
+      env(titlebar-area-x, 0px) + 0.75rem
   );
   --workspace-native-controls-inset: calc(
-    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
+    100vw - env(titlebar-area-width, calc(100vw - var(--wco-controls-width, 0px))) -
+      env(titlebar-area-x, 0px) + 0.75rem
   );
 }
 
