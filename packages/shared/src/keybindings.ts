@@ -1,4 +1,5 @@
 import {
+  COMPOSER_EFFORT_KEYBINDING_COMMANDS,
   type KeybindingRule,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -205,6 +206,16 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+m", command: "modelPicker.toggle", when: "!terminalFocus" },
   { key: "mod+shift+h", command: "composer.host", when: "!terminalFocus" },
   { key: "mod+shift+e", command: "composer.effort", when: "!terminalFocus" },
+  ...COMPOSER_EFFORT_KEYBINDING_COMMANDS.map((command, index) => ({
+    key: `shift+${index + 1}`,
+    command,
+    when: "!editableFocus && !terminalFocus && !previewFocus && !modelPickerOpen",
+  })),
+  {
+    key: "shift+s",
+    command: "composer.toggleSpeed",
+    when: "!editableFocus && !terminalFocus && !previewFocus && !modelPickerOpen",
+  },
   { key: "mod+shift+a", command: "composer.mode", when: "!terminalFocus" },
   { key: "mod+shift+x", command: "composer.workspace", when: "!terminalFocus" },
   { key: "mod+shift+g", command: "composer.branch", when: "!terminalFocus" },

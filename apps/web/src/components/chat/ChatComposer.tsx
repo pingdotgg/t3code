@@ -205,7 +205,11 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
-import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
+import {
+  getComposerDirectOptionChange,
+  getComposerPromptInjectionState,
+  getComposerReasoningStep,
+} from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
 import {
   providerSupportsManualCompaction,
@@ -305,6 +309,7 @@ export interface ChatComposerHandle {
   ) => boolean;
   openModelPicker: () => void;
   stepReasoningEffort: (direction: 1 | -1) => void;
+  selectModelOption: (effort?: string) => void;
   toggleModelPicker: () => void;
   openControl: (command: KeybindingCommand) => void;
   isModelPickerOpen: () => boolean;
@@ -2847,6 +2852,40 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             expandedCursorAfterReplace: change.cursor,
           });
         }
+      },
+      selectModelOption: (effort) => {
+        if (noProviderAvailable || pendingUserInputs.length > 0 || isEditingQueuedMessage) return;
+        const change = getComposerDirectOptionChange({
+          provider: selectedProvider,
+          instanceId: selectedInstanceId,
+          model: selectedModel,
+          models: selectedProviderModels,
+          modelOptions: composerModelOptions?.[selectedInstanceId],
+          reportedModelSelection,
+          prompt: promptRef.current,
+          planModeEnabled: settings.planModeEnabled,
+          ...(effort !== undefined ? { effort } : {}),
+        });
+        if (!change) return;
+        if ("modelOptions" in change) {
+          useComposerDraftStore
+            .getState()
+            .setProviderModelOptions(composerDraftTarget, selectedProvider, change.modelOptions, {
+              instanceId: selectedInstanceId,
+              model: selectedModel,
+              persistSticky: true,
+            });
+        }
+        if (change.prompt !== promptRef.current) {
+          const cursor = readComposerSnapshotStable().expandedCursor;
+          applyPromptReplacementStable(0, promptRef.current.length, change.prompt, {
+            expandedCursorAfterReplace: Math.max(
+              0,
+              cursor + change.prompt.length - promptRef.current.length,
+            ),
+          });
+        }
+        toastManager.add({ type: "info", title: change.label, timeout: 1800 });
       },
       toggleModelPicker: () => {
         if (isComposerModelPickerOpen) {

@@ -2,6 +2,7 @@ import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
 import type { ChatComposerHandle } from "./ChatComposer";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
+import { COMPOSER_EFFORT_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 
 const openControl =
   (composerRef: ComposerHandleRef, control: Parameters<ChatComposerHandle["openControl"]>[0]) =>
@@ -15,6 +16,18 @@ export function composerShortcutCommands(
   branchToolbarRef: { readonly current: BranchToolbarHandle | null },
 ): ChatShortcutCommands {
   return {
+    ...Object.fromEntries(
+      COMPOSER_EFFORT_KEYBINDING_COMMANDS.map((command) => [
+        command,
+        ({ event }: { readonly event: KeyboardEvent }) => {
+          if (!event.repeat)
+            composerRef.current?.selectModelOption(command.slice("composer.setEffort.".length));
+        },
+      ]),
+    ),
+    "composer.toggleSpeed": ({ event }) => {
+      if (!event.repeat) composerRef.current?.selectModelOption();
+    },
     "modelPicker.toggle": ({ event }) => {
       if (!event.repeat) composerRef.current?.toggleModelPicker();
     },
