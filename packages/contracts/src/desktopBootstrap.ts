@@ -37,7 +37,7 @@ export const DesktopBackendBootstrap = Schema.Struct({
 
 export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;
 
-/** Written to `<t3Home>/runtime` before update shutdown so the backend retains its managed tunnel. */
+// The service CLI writes this marker for installed servers that release their tunnel on shutdown.
 export const DESKTOP_UPDATE_RESTART_MARKER_FILE = "desktop-update-restart";
 
 export const DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE = "desktop-update-in-progress";

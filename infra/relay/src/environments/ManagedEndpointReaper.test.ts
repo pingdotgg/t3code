@@ -238,7 +238,7 @@ function harness(input?: {
     cloudMintPublicKey: "cloud-public-key",
     managedEndpointBaseDomain: "example.test",
     managedEndpointNamespace: input?.namespace ?? "prod",
-    managedEndpointCleanupMode: input?.cleanupMode ?? "enabled",
+    ...(input?.cleanupMode === undefined ? {} : { managedEndpointCleanupMode: input.cleanupMode }),
     legacyManagedEndpointCleanupMode: input?.legacyCleanupMode ?? "off",
     ...(input?.legacyTunnelGraceMinutes === undefined
       ? {}

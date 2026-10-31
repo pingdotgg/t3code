@@ -1,5 +1,4 @@
 import {
-  DESKTOP_UPDATE_RESTART_MARKER_FILE,
   DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
   DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
   DesktopUpdateChannelSchema,
@@ -760,19 +759,6 @@ export const make = Effect.gen(function* () {
   });
 
   const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
-  const updateRestartMarkerPath = environment.path.join(
-    updateRestartMarkerDir,
-    DESKTOP_UPDATE_RESTART_MARKER_FILE,
-  );
-  const writeUpdateRestartMarker = fileSystem
-    .makeDirectory(updateRestartMarkerDir, { recursive: true })
-    .pipe(
-      Effect.andThen(fileSystem.writeFileString(updateRestartMarkerPath, "")),
-      Effect.catch((error) =>
-        logUpdaterWarning("Could not write the update restart marker.", { errorTag: error._tag }),
-      ),
-    );
-
   const updateInProgressMarkerPath = environment.path.join(
     updateRestartMarkerDir,
     DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
@@ -787,6 +773,7 @@ export const make = Effect.gen(function* () {
       startedAt,
       expiresAt: startedAt + DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
     });
+    yield* fileSystem.makeDirectory(updateRestartMarkerDir, { recursive: true });
     yield* fileSystem.writeFileString(updateInProgressTempPath, contents);
     yield* fileSystem.rename(updateInProgressTempPath, updateInProgressMarkerPath);
   }).pipe(
@@ -801,18 +788,17 @@ export const make = Effect.gen(function* () {
     .remove(updateInProgressMarkerPath, { force: true })
     .pipe(Effect.ignore);
 
-  // Failed or interrupted installs leave no replacement backend; later quits must release the tunnel.
-  const removeUpdateRestartMarker = fileSystem
-    .remove(updateRestartMarkerPath, { force: true })
-    .pipe(Effect.ignore);
-
   const installRecordPath = environment.path.join(
     updateRestartMarkerDir,
     DESKTOP_UPDATE_INSTALL_RECORD_FILE,
   );
   const writeInstallRecord = (targetVersion: string) =>
     encodeInstallRecord({ fromVersion: environment.appVersion, targetVersion }).pipe(
-      Effect.flatMap((text) => fileSystem.writeFileString(installRecordPath, text)),
+      Effect.flatMap((text) =>
+        fileSystem
+          .makeDirectory(updateRestartMarkerDir, { recursive: true })
+          .pipe(Effect.andThen(fileSystem.writeFileString(installRecordPath, text))),
+      ),
       Effect.catch((error) =>
         logUpdaterWarning("Could not record the update install.", { errorTag: error._tag }),
       ),
@@ -855,7 +841,6 @@ export const make = Effect.gen(function* () {
       finishUpdateAction("install"),
       Ref.set(desktopState.quitting, false),
       Ref.set(installRunningBackendsRef, []),
-      removeUpdateRestartMarker,
       removeUpdateInProgressMarker,
       removeInstallRecord,
     ],
@@ -873,7 +858,6 @@ export const make = Effect.gen(function* () {
     if (!ownsRecovery) return;
 
     yield* Ref.set(desktopState.quitting, false);
-    yield* removeUpdateRestartMarker;
     yield* removeUpdateInProgressMarker;
     yield* removeInstallRecord;
     yield* Effect.gen(function* () {
@@ -937,7 +921,6 @@ export const make = Effect.gen(function* () {
         yield* Ref.set(installRunningBackendsRef, []);
 
         return yield* Effect.gen(function* () {
-          yield* writeUpdateRestartMarker;
           yield* writeUpdateInProgressMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);

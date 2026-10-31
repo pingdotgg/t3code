@@ -32,7 +32,7 @@ Labeling a same-repo PR `relay:preview` deploys stage `pr-<number>` (cleaned up 
 
 ### Managed tunnel cleanup rollout
 
-`RELAY_TUNNEL_CLEANUP_MODE` and `RELAY_LEGACY_TUNNEL_CLEANUP_MODE` accept `off` (default), `dry-run`, or `enabled` and take effect on the next relay deploy (without `force`). Monitor `relay.managed_endpoint_reaper.sweep` spans in Axiom. To stop cleanup during an incident, set the mode to `off` and redeploy the relay.
+`RELAY_TUNNEL_CLEANUP_MODE` defaults to `enabled` for tunnels whose hosts have registered recovery. `RELAY_LEGACY_TUNNEL_CLEANUP_MODE` defaults to `off` for other tunnels. Both accept `off`, `dry-run`, or `enabled` and take effect on the next relay deploy (without `force`). Monitor `relay.managed_endpoint_reaper.sweep` spans in Axiom. To stop cleanup during an incident, set the mode to `off` and redeploy the relay.
 
 ## Mobile releases
 

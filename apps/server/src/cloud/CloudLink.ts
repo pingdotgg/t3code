@@ -23,7 +23,7 @@ import {
   RelayManagedEndpointRecoveryRegistrationResponse,
   RelayManagedEndpointRecoveryResponse,
   type RelayManagedEndpointRuntimeConfig,
-  RelayOkResponse,
+  type RelayOkResponse,
 } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
@@ -37,7 +37,7 @@ import {
   RELAY_MINT_RESPONSE_TYP,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
-import { isSecureRelayUrl, normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -48,21 +48,17 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpServer from "effect/http/HttpServer";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { makeRelayEnvironmentClient } from "../relay/relayEnvironmentClient.ts";
@@ -114,7 +110,6 @@ import {
   managedEndpointRuntimeConfigsMatch,
   parseManagedEndpointLocalOrigin,
 } from "./linkChecks.ts";
-import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -501,12 +496,6 @@ export class CloudLink extends Context.Service<
       | CloudLinkOriginInvalidError
       | ServerSecretStore.SecretStoreError
     >;
-    readonly releaseManagedTunnelOnShutdown: () => Effect.Effect<
-      boolean,
-      | CloudLinkBackgroundError
-      | CliTokenManager.CloudCliTokenManagerError
-      | HttpClientError.HttpClientError
-    >;
   }
 >()("t3/cloud/CloudLink") {}
 
@@ -525,9 +514,6 @@ const make = Effect.gen(function* () {
   const digest = yield* Digest.Digest;
   const signature = yield* Signature.Signature;
   const signingKey = yield* EnvironmentSigningKey;
-  const config = yield* ServerConfig.ServerConfig;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
 
   // Relay-signed text must not name a file directly; a digest is also a fixed, safe length.
@@ -538,14 +524,6 @@ const make = Effect.gen(function* () {
   });
 
   const withSecrets = Effect.provideService(ServerSecretStore.ServerSecretStore, secrets);
-  const withRuntimeFiles = <A, E>(
-    effect: Effect.Effect<A, E, ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path>,
-  ) =>
-    effect.pipe(
-      Effect.provideService(ServerConfig.ServerConfig, config),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-    );
 
   const validateLinkedCloudUser = (
     cloudUserId: string,
@@ -1228,70 +1206,6 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  // Cloudflare bills provisioned tunnels even while environments are offline.
-  const releaseManagedTunnelOnShutdown = Effect.fn(
-    "environment.cloud.releaseManagedTunnelOnShutdown",
-  )(function* () {
-    const runtimeConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
-    if (Option.isNone(runtimeConfig)) {
-      return false;
-    }
-    // CLI authorization releases only CLI-desired managed links; web/mobile links recover by credential and expire through the relay reaper.
-    if (
-      !(yield* readCliDesiredCloudLink.pipe(withSecrets)) ||
-      (yield* readCliDesiredLinkMode.pipe(withSecrets)) !== "managed"
-    ) {
-      return false;
-    }
-    // Update handoffs reuse the tunnel: replacing it adds 1-2 minutes of hostname propagation.
-    if (
-      (yield* withRuntimeFiles(desktopUpdateRestartPending)) ||
-      (yield* withRuntimeFiles(pendingUpdateHandoffExists))
-    ) {
-      yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
-      return false;
-    }
-    const relayUrl = yield* requireRelayUrl.pipe(Effect.option);
-    const installedRelayUrl = yield* secrets.get(RELAY_URL_SECRET);
-    if (
-      Option.isNone(relayUrl) ||
-      Option.isNone(installedRelayUrl) ||
-      normalizeSecureRelayUrl(bytesToString(installedRelayUrl.value)) !== relayUrl.value
-    ) {
-      return false;
-    }
-    const token = yield* cliTokenManager.getExisting;
-    if (Option.isNone(token)) {
-      return false;
-    }
-    const environmentId = yield* environment.getEnvironmentId;
-    yield* endpointRuntime.applyConfig(null);
-    const response = yield* HttpClientRequest.delete(
-      `${relayUrl.value}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
-    ).pipe(
-      HttpClientRequest.bearerToken(token.value.accessToken),
-      httpClient.execute,
-      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-      Effect.flatMap(filterRelayResponse),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
-      withRelayClientTracing,
-    );
-    // ok:false means concurrent provisioning owns the tunnel; preserve its config.
-    if (!response.ok) {
-      return false;
-    }
-    // Released tokens are dead; remove only this shutdown's config to preserve a fast restart's replacement.
-    const storedConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
-    if (
-      Option.isSome(storedConfig) &&
-      bytesToString(storedConfig.value) === bytesToString(runtimeConfig.value)
-    ) {
-      yield* secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
-      yield* secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
-    }
-    return true;
-  });
-
   const readCloudLinkState = Effect.fn("environment.cloud.readLinkState")(function* () {
     const [
       cloudUserId,
@@ -1716,7 +1630,6 @@ const make = Effect.gen(function* () {
       registerManagedTunnelRecovery: notLinked,
       recoverManagedTunnel: notStarted,
       startManagedTunnelIfOriginConfirmed: notStarted,
-      releaseManagedTunnelOnShutdown,
     });
   }
 
@@ -1733,7 +1646,6 @@ const make = Effect.gen(function* () {
     registerManagedTunnelRecovery,
     recoverManagedTunnel,
     startManagedTunnelIfOriginConfirmed,
-    releaseManagedTunnelOnShutdown,
   });
 });
 

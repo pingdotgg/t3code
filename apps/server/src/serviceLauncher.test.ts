@@ -43,7 +43,6 @@ import {
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
-  SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
@@ -1871,7 +1870,7 @@ if (context.update?.status === "pending") {
     }),
   );
 
-  it.effect("holds its lock while it serves and stops the server over IPC, marker set", () =>
+  it.effect("holds its lock while it serves and stops the server over IPC, no marker", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1884,7 +1883,7 @@ if (context.update?.status === "pending") {
       const encoded = JSON.stringify({
         databasePath,
         reportPath,
-        markerPath: path.join(root, "runtime", SERVICE_STOP_MARKER_FILE),
+        markerPath: path.join(root, "runtime", ".service-stopping"),
       });
       const childSource = `
 const fs = require("node:fs");
@@ -1935,7 +1934,7 @@ process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.dat
       // What losing the task's console does.
       yield* Effect.promise(() => launcher.stop("SIGTERM"));
       yield* Effect.promise(() => running);
-      assert.equal(yield* fs.readFileString(reportPath), "true");
+      assert.equal(yield* fs.readFileString(reportPath), "false");
       assert.isFalse(yield* Effect.promise(() => serviceLauncherIsRunning(lockPath)));
     }),
   );
