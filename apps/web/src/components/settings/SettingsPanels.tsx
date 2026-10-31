@@ -68,7 +68,9 @@ import { providerInstanceEntriesFor } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { TRIAGE_CLI_COMMAND, useStartTriage } from "../../hooks/useStartTriage";
+import { pickTriageEnvironment } from "../../lib/triageTarget";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
@@ -1971,8 +1973,53 @@ export function MaintenanceSettingsPanel() {
             </Button>
           }
         />
+        <TriageSettingsRow />
       </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+function TriageSettingsRow() {
+  const { environment, connectedEnvironments } = useSettingsScope();
+  const startTriage = useStartTriage();
+  const supportsTriage = (environmentId: string) =>
+    connectedEnvironments.some(
+      (candidate) =>
+        candidate.environmentId === environmentId &&
+        candidate.serverConfig?.environment.capabilities.triage === true,
+    );
+  const triageEnvironmentId = pickTriageEnvironment({
+    onScreen: null,
+    primary: environment?.environmentId ?? null,
+    connected: connectedEnvironments.map((candidate) => candidate.environmentId),
+    supportsTriage,
+  });
+  const permitted = useAtomValue(
+    serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId),
+  );
+
+  return (
+    <SettingsRow
+      {...searchableSetting("triage")}
+      description="An agent investigates a T3 Code problem and helps file an issue."
+      status={
+        triageEnvironmentId === null
+          ? `Update T3 Code on this environment, or run ${TRIAGE_CLI_COMMAND} in a terminal there.`
+          : undefined
+      }
+      control={
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={triageEnvironmentId === null || !permitted}
+          onClick={() => {
+            if (triageEnvironmentId !== null) void startTriage(triageEnvironmentId);
+          }}
+        >
+          Start triage
+        </Button>
+      }
+    />
   );
 }
 

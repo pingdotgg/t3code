@@ -729,6 +729,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["logs traces processes resource history failures spans cpu memory"],
   },
   {
+    id: "triage",
+    title: "Triage an issue",
+    to: "/settings/maintenance",
+    searchTerms: ["bug issue report broken debug help support"],
+    environmentOnly: true,
+  },
+  {
     id: "open-source-licenses",
     title: "Open source licenses",
     to: "/settings/about",
