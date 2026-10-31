@@ -518,6 +518,93 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       Effect.provideService(CommandResolutionCache, new Map()),
     ),
   );
+
+  // Candidates are checked against the process cwd, so the lookup runs in a child with a temp cwd.
+  const resolveInChild = `
+import { createRequire } from "node:module";
+const [shellPath, command, rawPaths] = process.argv.slice(1);
+const requireFromShell = createRequire(shellPath);
+const Effect = await import(requireFromShell.resolve("effect/Effect"));
+const { layer } = await import(requireFromShell.resolve("@effect/platform-node/NodeServices"));
+const HostProcess = await import(shellPath.replace(/shell\\.ts$/, "HostProcess.ts"));
+const Shell = await import(shellPath);
+const resolved = {};
+for (const [label, PATH] of Object.entries(JSON.parse(rawPaths))) {
+  resolved[label] = {
+    effect: await Effect.runPromise(
+      Shell.resolveCommandPath(command, { env: { PATH } }).pipe(
+        Effect.provideService(HostProcess.Platform, process.platform),
+        Effect.provideService(Shell.CommandResolutionCache, new Map()),
+        Effect.provide(layer),
+      ),
+    ),
+    spawn: Shell.SpawnExecutableResolution.defaultValue()(command, process.platform, { PATH }) ?? null,
+  };
+}
+console.log(JSON.stringify(resolved));
+`;
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "searches the current directory for empty components of a nonempty POSIX PATH",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-empty-path-cwd-" });
+        const listed = yield* fs.makeTempDirectoryScoped({ prefix: "t3-empty-path-listed-" });
+        const command = "t3-empty-path-cli";
+        const inCwd = path.join(cwd, command);
+        const inListed = path.join(listed, command);
+        yield* fs.writeFileString(inCwd, "#!/bin/sh\n", { mode: 0o755 });
+        yield* fs.writeFileString(inListed, "#!/bin/sh\n", { mode: 0o755 });
+        const missing = path.join(cwd, "missing");
+
+        const searches = {
+          dot: { PATH: ".", expected: inCwd },
+          absolute: { PATH: listed, expected: inListed },
+          leading: { PATH: `:${missing}`, expected: inCwd },
+          trailing: { PATH: `${missing}:`, expected: inCwd },
+          interior: { PATH: `${missing}::${missing}-2`, expected: inCwd },
+          leadingBeforeListed: { PATH: `:${listed}`, expected: inCwd },
+          listedBeforeTrailing: { PATH: `${listed}:`, expected: inListed },
+          entirelyEmpty: { PATH: "", expected: null },
+          whitespaceOnly: { PATH: `${missing}: `, expected: null },
+          quotedEmpty: { PATH: `${missing}:""`, expected: null },
+        };
+
+        const entries = Object.entries(searches);
+        const stdout = NodeChildProcess.execFileSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            resolveInChild,
+            path.join(import.meta.dirname, "shell.ts"),
+            command,
+            JSON.stringify(Object.fromEntries(entries.map(([label, row]) => [label, row.PATH]))),
+          ],
+          { cwd, encoding: "utf8", env: {} },
+        );
+        const resolved: Record<string, { effect: string | null; spawn: string | null }> =
+          JSON.parse(stdout);
+
+        // A relative result is relative to the child's cwd.
+        const anchored = (found: string | null) =>
+          found === null ? null : path.resolve(cwd, found);
+        expect(
+          Object.fromEntries(
+            Object.entries(resolved).map(([label, found]) => [
+              label,
+              { effect: anchored(found.effect), spawn: anchored(found.spawn) },
+            ]),
+          ),
+        ).toEqual(
+          Object.fromEntries(
+            entries.map(([label, row]) => [label, { effect: row.expected, spawn: row.expected }]),
+          ),
+        );
+      }),
+  );
 });
 
 describe("preferGitForWindowsBinary", () => {
