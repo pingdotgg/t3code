@@ -69,12 +69,18 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
   const archive = yield* fs.readFile(path.join(root, "release", archiveName));
   let checksum = NodeCrypto.createHash("sha256").update(archive).digest("hex");
   const requests: Array<string> = [];
+  let oversizedArchive = false;
   const server = NodeHttp.createServer((request, response) => {
     requests.push(request.url ?? "");
     if (request.url === `/v${VERSION}/SHA256SUMS`) {
       response.end(`${checksum}  ${archiveName}\n`);
     } else if (request.url === `/v${VERSION}/${archiveName}`) {
-      response.writeHead(200, { "Content-Length": archive.length }).end(archive);
+      response
+        .writeHead(200, {
+          "Content-Length": oversizedArchive ? 128 * 1024 * 1024 + 1 : archive.length,
+          Connection: "close",
+        })
+        .end(archive);
     } else {
       response.writeHead(404).end();
     }
@@ -93,6 +99,9 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     requests,
+    setOversizedArchive: (enabled: boolean) => {
+      oversizedArchive = enabled;
+    },
     corruptChecksum: () => {
       checksum = "0".repeat(64);
     },
@@ -155,6 +164,20 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           (yield* fs.readDirectory(path.join(home, "runtime/versions"))).sort(),
           [VERSION],
         );
+
+        release.setOversizedArchive(true);
+        const oversizedHome = path.join(root, "oversized-home");
+        const oversized = yield* run(process.execPath, [launcher, "--version"], {
+          cwd: root,
+          env: { ...env, T3CODE_HOME: oversizedHome },
+        });
+        assert.equal(oversized.exitCode, 1);
+        assert.include(oversized.stderr, "134217728-byte limit");
+        assert.deepStrictEqual(
+          yield* fs.readDirectory(path.join(oversizedHome, "runtime/versions")),
+          [],
+        );
+        release.setOversizedArchive(false);
 
         const requestsAfterFirst = release.requests.length;
         const second = yield* run(process.execPath, [launcher, "--version"], { cwd: root, env });
