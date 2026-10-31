@@ -13,6 +13,7 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { WorktreeSetupSheet } from "./worktree-setup-sheet";
+import type { PreparationStep } from "./preparation-progress";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
@@ -282,13 +283,44 @@ function StageRow({
           ? `${stage.percent}%`
           : stage.detail;
   return (
+    <StepRow
+      label={label}
+      status={stage.status}
+      detail={detail}
+      duration={
+        stage.status !== "pending" && stage.status !== "skipped"
+          ? elapsed(stage.startedAt, stage.endedAt, now)
+          : null
+      }
+      compact={compact}
+      animate={animate}
+    />
+  );
+}
+
+function StepRow({
+  label,
+  status,
+  detail,
+  duration,
+  compact = false,
+  animate = true,
+}: {
+  label: string;
+  status: WorktreeSetupStage["status"];
+  detail: string | null;
+  duration: string | null;
+  compact?: boolean;
+  animate?: boolean;
+}) {
+  return (
     <View
-      accessibilityLabel={`${label}, ${stage.status}`}
+      accessibilityLabel={`${label}, ${status}`}
       className={compact ? "min-h-8 flex-row items-center" : "min-h-11 flex-row items-center"}
-      style={{ columnGap: 8, opacity: stage.status === "pending" ? 0.4 : 1 }}
+      style={{ columnGap: 8, opacity: status === "pending" ? 0.4 : 1 }}
     >
       <View className="w-6 items-center">
-        {stage.status === "running" && animate ? (
+        {status === "running" && animate ? (
           <AppActivityIndicator
             size="small"
             colorClassName="accent-icon-muted"
@@ -296,19 +328,19 @@ function StageRow({
           />
         ) : (
           <SymbolView
-            name={icons[stage.status]}
+            name={icons[status]}
             size={14}
             tintColorClassName={
-              stage.status === "failed"
+              status === "failed"
                 ? "accent-danger-foreground"
-                : stage.status === "warning"
+                : status === "warning"
                   ? "accent-warning-foreground"
                   : "accent-icon-muted"
             }
           />
         )}
       </View>
-      {stage.status === "running" && animate ? (
+      {status === "running" && animate ? (
         <ShimmeringWorkContent
           icon="clock"
           iconSubtleColor="transparent"
@@ -319,7 +351,7 @@ function StageRow({
         <Text
           numberOfLines={1}
           className={
-            stage.status === "failed"
+            status === "failed"
               ? "flex-1 text-sm text-danger-foreground"
               : "flex-1 text-sm text-foreground-secondary"
           }
@@ -332,15 +364,69 @@ function StageRow({
           {detail}
         </Text>
       ) : null}
-      {stage.status !== "pending" && stage.status !== "skipped" ? (
+      {duration ? (
         <Text
           className="text-2xs text-foreground-secondary"
           style={{ fontVariant: ["tabular-nums"] }}
         >
-          {elapsed(stage.startedAt, stage.endedAt, now)}
+          {duration}
         </Text>
       ) : null}
     </View>
+  );
+}
+
+/**
+ * Progress behind the preparing pill before the server's setup stages arrive,
+ * so a slow connection still says which step the task is waiting on.
+ */
+export function PreparationProgressSheet({
+  steps,
+  startedAt,
+  onClose,
+}: {
+  steps: ReadonlyArray<PreparationStep>;
+  startedAt: string | null;
+  onClose: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const [bodyHeight, setBodyHeight] = useState(0);
+  const now = useVisibleSecondClock(true);
+  const sinceStart = startedAt ? elapsed(startedAt, null, now) : null;
+  return (
+    <WorktreeSetupSheet title="Preparing task" height={bodyHeight} onClose={onClose}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        bounces={false}
+        onContentSizeChange={(_width, height) => setBodyHeight(height)}
+        contentContainerStyle={{
+          paddingHorizontal: 20,
+          paddingTop: 12,
+          paddingBottom: Math.max(20, insets.bottom),
+        }}
+      >
+        {/* The detail says what the step is waiting on, so it gets its own line
+            instead of the row's narrow trailing column. */}
+        {steps.map((step) => (
+          <View key={step.id}>
+            <StepRow label={step.label} status={step.status} detail={null} duration={null} />
+            {step.detail ? (
+              <Text className="-mt-2 mb-1 ml-8 text-2xs text-foreground-secondary">
+                {step.detail}
+              </Text>
+            ) : null}
+          </View>
+        ))}
+        {sinceStart ? (
+          <Text
+            className="ml-8 mt-2 text-2xs text-foreground-secondary"
+            style={{ fontVariant: ["tabular-nums"] }}
+          >
+            {`Started ${sinceStart} ago`}
+          </Text>
+        ) : null}
+      </ScrollView>
+    </WorktreeSetupSheet>
   );
 }
 

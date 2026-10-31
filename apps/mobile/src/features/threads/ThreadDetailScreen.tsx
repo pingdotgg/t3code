@@ -21,7 +21,8 @@ import {
   isThreadWokeUnseen,
   snoozeWakeLabel,
 } from "@t3tools/client-runtime/state/thread-settled";
-import type { WorktreeSetupCardProps } from "./worktree-setup-card";
+import { PreparationProgressSheet, type WorktreeSetupCardProps } from "./worktree-setup-card";
+import { preparationPillLabel, preparationSteps } from "./preparation-progress";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -237,6 +238,9 @@ export interface ThreadDetailScreenProps {
         readonly kind: "preparing";
         readonly preparingWorktree: boolean;
         readonly serverOwned: boolean;
+        /** The server has the task; until then the outbox is still sending it. */
+        readonly sent: boolean;
+        readonly startedAt: string | null;
       }
     | { readonly kind: "failed"; readonly reason: string; readonly onEditTask: () => void }
     | null;
@@ -478,6 +482,25 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   // effects when shown, so each show arms a fresh scope.
   const threadScope = useRef(new AbortController());
   const [composerHeight, setComposerHeight] = useState<number | null>(null);
+  const [preparationDetailsThreadKey, setPreparationDetailsThreadKey] = useState<string | null>(
+    null,
+  );
+  // Once the server's stages arrive, the setup card in the feed takes over.
+  const preparationDetailsOpen =
+    preparationDetailsThreadKey === selectedThreadKey &&
+    props.creationState?.kind === "preparing" &&
+    !props.worktreeSetup;
+  // Forget the sheet once the setup card takes over or another thread opens,
+  // so returning to this thread does not reopen it.
+  if (preparationDetailsThreadKey !== null && !preparationDetailsOpen) {
+    setPreparationDetailsThreadKey(null);
+  }
+  const preparationInput = (creation: { preparingWorktree: boolean; sent: boolean }) => ({
+    sent: creation.sent,
+    preparingWorktree: creation.preparingWorktree,
+    connected: props.connectionStateLabel === "connected",
+    environmentLabel: props.environmentLabel,
+  });
   // The composer animates its height and reports a layout every frame. The feed follows those
   // frames on the UI thread through onComposerLayout; this is only an estimate, so committing
   // each frame would re-render the whole screen for the length of the animation.
@@ -713,7 +736,8 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       if (props.worktreeSetup) return null;
       return {
         kind: "preparing",
-        label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
+        label: preparationPillLabel(preparationInput(props.creationState)),
+        onPress: () => setPreparationDetailsThreadKey(selectedThreadKey),
       };
     }
     if (props.creationState?.kind === "failed") {
@@ -1469,6 +1493,13 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 onLayout={handleComposerOverlayLayout}
                 className="w-full"
               >
+                {preparationDetailsOpen && props.creationState?.kind === "preparing" ? (
+                  <PreparationProgressSheet
+                    steps={preparationSteps(preparationInput(props.creationState))}
+                    startedAt={props.creationState.startedAt}
+                    onClose={() => setPreparationDetailsThreadKey(null)}
+                  />
+                ) : null}
                 <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
                   <FloatingWorkingControl
                     colorScheme={isDarkMode ? "dark" : "light"}

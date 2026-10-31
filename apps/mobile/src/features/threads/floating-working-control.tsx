@@ -160,9 +160,7 @@ export function FloatingWorkingControl(props: {
     hasQueue ||
     (props.devicePreview !== null && props.browserPreview !== null);
   const statusInteractive =
-    props.status?.kind === "connection" ||
-    props.status?.kind === "child-input" ||
-    props.status?.kind === "background";
+    props.status !== null && "onPress" in props.status && props.status.onPress !== undefined;
   const capsuleInteractive =
     statusInteractive || action !== null || hasQueue || hasAgents || hasPreview;
   const statusContent =
@@ -517,6 +515,9 @@ function FloatingStatusLabel(props: {
       <StatusLabelRow
         key="preparing"
         accessibilityLabel={props.status.label}
+        {...(props.status.onPress
+          ? { accessibilityRole: "button" as const, onPress: props.status.onPress }
+          : {})}
         className="gap-1.5"
         onLayout={props.onLayout}
       >
