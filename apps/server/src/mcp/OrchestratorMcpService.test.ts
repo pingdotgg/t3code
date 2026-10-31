@@ -1717,7 +1717,13 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: fallbackModelSelection,
           },
           {
-            name: "accepted retry replays the committed selection",
+            name: "accepted retry replays the provider committed before exhaustion",
+            target: undefined,
+            committed: { instanceId: codexInstanceId, model: "gpt-5.4" },
+            expected: { instanceId: codexInstanceId, model: "gpt-5.4" },
+          },
+          {
+            name: "accepted retry replays the committed fallback model and options",
             target: { options: [effortHigh] },
             committed: committedFallback,
             expected: committedFallback,
