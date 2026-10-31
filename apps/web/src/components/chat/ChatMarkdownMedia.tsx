@@ -113,7 +113,11 @@ function ChatMarkdownMediaUnavailableLabel(props: {
   return (
     <span data-thread-find-ignore className="inline-flex items-center gap-1.5">
       <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-      {[label, props.alt, props.detail].filter(Boolean).join(" · ")}
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span>{label}</span>
+        {props.alt ? <span>{props.alt}</span> : null}
+        {props.detail ? <span>{props.detail}</span> : null}
+      </span>
     </span>
   );
 }
@@ -130,7 +134,7 @@ export function ChatMarkdownImageFallback(props: {
       data-markdown-copy={props.copyMarkdown}
       className={cn(
         CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
-        "rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
+        "rounded-row border border-border surface-card px-2 py-1 text-xs text-muted-foreground",
       )}
     >
       <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} detail={props.detail} />
