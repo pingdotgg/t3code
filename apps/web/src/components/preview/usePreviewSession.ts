@@ -15,6 +15,7 @@ import {
   reconcilePreviewServerSessions,
 } from "~/previewStateStore";
 import { isElectron } from "~/env";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { previewEnvironment } from "~/state/preview";
 
 class PreviewSessionThreadKeyParseError extends Schema.TaggedError<PreviewSessionThreadKeyParseError>()(
@@ -57,7 +58,19 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     };
 
     const applyLatestEvent = (result: Atom.Type<typeof eventsAtom>) => {
-      if (!AsyncResult.isSuccess(result) || result.value.threadId !== threadRef.threadId) return;
+      if (!AsyncResult.isSuccess(result)) return;
+      // The stream carries every thread's tabs. A tab the server closed (an agent,
+      // another client) loses its surface even in a thread nobody is viewing, so
+      // only tabs lost to a restart, which sends no close, are left to reopen.
+      if (result.value.type === "closed") {
+        useRightPanelStore
+          .getState()
+          .dropBrowserTab(
+            scopeThreadRef(threadRef.environmentId, ThreadId.make(result.value.threadId)),
+            result.value.tabId,
+          );
+      }
+      if (result.value.threadId !== threadRef.threadId) return;
       const currentEpoch = readThreadPreviewState(threadRef).serverEpoch;
       if (currentEpoch !== null && currentEpoch !== result.value.serverEpoch) {
         get.refresh(sessionsAtom);

@@ -767,7 +767,7 @@ describe("isRichTextBoldShortcut", () => {
 });
 
 describe("composer and pull request shortcuts", () => {
-  it("dictates on mod+alt+v and keeps mod+shift+d for the terminal split", () => {
+  it("splits a pane down outside the terminal and preserves terminal split", () => {
     assert.strictEqual(
       resolveShortcutCommand(
         event({ key: "v", ctrlKey: true, altKey: true }),
@@ -777,6 +777,13 @@ describe("composer and pull request shortcuts", () => {
       "composer.dictation",
     );
     const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "layout.splitDown",
+    );
     assert.strictEqual(
       resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
         platform: "Linux",
