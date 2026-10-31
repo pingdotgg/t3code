@@ -38,6 +38,20 @@ export function newPreviewTabId(): string {
   return `${TAB_ID_PREFIX}${nextPreviewTabSequence.toString(36)}`;
 }
 
+/**
+ * The server run a server tab was opened in: the preview manager suffixes
+ * server tabs with its run's epoch. Null for a desktop tab.
+ */
+export function previewTabServerRun(tabId: string): string | null {
+  return new RegExp(`^${TAB_ID_PREFIX}[0-9a-z]+_(.+)$`).exec(tabId)?.[1] ?? null;
+}
+
+/** Whether a server tab belongs to an earlier run of its server than `serverEpoch`. */
+export function isPreviewTabFromEarlierRun(tabId: string, serverEpoch: string): boolean {
+  const run = previewTabServerRun(tabId);
+  return run !== null && run !== serverEpoch;
+}
+
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 
 export const LSOF_LOCAL_HOST_TOKENS: ReadonlySet<string> = new Set([
