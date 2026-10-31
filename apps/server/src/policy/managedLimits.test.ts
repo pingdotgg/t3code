@@ -163,6 +163,28 @@ it.effect(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make((command) => {
             const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+            // `tailscale status --json` names the machine; `tailscale serve status --json` routes.
+            if (args[0] === "status") {
+              return Effect.succeed(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(1),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                  isRunning: Effect.succeed(false),
+                  kill: () => Effect.void,
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout: Stream.make(
+                    new TextEncoder().encode(
+                      JSON.stringify({ Self: { DNSName: `${currentName}.` } }),
+                    ),
+                  ),
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                }),
+              );
+            }
             const isStatus = args.includes("status");
             if (!isStatus) {
               offCalls.push(args);
@@ -231,7 +253,7 @@ it.effect(
             "/other": "http://127.0.0.2:3773",
           },
         };
-        const tcp: Record<string, string> = { "7000": "localhost:3773" };
+        const tcp: Record<string, string> = { "7000": "127.0.0.1:3773" };
         const offCalls: Array<ReadonlyArray<string>> = [];
         yield* close({ web, tcp }, offCalls);
         assert.deepEqual(web, {
@@ -246,22 +268,40 @@ it.effect(
           ["serve", "--https=443", `--set-path=${mount}`, "off"],
         ]);
       }
-      // After a rename, `off` would act on the current name's route at the same path.
+      // `off` acts on the current name: a route under a former one is left, with how to clear it,
+      // while one under the current name goes even if a former name has routes too.
       const renamed: Web = {
         "old.tailnet.ts.net:443": { "/": "http://127.0.0.1:3773" },
         "new.tailnet.ts.net:443": { "/": "http://127.0.0.1:9000" },
       };
       const renamedOffCalls: Array<ReadonlyArray<string>> = [];
-      const ambiguous = yield* close(
+      const former = yield* close(
         { web: renamed, currentName: "new.tailnet.ts.net" },
         renamedOffCalls,
       ).pipe(Effect.flip);
       assert.deepEqual(renamedOffCalls, []);
       assert.deepEqual(renamed["new.tailnet.ts.net:443"], { "/": "http://127.0.0.1:9000" });
       assert.include(
-        ambiguous.message,
-        "port 443 at / for old.tailnet.ts.net here, and this machine has Serve routes under more than one name",
+        former.message,
+        'under old.tailnet.ts.net, a former name of this machine, which "tailscale serve ... off" cannot reach; run "tailscale serve reset"',
       );
+      const current: Web = {
+        "old.tailnet.ts.net:443": { "/": "http://127.0.0.1:9000" },
+        "new.tailnet.ts.net:443": { "/": "http://127.0.0.1:3773" },
+      };
+      yield* close({ web: current, currentName: "new.tailnet.ts.net" });
+      assert.deepEqual(current, {
+        "old.tailnet.ts.net:443": { "/": "http://127.0.0.1:9000" },
+        "new.tailnet.ts.net:443": {},
+      });
+      // A `localhost` target might reach another service on the other loopback, so it stays.
+      const localhostOffCalls: Array<ReadonlyArray<string>> = [];
+      const localhost = yield* close(
+        { web: { "box.tailnet.ts.net:443": { "/": "http://localhost:3773" } } },
+        localhostOffCalls,
+      ).pipe(Effect.flip);
+      assert.deepEqual(localhostOffCalls, []);
+      assert.include(localhost.message, "its target localhost can also reach another service");
       // Only a fresh read confirms the route is gone, whatever `off` exits with.
       for (const answers of [{ offIgnored: true }, { offIgnored: true, offExitCode: 1 }]) {
         const stuck = yield* close(answers).pipe(Effect.flip);

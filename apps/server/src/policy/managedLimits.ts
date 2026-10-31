@@ -14,8 +14,8 @@ import {
   disableTailscaleServeTcp,
   readTailscaleServeRoutesTo,
   tailscaleServeOffArgs,
+  readTailscaleStatus,
   type TailscaleServeRoute,
-  type TailscaleServeRoutesTo,
   type TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
@@ -88,7 +88,7 @@ const isMissingCli = (cause: unknown) =>
   (PlatformError.isPlatformError(cause) && cause.reason._tag === "NotFound") ||
   (cause instanceof Error && "code" in cause && cause.code === "ENOTDIR");
 
-const NOTHING_FORWARDED: TailscaleServeRoutesTo = { routes: [], machineNames: new Set() };
+const NOTHING_FORWARDED: ReadonlyArray<TailscaleServeRoute> = [];
 
 /** Tailscale answers that leave nothing forwarding here right now. */
 const NOTHING_TO_CLOSE: ReadonlySet<TailscaleStderrDiagnostic | undefined> = new Set([
@@ -129,12 +129,22 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
     ),
   );
   const found = yield* readRoutes;
-  if (found.routes.length === 0) return;
-  // `off` acts on the machine's current name, so a web route stays when another name has routes.
+  if (found.length === 0) return;
+  // `off` acts on the machine's current name, so a web route under a former name stays.
+  const currentName = found.some((route) => route.mount !== undefined && route.owner === undefined)
+    ? yield* readTailscaleStatus.pipe(
+        Effect.map((status) => status.magicDnsName?.toLowerCase() ?? null),
+        Effect.orElseSucceed(() => null),
+      )
+    : null;
+  const formerName = (route: TailscaleServeRoute) =>
+    route.host !== undefined && currentName !== null && route.host.toLowerCase() !== currentName;
   // A Service is shared across the tailnet, and a foreground route lives as long as its command.
   const removable = (route: TailscaleServeRoute) =>
-    route.owner === undefined && (route.mount === undefined || found.machineNames.size <= 1);
-  for (const route of found.routes.filter(removable)) {
+    route.owner === undefined &&
+    route.ambiguous !== true &&
+    (route.mount === undefined || (currentName !== null && !formerName(route)));
+  for (const route of found.filter(removable)) {
     yield* (
       route.mount === undefined
         ? disableTailscaleServeTcp(route.servePort)
@@ -145,18 +155,19 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
       ),
     );
   }
-  const left = (yield* readRoutes).routes;
+  const left = yield* readRoutes;
   if (left.length > 0) {
     const describe = (route: TailscaleServeRoute) => {
-      const where = `port ${route.servePort}${route.mount === undefined ? "" : ` at ${route.mount}`}${
-        found.machineNames.size > 1 && route.host !== undefined ? ` for ${route.host}` : ""
-      } here`;
+      const where = `port ${route.servePort}${route.mount === undefined ? "" : ` at ${route.mount}`} here`;
       const off = tailscaleServeOffArgs(route);
-      return off === undefined
-        ? `${where}; stop the "tailscale serve" command that runs it`
-        : route.owner === undefined && route.mount !== undefined && found.machineNames.size > 1
-          ? `${where}, and this machine has Serve routes under more than one name; remove that route yourself`
-          : `${where}; turn it off with "tailscale ${off.join(" ")}"`;
+      if (off === undefined) return `${where}; stop the "tailscale serve" command that runs it`;
+      if (formerName(route)) {
+        return `${where} under ${route.host}, a former name of this machine, which "tailscale serve ... off" cannot reach; run "tailscale serve reset" and set up your other routes again`;
+      }
+      const command = `"tailscale ${off.join(" ")}"`;
+      return route.ambiguous === true
+        ? `${where}, and its target localhost can also reach another service on this port; check it, then turn it off with ${command}`
+        : `${where}; turn it off with ${command}`;
     };
     return yield* refuseRemoteClients(
       policy,
@@ -164,7 +175,7 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
     );
   }
   yield* Effect.logInfo("Turned off Tailscale Serve the managed policy does not allow", {
-    routes: found.routes,
+    routes: found,
   });
 });
 

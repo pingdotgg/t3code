@@ -452,6 +452,8 @@ export interface TailscaleServeRoute {
   readonly mount?: string;
   /** The machine name a web route serves under. */
   readonly host?: string;
+  /** Its target is `localhost`, which can dial a different service on the other loopback. */
+  readonly ambiguous?: boolean;
   /** The Tailscale Service it belongs to, or `foreground` for a `tailscale serve` still running. */
   readonly owner?: string;
 }
@@ -521,8 +523,11 @@ const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.NullOr(TailscaleServeStatusJson)),
 );
 
-/** Whether a proxy to `hostname` dials `bindHost`: `localhost` and `0.0.0.0` reach the loopback. */
-const reaches = (hostname: string, bindHost: string) => {
+/**
+ * Whether a proxy to `hostname` dials `bindHost`: `0.0.0.0` and `[::]` reach the loopback of their
+ * family, and `localhost` may reach either one.
+ */
+const reaches = (hostname: string, bindHost: string): "exact" | "either" | undefined => {
   let address = normalizeHostname(hostname);
   // URLs write an IPv4-mapped address as hex, such as ::ffff:7f00:1 for 127.0.0.1.
   const mapped = /^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/u.exec(address);
@@ -533,25 +538,19 @@ const reaches = (hostname: string, bindHost: string) => {
   } else if (address.startsWith("::ffff:")) {
     address = address.slice("::ffff:".length);
   }
-  if (address === "localhost") return bindHost === "127.0.0.1" || bindHost === "::1";
-  if (address === "0.0.0.0") return bindHost === "127.0.0.1";
-  if (address === "::") return bindHost === "::1";
-  return address === bindHost;
+  if (address === "localhost") {
+    return bindHost === "127.0.0.1" || bindHost === "::1" ? "either" : undefined;
+  }
+  const dialed = address === "0.0.0.0" ? "127.0.0.1" : address === "::" ? "::1" : address;
+  return dialed === bindHost ? "exact" : undefined;
 };
 
 const reachesTarget = (url: string, target: { readonly host: string; readonly port: number }) => {
-  if (!URL.canParse(url)) return false;
+  if (!URL.canParse(url)) return undefined;
   const parsed = new URL(url);
   const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
-  return reaches(parsed.hostname, target.host) && port === String(target.port);
+  return port === String(target.port) ? reaches(parsed.hostname, target.host) : undefined;
 };
-
-/** What Serve forwards to a server: its routes, and the machine names its own web routes use. */
-export interface TailscaleServeRoutesTo {
-  readonly routes: ReadonlyArray<TailscaleServeRoute>;
-  /** More than one when routes from a former machine name remain; `off` acts on the current one. */
-  readonly machineNames: ReadonlySet<string>;
-}
 
 /**
  * The Serve routes that forward to the server bound at `target`, or undefined when the status
@@ -560,7 +559,7 @@ export interface TailscaleServeRoutesTo {
 export const parseTailscaleServeRoutesTo = (
   rawServeStatusJson: string,
   target: { readonly host: string; readonly port: number },
-): TailscaleServeRoutesTo | undefined => {
+): ReadonlyArray<TailscaleServeRoute> | undefined => {
   const status = decodeTailscaleServeStatusJson(rawServeStatusJson);
   if (Option.isNone(status)) return undefined;
   const routesIn = (
@@ -568,42 +567,38 @@ export const parseTailscaleServeRoutesTo = (
     owner?: string,
   ): ReadonlyArray<TailscaleServeRoute> => {
     const scope = owner === undefined ? {} : { owner };
-    const tcp = Object.entries(config?.TCP ?? {}).flatMap(([port, handler]) =>
-      handler.TCPForward !== undefined &&
-      Number.isInteger(Number(port)) &&
-      reachesTarget(`tcp://${handler.TCPForward}`, target)
-        ? [{ servePort: Number(port), ...scope }]
-        : [],
-    );
+    const reached = (url: string) => {
+      const reach = reachesTarget(url, target);
+      return reach === undefined ? undefined : reach === "either" ? { ambiguous: true } : {};
+    };
+    const tcp = Object.entries(config?.TCP ?? {}).flatMap(([port, handler]) => {
+      const reach =
+        handler.TCPForward === undefined ? undefined : reached(`tcp://${handler.TCPForward}`);
+      return reach !== undefined && Number.isInteger(Number(port))
+        ? [{ servePort: Number(port), ...reach, ...scope }]
+        : [];
+    });
     const web = Object.entries(config?.Web ?? {}).flatMap(([hostPort, site]) => {
       const separator = hostPort.lastIndexOf(":");
       const servePort = Number(hostPort.slice(separator + 1));
       if (!Number.isInteger(servePort)) return [];
       const host = hostPort.slice(0, separator);
-      return Object.entries(site.Handlers ?? {}).flatMap(([mount, handler]) =>
-        handler.Proxy !== undefined && reachesTarget(handler.Proxy, target)
-          ? [{ servePort, mount, host, ...scope }]
-          : [],
-      );
+      return Object.entries(site.Handlers ?? {}).flatMap(([mount, handler]) => {
+        const reach = handler.Proxy === undefined ? undefined : reached(handler.Proxy);
+        return reach === undefined ? [] : [{ servePort, mount, host, ...reach, ...scope }];
+      });
     });
     return [...tcp, ...web];
   };
-  return {
-    routes: [
-      ...routesIn(status.value ?? undefined),
-      ...Object.entries(status.value?.Services ?? {}).flatMap(([name, service]) =>
-        routesIn(service, name),
-      ),
-      ...Object.values(status.value?.Foreground ?? {}).flatMap((session) =>
-        routesIn(session, "foreground"),
-      ),
-    ],
-    machineNames: new Set(
-      Object.keys(status.value?.Web ?? {}).map((hostPort) =>
-        hostPort.slice(0, hostPort.lastIndexOf(":")),
-      ),
+  return [
+    ...routesIn(status.value ?? undefined),
+    ...Object.entries(status.value?.Services ?? {}).flatMap(([name, service]) =>
+      routesIn(service, name),
     ),
-  };
+    ...Object.values(status.value?.Foreground ?? {}).flatMap((session) =>
+      routesIn(session, "foreground"),
+    ),
+  ];
 };
 
 /** The Serve routes that forward to the server bound at `target` on this machine. */

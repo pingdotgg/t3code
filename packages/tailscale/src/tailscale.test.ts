@@ -133,36 +133,26 @@ describe("tailscale", () => {
         session1: { TCP: { "9000": { TCPForward: "localhost:3773" } } },
       },
     });
-    const found = parseTailscaleServeRoutesTo(status, { host: "127.0.0.1", port: 3773 });
-    assert.deepEqual(found?.routes, [
+    assert.deepEqual(parseTailscaleServeRoutesTo(status, { host: "127.0.0.1", port: 3773 }), [
       { servePort: 7000 },
       { servePort: 443, mount: "/t3", host: "box.tailnet.ts.net" },
-      ...["/d", "/e", "/f"].map((mount) => ({
-        servePort: 10000,
-        mount,
-        host: "box.tailnet.ts.net",
-      })),
+      ...["/d", "/e"].map((mount) => ({ servePort: 10000, mount, host: "box.tailnet.ts.net" })),
+      // `localhost` dials either loopback, so it might be another service's.
+      { servePort: 10000, mount: "/f", host: "box.tailnet.ts.net", ambiguous: true },
       { servePort: 443, mount: "/", host: "t3.tailnet.ts.net", owner: "svc:t3" },
-      { servePort: 9000, owner: "foreground" },
+      { servePort: 9000, ambiguous: true, owner: "foreground" },
     ]);
-    assert.deepEqual([...(found?.machineNames ?? [])], ["box.tailnet.ts.net"]);
     assert.deepEqual(
       parseTailscaleServeRoutesTo(
         JSON.stringify({
           Web: { "box:443": { Handlers: { "/": { Proxy: "http://127.0.0.1" } } } },
         }),
         { host: "127.0.0.1", port: 80 },
-      )?.routes,
+      ),
       [{ servePort: 443, mount: "/", host: "box" }],
     );
-    assert.deepEqual(
-      parseTailscaleServeRoutesTo("{}", { host: "127.0.0.1", port: 3773 })?.routes,
-      [],
-    );
-    assert.deepEqual(
-      parseTailscaleServeRoutesTo("null", { host: "127.0.0.1", port: 3773 })?.routes,
-      [],
-    );
+    assert.deepEqual(parseTailscaleServeRoutesTo("{}", { host: "127.0.0.1", port: 3773 }), []);
+    assert.deepEqual(parseTailscaleServeRoutesTo("null", { host: "127.0.0.1", port: 3773 }), []);
     assert.isUndefined(parseTailscaleServeRoutesTo("not json", { host: "127.0.0.1", port: 3773 }));
   });
 
