@@ -107,7 +107,7 @@ export function defaultHostCloneUrl(repository: string): string | null {
 }
 
 /** Owner present, repository name missing: `owner/` or `owner//`. */
-const INCOMPLETE_GITHUB_OWNER_PATH = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/+$/;
+const INCOMPLETE_GITHUB_OWNER_PATH = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})\/+$/;
 
 const INCOMPLETE_GITHUB_OWNER_REPOSITORY_MESSAGE = "Enter the full owner/repository name.";
 

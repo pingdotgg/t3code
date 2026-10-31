@@ -20,9 +20,13 @@ describe("add project shared logic", () => {
     expect(githubIncompleteOwnerRepositoryMessage(github, "  pingdotgg//  ")).toBe(
       "Enter the full owner/repository name.",
     );
+    expect(githubIncompleteOwnerRepositoryMessage(github, "mona-cat_octo/")).toBe(
+      "Enter the full owner/repository name.",
+    );
 
     for (const input of [
       "pingdotgg/t3code",
+      "mona-cat_octo/repo",
       "pingdotgg",
       "https://github.com/pingdotgg/t3code.git",
       "git@github.com:pingdotgg/t3code.git",
