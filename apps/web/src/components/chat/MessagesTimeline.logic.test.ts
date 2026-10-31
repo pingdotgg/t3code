@@ -3726,7 +3726,8 @@ describe("linked timeline resources", () => {
       message("steer", "user", 1),
       event("created", "thread_created"),
       message("after-steer", "assistant", 3),
-      message("final", "assistant", 4),
+      message("progress", "assistant", 4),
+      message("final", "assistant", 5),
     ];
     const segmentKey = RunId.make(`${runId}:steer:steer`);
     const rowIds = (expanded: RunId[]) =>
@@ -3742,6 +3743,7 @@ describe("linked timeline resources", () => {
       `turn-fold:${segmentKey}`,
       "created",
       "after-steer",
+      "progress",
       "final",
       "summary:created",
       "assistant-meta:final",
