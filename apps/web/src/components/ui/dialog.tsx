@@ -102,12 +102,16 @@ function DialogPopup({
   bottomStickOnMobile = true,
   variant = "default",
   viewportProps,
+  placement = "center",
+  contentInset = 0,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   bottomStickOnMobile?: boolean;
   variant?: "default" | "media" | "app" | "app-panel";
   viewportProps?: Omit<DialogPrimitive.Viewport.Props, "className">;
+  placement?: "center" | "content-top";
+  contentInset?: number;
 }) {
   return (
     <DialogPortal>
@@ -119,7 +123,13 @@ function DialogPopup({
       <DialogViewport
         variant={variant === "app" || variant === "app-panel" ? "app" : "default"}
         {...viewportProps}
+        style={{
+          ...viewportProps?.style,
+          ...(placement === "content-top" ? { "--dialog-content-inset": `${contentInset}px` } : {}),
+        }}
         className={cn(
+          placement === "content-top" &&
+            "sm:grid-rows-[0_auto_1fr] sm:pt-[min(23.611dvh,170px)] sm:ps-[calc(var(--dialog-content-inset)+1rem)]",
           variant === "app-panel" && "max-sm:p-2",
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           variant === "media" &&
