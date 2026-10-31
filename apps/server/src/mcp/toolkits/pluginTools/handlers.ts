@@ -4,6 +4,7 @@ import * as PluginTools from "../../../plugins/PluginTools.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { PluginToolsToolkit } from "./tools.ts";
+import { assertFullAccess } from "../../threadAccess.ts";
 
 const make = Effect.gen(function* () {
   const tools = yield* PluginTools.PluginTools;
@@ -24,8 +25,12 @@ const make = Effect.gen(function* () {
     ),
     // A plugin tool runs on behalf of the calling thread while its run is live, so a client
     // signed in from outside T3 Code (no thread, no grants) cannot call one.
-    plugin_tool_call: McpToolAccess.actsAsCaller((input) =>
-      McpInvocationContext.McpInvocationContext.pipe(
+    plugin_tool_call: McpToolAccess.actsAsCaller((input, caller) =>
+      assertFullAccess(
+        caller,
+        "Calling a trusted plugin needs a full-access thread in default mode.",
+      ).pipe(
+        Effect.andThen(McpInvocationContext.McpInvocationContext),
         Effect.flatMap((scope) =>
           McpInvocationContext.requireThreadScope(scope, "plugin_tool_call"),
         ),
