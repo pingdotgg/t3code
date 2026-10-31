@@ -132,72 +132,79 @@ const ERROR_FILE_NOT_FOUND = 2;
 const ERROR_MORE_DATA = 234;
 const ERROR_UNSUPPORTED_TYPE = 1630;
 
-export const layerWindowsRegistry = Layer.effect(
-  WindowsRegistry,
-  Effect.gen(function* () {
-    const architecture = yield* HostProcess.Architecture;
-    const loadGetValue = yield* Effect.cached(
-      Effect.tryPromise({
-        try: async () => {
-          // HKEY_LOCAL_MACHINE and the pointer arguments below are 64-bit.
-          if (architecture !== "x64" && architecture !== "arm64") {
-            throw new Error(`no registry access on ${architecture}`);
-          }
-          const { DataType, load, open } = await import("ffi-rs");
-          open({ library: "t3-advapi32", path: "advapi32.dll" });
-          return (subkey: string, value: string, data: Buffer, size: Buffer): number =>
-            load({
-              library: "t3-advapi32",
-              funcName: "RegGetValueW",
-              retType: DataType.I32,
-              paramsType: [
-                DataType.BigInt,
-                DataType.WString,
-                DataType.WString,
-                DataType.U32,
-                DataType.BigInt,
-                DataType.U8Array,
-                DataType.U8Array,
-              ],
-              paramsValue: [
-                HKEY_LOCAL_MACHINE,
-                subkey,
-                value,
-                RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
-                0n,
-                data,
-                size,
-              ],
-            });
-        },
-        catch: (cause) => new WindowsRegistryError({ cause }),
-      }),
-    );
-    return WindowsRegistry.of({
-      readMachineString: Effect.fn("WindowsRegistry.readMachineString")(function* (subkey, value) {
-        const getValue = yield* loadGetValue;
-        const attempt = (bytes: number) =>
-          Effect.try({
-            try: () => {
-              const data = Buffer.alloc(bytes);
-              const size = Buffer.alloc(4);
-              size.writeUInt32LE(bytes);
-              const code = getValue(subkey, value, data, size);
-              return { code, data, bytes: size.readUInt32LE() };
-            },
-            catch: (cause) => new WindowsRegistryError({ cause }),
-          });
-        let result = yield* attempt(64 * 1024);
-        // The value grew past the buffer; the API reported the size it needs.
-        if (result.code === ERROR_MORE_DATA) result = yield* attempt(result.bytes);
-        if (result.code === ERROR_FILE_NOT_FOUND) return undefined;
-        if (result.code !== 0) return yield* new WindowsRegistryError({ code: result.code });
-        // The size counts the terminating null RegGetValueW adds.
-        return result.data.subarray(0, result.bytes).toString("utf16le").replace(/\0+$/, "");
-      }),
-    });
-  }),
-);
+/**
+ * Each app passes how it loads ffi-rs: a server single-executable resolves packages on disk only
+ * through `require`, and the desktop's CommonJS bundle loads them with `import()`.
+ */
+export const layerWindowsRegistry = (loadFfi: () => Promise<typeof import("ffi-rs")>) =>
+  Layer.effect(
+    WindowsRegistry,
+    Effect.gen(function* () {
+      const architecture = yield* HostProcess.Architecture;
+      const loadGetValue = yield* Effect.cached(
+        Effect.tryPromise({
+          try: async () => {
+            // HKEY_LOCAL_MACHINE and the pointer arguments below are 64-bit.
+            if (architecture !== "x64" && architecture !== "arm64") {
+              throw new Error(`no registry access on ${architecture}`);
+            }
+            const { DataType, load, open } = await loadFfi();
+            open({ library: "t3-advapi32", path: "advapi32.dll" });
+            return (subkey: string, value: string, data: Buffer, size: Buffer): number =>
+              load({
+                library: "t3-advapi32",
+                funcName: "RegGetValueW",
+                retType: DataType.I32,
+                paramsType: [
+                  DataType.BigInt,
+                  DataType.WString,
+                  DataType.WString,
+                  DataType.U32,
+                  DataType.BigInt,
+                  DataType.U8Array,
+                  DataType.U8Array,
+                ],
+                paramsValue: [
+                  HKEY_LOCAL_MACHINE,
+                  subkey,
+                  value,
+                  RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
+                  0n,
+                  data,
+                  size,
+                ],
+              });
+          },
+          catch: (cause) => new WindowsRegistryError({ cause }),
+        }),
+      );
+      return WindowsRegistry.of({
+        readMachineString: Effect.fn("WindowsRegistry.readMachineString")(
+          function* (subkey, value) {
+            const getValue = yield* loadGetValue;
+            const attempt = (bytes: number) =>
+              Effect.try({
+                try: () => {
+                  const data = Buffer.alloc(bytes);
+                  const size = Buffer.alloc(4);
+                  size.writeUInt32LE(bytes);
+                  const code = getValue(subkey, value, data, size);
+                  return { code, data, bytes: size.readUInt32LE() };
+                },
+                catch: (cause) => new WindowsRegistryError({ cause }),
+              });
+            let result = yield* attempt(64 * 1024);
+            // The value grew past the buffer; the API reported the size it needs.
+            if (result.code === ERROR_MORE_DATA) result = yield* attempt(result.bytes);
+            if (result.code === ERROR_FILE_NOT_FOUND) return undefined;
+            if (result.code !== 0) return yield* new WindowsRegistryError({ code: result.code });
+            // The size counts the terminating null RegGetValueW adds.
+            return result.data.subarray(0, result.bytes).toString("utf16le").replace(/\0+$/, "");
+          },
+        ),
+      });
+    }),
+  );
 
 // A hung query must not hang startup; a timeout reads as a failed query.
 const run = Effect.fnUntraced(

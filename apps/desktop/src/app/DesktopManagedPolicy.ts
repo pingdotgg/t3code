@@ -47,7 +47,7 @@ export const layer = Layer.effect(
     );
     return DesktopManagedPolicy.of({ read });
   }),
-).pipe(Layer.provide(layerWindowsRegistry));
+).pipe(Layer.provide(layerWindowsRegistry(() => import("ffi-rs"))));
 
 /** A machine with `policy` deployed, one whose policy cannot be used, or none. */
 export const layerTest = (policy?: ManagedPolicyDocument | ManagedPolicyFileError) =>
