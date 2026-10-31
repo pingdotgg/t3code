@@ -2,18 +2,21 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
+  GitStatusEntry,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
+import { FolderOpen, SearchIcon } from "lucide-react";
 import { ChevronsDownUp, ChevronsUpDown } from "lucide";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
-import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -27,6 +30,10 @@ import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
+import { cn } from "~/lib/utils";
+
+import { addFileMentionToChat } from "./addFileToChat";
+import { FileSurfaceFailure, FileSurfaceState } from "./fileSurfaceChrome";
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
@@ -34,6 +41,8 @@ import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
+import { useEnvironmentQuery } from "~/state/query";
+import { vcsEnvironment } from "~/state/vcs";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -61,7 +70,7 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
           <Button
             type="button"
             variant="secondary"
-            size="icon-xs"
+            size="icon-sm"
             aria-label="Refresh workspace files"
             onClick={props.onRefresh}
           />
@@ -82,7 +91,13 @@ function FileSearchField(props: {
   value: string;
 }) {
   return (
-    <InputGroup variant="default" className="h-7 min-w-0 flex-1">
+    <InputGroup
+      variant="default"
+      className="h-8 min-w-0 flex-1 in-data-[preview-panel-mode=inline]:h-7"
+    >
+      <InputGroupAddon>
+        <SearchIcon aria-hidden className="size-3.5" />
+      </InputGroupAddon>
       <InputGroupInput
         type="search"
         name={props.name}
@@ -158,6 +173,12 @@ export default function FileBrowserPanel({
     isPending,
     loadingDirectories,
   } = useDirectoryEntries(environmentId, cwd);
+  // Shares the status stream the git controls already subscribe to.
+  const { data: vcsStatus } = useEnvironmentQuery(
+    vcsEnvironment.status({ environmentId, input: { cwd } }),
+  );
+  const workingTreeFiles = vcsStatus?.workingTree.files;
+  const workingTreeRootPath = vcsStatus?.workingTree.rootPath;
   const [query, setQuery] = useState("");
   const [expandAll, setExpandAll] = useState(false);
   const pathSearch = useProjectPathSearch(
@@ -229,23 +250,7 @@ export default function FileBrowserPanel({
           return;
         }
         if (clicked === "add-to-chat") {
-          const composer = composerRef?.current;
-          if (!composer) {
-            toastManager.add({
-              type: "error",
-              title: "Unable to add to chat",
-              description: "Open a chat for this project and try again.",
-            });
-            return;
-          }
-          const inserted = composer.insertTextAtEnd(`${mention} `, { ensureLeadingBoundary: true });
-          if (!inserted) {
-            toastManager.add({
-              type: "error",
-              title: "Unable to add to chat",
-              description: "The chat isn't ready to accept input right now.",
-            });
-          }
+          addFileMentionToChat(composerRef, panelPath(relativePath));
         }
       }).then((result) => {
         if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
@@ -268,6 +273,7 @@ export default function FileBrowserPanel({
     },
     dragAndDrop: { canDrop: () => false },
     density: "compact",
+    itemHeight: 26,
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: true,
     initialExpansion: "closed",
@@ -346,17 +352,20 @@ export default function FileBrowserPanel({
     loadExpanded();
     return model.subscribe(loadExpanded);
   }, [directoryPaths, load, model]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes ignored-file status into the imperative Pierre tree model
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes ignored and working-tree file statuses to the imperative Pierre tree model
   useEffect(() => {
-    model.setGitStatus(
-      entries
-        .filter((entry) => entry.ignored)
-        .map((entry) => ({
-          path: treePath(entry),
-          status: "ignored",
-        })),
-    );
-  }, [entries, model]);
+    const statuses: GitStatusEntry[] = entries
+      .filter((entry) => entry.ignored)
+      .map((entry) => ({ path: treePath(entry), status: "ignored" }));
+    for (const file of workingTreeFiles ?? []) {
+      // Status paths belong to the repository root; the tree belongs to its displayed folder.
+      const path = workingTreeRootPath
+        ? workspaceRelativeFilePath(joinHostPath(workingTreeRootPath, file.path), cwd)
+        : file.path;
+      if (file.status && path !== null) statuses.push({ path, status: file.status });
+    }
+    model.setGitStatus(statuses);
+  }, [cwd, entries, model, workingTreeFiles, workingTreeRootPath]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the selected file's ancestor directories and aborts on cleanup
   useEffect(() => {
     if (!selectedPath) return;
@@ -472,6 +481,31 @@ export default function FileBrowserPanel({
     });
   }, [entryKinds, model, selectedPath, selectedPathRevealId]);
 
+  // A failed or empty root, or a search with no hits, replaces the tree with one
+  // centered state; failures below the root keep the tree and show the inline retry.
+  const trimmedQuery = query.trim();
+  const surfaceState =
+    directoryEntries.length === 0 && error && !isPending ? (
+      <FileSurfaceFailure title="Can't list files" message={error} onRetry={handleRefresh} />
+    ) : ready && directoryEntries.length === 0 && !isPending && !trimmedQuery ? (
+      <FileSurfaceState
+        icon={<FolderOpen />}
+        title="No files yet"
+        description={`${projectName} is empty. Files the agent creates show up here.`}
+      />
+    ) : hasNoSearchMatches &&
+      ready &&
+      !isPending &&
+      !error &&
+      !pathSearch.isPending &&
+      !pathSearch.error ? (
+      <FileSurfaceState
+        icon={<SearchIcon />}
+        title="No matching files"
+        description={`Nothing in ${projectName} matches "${trimmedQuery}".`}
+      />
+    ) : null;
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
@@ -485,10 +519,9 @@ export default function FileBrowserPanel({
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
     >
       <div
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        className="flex shrink-0 items-center gap-2 bg-background px-4 py-2.5 in-data-[preview-panel-mode=inline]:px-2 in-data-[preview-panel-mode=inline]:py-0"
         data-surface-subheader
       >
-        <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
@@ -523,8 +556,10 @@ export default function FileBrowserPanel({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
       </div>
-      {error || pathSearch.error ? (
+      {surfaceState}
+      {!surfaceState && (error || pathSearch.error) ? (
         <button
           type="button"
           onClick={handleRefresh}
@@ -550,20 +585,20 @@ export default function FileBrowserPanel({
           Loading files…
         </div>
       )}
-      {hasNoSearchMatches ? (
-        ready && !isPending && !pathSearch.isPending && !error && !pathSearch.error ? (
-          <div role="status" className="px-3 py-4 text-meta text-muted-foreground">
-            No matching files.
-          </div>
-        ) : null
-      ) : (
+      {/* Kept mounted behind a state so the tree's expansion survives a search. */}
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col",
+          (surfaceState || hasNoSearchMatches) && "hidden",
+        )}
+      >
         <FileTree
           model={model}
           aria-label={`${projectName} files`}
           className="min-h-0 flex-1 overflow-hidden"
           style={pierreTreeStyle(resolvedTheme)}
         />
-      )}
+      </div>
     </div>
   );
 }

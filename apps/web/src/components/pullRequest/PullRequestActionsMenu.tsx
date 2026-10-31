@@ -1,3 +1,4 @@
+import { useId, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   canEditPullRequestMaintainerEdits,
@@ -25,9 +26,10 @@ import {
   RotateCcwIcon,
   SparklesIcon,
   Trash2Icon,
+  FolderGit2Icon,
+  PencilIcon,
+  SquareTerminalIcon,
 } from "lucide-react";
-import { useId, useState } from "react";
-
 import { shortcutLabelForCommand } from "~/keybindings";
 import { readLocalApi } from "~/localApi";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -44,6 +46,8 @@ import {
   MenuSeparator,
   MenuShortcut,
   MenuTrigger,
+  MenuGroup,
+  MenuGroupLabel,
 } from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { toastManager } from "../ui/toast";
@@ -55,9 +59,10 @@ import {
   readableFailure,
 } from "./pullRequestDetail.logic";
 import { PullRequestGlyph } from "./pullRequestIcons";
-import type { PickableEnvironment } from "./pullRequestProjectAssignment.logic";
+import { type PickableEnvironment } from "./pullRequestProjectAssignment.logic";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+import { canEditPullRequestChangeRequest } from "@t3tools/client-runtime/pull-request-editing";
 
 /** Everything else the reader can do with the pull request, behind the header's overflow button. */
 export function PullRequestActionsMenu({
@@ -102,21 +107,17 @@ export function PullRequestActionsMenu({
   perform,
   openOnHostText,
   copyReference,
+  inlineConfirm,
+  showCheckout,
+  checkoutMenuItems,
+  onEditTitle,
+  repositoryUrl,
+  checkoutCommand,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   pullRequestKey: string;
-  detail: Pick<
-    PullRequestDetail,
-    | "url"
-    | "state"
-    | "isDraft"
-    | "headBranch"
-    | "capabilities"
-    | "viewerPermissions"
-    | "maintainerCanModify"
-    | "observedAt"
-  >;
+  detail: PullRequestDetail;
   terminology: ChangeRequestTerminology;
   linkThreadRef: ScopedThreadRef | null;
   onThreadPickerOpenChange: (open: boolean) => void;
@@ -154,9 +155,14 @@ export function PullRequestActionsMenu({
   perform: PerformPullRequestAction;
   openOnHostText: string;
   copyReference: (value: string, label: string) => void;
+  inlineConfirm: ReturnType<typeof useInlineActionConfirm>;
+  showCheckout: boolean;
+  checkoutMenuItems: ReactNode;
+  onEditTitle: () => void;
+  repositoryUrl: string | null;
+  checkoutCommand: string | null;
 }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const actionPending = pendingAction !== null;
   const maintainerEditsHintId = useId();
   const updatePullRequest = useAtomCommand(pullRequestEnvironment.update, {
@@ -248,7 +254,7 @@ export function PullRequestActionsMenu({
           <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
           <span className="flex min-w-0 flex-col">
             <span>{handoff === "ask" ? "Opening..." : "Ask a question"}</span>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-meta text-muted-foreground">
               {attachesToComposer
                 ? `Adds the ${terminology.singular} to this thread's composer.`
                 : `Opens a thread that knows which ${terminology.singular} you mean.`}
@@ -261,7 +267,7 @@ export function PullRequestActionsMenu({
             <span>
               {handoff === "explain" ? "Opening..." : `Explain this ${terminology.shortLabel}`}
             </span>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-meta text-muted-foreground">
               A walk through the diff and what to read closely.
             </span>
           </span>
@@ -276,11 +282,17 @@ export function PullRequestActionsMenu({
             {guideRunning ? "Writing guide..." : !guideWritten ? "Write guide" : "Rewrite guide"}
           </MenuItem>
         ) : null}
+        {showCheckout ? (
+          <>
+            <MenuSeparator />
+            {checkoutMenuItems}
+          </>
+        ) : null}
         {pickableEnvironments.length > 0 ? (
           <ActOnEnvironmentPicker
             environments={pickableEnvironments}
             value={actingEnvironmentId}
-            onChange={onActingEnvironmentChange}
+            onChange={(next) => onActingEnvironmentChange(next)}
             disabled={handoff !== null}
           />
         ) : null}
@@ -366,24 +378,30 @@ export function PullRequestActionsMenu({
             {showsMergeMethods ? (
               <>
                 {showsDraftToggle || showsMergeNow || showsAutoMerge ? <MenuSeparator /> : null}
-                <MenuRadioGroup
-                  value={selectedMergeMethod}
-                  onValueChange={(method) => onSelectMergeMethod(method as PullRequestMergeMethod)}
-                >
-                  {allowedMergeMethods.map((method) => (
-                    <MenuRadioItem
-                      key={method}
-                      value={method}
-                      disabled={actionPending}
-                      closeOnClick
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <PullRequestGlyph.merged className="size-3.5" />
-                        <span>{PULL_REQUEST_MERGE_METHOD_LABELS[method]}</span>
-                      </span>
-                    </MenuRadioItem>
-                  ))}
-                </MenuRadioGroup>
+                <MenuGroup>
+                  <MenuGroupLabel>Merge method</MenuGroupLabel>
+                  <MenuRadioGroup
+                    value={selectedMergeMethod}
+                    onValueChange={(method) => {
+                      const selectedMethod = method as PullRequestMergeMethod;
+                      onSelectMergeMethod(selectedMethod);
+                    }}
+                  >
+                    {allowedMergeMethods.map((method) => (
+                      <MenuRadioItem
+                        key={method}
+                        value={method}
+                        disabled={actionPending}
+                        closeOnClick
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <PullRequestGlyph.merged className="size-3.5" />
+                          <span>{PULL_REQUEST_MERGE_METHOD_LABELS[method]}</span>
+                        </span>
+                      </MenuRadioItem>
+                    ))}
+                  </MenuRadioGroup>
+                </MenuGroup>
               </>
             ) : null}
             {pullRequestActionMenuHasGroup(
@@ -395,10 +413,22 @@ export function PullRequestActionsMenu({
             ) : null}
           </>
         ) : null}
+        {canEditPullRequestChangeRequest(detail) ? (
+          <MenuItem onClick={() => onEditTitle()}>
+            <PencilIcon className="size-3.5" />
+            Edit title
+          </MenuItem>
+        ) : null}
         <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}>
           <ArrowUpRightIcon className="size-3.5" />
           {openOnHostText}
         </MenuItem>
+        {repositoryUrl ? (
+          <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}>
+            <FolderGit2Icon className="size-3.5" />
+            Open {detail.repository}
+          </MenuItem>
+        ) : null}
         <MenuItem onClick={() => copyReference(detail.url, `${terminology.shortLabel} link`)}>
           <LinkIcon className="size-3.5" />
           Copy link
@@ -415,6 +445,12 @@ export function PullRequestActionsMenu({
             {shortcutLabelForCommand(keybindings, "pullRequest.copyNumber")}
           </MenuShortcut>
         </MenuItem>
+        {checkoutCommand ? (
+          <MenuItem onClick={() => copyReference(checkoutCommand, "Checkout command")}>
+            <SquareTerminalIcon className="size-3.5" />
+            Copy checkout command
+          </MenuItem>
+        ) : null}
         {detail.state === "open" && can("close") ? (
           <>
             <MenuSeparator />
