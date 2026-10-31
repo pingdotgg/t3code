@@ -315,22 +315,28 @@ describe("CLIProxyAPI built-in management API", () => {
   it.effect("maps Claude scoped windows without a scheduler plugin", () =>
     Effect.gen(function* () {
       const test = fixture({
-        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        // One login in two organizations: separate quotas that share an email.
+        accounts: [
+          { ...accounts[0]!, provider: "claude" },
+          { ...accounts[0]!, id: "first-team.json", auth_index: "b", provider: "claude" },
+        ],
         // The usage endpoint answers 429 to requests without a Claude Code user agent.
         upstream: (request) => ({
           status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
-          body: {
-            five_hour: { utilization: 10, resets_at: null },
-            seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
-            limits: [
-              {
-                kind: "weekly_scoped",
-                percent: 80,
-                resets_at: null,
-                scope: { model: { display_name: "Fable" } },
+          body: request.url?.endsWith("/oauth/profile")
+            ? { organization: { uuid: `org-${request.auth_index}` } }
+            : {
+                five_hour: { utilization: 10, resets_at: null },
+                seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
+                limits: [
+                  {
+                    kind: "weekly_scoped",
+                    percent: 80,
+                    resets_at: null,
+                    scope: { model: { display_name: "Fable" } },
+                  },
+                ],
               },
-            ],
-          },
         }),
       });
       const api = yield* test.api;
@@ -342,6 +348,11 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day", 50],
         ["seven_day_fable", 80],
       ]);
+      expect(result.map((account) => account.workspaceId)).toEqual(["org-a", "org-b"]);
+      yield* api.readAccounts(config);
+      expect(
+        test.requests.filter((request) => request.body?.url?.endsWith("/oauth/profile")),
+      ).toHaveLength(2);
     }),
   );
 
