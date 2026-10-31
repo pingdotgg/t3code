@@ -1,4 +1,4 @@
-import { joinBackward, joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
+import { joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
 import {
   Fragment,
   Mark,
@@ -1135,7 +1135,8 @@ function backspaceAcrossList(editor: Editor): boolean {
       return moved;
     };
     // can() skips the schema check and can accept tasks with no parent list to lift into.
-    return editor.chain().command(lift).run() || joinBackward(state, editor.view.dispatch);
+    // Those join the line above; joinBackward would re-nest them or select the parent line.
+    return editor.chain().command(lift).run() || joinTextblockBackward(state, editor.view.dispatch);
   }
   const before = $from.depth === 1 ? $from.node(0).maybeChild($from.index(0) - 1) : null;
   if (before && LIST_NODE_NAMES.has(before.type.name) && $from.parent.type.name !== "codeBlock") {
