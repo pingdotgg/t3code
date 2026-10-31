@@ -291,9 +291,13 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
   const [layout, setLayout] = useState({ offset: 0, height: 0, rowHeight: 29 });
   const [{ top, remainder }, setPosition] = useState({ top: 0, remainder: 0 });
   const setTop = (value: number) =>
-    setPosition((old) =>
-      value === 0 ? { top: 0, remainder: 0 } : { ...old, top: value + old.remainder },
-    );
+    setPosition((old) => {
+      const nextTop = value === 0 ? 0 : value + old.remainder;
+      const nextRemainder = value === 0 ? 0 : old.remainder;
+      return old.top === nextTop && old.remainder === nextRemainder
+        ? old
+        : { top: nextTop, remainder: nextRemainder };
+    });
   const handledReveal = useRef<string | null>(null);
   const pendingReveal = useRef<{ row: number; attempts: number } | null>(null);
   const pendingEnd = useRef(false);
