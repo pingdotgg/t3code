@@ -83,7 +83,15 @@ interface StreamTrack {
   readonly at: number;
   // Latest snapshot whose text has not all been delivered yet.
   readonly held: ProviderAdapter.ProviderAdapterV2Event | null;
-  readonly heldAt: number;
+  readonly dueAt: number;
+}
+
+/** A held snapshot due for delivery. Each outcome applies only while nothing newer replaced it. */
+interface IdleFlush {
+  readonly event: ProviderAdapter.ProviderAdapterV2Event;
+  readonly delivered: (now: number) => void;
+  readonly retryAt: (at: number) => void;
+  readonly discard: () => void;
 }
 
 function streamedMessage(event: ProviderAdapter.ProviderAdapterV2Event): StreamedMessage | null {
@@ -145,7 +153,7 @@ export function makeAssistantStreamingFilter(
           text: delivered,
           at: previous?.at ?? Number.NEGATIVE_INFINITY,
           held: message.text !== delivered ? event : null,
-          heldAt: now,
+          dueAt: now + idleFlushMs,
         });
         return null;
       };
@@ -158,31 +166,40 @@ export function makeAssistantStreamingFilter(
         text: ready,
         at: now,
         held: ready !== message.text ? event : null,
-        heldAt: now,
+        dueAt: now + idleFlushMs,
       });
       return withText(event, ready);
     },
     nextIdleFlushAt(): number | null {
       let next: number | null = null;
       for (const track of tracks.values()) {
-        if (track.held !== null && (next === null || track.heldAt + idleFlushMs < next))
-          next = track.heldAt + idleFlushMs;
+        if (track.held !== null && (next === null || track.dueAt < next)) next = track.dueAt;
       }
       return next;
     },
-    flushIdle(now: number): ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> {
-      const flushed: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+    dueIdleFlushes(now: number): ReadonlyArray<IdleFlush> {
+      const due: Array<IdleFlush> = [];
       for (const [key, track] of tracks) {
-        if (track.held === null || now - track.heldAt < idleFlushMs) continue;
-        tracks.set(key, {
-          text: streamedMessage(track.held)?.text ?? track.text,
-          at: now,
-          held: null,
-          heldAt: now,
+        const event = track.held;
+        if (event === null || track.dueAt > now) continue;
+        const settle = (next: (current: StreamTrack) => StreamTrack) => {
+          const current = tracks.get(key);
+          if (current?.held === event) tracks.set(key, next(current));
+        };
+        due.push({
+          event,
+          delivered: (at) =>
+            settle((current) => ({
+              text: streamedMessage(event)?.text ?? current.text,
+              at,
+              held: null,
+              dueAt: at,
+            })),
+          retryAt: (at) => settle((current) => ({ ...current, dueAt: at })),
+          discard: () => settle((current) => ({ ...current, held: null })),
         });
-        flushed.push(track.held);
       }
-      return flushed;
+      return due;
     },
   };
 }

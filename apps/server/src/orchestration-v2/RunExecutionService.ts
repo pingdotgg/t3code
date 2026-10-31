@@ -27,7 +27,6 @@ import {
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1345,24 +1344,40 @@ export const layer: Layer.Layer<
           }
           return storedEvents.length;
         });
-        // A failed idle write fails ingestion like any other write, through its recovery path.
-        const idleFlushFailed = yield* Deferred.make<
-          never,
-          Effect.Error<ReturnType<typeof ingestDelivered>>
-        >();
         // Held by the timer until it exits, so closing can always interrupt a blocked write.
         let idleFlushTimer: Fiber.Fiber<void> | undefined;
+        // A failed idle write keeps its text held and retries with backoff. The provider's next
+        // update still writes, and fails ingestion, the normal way.
+        let idleFlushFailures = 0;
         const flushDueAssistantText = ingestLock.withPermits(1)(
           Effect.gen(function* () {
             if (!idleFlushClosed) {
-              for (const event of assistantStreaming.flushIdle(
-                DateTime.toEpochMillis(yield* DateTime.now),
-              )) {
+              const now = DateTime.toEpochMillis(yield* DateTime.now);
+              const due = assistantStreaming.dueIdleFlushes(now);
+              for (const [index, flush] of due.entries()) {
                 // The held text's child may have been handed to another run since it arrived.
-                if (!routeProviderEvent(event, routeIdentity, yield* Ref.get(eventRouting))[0])
+                if (
+                  !routeProviderEvent(flush.event, routeIdentity, yield* Ref.get(eventRouting))[0]
+                ) {
+                  flush.discard();
                   continue;
-                yield* ingestDelivered(event, event);
-                yield* trackChildLifecycle(event, true);
+                }
+                const written = yield* Effect.exit(ingestDelivered(flush.event, flush.event));
+                if (Exit.isFailure(written)) {
+                  if (Cause.hasInterruptsOnly(written.cause)) return yield* written;
+                  idleFlushFailures += 1;
+                  yield* Effect.logWarning("orchestration V2 idle assistant text flush failed", {
+                    runId: input.run.id,
+                    failures: idleFlushFailures,
+                    cause: written.cause,
+                  });
+                  const retryAt = now + Math.min(1_000 * 2 ** (idleFlushFailures - 1), 30_000);
+                  for (const pending of due.slice(index)) pending.retryAt(retryAt);
+                  break;
+                }
+                idleFlushFailures = 0;
+                flush.delivered(now);
+                yield* trackChildLifecycle(flush.event, true);
               }
             }
             if (idleFlushClosed || assistantStreaming.nextIdleFlushAt() === null) {
@@ -1370,15 +1385,8 @@ export const layer: Layer.Layer<
               return true;
             }
             return false;
-          }).pipe(
-            Effect.tapCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.void
-                : Deferred.failCause(idleFlushFailed, cause),
-            ),
-          ),
+          }),
         );
-        // Failures reach ingestion through idleFlushFailed.
         const idleFlushLoop: Effect.Effect<void> = Effect.gen(function* () {
           while (true) {
             const at = assistantStreaming.nextIdleFlushAt();
@@ -1557,7 +1565,6 @@ export const layer: Layer.Layer<
             }),
           ),
           Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),
-          Stream.interruptWhen(Deferred.await(idleFlushFailed)),
           Stream.runDrain,
           Effect.ensuring(closeIdleFlush),
           Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
@@ -1590,86 +1597,7 @@ export const layer: Layer.Layer<
                   runId: input.run.id,
                   cause,
                 });
-                let nextRetryWarningAt = completedAt;
-                const persistRecovery = <E>(write: Effect.Effect<void, E>) =>
-                  write.pipe(
-                    // Storage failures can be defects; retry both failure channels.
-                    Effect.catchCause((writeCause) =>
-                      Effect.gen(function* () {
-                        if (Cause.hasInterruptsOnly(writeCause)) {
-                          return yield* Effect.failCause(writeCause);
-                        }
-                        const now = yield* DateTime.now;
-                        if (DateTime.isGreaterThanOrEqualTo(now, nextRetryWarningAt)) {
-                          yield* Effect.logWarning(
-                            "orchestration V2 run failure finalization retry",
-                            {
-                              runId: input.run.id,
-                              attemptId: input.attempt.id,
-                              cause: writeCause,
-                            },
-                          );
-                          // Persistent storage failures must not flood the same disk.
-                          nextRetryWarningAt = DateTime.add(now, { minutes: 10 });
-                        }
-                        return yield* Effect.fail(writeCause);
-                      }),
-                    ),
-                    Effect.retry({
-                      schedule: Schedule.exponential("1 second").pipe(
-                        Schedule.modifyDelay(({ duration }) =>
-                          Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-                        ),
-                      ),
-                    }),
-                    // Startup may cancel the consumer and fail its own terminal
-                    // write. Only service shutdown or the atomic gate ends recovery.
-                    Effect.forkIn(scope),
-                    Effect.flatMap(Fiber.join),
-                  );
-                if (yield* Ref.get(rootRunFinalized)) {
-                  // The root's terminal is written; settle the children it left running, which
-                  // lose their only consumer here, and stop them.
-                  return yield* persistRecovery(
-                    Effect.gen(function* () {
-                      const events = yield* cascadeTerminalizeRunOwnedSubagents({
-                        run: input.run,
-                        open: yield* Ref.get(openRunOwnedSubagents),
-                        status: "failed",
-                        completedAt,
-                        allocateEventId: () =>
-                          idAllocator.allocate.event({ threadId: input.run.threadId }),
-                      });
-                      if (events.length === 0) return;
-                      // A newer run on this provider thread owns whatever is still live.
-                      const { committed } = yield* eventSink.writeIfProviderThreadOwner({
-                        providerThreadId: input.providerThread.id,
-                        runId: input.run.id,
-                        activeAttemptId: input.attempt.id,
-                        expectedLastRunOrdinal: input.run.ordinal,
-                        events,
-                      });
-                      const { rootProviderTurnId } = yield* Ref.get(eventRouting);
-                      if (!committed || rootProviderTurnId === null) return;
-                      yield* input.session
-                        .interruptTurn({
-                          providerThread: yield* Ref.get(latestProviderThread),
-                          providerTurnId: rootProviderTurnId,
-                          requestRuntimeRestart: true,
-                        })
-                        .pipe(
-                          Effect.catchCauseIf(
-                            (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
-                            (interruptCause) =>
-                              Effect.logWarning(
-                                "orchestration V2 failed to stop children after ingestion failure",
-                                { runId: input.run.id, cause: interruptCause },
-                              ),
-                          ),
-                        );
-                    }),
-                  );
-                }
+                if (yield* Ref.get(rootRunFinalized)) return;
                 const providerThread = yield* Ref.get(latestProviderThread);
                 const routing = yield* Ref.get(eventRouting);
                 const rootProviderTurn = yield* Ref.get(latestRootProviderTurn);
@@ -1711,33 +1639,66 @@ export const layer: Layer.Layer<
                 const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                 const openSubagents = yield* Ref.get(openRunOwnedSubagents);
                 const squashed = Cause.squash(cause);
-                yield* persistRecovery(
-                  writeFinalRunEvents({
-                    run: input.run,
-                    rootNode: input.rootNode,
-                    checkpointScope: input.checkpointScope,
-                    providerThread,
-                    attempt: input.attempt,
-                    writeIfRunCurrent: {
-                      activeAttemptId: input.attempt.id,
-                      expectedStatus: "running",
-                    },
-                    openRunOwnedSubagents: openSubagents,
-                    ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
-                    completedAt,
-                    terminal: makeFailedTerminalEvent(
-                      makeProviderFailure({
-                        cause: squashed,
-                        message:
-                          knownProviderFailureMessage(squashed) ??
-                          userFacingDatabaseErrorMessage(squashed),
-                        class: "unknown",
-                      }),
-                      latestItemOrdinal + 1,
+                let nextRetryWarningAt = completedAt;
+                yield* writeFinalRunEvents({
+                  run: input.run,
+                  rootNode: input.rootNode,
+                  checkpointScope: input.checkpointScope,
+                  providerThread,
+                  attempt: input.attempt,
+                  writeIfRunCurrent: {
+                    activeAttemptId: input.attempt.id,
+                    expectedStatus: "running",
+                  },
+                  openRunOwnedSubagents: openSubagents,
+                  ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
+                  completedAt,
+                  terminal: makeFailedTerminalEvent(
+                    makeProviderFailure({
+                      cause: squashed,
+                      message:
+                        knownProviderFailureMessage(squashed) ??
+                        userFacingDatabaseErrorMessage(squashed),
+                      class: "unknown",
+                    }),
+                    latestItemOrdinal + 1,
+                  ),
+                  failureItemPersisted: false,
+                  refreshAfterTurn,
+                }).pipe(
+                  // Storage failures can be defects; retry both failure channels.
+                  Effect.catchCause((writeCause) =>
+                    Effect.gen(function* () {
+                      if (Cause.hasInterruptsOnly(writeCause)) {
+                        return yield* Effect.failCause(writeCause);
+                      }
+                      const now = yield* DateTime.now;
+                      if (DateTime.isGreaterThanOrEqualTo(now, nextRetryWarningAt)) {
+                        yield* Effect.logWarning(
+                          "orchestration V2 run failure finalization retry",
+                          {
+                            runId: input.run.id,
+                            attemptId: input.attempt.id,
+                            cause: writeCause,
+                          },
+                        );
+                        // Persistent storage failures must not flood the same disk.
+                        nextRetryWarningAt = DateTime.add(now, { minutes: 10 });
+                      }
+                      return yield* Effect.fail(writeCause);
+                    }),
+                  ),
+                  Effect.retry({
+                    schedule: Schedule.exponential("1 second").pipe(
+                      Schedule.modifyDelay(({ duration }) =>
+                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                      ),
                     ),
-                    failureItemPersisted: false,
-                    refreshAfterTurn,
                   }),
+                  // Startup may cancel the consumer and fail its own terminal
+                  // write. Only service shutdown or the atomic gate ends recovery.
+                  Effect.forkIn(scope),
+                  Effect.flatMap(Fiber.join),
                 );
               }),
           ),

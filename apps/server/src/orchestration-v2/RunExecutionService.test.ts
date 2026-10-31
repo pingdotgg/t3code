@@ -3631,9 +3631,6 @@ function runBackgroundItemScenario(
     readonly onInterruptTurn?: (input: {
       readonly requestRuntimeRestart?: boolean;
     }) => Effect.Effect<void>;
-    readonly onGuardedWrite?: (
-      events: ReadonlyArray<OrchestrationV2DomainEvent>,
-    ) => Effect.Effect<void>;
   },
 ) {
   return Effect.gen(function* () {
@@ -3665,16 +3662,7 @@ function runBackgroundItemScenario(
                 }
                 return [];
               }),
-            writeIfRunCurrent: (input) =>
-              Effect.as(options?.onGuardedWrite?.(input.events) ?? Effect.void, {
-                committed: true,
-                storedEvents: [],
-              }),
-            writeIfProviderThreadOwner: (input) =>
-              Effect.as(options?.onGuardedWrite?.(input.events) ?? Effect.void, {
-                committed: true,
-                storedEvents: [],
-              }),
+            writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
@@ -3783,10 +3771,10 @@ function runBackgroundItemScenario(
           },
         },
       });
-      // Ingestion recovery forks into the service scope, which lives as long as the server.
-      const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
-      assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
     }).pipe(Effect.provide(layerTest));
+
+    // No timeout: tests advance the TestClock, which would fire it early.
+    yield* Deferred.await(ingestionDone);
 
     return yield* Ref.get(observed);
   });
@@ -4059,49 +4047,80 @@ it.effect.each([
   }),
 );
 
-it.effect("fails the run through ingestion recovery when an idle flush cannot write", () =>
+it.effect.each([
+  { name: "before", afterRoot: false },
+  { name: "after", afterRoot: true },
+])("retries a failed idle flush $name the root completes and keeps the run live", ({ afterRoot }) =>
   Effect.gen(function* () {
-    const ids = backgroundScenarioIds("idle-flush-write-failure");
+    const key = `idle-flush-retry-${afterRoot ? "after" : "before"}-root`;
+    const ids = backgroundScenarioIds(key);
     const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
     const subagentIngested = yield* Deferred.make<void>();
-    const interrupts = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
-    const guardedWrites = yield* Ref.make<ReadonlyArray<ReadonlyArray<OrchestrationV2DomainEvent>>>(
-      [],
-    );
-    const scenario = yield* runBackgroundItemScenario(
-      "idle-flush-write-failure",
-      () => Stream.fromQueue(events),
-      {
-        onIngest: (event) =>
-          event.type === "subagent.updated"
-            ? Deferred.succeed(subagentIngested, undefined)
-            : isHeldChildSnapshot(event)
-              ? Effect.die(new Error("disk I/O error"))
-              : Effect.void,
-        onInterruptTurn: (interrupt) =>
-          Ref.update(interrupts, (current) => [...current, interrupt.requestRuntimeRestart]),
-        onGuardedWrite: (written) => Ref.update(guardedWrites, (current) => [...current, written]),
-      },
-    ).pipe(Effect.forkChild);
+    const rootFinalized = yield* Deferred.make<void>();
+    const firstWriteFailed = yield* Deferred.make<void>();
+    const retried = yield* Deferred.make<void>();
+    const attempts = yield* Ref.make(0);
+    const childWrites = yield* Ref.make<ReadonlyArray<string>>([]);
+    const interrupts = yield* Ref.make(0);
+    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
+      onIngest: (event) =>
+        Effect.gen(function* () {
+          if (event.type === "subagent.updated") {
+            return yield* Deferred.succeed(subagentIngested, undefined);
+          }
+          if (event.type !== "turn_item.updated" || event.turnItem.type !== "assistant_message")
+            return;
+          if (
+            isHeldChildSnapshot(event) &&
+            (yield* Ref.getAndUpdate(attempts, (n) => n + 1)) === 0
+          ) {
+            yield* Deferred.succeed(firstWriteFailed, undefined);
+            return yield* Effect.die(new Error("disk I/O error"));
+          }
+          const { text, streaming } = event.turnItem;
+          yield* Ref.update(childWrites, (current) => [
+            ...current,
+            `${streaming ? "streaming" : "final"}:${text}`,
+          ]);
+          if (isHeldChildSnapshot(event)) yield* Deferred.succeed(retried, undefined);
+        }),
+      onFinalized: () => Deferred.succeed(rootFinalized, undefined),
+      onInterruptTurn: () => Ref.update(interrupts, (n) => n + 1),
+    }).pipe(Effect.forkChild);
 
     yield* holdChildSnapshot(ids, events, subagentIngested);
+    if (afterRoot) {
+      yield* Queue.offer(events, rootTerminalEvent(ids, "completed"));
+      yield* Deferred.await(rootFinalized);
+    }
     yield* TestClock.adjust("1 second");
-    // The subscription closes only after recovery has persisted its write.
+    yield* Deferred.await(firstWriteFailed);
+    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(retried);
+    const childText = (text: string, streaming: boolean) => {
+      const snapshot = childAssistantSnapshot(ids);
+      return snapshot.type === "turn_item.updated"
+        ? ({
+            ...snapshot,
+            turnItem: { ...snapshot.turnItem, text, streaming },
+          } as ProviderAdapter.ProviderAdapterV2Event)
+        : snapshot;
+    };
+    yield* Queue.offerAll(events, [
+      childText(`${heldChildText} and more`, true),
+      childText(`${heldChildText} and more.`, false),
+      ...(afterRoot ? [] : [rootTerminalEvent(ids, "completed")]),
+      linkedSubagentEvent(ids, "completed"),
+    ]);
     const observed = yield* Fiber.join(scenario);
 
-    assert.deepEqual(observed, ["subagent:running"]);
-    // The recovery a failed stream write takes: stop the turn and fail the run.
-    assert.deepEqual(yield* Ref.get(interrupts), [true]);
-    assert.deepEqual(
-      (yield* Ref.get(guardedWrites)).map((written) =>
-        written.flatMap((event) =>
-          event.type === "run.updated" || event.type === "subagent.updated"
-            ? [`${event.type}:${event.payload.status}`]
-            : [],
-        ),
-      ),
-      [["subagent.updated:failed", "run.updated:failed"]],
-    );
+    assert.deepEqual(yield* Ref.get(childWrites), [
+      `streaming:${heldChildText}`,
+      `final:${heldChildText} and more.`,
+    ]);
+    assert.equal(yield* Ref.get(interrupts), 0);
+    assert.include(observed, "root-finalized");
+    assert.equal(observed.at(-1), "subagent:completed");
   }),
 );
 
@@ -4134,12 +4153,16 @@ function streamedMessageEvent(input: {
   } as ProviderAdapter.ProviderAdapterV2Event;
 }
 
-it.effect("drops a child's held text once the child is handed to another run", () =>
+it.effect.each([
+  { name: "", failFirst: false },
+  { name: " after its first idle write failed", failFirst: true },
+])("drops a child's held text once the child is handed to another run$name", ({ failFirst }) =>
   Effect.gen(function* () {
-    const key = "idle-child-handoff";
+    const key = `idle-child-handoff${failFirst ? "-after-failure" : ""}`;
     const ids = backgroundScenarioIds(key);
     const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
     const subagentIngested = yield* Deferred.make<void>();
+    const firstWriteFailed = yield* Deferred.make<void>();
     const handoffRead = yield* Deferred.make<void>();
     const rootFlushed = yield* Deferred.make<void>();
     const staleWrites = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -4149,8 +4172,15 @@ it.effect("drops a child's held text once the child is handed to another run", (
         if (event.type !== "message.updated" && event.type !== "turn_item.updated")
           return Effect.void;
         const message = event.type === "message.updated" ? event.message : event.turnItem;
-        if (message.threadId === ids.childThreadId)
-          return Ref.update(staleWrites, (current) => [...current, event.type]);
+        if (message.threadId === ids.childThreadId) {
+          return Deferred.succeed(firstWriteFailed, undefined).pipe(
+            Effect.flatMap((first) =>
+              failFirst && first
+                ? Effect.die(new Error("disk I/O error"))
+                : Ref.update(staleWrites, (current) => [...current, event.type]),
+            ),
+          );
+        }
         if (event.type === "message.updated" && event.message.role === "user")
           return Deferred.succeed(handoffRead, undefined);
         return Deferred.succeed(rootFlushed, undefined);
@@ -4158,6 +4188,11 @@ it.effect("drops a child's held text once the child is handed to another run", (
     }).pipe(Effect.forkChild);
 
     yield* holdChildSnapshot(ids, events, subagentIngested);
+    if (failFirst) {
+      // The held snapshot stays held for a retry that must not outlive the handoff.
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(firstWriteFailed);
+    }
     const handoff = linkedSubagentEvent(ids, "running");
     yield* Queue.offerAll(events, [
       streamedMessageEvent({
@@ -4196,53 +4231,6 @@ it.effect("drops a child's held text once the child is handed to another run", (
     yield* Fiber.join(scenario);
 
     assert.deepEqual(yield* Ref.get(staleWrites), []);
-  }),
-);
-
-it.effect("settles and stops a continuing child when an idle flush fails after the root", () =>
-  Effect.gen(function* () {
-    const key = "idle-flush-failure-after-root";
-    const ids = backgroundScenarioIds(key);
-    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
-    const subagentIngested = yield* Deferred.make<void>();
-    const rootFinalized = yield* Deferred.make<void>();
-    const interrupts = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
-    const guardedWrites = yield* Ref.make<ReadonlyArray<ReadonlyArray<OrchestrationV2DomainEvent>>>(
-      [],
-    );
-    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
-      onIngest: (event) =>
-        event.type === "subagent.updated"
-          ? Deferred.succeed(subagentIngested, undefined)
-          : isHeldChildSnapshot(event)
-            ? Effect.die(new Error("disk I/O error"))
-            : Effect.void,
-      onFinalized: () => Deferred.succeed(rootFinalized, undefined),
-      onInterruptTurn: (interrupt) =>
-        Ref.update(interrupts, (current) => [...current, interrupt.requestRuntimeRestart]),
-      onGuardedWrite: (written) => Ref.update(guardedWrites, (current) => [...current, written]),
-    }).pipe(Effect.forkChild);
-
-    yield* holdChildSnapshot(ids, events, subagentIngested);
-    yield* Queue.offer(events, rootTerminalEvent(ids, "completed"));
-    yield* Deferred.await(rootFinalized);
-    yield* TestClock.adjust("1 second");
-    // The subscription closes only after recovery has persisted its write.
-    const observed = yield* Fiber.join(scenario);
-
-    assert.deepEqual(observed, ["subagent:running", "root-finalized"]);
-    // The completed root stays as written; only the child it left running is settled.
-    assert.deepEqual(
-      (yield* Ref.get(guardedWrites)).map((written) =>
-        written.map((event) =>
-          event.type === "subagent.updated"
-            ? `${event.type}:${event.payload.id}:${event.payload.status}`
-            : event.type,
-        ),
-      ),
-      [[`subagent.updated:${ids.subagentNodeId}:failed`]],
-    );
-    assert.deepEqual(yield* Ref.get(interrupts), [true]);
   }),
 );
 
