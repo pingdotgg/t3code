@@ -82,6 +82,11 @@ export function makeSubagentChildThread(input: {
     settledAt: null,
     snoozedUntil: null,
     snoozedAt: null,
+    pinnedAt: null,
+    pinOrderKey: null,
+    autoSettleDisabledAt: null,
+    // A guest link belongs to the thread it was made for.
+    guestShare: null,
     lastVisitedAt: null,
     deletedAt: null,
   };
@@ -98,7 +103,6 @@ export function makeSubagentConversationArtifacts(input: {
   readonly nativeItemRef: OrchestrationV2ProviderRef | null;
   readonly role: "user" | "assistant";
   readonly text: string;
-  /** Whether a user message is the script a workflow run executes; unset for older callers. */
   readonly workflowScript?: boolean;
   readonly ordinal: number;
   readonly now: DateTime.Utc;
@@ -189,8 +193,7 @@ export function subagentResultForRun(
       candidate.role === "assistant" &&
       candidate.text.trim().length > 0,
   );
-  // Turn item order is authoritative: providers can finalize every message of a turn at once,
-  // so message timestamps can tie. They only order messages that have no turn item.
+  // Prefer turn item order; providers can finalize messages with identical timestamps.
   const message =
     messages.find((candidate) => candidate.id === turnItem?.messageId) ??
     messages.toSorted(
@@ -271,7 +274,7 @@ export function delegatedTaskProgress(projection: {
 
 function writtenIds(
   emitted: ReadonlyArray<OrchestrationV2DomainEvent>,
-  type: "subagent.updated" | "node.updated" | "turn-item.updated",
+  type: "subagent.updated" | "node.updated" | "turn-item.updated" | "provider-turn.updated",
 ): ReadonlySet<string> {
   return new Set(emitted.flatMap((event) => (event.type === type ? [event.payload.id] : [])));
 }
@@ -359,7 +362,10 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
 >(input: {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "turnItems">;
+  readonly projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "nodes" | "providerTurns" | "turnItems"
+  >;
   readonly status: "completed" | "failed" | "interrupted" | "cancelled";
   readonly completedAt?: DateTime.Utc;
   readonly now: DateTime.Utc;
@@ -369,6 +375,7 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
   const { now, status, completedAt = now } = input;
   const endedNodeIds = writtenIds(input.emitted, "node.updated");
   const endedItemIds = writtenIds(input.emitted, "turn-item.updated");
+  const endedProviderTurnIds = writtenIds(input.emitted, "provider-turn.updated");
   const scope = {
     threadId: input.threadId,
     providerInstanceId: input.providerInstanceId,
@@ -419,6 +426,23 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
             ? { streaming: false }
             : {}),
         },
+      });
+    }
+    for (const providerTurn of input.projection.providerTurns) {
+      if (
+        providerTurn.nodeId !== node.id ||
+        providerTurn.runAttemptId !== null ||
+        !isOrchestrationV2WorkActive(providerTurn.status) ||
+        endedProviderTurnIds.has(providerTurn.id)
+      ) {
+        continue;
+      }
+      events.push({
+        ...scope,
+        id: yield* input.allocateEventId(),
+        type: "provider-turn.updated",
+        nodeId: node.id,
+        payload: { ...providerTurn, status, completedAt },
       });
     }
   }
