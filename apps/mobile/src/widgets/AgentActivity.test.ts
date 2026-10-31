@@ -277,6 +277,111 @@ describe("AgentActivity", () => {
     );
   });
 
+  const handoff = activity(3, [
+    row("update-snapshots", "Update snapshots", "running", "Working"),
+    row("fix-login-redirect", "Fix login redirect", "waiting_for_approval", "Approval"),
+    row("bump-deps", "Bump deps", "running", "Working"),
+  ]);
+  const approvalLink = ["t3code://threads/moonbase-terminal/fix-login-redirect"];
+
+  it("names only the leading thread and its need on Apple Watch and CarPlay", () => {
+    const small = layout(handoff, { ...dark, activityFamily: "small" }).bannerSmall;
+
+    expect(text(small)).toBe("Needs approval Fix login redirect");
+    expect(modifierArgs(small, "widgetURL")).toEqual(approvalLink);
+    expect(modifierArgs(small, "accessibilityLabel")).toEqual([
+      "Fix login redirect needs approval. 1 needs you, 2 working",
+    ]);
+  });
+
+  it("counts working agents when nothing needs the user on Apple Watch and CarPlay", () => {
+    const small = layout(
+      activity(2, [
+        row("update-snapshots", "Update snapshots", "running", "Working"),
+        row("bump-deps", "Bump deps", "running", "Working"),
+      ]),
+      { ...dark, activityFamily: "small" },
+    ).bannerSmall;
+
+    expect(text(small)).toBe("›_ 2 working Update snapshots");
+  });
+
+  it("shows StandBy the leading thread, its need and the summary without other rows", () => {
+    const banner = layout(handoff, { ...dark, isActivityFullscreen: true }).banner;
+
+    expect(text(banner)).toBe("Fix login redirect Needs approval 1 needs you · 2 working");
+    expect(modifierArgs(banner, "widgetURL")).toEqual(approvalLink);
+    expect(modifierArgs(banner, "accessibilityLabel")).toEqual([
+      "Fix login redirect needs approval. 1 needs you, 2 working",
+      "T3 Code",
+    ]);
+  });
+
+  it("keeps StandBy's night mode readable by shape alone", () => {
+    const banner = layout(handoff, {
+      ...dark,
+      isActivityFullscreen: true,
+      isLuminanceReduced: true,
+    }).banner;
+
+    expect(modifierArgs(banner, "foregroundStyle").filter((s) => typeof s === "string")).toEqual(
+      [],
+    );
+    expect([...walk(banner)].find((element) => element.props.systemName)?.props.systemName).toBe(
+      "exclamationmark.shield.fill",
+    );
+  });
+
+  it("speaks the count the small banner and StandBy show, from the rows the relay sent", () => {
+    const props = activity(
+      6,
+      ["a", "b", "c", "d", "e"].map((id) => row(id, id.toUpperCase(), "running", "Working")),
+    );
+
+    expect(text(layout(props, dark).bannerSmall)).toBe("›_ 5 working A");
+    expect(modifierArgs(layout(props, dark).bannerSmall, "accessibilityLabel")).toEqual([
+      "A is working. 5 working",
+    ]);
+    expect(
+      modifierArgs(
+        layout(props, { ...dark, isActivityFullscreen: true }).banner,
+        "accessibilityLabel",
+      )[0],
+    ).toBe("A is working. 5 working");
+  });
+
+  it("names a failed leading thread instead of the working count on Apple Watch and CarPlay", () => {
+    const small = layout(
+      activity(2, [
+        row("fix-login-redirect", "Fix login redirect", "failed", "Failed"),
+        row("update-snapshots", "Update snapshots", "running", "Working"),
+        row("bump-deps", "Bump deps", "running", "Working"),
+      ]),
+      dark,
+    ).bannerSmall;
+
+    expect(text(small)).toBe("Failed Fix login redirect");
+  });
+
+  it("does not repeat the need line as StandBy's summary", () => {
+    const fullscreen = { ...dark, isActivityFullscreen: true };
+
+    expect(text(layout(activity(1, [row("a", "A", "stale", "Waiting")]), fullscreen).banner)).toBe(
+      "A Out of date",
+    );
+    expect(
+      text(layout(activity(1, [row("a", "A", "running", "Working")]), fullscreen).banner),
+    ).toBe("›_ A Working");
+    expect(
+      text(
+        layout(
+          activity(2, [row("a", "A", "stale", "Waiting"), row("b", "B", "stale", "Waiting")]),
+          fullscreen,
+        ).banner,
+      ),
+    ).toBe("A Out of date");
+  });
+
   it("names an untitled thread instead of speaking a bare status", () => {
     const sections = layout(activity(1, [row("a", "  ", "running", "Working")]), dark);
 

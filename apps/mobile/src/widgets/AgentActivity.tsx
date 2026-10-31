@@ -1,5 +1,5 @@
 import { HStack, Image, Spacer, Text, VStack } from "@expo/ui/swift-ui";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import {
   Animation,
   accessibilityElement,
@@ -199,8 +199,10 @@ function AgentActivity(
 
   const describe = (row: AgentActivityRowProps) =>
     `${row.threadTitle.trim() || "A thread"} ${signalFor(row.phase).spoken}`;
+  // Speak the summary whenever it covers more threads than the leading one, as the glance shows it.
+  const coversOthers = ordered.length > 1;
   const glanceLabel = hero
-    ? ordered.length > 1
+    ? coversOthers
       ? `${describe(hero)}. ${summaryParts.join(", ")}`
       : describe(hero)
     : "T3 Code";
@@ -265,8 +267,36 @@ function AgentActivity(
     </HStack>
   );
 
-  const renderHero = (row: AgentActivityRowProps, markSize: number, titleSize: number) => (
-    <HStack spacing={10} alignment="center">
+  const renderNeed = (row: AgentActivityRowProps, label: string, size: number) => (
+    <Text
+      modifiers={[
+        font({ weight: "semibold", size }),
+        foregroundStyle(tintFor(row.phase)),
+        lineLimit(1),
+        layoutPriority(1),
+      ]}
+    >
+      {label}
+    </Text>
+  );
+
+  const renderCaption = (row: AgentActivityRowProps) => (
+    <HStack spacing={4} alignment="center">
+      {renderNeed(row, signalFor(row.phase).need ?? row.status, 12)}
+      <Text modifiers={[font({ size: 12 }), foregroundStyle(secondaryForeground), lineLimit(1)]}>
+        {`· ${row.projectTitle}`}
+      </Text>
+      <Spacer minLength={0} />
+    </HStack>
+  );
+
+  const renderHero = (
+    row: AgentActivityRowProps,
+    markSize: number,
+    titleSize: number,
+    caption: ReactNode,
+  ) => (
+    <HStack spacing={Math.round(markSize * 0.4)} alignment="center">
       {renderMark(row, markSize, true)}
       <VStack alignment="leading" spacing={2}>
         <Text
@@ -279,24 +309,7 @@ function AgentActivity(
         >
           {row.threadTitle}
         </Text>
-        <HStack spacing={4} alignment="center">
-          <Text
-            modifiers={[
-              font({ weight: "semibold", size: 12 }),
-              foregroundStyle(tintFor(row.phase)),
-              lineLimit(1),
-              layoutPriority(1),
-            ]}
-          >
-            {signalFor(row.phase).need ?? row.status}
-          </Text>
-          <Text
-            modifiers={[font({ size: 12 }), foregroundStyle(secondaryForeground), lineLimit(1)]}
-          >
-            {`· ${row.projectTitle}`}
-          </Text>
-          <Spacer minLength={0} />
-        </HStack>
+        {caption}
       </VStack>
       <Spacer minLength={0} />
     </HStack>
@@ -340,12 +353,31 @@ function AgentActivity(
       </Text>
     ) : null;
 
-  const renderSummary = (size: number) =>
-    summary ? (
-      <Text modifiers={[font({ size }), foregroundStyle(secondaryForeground), lineLimit(1)]}>
-        {summary}
-      </Text>
-    ) : null;
+  const renderHeader = (size: number, withSummary = true) => (
+    <HStack spacing={Math.round(size * 0.7)} alignment="center">
+      {renderLogo(size)}
+      {withSummary && summary ? (
+        <Text modifiers={[font({ size }), foregroundStyle(secondaryForeground), lineLimit(1)]}>
+          {summary}
+        </Text>
+      ) : null}
+      <Spacer minLength={0} />
+    </HStack>
+  );
+
+  // StandBy spreads the banner across the screen, read from across a desk.
+  const standBy = environment.isActivityFullscreen === true;
+  const standByNeed = hero ? (signalFor(hero.phase).need ?? hero.status) : null;
+  // StandBy drops a one-part summary that only repeats the need line.
+  const standBySummary =
+    summaryParts.length > 1 || (coversOthers && summaryParts[0] !== standByNeed);
+  // The small family (Apple Watch Smart Stack, CarPlay) has room for one fact.
+  const glanceNeed = hero
+    ? (signalFor(hero.phase).need ??
+      (signalFor(hero.phase).rank === 2 && workingCount > 0
+        ? `${workingCount} working`
+        : hero.status))
+    : null;
 
   // While agents only work, the compact island stays a quiet prompt; words appear
   // only when a thread needs the user or failed.
@@ -355,23 +387,24 @@ function AgentActivity(
     banner: (
       <VStack
         alignment="leading"
-        spacing={10}
+        spacing={standBy ? 14 : 10}
         modifiers={[
-          padding({ all: 14 }),
+          padding({ all: standBy ? 18 : 14 }),
           // A clear tint reveals iOS 26's glass material; older hosts keep the standard surface.
           activityBackgroundTint(environment.isLiquidGlassAvailable ? "clear" : null),
           accessibilityElement("ignore"),
-          accessibilityLabel(cardLabel),
+          accessibilityLabel(standBy ? glanceLabel : cardLabel),
           ...linkModifiers,
         ]}
       >
-        <HStack spacing={8} alignment="center">
-          {renderLogo(12)}
-          {renderSummary(12)}
-          <Spacer minLength={0} />
-        </HStack>
-        {hero ? renderHero(hero, 24, 15) : null}
-        {other0 || other1 || other2 ? (
+        {standBy ? null : renderHeader(12)}
+        {hero
+          ? standBy
+            ? renderHero(hero, 44, 22, renderNeed(hero, standByNeed ?? hero.status, 17))
+            : renderHero(hero, 24, 15, renderCaption(hero))
+          : null}
+        {standBy ? renderHeader(15, standBySummary) : null}
+        {!standBy && (other0 || other1 || other2) ? (
           <VStack alignment="leading" spacing={6}>
             {other0 ? renderOther(other0) : null}
             {other1 ? renderOther(other1) : null}
@@ -392,8 +425,23 @@ function AgentActivity(
           ...linkModifiers,
         ]}
       >
-        {hero ? renderHero(hero, 18, 13) : renderLogo(14)}
-        {renderSummary(11)}
+        <HStack spacing={6} alignment="center">
+          {hero ? renderMark(hero, 20, true) : renderLogo(16)}
+          {hero && glanceNeed !== null ? renderNeed(hero, glanceNeed, 15) : null}
+          <Spacer minLength={0} />
+        </HStack>
+        {hero ? (
+          <Text
+            modifiers={[
+              font({ weight: "semibold", size: 16 }),
+              foregroundStyle(primaryForeground),
+              lineLimit(1),
+              truncationMode("tail"),
+            ]}
+          >
+            {hero.threadTitle}
+          </Text>
+        ) : null}
       </VStack>
     ),
     compactLeading: (
@@ -455,7 +503,7 @@ function AgentActivity(
           ...linkModifiers,
         ]}
       >
-        {hero ? renderHero(hero, 24, 15) : null}
+        {hero ? renderHero(hero, 24, 15, renderCaption(hero)) : null}
         {other0 || other1 ? (
           <VStack alignment="leading" spacing={5}>
             {other0 ? renderOther(other0) : null}
