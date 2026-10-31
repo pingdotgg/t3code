@@ -668,16 +668,8 @@ const isExecutableFile = Effect.fnUntraced(function* (
   return canExecuteFile(filePath);
 });
 
-// Called within the traced command resolvers.
-const findOnPath = Effect.fnUntraced(function* (
-  pathValue: string,
-  commandCandidates: ReadonlyArray<string>,
-  platform: NodeJS.Platform,
-  windowsPathExtensions: ReadonlyArray<string>,
-  isLast: (match: string) => boolean,
-): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
-  const path = yield* Path.Path;
-  // Keep case variants: Windows can make PATH directories case-sensitive.
+// Keep case variants: Windows can make PATH directories case-sensitive.
+function pathEntriesForPlatform(pathValue: string, platform: NodeJS.Platform): string[] {
   const pathEntries: string[] = [];
   const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
@@ -691,14 +683,40 @@ const findOnPath = Effect.fnUntraced(function* (
     seenPathEntries.add(pathEntry);
     pathEntries.push(pathEntry);
   }
+  return pathEntries;
+}
+
+// Relative POSIX PATH entries resolve against the working directory, so caches keyed by them include it.
+function relativePathEntriesCwd(
+  pathEntries: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+  isAbsolute: (pathEntry: string) => boolean,
+): string | undefined {
+  return platform !== "win32" && pathEntries.some((entry) => !isAbsolute(entry))
+    ? process.cwd()
+    : undefined;
+}
+
+// Called within the traced command resolvers.
+const findOnPath = Effect.fnUntraced(function* (
+  pathValue: string,
+  commandCandidates: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+  windowsPathExtensions: ReadonlyArray<string>,
+  isLast: (match: string) => boolean,
+): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
+  const pathEntries = pathEntriesForPlatform(pathValue, platform);
+  const cwd = relativePathEntriesCwd(pathEntries, platform, path.isAbsolute);
 
   const listings = yield* PathDirectoryListings;
   const matches: string[] = [];
   for (const pathEntry of pathEntries) {
-    let listing = listings && (yield* Cache.get(listings, pathEntry));
-    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
-      yield* Cache.invalidate(listings, pathEntry);
-      listing = yield* Cache.get(listings, pathEntry);
+    const directory = cwd === undefined ? pathEntry : path.resolve(cwd, pathEntry);
+    let listing = listings && (yield* Cache.get(listings, directory));
+    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(directory))) {
+      yield* Cache.invalidate(listings, directory);
+      listing = yield* Cache.get(listings, directory);
     }
     for (const candidate of commandCandidates) {
       if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
@@ -742,9 +760,18 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return null;
   }
 
-  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
-    COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
+  const cwd = relativePathEntriesCwd(
+    pathEntriesForPlatform(pathValue, platform),
+    platform,
+    path.isAbsolute,
   );
+  const cacheKey = [
+    platform,
+    pathValue,
+    windowsPathExtensions.join(";"),
+    command,
+    ...(cwd === undefined ? [] : [cwd]),
+  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const cache = yield* CommandResolutionCache;
   const nowNanos = yield* Clock.monotonicTimeNanos;
   const cached = cache.get(cacheKey);
