@@ -96,6 +96,29 @@ describe("ConnectionStorage.makeCatalogBackend", () => {
   );
 });
 
+describe("ConnectionStorage registration writability", () => {
+  it.effect("fails without writing when the desktop cannot save the catalog", () =>
+    Effect.gen(function* () {
+      const setConnectionCatalog = vi.fn(() => Promise.resolve(false));
+      vi.stubGlobal("window", {
+        desktopBridge: {
+          canSaveConnectionCatalog: () => Promise.resolve(false),
+          setConnectionCatalog,
+        },
+      });
+
+      const error = yield* Effect.gen(function* () {
+        const registrations = yield* Persistence.ConnectionRegistrationStore;
+        return yield* Effect.flip(registrations.assertWritable);
+      }).pipe(Effect.provide(ConnectionStorage.layer));
+
+      expect(error.message).toContain("Unlock GNOME Keyring or KWallet");
+      // Writing back what was read would clobber a connection another runtime saved meanwhile.
+      expect(setConnectionCatalog).not.toHaveBeenCalled();
+    }),
+  );
+});
+
 describe("IndexedDB connection recovery", () => {
   it.effect("reopens after a forced close and finalizes the current connection", () =>
     Effect.gen(function* () {
