@@ -32,11 +32,18 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
@@ -1582,6 +1589,300 @@ it.effect("lists every thread in the shell snapshot past SQLite's bound variable
     assert.strictEqual(unscoped.threads.length, threadCount);
     assert.strictEqual(active.threads.length, threadCount);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps an unresolved Codex reset attempt account-scoped and reuses its key", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-10-31T10:00:00.000Z"));
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = DateTime.makeUnsafe(Date.parse("2026-10-31T10:00:00.000Z"));
+    const pending: ProjectionStore.CodexResetAttempt = {
+      accountFingerprint: "codex-account:ledger-test",
+      resetAt: "2026-10-31T15:00:00.000Z",
+      idempotencyKey: "codex-auto-reset:ledger-test:first-window",
+      attemptedAt: "2026-10-31T10:00:00.000Z",
+      outcome: "pending",
+      allowanceCleared: false,
+    };
+    assert.isTrue(yield* store.claimCodexResetAttempt(pending, now));
+    assert.deepEqual(yield* store.getCodexResetAttempt(pending.accountFingerprint), pending);
+    assert.isFalse(
+      yield* store.claimCodexResetAttempt(
+        {
+          ...pending,
+          resetAt: "2026-10-31T16:00:00.000Z",
+          idempotencyKey: "codex-auto-reset:ledger-test:second-window",
+        },
+        now,
+      ),
+    );
+    yield* store.updateCodexResetAttempt({
+      ...pending,
+      outcome: "reset",
+      allowanceCleared: false,
+    });
+    assert.isFalse(
+      yield* store.claimCodexResetAttempt(
+        {
+          ...pending,
+          resetAt: "2026-10-31T16:00:00.000Z",
+          idempotencyKey: "codex-auto-reset:ledger-test:second-window",
+        },
+        now,
+      ),
+    );
+    yield* store.updateCodexResetAttempt({
+      ...pending,
+      outcome: "reset",
+      allowanceCleared: true,
+      checkedAt: "2026-10-31T10:01:00.000Z",
+    });
+    assert.isTrue(
+      yield* store.claimCodexResetAttempt(
+        {
+          ...pending,
+          resetAt: "2026-10-31T16:00:00.000Z",
+          idempotencyKey: "codex-auto-reset:ledger-test:second-window",
+        },
+        now,
+      ),
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "releases only its matching Codex attempt and permits a claim after the window expires",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-10-31T10:00:00.000Z"));
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = DateTime.makeUnsafe(Date.parse("2026-10-31T10:00:00.000Z"));
+      const first: ProjectionStore.CodexResetAttempt = {
+        accountFingerprint: "codex-account:release-test",
+        resetAt: "2026-10-31T15:00:00.000Z",
+        idempotencyKey: "codex-auto-reset:first",
+        attemptedAt: "2026-10-31T10:00:00.000Z",
+        outcome: "pending",
+        allowanceCleared: false,
+      };
+      assert.isTrue(yield* store.claimCodexResetAttempt(first, now));
+      assert.isFalse(
+        yield* store.claimCodexResetAttempt({ ...first, idempotencyKey: "other" }, now),
+      );
+      yield* store.releaseCodexResetAttempt(first.accountFingerprint, "other");
+      assert.isFalse((yield* store.getCodexResetAttempt(first.accountFingerprint)) === null);
+      yield* store.releaseCodexResetAttempt(first.accountFingerprint, first.idempotencyKey);
+      const second = { ...first, idempotencyKey: "codex-auto-reset:second" };
+      assert.isTrue(yield* store.claimCodexResetAttempt(second, now));
+      const nextWindowNow = DateTime.makeUnsafe(Date.parse("2026-10-31T15:01:00.000Z"));
+      assert.isTrue(
+        yield* store.claimCodexResetAttempt(
+          { ...second, idempotencyKey: "codex-auto-reset:next-window" },
+          nextWindowNow,
+        ),
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "sweeps a real future-reset projection through one confirmed redemption and continuation",
+  () =>
+    Effect.gen(function* () {
+      const nowMs = Date.parse("2026-10-31T10:00:00.000Z");
+      yield* TestClock.setTime(nowMs);
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* addRolledBackRecoveryCandidate("auto-reset-sweep");
+      const sharedThreadId = yield* addRolledBackRecoveryCandidate("auto-reset-sweep-shared");
+      const projection = yield* store.getThreadProjection(threadId);
+      const sharedProjection = yield* store.getThreadProjection(sharedThreadId);
+      const run = projection.runs[0]!;
+      const sharedRun = sharedProjection.runs[0]!;
+      const now = yield* DateTime.now;
+      const resetAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs + 5 * 60 * 60 * 1000));
+      const failedRun = { ...run, status: "failed" as const, completedAt: now };
+      const failureItem = {
+        id: TurnItemId.make("auto-reset-sweep:usage-limit"),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "failed" as const,
+        title: "Usage limit reached",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "error" as const,
+        failure: {
+          class: "usage_limit" as const,
+          message: "Usage limit reached.",
+          resetAt,
+          code: "usageLimitExceeded",
+          retryable: null,
+        },
+      } satisfies OrchestrationV2TurnItem;
+      yield* store.apply({
+        id: EventId.make("auto-reset-sweep:failed-run"),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: failedRun,
+      });
+      yield* store.apply({
+        id: EventId.make("auto-reset-sweep:usage-limit"),
+        type: "turn-item.updated",
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: failureItem,
+      });
+      const sharedFailureItem = {
+        ...failureItem,
+        id: TurnItemId.make("auto-reset-sweep-shared:usage-limit"),
+        threadId: sharedThreadId,
+        runId: sharedRun.id,
+        nodeId: sharedRun.rootNodeId!,
+      } satisfies OrchestrationV2TurnItem;
+      yield* store.apply({
+        id: EventId.make("auto-reset-sweep-shared:failed-run"),
+        type: "run.updated",
+        threadId: sharedThreadId,
+        occurredAt: now,
+        payload: { ...sharedRun, status: "failed" as const, completedAt: now },
+      });
+      yield* store.apply({
+        id: EventId.make("auto-reset-sweep-shared:usage-limit"),
+        type: "turn-item.updated",
+        threadId: sharedThreadId,
+        runId: sharedRun.id,
+        nodeId: sharedRun.rootNodeId!,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: sharedFailureItem,
+      });
+
+      const fingerprint = "codex-account:auto-reset-sweep";
+      const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs + 2_000));
+      const provider = {
+        instanceId: providerInstanceId,
+        driver,
+        displayName: "Test Codex account",
+        auth: { email: "codex@example.test" },
+        usageLimits: {
+          credentialFingerprint: fingerprint,
+          checkedAt,
+          windows: [],
+          resetCredits: { availableCount: 1, nextCreditId: "fixture-credit-id" },
+        },
+      } as unknown as import("@t3tools/contracts").ServerProvider;
+      const autoRedeemCalls: Array<string> = [];
+      const continuationCalls: Array<string> = [];
+      const dispatchedCommandIds = new Set<string>();
+      const setRecovery = (
+        input: Parameters<Orchestrator.OrchestratorV2["Service"]["autoArmLimitRecovery"]>[0],
+      ) =>
+        Effect.gen(function* () {
+          yield* sql`UPDATE orchestration_v2_projection_threads
+          SET payload_json = json_set(payload_json, '$.limitRecovery', json(${encodeUnknownJsonString(input.limitRecovery)}))
+          WHERE thread_id = ${input.threadId}`;
+          return true;
+        }).pipe(Effect.orDie);
+      const recordRedemption = (
+        input: Parameters<Orchestrator.OrchestratorV2["Service"]["recordCodexResetRedemption"]>[0],
+      ) =>
+        Effect.gen(function* () {
+          const current = yield* store.getThread(input.threadId);
+          const recovery = current.limitRecovery!;
+          const updated = {
+            ...recovery,
+            requestId: input.commandId,
+            codexResetRedemption: input.codexResetRedemption!,
+          };
+          yield* sql`UPDATE orchestration_v2_projection_threads
+          SET payload_json = json_set(payload_json, '$.limitRecovery', json(${encodeUnknownJsonString(updated)}))
+          WHERE thread_id = ${input.threadId}`;
+          return true;
+        }).pipe(Effect.orDie);
+      const mocks = Layer.mergeAll(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          streamDomainEvents: Stream.never,
+          autoArmLimitRecovery: (input) => setRecovery(input),
+          recordCodexResetRedemption: (input) => recordRedemption(input),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          dispatch: (command) =>
+            Effect.sync(() => {
+              if (
+                command.type === "message.dispatch" &&
+                command.usageLimitContinuationOfRunId &&
+                !dispatchedCommandIds.has(command.commandId)
+              ) {
+                dispatchedCommandIds.add(command.commandId);
+                continuationCalls.push(command.threadId);
+              }
+              return { sequence: 1, storedEvents: [] };
+            }),
+        }),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.succeed({
+            autoResumeLimitedThreads: true,
+            snoozeLimitedThreads: false,
+            autoRedeemCodexResetCredits: { [providerInstanceId]: true },
+          } as never),
+          streamChanges: Stream.never,
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([provider]),
+          refreshInstance: () => Effect.succeed([provider]),
+          supportsAutoRedeemResetCredit: () => Effect.succeed(true),
+          autoRedeemResetCredit: (input) =>
+            Effect.gen(function* () {
+              if (!input.stillArmed || !(yield* input.stillArmed())) return null;
+              autoRedeemCalls.push(input.idempotencyKey);
+              return {
+                status: "sent",
+                accountFingerprint: fingerprint,
+                creditsBefore: 1,
+                outcome: "reset",
+                checkedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs + 1_000)),
+                allowanceCleared: true,
+                idempotencyKey: input.idempotencyKey,
+              } as const;
+            }),
+        }),
+      );
+      const sweep = yield* UsageLimitRecoveryWorker.makeSweep.pipe(Effect.provide(mocks));
+      yield* sweep();
+      assert.strictEqual((yield* store.getThread(threadId)).limitRecovery?.autoResume, true);
+      assert.isUndefined((yield* store.getThread(threadId)).limitRecovery?.codexResetRedemption);
+      yield* sweep();
+      assert.strictEqual(autoRedeemCalls.length, 1);
+      assert.strictEqual(
+        (yield* store.getThread(threadId)).limitRecovery?.codexResetRedemption?.outcome,
+        "reset",
+      );
+      assert.strictEqual(
+        (yield* store.getThread(threadId)).limitRecovery?.codexResetRedemption?.allowanceCleared,
+        true,
+      );
+      assert.strictEqual(
+        (yield* store.getThread(sharedThreadId)).limitRecovery?.codexResetRedemption
+          ?.allowanceCleared,
+        true,
+      );
+      assert.isUndefined(
+        (yield* store.getThread(threadId)).limitRecovery?.codexResetRedemption?.creditId,
+      );
+      assert.deepEqual(continuationCalls.sort(), [threadId, sharedThreadId].sort());
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
@@ -4366,6 +4667,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         if (lastErrorClass === "usage_limit") {
           assert.deepEqual(candidate, {
             id: sqlShell.id,
+            providerInstanceId: sqlShell.providerInstanceId,
+            modelSelection: sqlShell.modelSelection,
             status: sqlShell.status,
             lastErrorClass: sqlShell.lastErrorClass,
             usageLimitResetAt: sqlShell.usageLimitResetAt,
@@ -4549,6 +4852,41 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (row) => row.id === threadId,
         ),
       );
+      const optedInRecovery = {
+        ...recoveryOptions,
+        autoResume: true,
+        autoRedeemCodexResetCreditInstanceIds: [providerInstanceId],
+      };
+      assert.strictEqual(
+        (yield* store.getLimitRecoveryCandidates(optedInRecovery)).find(
+          (row) => row.id === threadId,
+        )?.limitRecovery?.runId,
+        original.id,
+      );
+      const pendingRedemption = {
+        providerInstanceId,
+        redeemedByProviderInstanceId: providerInstanceId,
+        accountFingerprint: "codex-account:test",
+        accountLabel: "test account",
+        idempotencyKey: "attempt:pending",
+        attemptedAt: DateTime.formatIso(now),
+        creditsBefore: 1,
+        outcome: "pending" as const,
+        allowanceCleared: false,
+      };
+      const pendingRecovery = { ...recovery, codexResetRedemption: pendingRedemption };
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.limitRecovery', json(${encodeUnknownJsonString(pendingRecovery)}))
+        WHERE thread_id = ${threadId}`;
+      assert.strictEqual(
+        (yield* store.getLimitRecoveryCandidates(optedInRecovery)).find(
+          (row) => row.id === threadId,
+        )?.limitRecovery?.codexResetRedemption?.outcome,
+        "pending",
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.limitRecovery', json(${encodeUnknownJsonString(recovery)}))
+        WHERE thread_id = ${threadId}`;
       assert.strictEqual(yield* store.getLimitRecoveryWakeAt(now), DateTime.toEpochMillis(reset));
       assert.isNull(yield* store.getLimitRecoveryWakeAt(reset));
       const due = (yield* store.getLimitRecoveryCandidates({

@@ -9,7 +9,7 @@ import {
   IDLE_COMPACTION_MODES,
   globalIdleCompaction,
   ProviderDriverKind,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import {
@@ -1585,6 +1585,46 @@ export function ThreadsSettingsPanel() {
             />
           }
         />
+        {scope.kind === "environment" && connectedEnvironments.length === 1
+          ? Object.entries(settings.providerInstances)
+              .filter(([, instance]) => {
+                if (instance.driver !== ProviderDriverKind.make("codex")) return false;
+                const config = instance.config;
+                return !(
+                  typeof config === "object" &&
+                  config !== null &&
+                  "setupMode" in config &&
+                  config.setupMode === "managed"
+                );
+              })
+              .map(([instanceId, instance]) => (
+                <SettingsRow
+                  key={instanceId}
+                  serverScoped
+                  title={`Use banked Codex resets${instance.displayName ? ` for ${instance.displayName}` : ""}`}
+                  description="For native Codex accounts. When an included usage limit is exhausted, redeem one banked reset and resume eligible threads after Codex reports a reset and a fresh usage check shows the limit clear."
+                  settingKeys={["autoRedeemCodexResetCredits"]}
+                  control={
+                    <ScopedSwitch
+                      settingKeys={["autoRedeemCodexResetCredits"]}
+                      checked={
+                        settings.autoRedeemCodexResetCredits[
+                          ProviderInstanceId.make(instanceId)
+                        ] === true
+                      }
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          autoRedeemCodexResetCredits: {
+                            [ProviderInstanceId.make(instanceId)]: Boolean(checked),
+                          },
+                        })
+                      }
+                      aria-label={`Automatically redeem Codex reset for ${instance.displayName ?? "this account"}`}
+                    />
+                  }
+                />
+              ))
+          : null}
         <SettingsRow
           serverScoped
           {...searchableSetting("snooze-limited-threads")}

@@ -1,4 +1,5 @@
 import type {
+  ProviderConsumeResetCreditOutcome,
   ProviderUsageLimitsUpdate,
   ServerProviderResetCredits,
   ServerProviderUsageLimits,
@@ -31,9 +32,48 @@ export interface CodexRateLimitSnapshot {
 export interface CodexResetCreditsSummary {
   readonly availableCount: number;
   readonly credits?: ReadonlyArray<{
+    readonly id: string;
+    readonly grantedAt?: number;
     readonly status: string;
     readonly expiresAt?: number | null;
   }> | null;
+}
+
+export function canAutoRedeemCodexReset(input: {
+  readonly mode: "first" | "replay";
+  readonly initialFingerprint: string;
+  readonly freshFingerprint: string | undefined;
+  readonly checkedBefore: string | undefined;
+  readonly limits: ServerProviderUsageLimits | undefined;
+  readonly creditsAvailable: number;
+  readonly usageExhausted: boolean;
+}) {
+  return (
+    input.freshFingerprint === input.initialFingerprint &&
+    input.checkedBefore !== undefined &&
+    input.limits !== undefined &&
+    input.limits.unavailable === undefined &&
+    input.limits.checkedAt !== undefined &&
+    Date.parse(input.limits.checkedAt) > Date.parse(input.checkedBefore) &&
+    (input.mode === "replay" || (input.creditsAvailable > 0 && input.usageExhausted))
+  );
+}
+
+export function confirmsCodexResetCredit(input: {
+  readonly outcome: ProviderConsumeResetCreditOutcome;
+  readonly checkedBefore: string | undefined;
+  readonly checkedAt: string | undefined;
+  readonly limitsUnavailable: boolean;
+  readonly usageExhausted: boolean;
+}) {
+  return (
+    (input.outcome === "reset" || input.outcome === "alreadyRedeemed") &&
+    input.checkedBefore !== undefined &&
+    input.checkedAt !== undefined &&
+    Date.parse(input.checkedAt) > Date.parse(input.checkedBefore) &&
+    !input.limitsUnavailable &&
+    !input.usageExhausted
+  );
 }
 
 const SESSION_MINS = 5 * 60;
@@ -101,14 +141,16 @@ function codexResetCreditsToContract(
   summary: CodexResetCreditsSummary | null | undefined,
 ): ServerProviderResetCredits | undefined {
   if (!summary) return undefined;
-  const expiries = (summary.credits ?? [])
-    .filter((credit) => credit.status === "available")
+  const available = (summary.credits ?? []).filter((credit) => credit.status === "available");
+  const expiries = available
     .map((credit) => credit.expiresAt)
     .filter((value): value is number => typeof value === "number");
   const nextExpiresAt =
     expiries.length > 0 ? isoFromEpochSeconds(Math.min(...expiries)) : undefined;
+  const nextCredit = available[0];
   return {
     availableCount: Math.max(0, summary.availableCount),
+    ...(nextCredit?.id ? { nextCreditId: nextCredit.id } : {}),
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
   };
 }
@@ -120,6 +162,7 @@ export function codexRateLimitsToLimits(input: {
     | null
     | undefined;
   readonly resetCredits?: CodexResetCreditsSummary | null | undefined;
+  readonly credentialFingerprint?: string | undefined;
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
@@ -129,6 +172,7 @@ export function codexRateLimitsToLimits(input: {
       checkedAt: input.checkedAt,
       windows,
     }),
+    ...(input.credentialFingerprint ? { credentialFingerprint: input.credentialFingerprint } : {}),
     ...(resetCredits ? { resetCredits } : {}),
   };
 }

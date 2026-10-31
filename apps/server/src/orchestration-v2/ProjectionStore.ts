@@ -182,7 +182,8 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "updatedAt"
   | "limitRecovery"
   | "snoozedUntil"
->;
+> &
+  Pick<OrchestrationV2AppThread, "providerInstanceId" | "modelSelection">;
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
@@ -506,11 +507,26 @@ export interface ProjectionStoreV2Shape {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
     readonly snooze: boolean;
+    readonly autoRedeemCodexResetCreditInstanceIds?: ReadonlyArray<ProviderInstanceId>;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
   /** Epoch ms of the next armed reset or snooze end after `now`, when a waiting thread becomes a candidate. */
   readonly getLimitRecoveryWakeAt: (
     now: DateTime.Utc,
   ) => Effect.Effect<number | null, ProjectionStoreV2Error>;
+  readonly getCodexResetAttempt: (
+    accountFingerprint: string,
+  ) => Effect.Effect<CodexResetAttempt | null, ProjectionStoreV2Error>;
+  readonly claimCodexResetAttempt: (
+    input: CodexResetAttempt,
+    now: DateTime.Utc,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly releaseCodexResetAttempt: (
+    accountFingerprint: string,
+    idempotencyKey: string,
+  ) => Effect.Effect<void, ProjectionStoreV2Error>;
+  readonly updateCodexResetAttempt: (
+    input: CodexResetAttempt,
+  ) => Effect.Effect<void, ProjectionStoreV2Error>;
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
@@ -663,6 +679,17 @@ export interface ProjectionStoreV2Shape {
     },
     ProjectionStoreV2Error
   >;
+}
+
+export interface CodexResetAttempt {
+  readonly accountFingerprint: string;
+  readonly resetAt: string;
+  readonly idempotencyKey: string;
+  readonly attemptedAt: string;
+  readonly outcome: "pending" | "reset" | "noCredit" | "nothingToReset";
+  readonly allowanceCleared: boolean;
+  readonly checkedAt?: string;
+  readonly nextCheckAt?: string;
 }
 
 type ProjectionWindow = Omit<
@@ -3865,7 +3892,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
                 AND json_extract(t.payload_json, '$.limitRecovery.resetAt') IS json_extract(item.payload_json, '$.failure.resetAt')
                 AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
-                AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) <= julianday(${DateTime.formatIso(options.now)})
+                AND (
+                  julianday(json_extract(item.payload_json, '$.failure.resetAt')) <= julianday(${DateTime.formatIso(options.now)})
+                  OR (
+                    t.provider_instance_id IN ${sql.in(options.autoRedeemCodexResetCreditInstanceIds ?? [])}
+                  )
+                  OR (
+                    json_extract(t.payload_json, '$.limitRecovery.codexResetRedemption.outcome') = 'reset'
+                    AND json_extract(t.payload_json, '$.limitRecovery.codexResetRedemption.allowanceCleared') = 1
+                    AND json_extract(t.payload_json, '$.limitRecovery.codexResetRedemption.providerInstanceId') = t.provider_instance_id
+                    AND julianday(json_extract(t.payload_json, '$.limitRecovery.codexResetRedemption.checkedAt')) >
+                      julianday(json_extract(t.payload_json, '$.limitRecovery.codexResetRedemption.attemptedAt'))
+                  )
+                )
                 AND (
                   json_extract(t.payload_json, '$.snoozedUntil') IS NULL
                   OR julianday(json_extract(t.payload_json, '$.snoozedUntil')) <= julianday(${DateTime.formatIso(options.now)})
@@ -3899,6 +3938,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           if (summary.lastErrorClass !== "usage_limit") continue;
           candidates.push({
             id: thread.id,
+            providerInstanceId: thread.providerInstanceId,
+            modelSelection: thread.modelSelection,
             status: "failed",
             lastErrorClass: summary.lastErrorClass,
             usageLimitResetAt: summary.usageLimitResetAt,
@@ -3942,6 +3983,89 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (value): value is number => value != null,
         );
         return wakes.length === 0 ? null : Math.round(Math.min(...wakes));
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    const getCodexResetAttempt = Effect.fn("ProjectionStore.getCodexResetAttempt")(
+      function* (accountFingerprint: string) {
+        const rows = yield* sql<{
+          readonly reset_at: string;
+          readonly idempotency_key: string;
+          readonly attempted_at: string;
+          readonly outcome: CodexResetAttempt["outcome"];
+          readonly allowance_cleared: number;
+          readonly checked_at: string | null;
+          readonly next_check_at: string | null;
+        }>`
+          SELECT reset_at, idempotency_key, attempted_at, outcome, allowance_cleared, checked_at,
+            next_check_at
+          FROM codex_auto_reset_attempts WHERE account_fingerprint = ${accountFingerprint}
+        `;
+        const row = rows[0];
+        return row === undefined
+          ? null
+          : ({
+              accountFingerprint,
+              resetAt: row.reset_at,
+              idempotencyKey: row.idempotency_key,
+              attemptedAt: row.attempted_at,
+              outcome: row.outcome,
+              allowanceCleared: row.allowance_cleared === 1,
+              ...(row.checked_at === null ? {} : { checkedAt: row.checked_at }),
+              ...(row.next_check_at === null ? {} : { nextCheckAt: row.next_check_at }),
+            } satisfies CodexResetAttempt);
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    const claimCodexResetAttempt = Effect.fn("ProjectionStore.claimCodexResetAttempt")(
+      function* (input: CodexResetAttempt, now: DateTime.Utc) {
+        const rows = yield* sql<{ readonly account_fingerprint: string }>`
+          INSERT INTO codex_auto_reset_attempts (
+            account_fingerprint, reset_at, idempotency_key, attempted_at, outcome,
+            allowance_cleared, checked_at, next_check_at
+          ) VALUES (
+            ${input.accountFingerprint}, ${input.resetAt}, ${input.idempotencyKey},
+            ${input.attemptedAt}, ${input.outcome}, ${Number(input.allowanceCleared)},
+            ${input.checkedAt ?? null}, ${input.nextCheckAt ?? null}
+          ) ON CONFLICT(account_fingerprint) DO UPDATE SET
+            reset_at = excluded.reset_at, idempotency_key = excluded.idempotency_key,
+            attempted_at = excluded.attempted_at, outcome = excluded.outcome,
+            allowance_cleared = excluded.allowance_cleared, checked_at = excluded.checked_at,
+            next_check_at = excluded.next_check_at
+          WHERE codex_auto_reset_attempts.outcome IN ('noCredit', 'nothingToReset')
+            OR (codex_auto_reset_attempts.outcome = 'reset'
+              AND codex_auto_reset_attempts.allowance_cleared = 1)
+            OR julianday(codex_auto_reset_attempts.reset_at) <= julianday(${DateTime.formatIso(now)})
+          RETURNING account_fingerprint
+        `;
+        return rows.length > 0;
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    const releaseCodexResetAttempt = Effect.fn("ProjectionStore.releaseCodexResetAttempt")(
+      function* (accountFingerprint: string, idempotencyKey: string) {
+        yield* sql`
+          DELETE FROM codex_auto_reset_attempts
+          WHERE account_fingerprint = ${accountFingerprint}
+            AND idempotency_key = ${idempotencyKey}
+        `;
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    const updateCodexResetAttempt = Effect.fn("ProjectionStore.updateCodexResetAttempt")(
+      function* (input: CodexResetAttempt) {
+        yield* sql`
+          UPDATE codex_auto_reset_attempts SET outcome = ${input.outcome},
+            allowance_cleared = ${Number(input.allowanceCleared)},
+            checked_at = ${input.checkedAt ?? null},
+            next_check_at = ${input.nextCheckAt ?? null}
+          WHERE account_fingerprint = ${input.accountFingerprint}
+            AND idempotency_key = ${input.idempotencyKey}
+        `;
       },
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
@@ -7040,6 +7164,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getProviderControlContext: readOnReader(getProviderControlContext),
       getLimitRecoveryCandidates: readOnReader(getLimitRecoveryCandidates),
       getLimitRecoveryWakeAt: readOnReader(getLimitRecoveryWakeAt),
+      getCodexResetAttempt,
+      claimCodexResetAttempt,
+      releaseCodexResetAttempt,
+      updateCodexResetAttempt,
       getRecoveryThreadIds: readOnReader(getRecoveryThreadIds),
       getUnreadableThreadIds: readOnReader(getUnreadableThreadIds),
       getThreadSnapshot: readOnReader(getThreadSnapshot),

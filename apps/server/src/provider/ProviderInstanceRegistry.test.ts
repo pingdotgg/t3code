@@ -414,6 +414,136 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live.skipIf(windowsHost)(
+    "replays a timed-out Codex consume with the same key after allowance clearance and zero credits",
+    () =>
+      Effect.gen(function* () {
+        const fixtures = yield* makeTildeProviderFixtures();
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const script = {
+          rootThreadId: "probe-thread",
+          notifications: [],
+          account: { type: "chatgpt", email: "fixture@example.test", planType: "pro" },
+          rateLimits: {
+            accountId: "replay-account",
+            rateLimits: {
+              primary: { usedPercent: 100, resetsAt: 4_102_444_800, windowDurationMins: 300 },
+              secondary: { usedPercent: 25, resetsAt: 4_102_444_800, windowDurationMins: 10_080 },
+            },
+            rateLimitResetCredits: { availableCount: 1 },
+          },
+          resetCreditOutcomes: ["timeout", "alreadyRedeemed"],
+          recordResetCreditConsumes: true,
+        };
+        yield* fs.writeFileString(fixtures.codexScriptPath, JSON.stringify(script));
+        const instanceId = ProviderInstanceId.make("codex_auto_replay_test");
+        const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+          drivers: [CodexDriver],
+          configMap: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: true,
+              environment: [
+                {
+                  name: "T3_CODEX_COLLAB_SCRIPT",
+                  value: fixtures.codexScriptPath,
+                  sensitive: false,
+                },
+              ],
+              config: makeCodexConfig({
+                enabled: true,
+                binaryPath: fixtures.codexBinaryPath,
+                homePath: path.join(stateDir, "codex-auto-replay-test-home"),
+              }),
+            },
+          },
+        });
+        const instance = yield* registry.getInstance(instanceId);
+        expect(instance?.autoRedeemResetCredit).toBeDefined();
+        const before = yield* instance!.snapshot.refresh;
+        const fingerprint = before.usageLimits?.credentialFingerprint;
+        expect(fingerprint).toBeDefined();
+
+        const idempotencyKey = "codex-auto-reset:fixture-account:window";
+        const first = yield* instance!.autoRedeemResetCredit!({
+          model: "gpt-5-codex",
+          idempotencyKey,
+          expectedAccountFingerprint: fingerprint!,
+          mode: "first",
+          stillArmed: () => Effect.succeed(true),
+        });
+        expect(first.status).toBe("sentUnknown");
+
+        yield* fs.writeFileString(
+          fixtures.codexScriptPath,
+          JSON.stringify({
+            ...script,
+            rateLimits: {
+              accountId: "replay-account",
+              rateLimits: {
+                primary: { usedPercent: 0, resetsAt: 4_102_444_800, windowDurationMins: 300 },
+                secondary: { usedPercent: 0, resetsAt: 4_102_444_800, windowDurationMins: 10_080 },
+              },
+              rateLimitResetCredits: { availableCount: 0 },
+            },
+          }),
+        );
+        const replay = yield* instance!.autoRedeemResetCredit!({
+          model: "gpt-5-codex",
+          idempotencyKey,
+          expectedAccountFingerprint: fingerprint!,
+          mode: "replay",
+          stillArmed: () => Effect.succeed(true),
+        });
+        expect(replay).toMatchObject({
+          status: "sent",
+          outcome: "alreadyRedeemed",
+          allowanceCleared: true,
+          idempotencyKey,
+        });
+        const consumeRows = (yield* fs.readFileString(
+          `${fixtures.codexScriptPath}.resetCreditConsumes`,
+        ))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as { params: { idempotencyKey: string } });
+        expect(consumeRows.map((row) => row.params.idempotencyKey)).toEqual([
+          idempotencyKey,
+          idempotencyKey,
+        ]);
+        yield* fs.writeFileString(
+          fixtures.codexScriptPath,
+          JSON.stringify({
+            ...script,
+            rateLimits: {
+              accountId: "replay-account",
+              rateLimits: {
+                primary: { usedPercent: 100, resetsAt: 4_102_444_800, windowDurationMins: 300 },
+                secondary: { usedPercent: 25, resetsAt: 4_102_444_800, windowDurationMins: 10_080 },
+              },
+              rateLimitResetCredits: { availableCount: 1 },
+            },
+          }),
+        );
+        const stopped = yield* instance!.autoRedeemResetCredit!({
+          model: "gpt-5-codex",
+          idempotencyKey: "codex-auto-reset:fixture-account:stopped-window",
+          expectedAccountFingerprint: fingerprint!,
+          mode: "first",
+          stillArmed: () => Effect.succeed(false),
+        });
+        expect(stopped).toMatchObject({ status: "notSent", reason: "declined" });
+        const consumeRowsAfterStop = (yield* fs.readFileString(
+          `${fixtures.codexScriptPath}.resetCreditConsumes`,
+        ))
+          .trim()
+          .split("\n");
+        expect(consumeRowsAfterStop).toHaveLength(2);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("runs Claude instance probes in the server state dir, not the server cwd", () =>
     Effect.gen(function* () {
       if (yield* HostProcess.isWindows) return;

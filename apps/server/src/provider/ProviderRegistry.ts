@@ -38,9 +38,11 @@ import {
   writeProviderStatusCache,
 } from "./providerStatusCache.ts";
 import type {
+  ProviderAutoResetCreditResult,
   ProviderInstance,
   ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
+import type { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
@@ -63,6 +65,19 @@ export class ProviderRegistry extends Context.Service<
     readonly refreshInstance: (
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    readonly autoRedeemResetCredit: (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly model: string;
+      readonly idempotencyKey: string;
+      readonly expectedAccountFingerprint: string;
+      readonly mode: "first" | "replay";
+      readonly stillArmed?: () => Effect.Effect<boolean>;
+    }) => Effect.Effect<ProviderAutoResetCreditResult | null, ProviderDriverError>;
+
+    readonly supportsAutoRedeemResetCredit: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<boolean>;
 
     /** Re-reads secret-backed environments first, so a fixed secret applies without a restart. */
     readonly reloadSecretsAndRefresh: (
@@ -672,6 +687,33 @@ export const layer = Layer.effect(
       return yield* refreshOneSource(providerSource);
     });
 
+    const autoRedeemResetCredit: ProviderRegistry["Service"]["autoRedeemResetCredit"] = Effect.fn(
+      "ProviderRegistry.autoRedeemResetCredit",
+    )(function* (input) {
+      const instance = yield* instanceRegistry.getInstance(input.instanceId);
+      if (instance === undefined || !instance.enabled) return null;
+      if (instance.driverKind !== ProviderDriverKind.make("codex")) return null;
+      if (instance.autoRedeemResetCredit === undefined) return null;
+      return yield* instance.autoRedeemResetCredit({
+        model: input.model,
+        idempotencyKey: input.idempotencyKey,
+        expectedAccountFingerprint: input.expectedAccountFingerprint,
+        mode: input.mode,
+        ...(input.stillArmed === undefined ? {} : { stillArmed: input.stillArmed }),
+      });
+    });
+
+    const supportsAutoRedeemResetCredit: ProviderRegistry["Service"]["supportsAutoRedeemResetCredit"] =
+      Effect.fn("ProviderRegistry.supportsAutoRedeemResetCredit")(function* (instanceId) {
+        const instance = yield* instanceRegistry.getInstance(instanceId);
+        return (
+          instance !== undefined &&
+          instance.enabled &&
+          instance.driverKind === ProviderDriverKind.make("codex") &&
+          instance.autoRedeemResetCredit !== undefined
+        );
+      });
+
     const reloadSecretsAndRefresh = Effect.fn("reloadSecretsAndRefresh")(function* (
       instanceId?: ProviderInstanceId,
     ) {
@@ -1031,6 +1073,8 @@ export const layer = Layer.effect(
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      autoRedeemResetCredit,
+      supportsAutoRedeemResetCredit,
       reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>
         reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>

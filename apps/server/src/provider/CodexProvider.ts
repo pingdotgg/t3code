@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Types from "effect/Types";
+import * as Crypto from "effect/Crypto";
+import * as Hex from "effect/encoding/Hex";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as CodexClient from "effect-codex-app-server/client";
@@ -752,7 +754,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -839,6 +841,15 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   const snapshot = probeResult.success.value;
+  const accountId =
+    snapshot.rateLimits && "snapshot" in snapshot.rateLimits
+      ? snapshot.rateLimits.accountId?.trim()
+      : undefined;
+  const credentialFingerprint = accountId
+    ? yield* (yield* Crypto.Crypto)
+        .digest("SHA-256", new TextEncoder().encode(`codex-account\0${accountId}`))
+        .pipe(Effect.map(Hex.encode), Effect.orDie)
+    : undefined;
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);
@@ -856,6 +867,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
             snapshot: snapshot.rateLimits.snapshot,
             rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
             resetCredits: snapshot.rateLimits.resetCredits,
+            ...(credentialFingerprint === undefined ? {} : { credentialFingerprint }),
             checkedAt,
           });
 

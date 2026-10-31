@@ -286,7 +286,7 @@ const layerTest = Layer.mergeAll(
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
+  Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerProjectServiceTest),
@@ -7719,6 +7719,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "independent-patches",
     "expired-snooze",
     "wake",
+    "codex-reset-confirmed",
+    "codex-reset-natural-after-rejected-early",
+    "codex-reset-stop-before-redemption",
+    "codex-reset-stop-during-consume",
+    "codex-reset-stop-after-confirmation",
     "stop",
     "stop-before-arm",
     "stop-before-arm-mismatched-recovery",
@@ -7936,6 +7941,186 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       let armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
         (thread) => thread.id === threadId,
       )!;
+      if (scenario === "codex-reset-stop-before-redemption") {
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        yield* serverSettings.updateSettings({
+          autoResumeLimitedThreads: true,
+          autoRedeemCodexResetCredits: { [modelSelection.instanceId]: true },
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make(`recovery:stop-before-credit:${scenario}`),
+          threadId,
+        });
+        assert.isFalse(
+          yield* orchestrator.recordCodexResetRedemption({
+            commandId: CommandId.make(`recovery:codex-reset:${scenario}`),
+            threadId,
+            runId: run.id,
+            resetAt,
+            codexResetRedemption: {
+              providerInstanceId: modelSelection.instanceId,
+              redeemedByProviderInstanceId: modelSelection.instanceId,
+              accountFingerprint: "codex-account-fingerprint",
+              idempotencyKey: `codex-reset:${scenario}`,
+              attemptedAt: DateTime.formatIso(now),
+              creditsBefore: 1,
+              outcome: "pending",
+            },
+          }),
+        );
+        const stopped = yield* orchestrator.getThreadProjection(threadId);
+        assert.isFalse(stopped.thread.limitRecovery?.autoResume);
+        assert.isUndefined(stopped.thread.limitRecovery?.codexResetRedemption);
+        assert.lengthOf(stopped.runs, 1);
+        return;
+      }
+      if (scenario === "codex-reset-stop-during-consume") {
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        yield* serverSettings.updateSettings({
+          autoResumeLimitedThreads: true,
+          autoRedeemCodexResetCredits: { [modelSelection.instanceId]: true },
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make(`recovery:stop-during-credit:${scenario}`),
+          threadId,
+        });
+        yield* serverSettings.updateSettings({
+          autoResumeLimitedThreads: false,
+          autoRedeemCodexResetCredits: { [modelSelection.instanceId]: false },
+        });
+        const redemption = {
+          providerInstanceId: modelSelection.instanceId,
+          redeemedByProviderInstanceId: modelSelection.instanceId,
+          accountFingerprint: "codex-account-fingerprint",
+          accountLabel: "Codex account",
+          idempotencyKey: `codex-reset:${scenario}`,
+          attemptedAt: DateTime.formatIso(DateTime.add(now, { seconds: -1 })),
+          creditsBefore: 1,
+          outcome: "reset" as const,
+          checkedAt: DateTime.formatIso(now),
+          allowanceCleared: true,
+        };
+        assert.isTrue(
+          yield* orchestrator.recordCodexResetRedemption({
+            commandId: CommandId.make(`recovery:codex-reset:${scenario}`),
+            threadId,
+            runId: run.id,
+            resetAt,
+            codexResetRedemption: redemption,
+          }),
+        );
+        const stopped = yield* orchestrator.getThreadProjection(threadId);
+        assert.isFalse(stopped.thread.limitRecovery?.autoResume);
+        assert.deepEqual(stopped.thread.limitRecovery?.codexResetRedemption, redemption);
+        return;
+      }
+      if (
+        scenario === "codex-reset-confirmed" ||
+        scenario === "codex-reset-natural-after-rejected-early" ||
+        scenario === "codex-reset-stop-after-confirmation"
+      ) {
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        yield* serverSettings.updateSettings({
+          autoResumeLimitedThreads: true,
+          autoRedeemCodexResetCredits: { [modelSelection.instanceId]: true },
+        });
+        const redemption = {
+          providerInstanceId: modelSelection.instanceId,
+          redeemedByProviderInstanceId: modelSelection.instanceId,
+          accountFingerprint: "codex-account-fingerprint",
+          accountLabel: "Codex account",
+          idempotencyKey: `codex-reset:${scenario}`,
+          attemptedAt: DateTime.formatIso(DateTime.add(now, { seconds: -1 })),
+          creditsBefore: 1,
+          outcome: "reset" as const,
+          checkedAt: DateTime.formatIso(now),
+          allowanceCleared: false,
+        };
+        assert.isTrue(
+          yield* orchestrator.recordCodexResetRedemption({
+            commandId: CommandId.make(`recovery:codex-reset-pending:${scenario}`),
+            threadId,
+            runId: run.id,
+            resetAt,
+            codexResetRedemption: redemption,
+          }),
+        );
+        armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        assert.equal(armedShell.limitRecovery?.requestId, armCommand.commandId);
+        const confirmedRedemption = { ...redemption, allowanceCleared: true };
+        if (scenario === "codex-reset-natural-after-rejected-early") {
+          const rejected = limitRecoveryCommand(
+            {
+              ...armedShell,
+              limitRecovery: {
+                ...armedShell.limitRecovery!,
+                codexResetRedemption: confirmedRedemption,
+              },
+            },
+            true,
+            DateTime.toEpochMillis(now),
+            false,
+            true,
+            true,
+          );
+          assert.isNotNull(rejected);
+          yield* orchestrator.dispatch(rejected!);
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+          yield* TestClock.adjust("1 minute");
+          assert.isAtLeast(DateTime.toEpochMillis(yield* DateTime.now), Date.parse(resetAt));
+          const natural = limitRecoveryCommand(armedShell, true, Date.parse(resetAt) + 1);
+          assert.isNotNull(natural);
+          assert.notEqual(natural?.commandId, rejected?.commandId);
+          yield* orchestrator.dispatch(natural!);
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+          return;
+        }
+        assert.isTrue(
+          yield* orchestrator.recordCodexResetRedemption({
+            commandId: CommandId.make(`recovery:codex-reset-pending:${scenario}`),
+            threadId,
+            runId: run.id,
+            resetAt,
+            codexResetRedemption: confirmedRedemption,
+          }),
+        );
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.limitRecovery
+            ?.codexResetRedemption,
+          confirmedRedemption,
+        );
+        armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const earlyResume = limitRecoveryCommand(
+          armedShell,
+          true,
+          DateTime.toEpochMillis(now),
+          false,
+          true,
+          true,
+        );
+        assert.equal(earlyResume?.type, "message.dispatch");
+        if (scenario === "codex-reset-stop-after-confirmation") {
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make(`recovery:stop-after-credit:${scenario}`),
+            threadId,
+          });
+          const stopped = yield* orchestrator.getThreadProjection(threadId);
+          assert.isFalse(stopped.thread.limitRecovery?.autoResume);
+          yield* orchestrator.dispatch(earlyResume!);
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        } else {
+          yield* orchestrator.dispatch(earlyResume!);
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+        }
+        return;
+      }
       assert.deepEqual(armedShell.limitRecovery, {
         runId: run.id,
         resetAt,

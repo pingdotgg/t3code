@@ -89,6 +89,8 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Crypto from "effect/Crypto";
+import * as Hex from "effect/encoding/Hex";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
@@ -343,7 +345,16 @@ export interface OrchestratorV2Shape {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
     readonly limitRecovery: OrchestrationV2LimitRecoveryUpdate;
-  }) => Effect.Effect<void, OrchestratorV2Error>;
+  }) => Effect.Effect<boolean, OrchestratorV2Error>;
+  readonly recordCodexResetRedemption: (
+    input: Omit<
+      Extract<
+        OrchestrationV2InternalCommand,
+        { readonly type: "thread.limit-recovery.codex-reset" }
+      >,
+      "type"
+    >,
+  ) => Effect.Effect<boolean, OrchestratorV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, OrchestratorV2Error>;
@@ -558,6 +569,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.created.record":
       return command.parentThreadId;
     case "secret_request.record":
+    case "thread.limit-recovery.codex-reset":
     case "link_request.record":
       return command.threadId;
     case "thread.fork":
@@ -970,7 +982,10 @@ function lastDeliveredRunForProviderThread(
   );
 }
 
+const encodeRedemptionReport = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
+  const crypto = yield* Crypto.Crypto;
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -3530,6 +3545,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     autoResume:
                       command.limitRecovery.autoResume ?? previousRecovery?.autoResume ?? false,
                     snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
+                    ...(previousRecovery?.codexResetRedemption === undefined
+                      ? {}
+                      : { codexResetRedemption: previousRecovery.codexResetRedemption }),
                     requestId: command.commandId,
                   };
           return {
@@ -5284,6 +5302,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const failure = latestRootProviderFailure(run, projection.turnItems);
       const recovery = projection.thread.limitRecovery;
       const now = yield* DateTime.now;
+      const nowMs = DateTime.toEpochMillis(now);
+      const currentSettings = yield* serverSettings.getSettings.pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      const earlyResetConfirmed =
+        currentSettings?.autoResumeLimitedThreads === true &&
+        currentSettings.autoRedeemCodexResetCredits[projection.thread.providerInstanceId] ===
+          true &&
+        recovery?.codexResetRedemption?.outcome === "reset" &&
+        recovery.codexResetRedemption.allowanceCleared === true &&
+        recovery.codexResetRedemption.checkedAt !== undefined &&
+        recovery.codexResetRedemption.providerInstanceId === run?.providerInstanceId &&
+        Date.parse(recovery.codexResetRedemption.checkedAt) >
+          Date.parse(recovery.codexResetRedemption.attemptedAt);
       if (
         run?.id !== command.usageLimitContinuationOfRunId ||
         failure?.class !== "usage_limit" ||
@@ -5292,7 +5324,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         recovery.requestId !== command.usageLimitRecoveryRequestId ||
         recovery.runId !== run.id ||
         recovery.resetAt !== failure.resetAt ||
-        Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
+        (Date.parse(recovery.resetAt) > nowMs && !earlyResetConfirmed) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled" ||
@@ -8585,6 +8617,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: run.providerInstanceId,
         occurredAt: now,
         payload: turnItem,
+      });
+    },
+  );
+
+  const dispatchCodexResetRedemption = Effect.fn("orchestrationV2.dispatch.codexResetRedemption")(
+    function* (
+      command: Extract<
+        OrchestrationV2InternalCommand,
+        { readonly type: "thread.limit-recovery.codex-reset" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const recovery = thread.limitRecovery;
+      if (
+        recovery?.runId !== command.runId ||
+        recovery.resetAt !== command.resetAt ||
+        (command.codexResetRedemption.outcome === "pending" && !recovery.autoResume) ||
+        thread.providerInstanceId !== command.codexResetRedemption.providerInstanceId
+      )
+        return;
+      const now = yield* DateTime.now;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          limitRecovery: {
+            ...recovery,
+            codexResetRedemption: command.codexResetRedemption,
+          },
+          updatedAt: now,
+        },
       });
     },
   );
@@ -13223,6 +13298,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
         break;
+      case "thread.limit-recovery.codex-reset":
+        yield* dispatchCodexResetRedemption(command, events);
+        break;
       case "link_request.record":
         yield* dispatchLinkRequestRecord(command, events, effects);
         break;
@@ -13814,11 +13892,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ),
             );
           // Stop or an explicit recovery choice can commit after the sweep reads its candidate.
-          if (
+          const recoveryMatches =
             thread.limitRecovery?.runId === input.limitRecovery.runId &&
-            thread.limitRecovery.resetAt === input.limitRecovery.resetAt
-          )
-            return;
+            thread.limitRecovery.resetAt === input.limitRecovery.resetAt;
+          if (recoveryMatches) return thread.limitRecovery?.autoResume === true;
           const command = { type: "thread.metadata.update", ...input } as const;
           // A Stop that reached the run before its limit failure landed had nothing to disarm.
           const stopped = yield* stopReachedRun(command, input.threadId, input.limitRecovery.runId);
@@ -13830,9 +13907,69 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 }
               : command,
           );
+          return !stopped;
         }),
       );
     }),
+    recordCodexResetRedemption: Effect.fn("OrchestratorV2.recordCodexResetRedemption")(
+      function* (input) {
+        return yield* threadDispatch.withLock(
+          input.threadId,
+          Effect.gen(function* () {
+            const thread = yield* projectionStore
+              .getThread(input.threadId)
+              .pipe(
+                Effect.mapError(
+                  (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+                ),
+              );
+            const recovery = thread.limitRecovery;
+            const pending = input.codexResetRedemption.outcome === "pending";
+            if (
+              recovery?.runId !== input.runId ||
+              recovery.resetAt !== input.resetAt ||
+              (pending && !recovery.autoResume) ||
+              thread.providerInstanceId !== input.codexResetRedemption.providerInstanceId
+            )
+              return false;
+            if (pending) {
+              const currentSettings = yield* serverSettings.getSettings.pipe(
+                Effect.orElseSucceed(() => null),
+              );
+              if (
+                currentSettings?.autoResumeLimitedThreads !== true ||
+                currentSettings.autoRedeemCodexResetCredits[thread.providerInstanceId] !== true
+              )
+                return false;
+            }
+            const previousRedemption = recovery.codexResetRedemption;
+            const nextRedemption = input.codexResetRedemption;
+            if (
+              previousRedemption !== undefined &&
+              Object.keys(previousRedemption).length === Object.keys(nextRedemption).length &&
+              Object.entries(previousRedemption).every(([key, value]) =>
+                Object.is(value, nextRedemption[key as keyof typeof nextRedemption]),
+              )
+            )
+              return true;
+            const report = Object.entries(nextRedemption).sort(([a], [b]) =>
+              a < b ? -1 : a > b ? 1 : 0,
+            );
+            const digest = yield* crypto
+              .digest("SHA-256", new TextEncoder().encode(encodeRedemptionReport(report)))
+              .pipe(Effect.orDie);
+            // A later provider check is a new command even when the worker retries its run.
+            const reportId = Hex.encode(digest);
+            yield* dispatchWithReceiptEffect({
+              type: "thread.limit-recovery.codex-reset",
+              ...input,
+              commandId: CommandId.make(`${input.commandId}:${reportId}`),
+            });
+            return true;
+          }),
+        );
+      },
+    ),
     searchThreadStream: (input) =>
       projectionStore
         .searchThreadStream(input)
@@ -13986,6 +14123,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 export const layer: Layer.Layer<
   OrchestratorV2,
   never,
+  | Crypto.Crypto
   | CheckpointServiceV2
   | FileSystem.FileSystem
   | Path.Path

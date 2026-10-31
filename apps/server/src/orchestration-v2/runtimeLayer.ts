@@ -379,7 +379,7 @@ export const layerProduction = Layer.mergeAll(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
   ),
   UsageLimitRecoveryWorker.layer.pipe(
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         ProjectionStore.layer,
         layerThreadManagementProvided,

@@ -1,5 +1,7 @@
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as Result from "effect/Result";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -30,9 +32,15 @@ import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import { applyCodexModelCatalog } from "../codexModelCatalog.ts";
-import type { ProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
+import type {
+  ProviderAutoResetCreditResult,
+  ProviderDriver,
+  ProviderInstance,
+} from "@t3tools/provider-core/server/driver";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
+import { canAutoRedeemCodexReset, confirmsCodexResetCredit } from "../codexUsageLimits.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
@@ -142,6 +150,7 @@ export const CodexDriver: ProviderDriver<
         config,
       });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const crypto = yield* Crypto.Crypto;
     const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
@@ -230,6 +239,7 @@ export const CodexDriver: ProviderDriver<
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),
+      Effect.provideService(Crypto.Crypto, crypto),
     );
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CodexSettings>>({
@@ -300,27 +310,37 @@ export const CodexDriver: ProviderDriver<
             ),
           );
 
-    // Redemption spends account credit; serialize by the auth.json directory, keep one idempotency key
-    // until the outcome, and bound the wait so a hung app-server cannot hold the account lock.
     // Auth overlays use effectiveHomePath; the continuation key would conflate them with shared homes.
-    const accountKey = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
-    const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
-      resetCreditCoordinator
-        .redeem(accountKey, (idempotencyKey) =>
-          Effect.gen(function* () {
-            const { client } = yield* withCodexAppServerClient({
-              binaryPath: effectiveConfig.binaryPath,
-              homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-              cwd: process.cwd(),
-              environment: processEnv,
-            });
-            const response = yield* client.request("account/rateLimitResetCredit/consume", {
-              idempotencyKey,
-            });
-            return response.outcome;
-          }).pipe(Effect.scoped, Effect.timeout("20 seconds")),
-        )
+    const fallbackAccountKey = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
+    const accountKeysForFingerprint = (fingerprint: string | undefined) => [
+      fallbackAccountKey,
+      homeLayout.sharedHomePath,
+      ...(fingerprint === undefined ? [] : [`codex-account:${fingerprint}`]),
+    ];
+    const consumeWithIdempotencyKey = Effect.fn("CodexDriver.consumeResetCredit")(function* (
+      idempotencyKey: string,
+    ) {
+      const { client } = yield* withCodexAppServerClient({
+        binaryPath: effectiveConfig.binaryPath,
+        homePath: effectiveConfig.homePath,
+        launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+        cwd: process.cwd(),
+        environment: processEnv,
+      });
+      return (yield* client
+        .request("account/rateLimitResetCredit/consume", { idempotencyKey })
+        .pipe(Effect.timeout("20 seconds"))).outcome;
+    }, Effect.scoped);
+    const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = Effect.fn(
+      "CodexDriver.consumeResetCredit",
+    )(function* () {
+      const beforeSnapshot = yield* snapshot.getSnapshot;
+      const before = beforeSnapshot.usageLimits?.checkedAt;
+      const accountKeys = accountKeysForFingerprint(
+        beforeSnapshot.usageLimits?.credentialFingerprint,
+      );
+      const outcome = yield* resetCreditCoordinator
+        .redeem(accountKeys, consumeWithIdempotencyKey)
         .pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.mapError(
@@ -332,31 +352,219 @@ export const CodexDriver: ProviderDriver<
                 cause,
               }),
           ),
-          // The windows just changed; re-probe so the snapshot says so. A
-          // failed probe republishes the pre-redemption limits rather than
-          // marking them failed, so "confirmed" means `checkedAt` moved past
-          // what was published before the redemption started.
-          Effect.tap((outcome) =>
+        );
+      const refreshed = yield* snapshot.refresh;
+      const after = refreshed.usageLimits?.checkedAt;
+      if (
+        outcome === "reset" &&
+        (after === undefined ||
+          (before !== undefined && Date.parse(after) <= Date.parse(before)) ||
+          refreshed.usageLimits?.unavailable !== undefined)
+      ) {
+        return yield* new ProviderDriverError({
+          driver: DRIVER_KIND,
+          instanceId,
+          detail:
+            "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
+        });
+      }
+      return outcome;
+    });
+
+    const autoRedeemResetCredit: NonNullable<ProviderInstance["autoRedeemResetCredit"]> = Effect.fn(
+      "CodexDriver.autoRedeemResetCredit",
+    )(function* (input) {
+      const consumeAutoWithIdempotencyKey = Effect.fn("CodexDriver.consumeAutoResetCredit")(
+        function* (idempotencyKey: string) {
+          const clientResult = yield* Effect.result(
+            withCodexAppServerClient({
+              binaryPath: effectiveConfig.binaryPath,
+              homePath: effectiveConfig.homePath,
+              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+              cwd: process.cwd(),
+              environment: processEnv,
+            }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          );
+          if (Result.isFailure(clientResult)) return { status: "notSent" as const };
+          const response = yield* Effect.result(
+            clientResult.success.client
+              .request("account/rateLimitResetCredit/consume", { idempotencyKey })
+              .pipe(Effect.timeout("20 seconds")),
+          );
+          if (Result.isFailure(response)) return { status: "sentUnknown" as const };
+          return { status: "sent" as const, outcome: response.success.outcome };
+        },
+        Effect.scoped,
+      );
+      const initial = yield* snapshot.getSnapshot;
+      const initialFingerprint = initial.usageLimits?.credentialFingerprint;
+      if (
+        initialFingerprint === undefined ||
+        initialFingerprint !== input.expectedAccountFingerprint
+      ) {
+        return {
+          status: "notSent",
+          reason: "keyConflict",
+          accountFingerprint: "",
+          creditsBefore: 0,
+          idempotencyKey: input.idempotencyKey,
+        } satisfies ProviderAutoResetCreditResult;
+      }
+      let checkedBefore: string | undefined;
+      let creditsBefore = 0;
+      let fingerprint = "";
+      let refreshedAt: string | undefined;
+      let notSentReason: "probeFailed" | "notExhausted" | "noCredit" | "declined" | "keyConflict" =
+        "probeFailed";
+      return yield* resetCreditCoordinator
+        .redeemIf(
+          accountKeysForFingerprint(initialFingerprint),
+          input.idempotencyKey,
+          () =>
             Effect.gen(function* () {
-              const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-              const refreshed = yield* snapshot.refresh;
-              const after = refreshed.usageLimits?.checkedAt;
-              if (
-                outcome === "reset" &&
-                (after === undefined ||
-                  after === before ||
-                  refreshed.usageLimits?.unavailable?.reason === "probeFailed")
-              ) {
-                return yield* new ProviderDriverError({
-                  driver: DRIVER_KIND,
-                  instanceId,
-                  detail:
-                    "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
-                });
+              const before = yield* snapshot.getSnapshot;
+              checkedBefore = before.usageLimits?.checkedAt;
+              const refreshed = yield* Effect.result(snapshot.refresh);
+              if (Result.isFailure(refreshed)) {
+                notSentReason = "probeFailed";
+                return false;
               }
+              const fresh = refreshed.success;
+              const limits = fresh.usageLimits;
+              fingerprint = limits?.credentialFingerprint ?? "";
+              refreshedAt = limits?.checkedAt;
+              creditsBefore = limits?.resetCredits?.availableCount ?? 0;
+              const freshProbe =
+                limits !== undefined &&
+                refreshedAt !== undefined &&
+                checkedBefore !== undefined &&
+                Date.parse(refreshedAt) > Date.parse(checkedBefore) &&
+                limits.unavailable === undefined;
+              if (!freshProbe) {
+                notSentReason = "probeFailed";
+                return false;
+              }
+              if (fingerprint !== initialFingerprint) {
+                notSentReason = "keyConflict";
+                return false;
+              }
+              const now = DateTime.toEpochMillis(yield* DateTime.now);
+              const usageExhausted = exhaustedUsageWindow(fresh, now, input.model) !== undefined;
+              if (input.mode === "first" && !usageExhausted) {
+                notSentReason = "notExhausted";
+                return false;
+              }
+              if (input.mode === "first" && creditsBefore === 0) {
+                notSentReason = "noCredit";
+                return false;
+              }
+              const canRedeem = canAutoRedeemCodexReset({
+                mode: input.mode,
+                initialFingerprint,
+                freshFingerprint: fingerprint || undefined,
+                checkedBefore,
+                limits,
+                creditsAvailable: creditsBefore,
+                usageExhausted,
+              });
+              if (!canRedeem) {
+                notSentReason = "probeFailed";
+                return false;
+              }
+              if (input.stillArmed !== undefined) {
+                const armed = yield* Effect.result(input.stillArmed());
+                if (Result.isFailure(armed) || !armed.success) {
+                  notSentReason = "declined";
+                  return false;
+                }
+              }
+              return true;
+            }),
+          consumeAutoWithIdempotencyKey,
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: "Codex could not redeem the reset credit.",
+                cause,
+              }),
+          ),
+          Effect.flatMap((redemption) =>
+            Effect.gen(function* () {
+              if (redemption._tag === "declined") {
+                return {
+                  status: "notSent",
+                  reason: notSentReason,
+                  accountFingerprint: fingerprint,
+                  creditsBefore,
+                  ...(refreshedAt === undefined ? {} : { checkedAt: refreshedAt }),
+                  idempotencyKey: input.idempotencyKey,
+                } satisfies ProviderAutoResetCreditResult;
+              }
+              if (redemption._tag === "conflict")
+                return {
+                  status: "notSent",
+                  reason: "keyConflict",
+                  accountFingerprint: fingerprint,
+                  creditsBefore,
+                  ...(refreshedAt === undefined ? {} : { checkedAt: refreshedAt }),
+                  idempotencyKey: input.idempotencyKey,
+                } satisfies ProviderAutoResetCreditResult;
+              if (redemption.outcome.status === "notSent")
+                return {
+                  status: "notSent",
+                  reason: "probeFailed",
+                  accountFingerprint: fingerprint,
+                  creditsBefore,
+                  ...(refreshedAt === undefined ? {} : { checkedAt: refreshedAt }),
+                  idempotencyKey: input.idempotencyKey,
+                } satisfies ProviderAutoResetCreditResult;
+              if (redemption.outcome.status === "sentUnknown")
+                return {
+                  status: "sentUnknown",
+                  accountFingerprint: fingerprint,
+                  creditsBefore,
+                  ...(refreshedAt === undefined ? {} : { checkedAt: refreshedAt }),
+                  idempotencyKey: input.idempotencyKey,
+                } satisfies ProviderAutoResetCreditResult;
+              const { outcome } = redemption.outcome;
+              const refreshedResult = yield* Effect.result(snapshot.refresh);
+              if (Result.isFailure(refreshedResult))
+                return {
+                  status: "sent",
+                  accountFingerprint: fingerprint,
+                  creditsBefore,
+                  outcome,
+                  allowanceCleared: false,
+                  idempotencyKey: redemption.idempotencyKey,
+                } satisfies ProviderAutoResetCreditResult;
+              const refreshed = refreshedResult.success;
+              const limits = refreshed.usageLimits;
+              const checkedAt = limits?.checkedAt;
+              const now = DateTime.toEpochMillis(yield* DateTime.now);
+              const allowanceCleared = confirmsCodexResetCredit({
+                outcome,
+                checkedBefore: refreshedAt,
+                checkedAt,
+                limitsUnavailable: limits?.unavailable !== undefined,
+                usageExhausted: exhaustedUsageWindow(refreshed, now, input.model) !== undefined,
+              });
+              return {
+                status: "sent",
+                accountFingerprint: fingerprint,
+                creditsBefore,
+                outcome,
+                ...(checkedAt === undefined ? {} : { checkedAt }),
+                allowanceCleared,
+                idempotencyKey: redemption.idempotencyKey,
+              } satisfies ProviderAutoResetCreditResult;
             }),
           ),
         );
+    });
 
     return {
       instanceId,
@@ -368,6 +576,7 @@ export const CodexDriver: ProviderDriver<
       snapshot,
       snapshotForCwd,
       consumeResetCredit,
+      autoRedeemResetCredit,
       orchestrationAdapter,
       textGeneration,
     } satisfies ProviderInstance;
