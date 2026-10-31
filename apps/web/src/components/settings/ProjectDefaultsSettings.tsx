@@ -48,7 +48,7 @@ function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules
 }
 
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
-  const { scope, target, connectedEnvironments } = useSettingsScope();
+  const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
@@ -76,7 +76,25 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     selection?.model,
   );
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
-  const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
+  // Equal saved values can still resolve to different models on each environment's providers.
+  const resolvedDefaults = targets.flatMap((candidate) => {
+    const candidateProviders = providersByEnvironment.get(candidate.environmentId);
+    return candidateProviders?.length
+      ? [
+          resolveDefaultProviderModelSelection(
+            candidateProviders,
+            candidate.settings.defaultModelSelection,
+          ),
+        ]
+      : [];
+  });
+  const mixedModel =
+    useScopedSettingsMixed(["defaultModelSelection"]) ||
+    resolvedDefaults.some(
+      (resolved) =>
+        resolved?.instanceId !== resolvedDefaults[0]?.instanceId ||
+        resolved?.model !== resolvedDefaults[0]?.model,
+    );
   const mixedFallback = useScopedSettingsMixed(["fallbackModelSelection"]);
   const fallbackSelection = settings.fallbackModelSelection ?? selection;
   const fallbackModelOptions = getCustomModelOptionsByInstance(
