@@ -88,7 +88,11 @@ import { PreviewImage } from "~/components/files/PreviewImage";
 import FileBrowserPanel from "~/components/files/FileBrowserPanel";
 import { FileExplorerPane } from "~/components/files/FileExplorerPane";
 import { FileBreadcrumbs } from "~/components/files/FileBreadcrumbs";
-import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "~/components/files/filePath";
+import {
+  breadcrumbPathOf,
+  retainedBreadcrumbTrail,
+  trailChildOf,
+} from "~/components/files/filePath";
 import { FileMarkdownPreview } from "~/components/files/FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
@@ -150,7 +154,9 @@ interface FilesSidePanelProps {
 }
 
 const MermaidFilePreview = lazy(() =>
-  import("~/components/files/MermaidFilePreview").then((module) => ({ default: module.MermaidFilePreview })),
+  import("~/components/files/MermaidFilePreview").then((module) => ({
+    default: module.MermaidFilePreview,
+  })),
 );
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";

@@ -104,20 +104,28 @@ function markdownPreview(truncated: boolean) {
     truncated,
   };
   return (
-    <PanelHostContext value={{threadRef, visible:true, composerDraftTarget:threadRef, workspaceMutationId:null, sendAnnotation: () => undefined}}>
-    <FilePreviewPanel
-      cwd="/workspace"
-      projectName="Project"
-      relativePath="tasks.md"
-      availableEditors={[]}
-      openInShortcutEnabled={false}
-      revealLine={null}
-      revealRequestId={0}
-      onNavigateFolder={vi.fn()}
-      folderTrail={undefined}
-      onPendingChange={vi.fn()}
-      selectedFilePending={false}
-    />
+    <PanelHostContext
+      value={{
+        threadRef,
+        visible: true,
+        composerDraftTarget: threadRef,
+        workspaceMutationId: null,
+        sendAnnotation: () => undefined,
+      }}
+    >
+      <FilePreviewPanel
+        cwd="/workspace"
+        projectName="Project"
+        relativePath="tasks.md"
+        availableEditors={[]}
+        openInShortcutEnabled={false}
+        revealLine={null}
+        revealRequestId={0}
+        onNavigateFolder={vi.fn()}
+        folderTrail={undefined}
+        onPendingChange={vi.fn()}
+        selectedFilePending={false}
+      />
     </PanelHostContext>
   );
 }
