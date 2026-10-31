@@ -44,12 +44,14 @@ import * as FileSystem from "effect/FileSystem";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
+import { CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS } from "../../provider/codexRateLimitRetry.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
@@ -2546,6 +2548,463 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #17503 a post-tool HTTP 429 retry left the turn running for hours
+  it.effect.each([
+    {
+      name: "backoff",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+      details: "429 Too Many Requests",
+      retryDelayMs: 5_000,
+      deadlineMs: 65_000,
+      resetAfterMs: null,
+      resetAt: null,
+    },
+    {
+      name: "background-terminal-failed",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+      details: "429 Too Many Requests",
+      retryDelayMs: 5_000,
+      deadlineMs: 65_000,
+      resetAfterMs: null,
+      resetAt: null,
+    },
+    {
+      name: "late-background-terminal",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+      details: "429 Too Many Requests",
+      retryDelayMs: 5_000,
+      deadlineMs: 65_000,
+      resetAfterMs: null,
+      resetAt: null,
+    },
+    {
+      name: "background-terminal",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+      details: "429 Too Many Requests",
+      retryDelayMs: 5_000,
+      deadlineMs: 65_000,
+      resetAfterMs: null,
+      resetAt: null,
+    },
+    {
+      name: "short-retry-after",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+      details: "429 Too Many Requests; Retry-After: 30",
+      retryDelayMs: 30_000,
+      deadlineMs: 90_000,
+      // The Retry-After already elapsed while waiting, so it is no reset time.
+      resetAfterMs: null,
+      resetAt: null,
+    },
+    {
+      name: "long-retry-after",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+      details: '429 Too Many Requests; Retry-After: 384882 {"error":{"code":"model_cooldown"}}',
+      retryDelayMs: null,
+      deadlineMs: null,
+      resetAfterMs: 384_882_000,
+      resetAt: null,
+    },
+    {
+      name: "http-date-retry-after",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+      details: "429 Too Many Requests; Retry-After: Thu, 22 Oct 2026 12:00:00 GMT",
+      retryDelayMs: null,
+      deadlineMs: null,
+      resetAfterMs: null,
+      // The provider's own reset date is kept, so auto-resume waits for it.
+      resetAt: "2026-10-22T12:00:00.000Z",
+    },
+    {
+      // Codex's structured status is optional; only the text names the 429.
+      name: "textual-429",
+      errorInfo: { responseStreamDisconnected: {} },
+      details: "429 Too Many Requests; Retry-After: 384882",
+      retryDelayMs: null,
+      deadlineMs: null,
+      resetAfterMs: 384_882_000,
+      resetAt: null,
+    },
+  ] as const)(
+    "ends a stalled post-tool 429 retry with an explicit failure ($name)",
+    ({ name, errorInfo, details, retryDelayMs, deadlineMs, resetAfterMs, resetAt }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = `codex-rate-limit-stall-${name}`;
+          const nativeThreadId = `native-${scenario}-thread`;
+          const nativeTurnId = `native-${scenario}-turn`;
+          const command = {
+            type: "commandExecution",
+            id: "command-before-rate-limit",
+            command: "pwd",
+            cwd: "/workspace",
+            processId: "42",
+            source: "unifiedExecStartup",
+            commandActions: [{ type: "unknown", command: "pwd" }],
+          };
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Run pwd." }),
+              {
+                type: "emit_inbound",
+                label: "item/started/tool",
+                frame: {
+                  method: "item/started",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    startedAtMs: 1782622445000,
+                    item: {
+                      ...command,
+                      status: "inProgress",
+                      aggregatedOutput: null,
+                      exitCode: null,
+                      durationMs: null,
+                    },
+                  },
+                },
+              },
+              ...(name.startsWith("background-terminal")
+                ? []
+                : [
+                    {
+                      type: "emit_inbound" as const,
+                      label: "item/completed/tool",
+                      frame: {
+                        method: "item/completed",
+                        params: {
+                          threadId: nativeThreadId,
+                          turnId: nativeTurnId,
+                          completedAtMs: 1782622445010,
+                          item: {
+                            ...command,
+                            status: "completed",
+                            aggregatedOutput: "/workspace\n",
+                            exitCode: 0,
+                            durationMs: 10,
+                          },
+                        },
+                      },
+                    },
+                  ]),
+              // Codex then sleeps for its retry without any further notification.
+              {
+                type: "emit_inbound",
+                label: "error/rate-limit-retry",
+                frame: {
+                  method: "error",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    willRetry: true,
+                    error: {
+                      message: "Reconnecting... 1/5",
+                      additionalDetails: details,
+                      codexErrorInfo: errorInfo,
+                    },
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                label: "turn/interrupt",
+                frame: {
+                  id: 4,
+                  method: "turn/interrupt",
+                  params: { threadId: nativeThreadId, turnId: nativeTurnId },
+                },
+              },
+              ...(name === "late-background-terminal"
+                ? [
+                    {
+                      type: "emit_inbound" as const,
+                      label: "late-command",
+                      frame: {
+                        method: "item/started",
+                        params: {
+                          threadId: nativeThreadId,
+                          turnId: nativeTurnId,
+                          startedAtMs: 1782622445020,
+                          item: {
+                            ...command,
+                            id: "late-command",
+                            status: "inProgress",
+                            aggregatedOutput: null,
+                            exitCode: null,
+                            durationMs: null,
+                          },
+                        },
+                      },
+                    },
+                  ]
+                : []),
+              { type: "emit_inbound", label: "turn/interrupt", frame: { id: 4, result: {} } },
+              ...(name.includes("background-terminal")
+                ? [
+                    {
+                      type: "expect_outbound" as const,
+                      label: "terminate-background",
+                      frame: {
+                        id: 5,
+                        method: "thread/backgroundTerminals/terminate",
+                        params: { threadId: nativeThreadId, processId: "42" },
+                      },
+                    },
+                    {
+                      type: "emit_inbound" as const,
+                      label: "terminate-background",
+                      frame:
+                        name === "background-terminal-failed"
+                          ? { id: 5, error: { code: -32603, message: "termination failed" } }
+                          : { id: 5, result: { terminated: true } },
+                    },
+                  ]
+                : []),
+              {
+                type: "emit_inbound",
+                label: "turn/completed/interrupted",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                  },
+                },
+              },
+            ],
+          });
+          // Each interrupt request records the clock it was sent at, so the
+          // assertions read observed state instead of waiting on elapsed time.
+          // The request is held until released, to observe what the adapter
+          // published while Codex had not acknowledged the interrupt yet.
+          const interruptRequests: Array<{ readonly atMs: number }> = [];
+          const interrupted = yield* Deferred.make<void>();
+          const releaseInterrupt = yield* Deferred.make<void>();
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            () => Effect.void,
+            (method) =>
+              method === "turn/interrupt"
+                ? DateTime.now.pipe(
+                    Effect.tap((now) =>
+                      Effect.sync(() => {
+                        interruptRequests.push({ atMs: DateTime.toEpochMillis(now) });
+                      }),
+                    ),
+                    Effect.andThen(Deferred.succeed(interrupted, undefined)),
+                    Effect.andThen(Deferred.await(releaseInterrupt)),
+                  )
+                : Effect.void,
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-${scenario}`),
+              text: "Run pwd.",
+            }),
+          );
+          const retryItems = () =>
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "error" &&
+              event.turnItem.retry !== undefined
+                ? [event.turnItem]
+                : [],
+            );
+          yield* harness.until(() => retryItems().length > 0);
+          const retryNotice = retryItems()[0];
+          assert.isDefined(retryNotice);
+          assert.equal(retryNotice.status, "running");
+          const noticedAt = retryNotice.updatedAt;
+
+          // The retry budget (backoff or Retry-After, plus grace) is honored
+          // first; TestClock wakes the deadline exactly when it is due.
+          if (deadlineMs !== null) {
+            yield* TestClock.adjust(`${deadlineMs} millis`);
+            // adjust returns once the woken deadline fiber and the event
+            // consumer it fed are idle; here that is the held interrupt. The
+            // native turn is interrupted before its terminal is published, so
+            // a queued follow-up cannot start while Codex still runs it.
+            assert.lengthOf(interruptRequests, 1);
+            assert.lengthOf(
+              harness.terminalEvents(),
+              0,
+              "the terminal must wait until Codex acknowledges the interrupt",
+            );
+          }
+          yield* Deferred.await(interrupted);
+          yield* Deferred.succeed(releaseInterrupt, undefined);
+          yield* harness.awaitTerminal(1);
+
+          const expectedStopMs = DateTime.toEpochMillis(noticedAt) + (deadlineMs ?? 0);
+          const stoppedTurn = harness.events.findLast(
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "provider_turn.updated" }
+            > => event.type === "provider_turn.updated" && event.providerTurn.status === "failed",
+          );
+          assert.isDefined(stoppedTurn, "a stalled 429 retry must end the turn");
+          assert.equal(
+            stoppedTurn.providerTurn.completedAt === null
+              ? null
+              : DateTime.toEpochMillis(stoppedTurn.providerTurn.completedAt),
+            expectedStopMs,
+            "the turn must stop at the retry deadline, not before it",
+          );
+          assert.deepEqual(
+            interruptRequests.map((request) => request.atMs),
+            [expectedStopMs],
+            "Codex's own retry sleep must be interrupted once, at the deadline",
+          );
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "failed");
+          if (terminal?.status !== "failed") return;
+          assert.equal(
+            terminal.threadDisposition,
+            name === "background-terminal-failed" ? "broken" : "reusable",
+          );
+          assert.equal(terminal.failure.class, "usage_limit");
+          assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+          assert.equal(terminal.failure.retryable, true);
+          assert.include(terminal.failure.message, "HTTP 429");
+          assert.deepEqual(terminal.retry, { attempt: 1, maxAttempts: 5, retryDelayMs });
+          assert.equal(
+            terminal.failure.resetAt ?? null,
+            resetAfterMs === null
+              ? resetAt
+              : DateTime.formatIso(DateTime.add(noticedAt, { milliseconds: resetAfterMs })),
+          );
+          assert.lengthOf(harness.terminalEvents(), 1);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("keeps a 429 retry that resumed into context compaction running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-retry-compaction";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const compaction = { type: "contextCompaction", id: "compaction-after-rate-limit" };
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Summarize." }),
+            {
+              type: "emit_inbound",
+              label: "error/rate-limit-retry",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: {
+                    message: "Reconnecting... 1/5",
+                    additionalDetails: "429 Too Many Requests",
+                    codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "item/started/compaction",
+              frame: {
+                method: "item/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  startedAtMs: 1782622445000,
+                  item: compaction,
+                },
+              },
+            },
+            // Compaction outlasts the 65s first-attempt retry deadline.
+            {
+              type: "emit_inbound",
+              label: "item/completed/compaction",
+              afterMs: 70_000,
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  completedAtMs: 1782622515000,
+                  item: compaction,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const requests: Array<string> = [];
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            Effect.sync(() => {
+              requests.push(method);
+            }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Summarize.",
+          }),
+        );
+        const compactionStatuses = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+              ? [event.turnItem.status]
+              : [],
+          );
+        yield* harness.until(() => compactionStatuses().includes("running"));
+        // Pass the first-attempt deadline (65s) while compaction is running.
+        yield* TestClock.adjust("70 seconds");
+        yield* harness.awaitTerminal(1);
+
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        assert.notInclude(requests, "turn/interrupt");
+        assert.deepEqual(compactionStatuses(), ["running", "completed"]);
+        const retryStatuses = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "error" &&
+          event.turnItem.retry !== undefined
+            ? [event.turnItem.status]
+            : [],
+        );
+        assert.deepEqual(retryStatuses, ["running", "completed"]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     "recover",
     "completion-only",
@@ -5034,6 +5493,3114 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  const rateLimitRetryNotice = (nativeThreadId: string, nativeTurnId: string) => ({
+    type: "emit_inbound" as const,
+    label: `error/rate-limit-retry/${nativeTurnId}`,
+    frame: {
+      method: "error",
+      params: {
+        threadId: nativeThreadId,
+        turnId: nativeTurnId,
+        willRetry: true,
+        error: {
+          message: "Reconnecting... 1/5",
+          // Longer than the allowed retry delay, so the turn stops at once.
+          additionalDetails: "429 Too Many Requests; Retry-After: 384882",
+          codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+        },
+      },
+    },
+  });
+  // Codex reports a turn ended, confirming the interrupt that stopped it.
+  const rateLimitTurnInterrupted = (
+    label: string,
+    nativeThreadId: string,
+    nativeTurnId: string,
+  ) => ({
+    type: "emit_inbound" as const,
+    label,
+    frame: {
+      method: "turn/completed",
+      params: {
+        threadId: nativeThreadId,
+        turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+      },
+    },
+  });
+  const rateLimitSubagentEntries = interruptSubagentCommandTranscript.entries.slice(
+    0,
+    interruptSubagentCommandTranscript.entries.findIndex(
+      (entry) => entry.type === "emit_inbound" && entry.label === "item/started/child-command",
+    ),
+  );
+
+  it.effect.each([
+    { cleanupFails: false, earlyCompletion: false, capacity: false },
+    { cleanupFails: true, earlyCompletion: false, capacity: false },
+    { cleanupFails: true, earlyCompletion: true, capacity: false },
+    { cleanupFails: true, earlyCompletion: false, capacity: true },
+  ])(
+    "interrupts the whole active lineage when a root 429 retry is exhausted (%j)",
+    ({ cleanupFails, earlyCompletion, capacity }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeTurnId = capacity ? "native-capacity-continued-429" : INTERRUPT_NATIVE_TURN;
+          const capacityError = {
+            message: "Selected model is at capacity. Please try a different model.",
+            codexErrorInfo: "serverOverloaded",
+          };
+          const transcript = makeCodexReplayTranscript({
+            scenario: "codex-rate-limit-root-lineage",
+            entries: [
+              ...rateLimitSubagentEntries,
+              ...(cleanupFails
+                ? [
+                    interruptSubagentCommandTranscript.entries.find(
+                      (entry) => "label" in entry && entry.label === "item/started/child-command",
+                    )!,
+                  ]
+                : []),
+              ...(capacity
+                ? [
+                    {
+                      type: "emit_inbound" as const,
+                      frame: {
+                        method: "error",
+                        params: {
+                          threadId: INTERRUPT_NATIVE_THREAD,
+                          turnId: INTERRUPT_NATIVE_TURN,
+                          willRetry: false,
+                          error: capacityError,
+                        },
+                      },
+                    },
+                    {
+                      type: "emit_inbound" as const,
+                      frame: {
+                        method: "turn/completed",
+                        params: {
+                          threadId: INTERRUPT_NATIVE_THREAD,
+                          turn: {
+                            ...makeCodexReplayTurn({ id: INTERRUPT_NATIVE_TURN, status: "failed" }),
+                            error: capacityError,
+                          },
+                        },
+                      },
+                    },
+                    ...codexReplayPreamble({
+                      nativeThreadId: INTERRUPT_NATIVE_THREAD,
+                      nativeTurnId,
+                      prompt: INTERRUPT_PROMPT,
+                    })
+                      .slice(-3)
+                      .map((entry) => {
+                        if (entry.type === "expect_outbound")
+                          return {
+                            ...entry,
+                            frame: {
+                              id: 4,
+                              method: "turn/start",
+                              params: {
+                                threadId: INTERRUPT_NATIVE_THREAD,
+                                input: [],
+                                cwd: "/workspace",
+                                model: "gpt-5.4",
+                                approvalPolicy: "never",
+                                approvalsReviewer: "user",
+                                sandboxPolicy: { type: "dangerFullAccess" },
+                                summary: "detailed",
+                                collaborationMode: {
+                                  mode: "default",
+                                  settings: { model: "gpt-5.4" },
+                                },
+                              },
+                            },
+                          };
+                        return entry.type === "emit_inbound" && entry.label === "turn/start"
+                          ? withReplayRequestId(entry, 4)
+                          : entry;
+                      }),
+                  ]
+                : []),
+              rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, nativeTurnId),
+              {
+                type: "expect_outbound",
+                label: "turn/interrupt/root",
+                frame: {
+                  id: capacity ? 5 : 4,
+                  method: "turn/interrupt",
+                  params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: nativeTurnId },
+                },
+              },
+              ...(earlyCompletion
+                ? [
+                    rateLimitTurnInterrupted(
+                      "turn/completed/early-child",
+                      INTERRUPT_CHILD_NATIVE_THREAD,
+                      INTERRUPT_CHILD_NATIVE_TURN,
+                    ),
+                  ]
+                : []),
+              {
+                type: "emit_inbound",
+                label: "turn/interrupt/root",
+                frame: { id: capacity ? 5 : 4, result: {} },
+              },
+              ...(capacity
+                ? [
+                    rateLimitTurnInterrupted(
+                      "turn/completed/continued-root",
+                      INTERRUPT_NATIVE_THREAD,
+                      nativeTurnId,
+                    ),
+                  ]
+                : []),
+              {
+                type: "expect_outbound",
+                label: "turn/interrupt/child",
+                frame: {
+                  id: capacity ? 6 : 5,
+                  method: "turn/interrupt",
+                  params: {
+                    threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                    turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/interrupt/child",
+                frame: { id: capacity ? 6 : 5, result: {} },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/completed/root",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: INTERRUPT_NATIVE_THREAD,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/completed/child",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                    turn: makeCodexReplayTurn({
+                      id: INTERRUPT_CHILD_NATIVE_TURN,
+                      status: "interrupted",
+                    }),
+                  },
+                },
+              },
+              ...(cleanupFails
+                ? [
+                    {
+                      type: "expect_outbound" as const,
+                      label: "terminate-child-terminal",
+                      frame: {
+                        id: capacity ? 7 : 6,
+                        method: "thread/backgroundTerminals/terminate",
+                        params: {
+                          threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                          processId: "57682",
+                        },
+                      },
+                    },
+                    {
+                      type: "emit_inbound" as const,
+                      label: "terminate-child-terminal",
+                      frame: {
+                        id: capacity ? 7 : 6,
+                        error: { code: -32603, message: "termination failed" },
+                      },
+                    },
+                  ]
+                : []),
+            ],
+          });
+          const interrupts: Array<unknown> = [];
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            () => Effect.void,
+            (method, params) =>
+              Effect.sync(() => {
+                if (method === "turn/interrupt") interrupts.push(params);
+              }),
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-codex-rate-limit-root-lineage"),
+              text: INTERRUPT_PROMPT,
+            }),
+          );
+          if (capacity) {
+            yield* harness.until(() =>
+              harness.events.some(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "error" &&
+                  event.turnItem.status === "running",
+              ),
+            );
+            yield* TestClock.adjust("2 seconds");
+          }
+          yield* harness.awaitTerminal(1);
+
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "failed");
+          if (terminal?.status !== "failed") return;
+          assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+          assert.isUndefined(
+            terminal.childTurnsContinue,
+            "no descendant may keep the run active past the retry deadline",
+          );
+          assert.deepEqual(interrupts, [
+            { threadId: INTERRUPT_NATIVE_THREAD, turnId: nativeTurnId },
+            { threadId: INTERRUPT_CHILD_NATIVE_THREAD, turnId: INTERRUPT_CHILD_NATIVE_TURN },
+          ]);
+          assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
+          if (cleanupFails) {
+            const retryIndex = harness.events.findIndex(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                event.turnItem.retry !== undefined,
+            );
+            const childThreads = harness.events
+              .slice(retryIndex)
+              .flatMap((event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeThreadRef?.nativeId === INTERRUPT_CHILD_NATIVE_THREAD
+                  ? [event.providerThread]
+                  : [],
+              );
+            assert.equal(childThreads.at(-1)?.status, "error");
+            assert.isFalse(childThreads.some((thread) => thread.status === "idle"));
+          }
+          assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("interrupts a nested turn that starts while the 429 lineage is being stopped", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-rate-limit-late-descendant",
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/root",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+              },
+            },
+            // The subagent starts a nested turn while the root interrupt is in flight.
+            {
+              type: "emit_inbound",
+              label: "turn/started/late-child",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({
+                    id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                    status: "inProgress",
+                  }),
+                },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/root", frame: { id: 4, result: {} } },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/child", frame: { id: 5, result: {} } },
+            rateLimitTurnInterrupted(
+              "turn/completed/child",
+              INTERRUPT_CHILD_NATIVE_THREAD,
+              INTERRUPT_CHILD_NATIVE_TURN,
+            ),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/late-child",
+              frame: {
+                id: 6,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/late-child",
+              frame: { id: 6, result: {} },
+            },
+            rateLimitTurnInterrupted(
+              "turn/completed/late-child",
+              INTERRUPT_CHILD_NATIVE_THREAD,
+              INTERRUPT_LATE_CHILD_NATIVE_TURN,
+            ),
+            rateLimitTurnInterrupted(
+              "turn/completed/root",
+              INTERRUPT_NATIVE_THREAD,
+              INTERRUPT_NATIVE_TURN,
+            ),
+          ],
+        });
+        const interrupts: Array<unknown> = [];
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method, params) =>
+            Effect.sync(() => {
+              if (method === "turn/interrupt") interrupts.push(params);
+            }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-rate-limit-late-descendant"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.isUndefined(
+          terminal.childTurnsContinue,
+          "a nested turn started mid-teardown may not keep the run active",
+        );
+        assert.deepEqual(interrupts, [
+          { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+          { threadId: INTERRUPT_CHILD_NATIVE_THREAD, turnId: INTERRUPT_CHILD_NATIVE_TURN },
+          { threadId: INTERRUPT_CHILD_NATIVE_THREAD, turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN },
+        ]);
+        const lateChildUpdates = harness.events.filter(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === INTERRUPT_LATE_CHILD_NATIVE_TURN,
+        );
+        const lateChildSettled = lateChildUpdates.at(-1);
+        assert.isDefined(lateChildSettled);
+        assert.equal(lateChildSettled.providerTurn.status, "interrupted");
+        assert.isBelow(
+          harness.events.indexOf(lateChildSettled),
+          harness.events.indexOf(terminal),
+          "the nested turn must settle before the root fails",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "settles a nested turn started during the 429 root interrupt no earlier than it started",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // The deadline stops the root at DEADLINE_AT; the nested turn starts
+          // two seconds later, while the root interrupt is still in flight.
+          const DEADLINE_AT_MS = 1782622445000;
+          const LATE_CHILD_STARTED_AT_SECONDS = DEADLINE_AT_MS / 1000 + 2;
+          yield* TestClock.setTime(DEADLINE_AT_MS);
+          const transcript = makeCodexReplayTranscript({
+            scenario: "codex-rate-limit-late-descendant-completed-at",
+            entries: [
+              ...rateLimitSubagentEntries,
+              rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+              {
+                type: "expect_outbound",
+                label: "turn/interrupt/root",
+                frame: {
+                  id: 4,
+                  method: "turn/interrupt",
+                  params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+                },
+              },
+              // The subagent starts a nested turn while the root interrupt is in flight.
+              {
+                type: "emit_inbound",
+                label: "turn/started/late-child",
+                afterMs: 5_000,
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                    turn: {
+                      ...makeCodexReplayTurn({
+                        id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                        status: "inProgress",
+                      }),
+                      // Codex starts it after the deadline stopped the root.
+                      startedAt: LATE_CHILD_STARTED_AT_SECONDS,
+                    },
+                  },
+                },
+              },
+              { type: "emit_inbound", label: "turn/interrupt/root", frame: { id: 4, result: {} } },
+              {
+                type: "expect_outbound",
+                label: "turn/interrupt/child",
+                frame: {
+                  id: 5,
+                  method: "turn/interrupt",
+                  params: {
+                    threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                    turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                  },
+                },
+              },
+              { type: "emit_inbound", label: "turn/interrupt/child", frame: { id: 5, result: {} } },
+              rateLimitTurnInterrupted(
+                "turn/completed/child",
+                INTERRUPT_CHILD_NATIVE_THREAD,
+                INTERRUPT_CHILD_NATIVE_TURN,
+              ),
+              {
+                type: "expect_outbound",
+                label: "turn/interrupt/late-child",
+                frame: {
+                  id: 6,
+                  method: "turn/interrupt",
+                  params: {
+                    threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                    turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/interrupt/late-child",
+                frame: { id: 6, result: {} },
+              },
+              rateLimitTurnInterrupted(
+                "turn/completed/late-child",
+                INTERRUPT_CHILD_NATIVE_THREAD,
+                INTERRUPT_LATE_CHILD_NATIVE_TURN,
+              ),
+              rateLimitTurnInterrupted(
+                "turn/completed/root",
+                INTERRUPT_NATIVE_THREAD,
+                INTERRUPT_NATIVE_TURN,
+              ),
+            ],
+          });
+          const rootInterruptSent = yield* Deferred.make<void>();
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            () => Effect.void,
+            (method) =>
+              method === "turn/interrupt"
+                ? Deferred.succeed(rootInterruptSent, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-codex-rate-limit-late-descendant-completed-at"),
+              text: INTERRUPT_PROMPT,
+            }),
+          );
+          yield* Deferred.await(rootInterruptSent);
+          yield* TestClock.adjust("5 seconds");
+          yield* harness.awaitTerminal(1);
+
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "failed");
+          const lateChildSettled = harness.events.findLast(
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "provider_turn.updated" }
+            > =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.nativeTurnRef?.nativeId === INTERRUPT_LATE_CHILD_NATIVE_TURN,
+          );
+          assert.isDefined(lateChildSettled);
+          assert.equal(lateChildSettled.providerTurn.status, "interrupted");
+          const { startedAt, completedAt } = lateChildSettled.providerTurn;
+          assert.isNotNull(startedAt);
+          assert.isNotNull(completedAt);
+          if (startedAt === null || completedAt === null) return;
+          assert.equal(DateTime.toEpochMillis(startedAt), LATE_CHILD_STARTED_AT_SECONDS * 1000);
+          assert.isAtLeast(
+            DateTime.toEpochMillis(completedAt),
+            DateTime.toEpochMillis(startedAt),
+            "a nested turn cannot complete before it started",
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("interrupts a nested turn that starts after the last 429 lineage scan", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-rate-limit-final-scan-descendant",
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/root",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/root", frame: { id: 4, result: {} } },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/child", frame: { id: 5, result: {} } },
+            rateLimitTurnInterrupted(
+              "turn/completed/child",
+              INTERRUPT_CHILD_NATIVE_THREAD,
+              INTERRUPT_CHILD_NATIVE_TURN,
+            ),
+            rateLimitTurnInterrupted(
+              "turn/completed/root",
+              INTERRUPT_NATIVE_THREAD,
+              INTERRUPT_NATIVE_TURN,
+            ),
+            // The subagent starts a nested turn right after Codex confirms the
+            // lineage stopped, as the teardown makes its final lineage scan.
+            {
+              type: "emit_inbound",
+              label: "turn/started/late-child",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({
+                    id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                    status: "inProgress",
+                  }),
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/late-child",
+              frame: {
+                id: 6,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/late-child",
+              frame: { id: 6, result: {} },
+            },
+            rateLimitTurnInterrupted(
+              "turn/completed/late-child",
+              INTERRUPT_CHILD_NATIVE_THREAD,
+              INTERRUPT_LATE_CHILD_NATIVE_TURN,
+            ),
+          ],
+        });
+        const lateChildInterrupted = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method, params) =>
+            method === "turn/interrupt" &&
+            (params as { readonly turnId?: string }).turnId === INTERRUPT_LATE_CHILD_NATIVE_TURN
+              ? Deferred.succeed(lateChildInterrupted, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-rate-limit-final-scan-descendant"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.isUndefined(
+          terminal.childTurnsContinue,
+          "a nested turn started during the final scan may not keep the run active",
+        );
+        // Either way the late nested turn is stopped rather than left running.
+        yield* Deferred.await(lateChildInterrupted);
+      }).pipe(
+        // A small yield budget interleaves the late turn/started handler with
+        // the teardown's final lineage scan, the window this test covers.
+        Effect.provideService(Scheduler.MaxOpsBeforeYield, 8),
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps an exhausted 429 turn active until Codex confirms it stopped", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-uncontained";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Run pwd." }),
+            rateLimitRetryNotice(nativeThreadId, nativeTurnId),
+            // Codex never answers the deadline's interrupt.
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/deadline",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/stop",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/stop", frame: { id: 5, result: {} } },
+            {
+              type: "emit_inbound",
+              label: "turn/completed/interrupted",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                },
+              },
+            },
+          ],
+        });
+        const deadlineInterruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(deadlineInterruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(deadlineInterruptSent);
+        // adjust returns once the interrupt timeout fired and its fiber is idle.
+        yield* TestClock.adjust("10 seconds");
+        const failedTurns = () =>
+          harness.events.filter(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "failed",
+          );
+        assert.lengthOf(
+          harness.terminalEvents(),
+          0,
+          "an unacknowledged interrupt must not make the thread idle",
+        );
+        assert.lengthOf(failedTurns(), 0);
+
+        const providerTurnId = harness.events.find(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > => event.type === "provider_turn.updated",
+        )?.providerTurn.id;
+        assert.isDefined(providerTurnId);
+        // The turn is still stoppable, and settles once Codex ends it.
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+        yield* harness.awaitTerminal(1);
+
+        assert.lengthOf(failedTurns(), 1);
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // Codex never answers the deadline's turn/interrupt, so the turn is
+  // "unconfirmed"; `lateEntries` follow that interrupt.
+  const unconfirmedRateLimitTranscript = (
+    scenario: string,
+    lateEntries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> = [],
+  ) => {
+    const nativeThreadId = `native-${scenario}-thread`;
+    const nativeTurnId = `native-${scenario}-turn`;
+    return makeCodexReplayTranscript({
+      scenario,
+      entries: [
+        ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Run pwd." }),
+        rateLimitRetryNotice(nativeThreadId, nativeTurnId),
+        {
+          type: "expect_outbound",
+          label: "turn/interrupt/deadline",
+          frame: {
+            id: 4,
+            method: "turn/interrupt",
+            params: { threadId: nativeThreadId, turnId: nativeTurnId },
+          },
+        },
+        ...lateEntries,
+      ],
+    });
+  };
+  const failedProviderTurns = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+    events.filter(
+      (event) => event.type === "provider_turn.updated" && event.providerTurn.status === "failed",
+    );
+
+  it.effect("fails an unconfirmed 429 turn as broken once Codex stays silent past the bound", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-bound";
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          unconfirmedRateLimitTranscript(scenario),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        // The interrupt times out, so the turn is kept active as unconfirmed.
+        yield* TestClock.adjust("10 seconds");
+        assert.lengthOf(harness.terminalEvents(), 0);
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS - 1} millis`);
+        assert.lengthOf(harness.terminalEvents(), 0, "the turn waits for the whole bound");
+        yield* TestClock.adjust("1 millis");
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.equal(terminal.failure.class, "usage_limit");
+        assert.isTrue(terminal.failure.retryable);
+        assert.equal(
+          terminal.threadDisposition,
+          "broken",
+          "a turn Codex never confirmed stopped must not reuse the loaded thread",
+        );
+        assert.lengthOf(failedProviderTurns(harness.events), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("waits for turn/completed after a 429 interrupt reply before ending the turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-interrupt-reply-only";
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          // Codex accepts the interrupt but never reports the turn ended.
+          unconfirmedRateLimitTranscript(scenario, [
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/deadline",
+              frame: { id: 4, result: {} },
+            },
+          ]),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        // The reply alone does not confirm the stop, so the turn waits for
+        // turn/completed within the interrupt bound, then the unconfirmed
+        // bound. Stepping lets the reply be handled before the bound ends.
+        for (let second = 0; second < 10; second++) {
+          yield* TestClock.adjust("1 seconds");
+        }
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS} millis`);
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.equal(
+          terminal.threadDisposition,
+          "broken",
+          "a turn Codex never reported ended must not reuse the loaded thread",
+        );
+        assert.lengthOf(failedProviderTurns(harness.events), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("ends a 429 turn once turn/completed follows its interrupt reply", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-interrupt-reply-then-completed";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          unconfirmedRateLimitTranscript(scenario, [
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/deadline",
+              frame: { id: 4, result: {} },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed/interrupted",
+              afterMs: 5_000,
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                },
+              },
+            },
+          ]),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        const interruptAt = DateTime.toEpochMillis(yield* DateTime.now);
+        yield* TestClock.adjust("5 seconds");
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.notEqual(
+          terminal.threadDisposition,
+          "broken",
+          "Codex confirmed the stop, so the loaded thread stays reusable",
+        );
+        const rootFailed = failedProviderTurns(harness.events)[0];
+        if (rootFailed?.type !== "provider_turn.updated") return assert.fail("no failed turn");
+        const completedAt = rootFailed.providerTurn.completedAt;
+        assert.isNotNull(completedAt);
+        if (completedAt === null) return;
+        // The turn still settles at the deadline that stopped it.
+        assert.equal(DateTime.toEpochMillis(completedAt), interruptAt);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "marks an unconfirmed 429 root thread errored so its session drops the loaded thread",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-rate-limit-unconfirmed-root-thread-error";
+          const interruptSent = yield* Deferred.make<void>();
+          const harness = yield* makeCodexReplayHarness(
+            unconfirmedRateLimitTranscript(scenario, [
+              {
+                type: "expect_outbound",
+                frame: {
+                  id: 5,
+                  method: "thread/resume",
+                  params: {
+                    threadId: `native-${scenario}-thread`,
+                    excludeTurns: true,
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  id: 5,
+                  result: { thread: { id: `native-${scenario}-thread`, updatedAt: 1782622450 } },
+                },
+              },
+            ]),
+            () => Effect.void,
+            (method) =>
+              method === "turn/interrupt"
+                ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-${scenario}`),
+              text: "Run pwd.",
+            }),
+          );
+          yield* Deferred.await(interruptSent);
+          yield* TestClock.adjust("10 seconds");
+          yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS} millis`);
+          yield* harness.awaitTerminal(1);
+
+          const terminalIndex = harness.events.findIndex((event) => event.type === "turn.terminal");
+          const rootThreadErrorIndex = harness.events.findIndex(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.id === harness.providerThread.id &&
+              event.providerThread.appThreadId === harness.threadId &&
+              event.providerThread.status === "error",
+          );
+          // The session's loaded-thread cache only drops a thread on an errored
+          // provider_thread.updated; the broken disposition alone would let the
+          // next turn start on the native thread that may still be retrying.
+          assert.notEqual(rootThreadErrorIndex, -1, "the root thread must be published as errored");
+          assert.isBelow(rootThreadErrorIndex, terminalIndex);
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.threadDisposition, "broken");
+          const resumeError = yield* Effect.flip(
+            harness.runtime.resumeThread({
+              providerThread: harness.providerThread,
+              modelSelection: CODEX_TEST_MODEL_SELECTION,
+              runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            }),
+          );
+          assert.nestedPropertyVal(
+            resumeError,
+            "cause.detail",
+            "Codex did not confirm the rate-limited turn stopped. Restart the Codex provider before retrying this thread.",
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("ignores a turn/completed that arrives after the unconfirmed 429 bound", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-late-completion";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        // 10s interrupt timeout + the bound, then 5s more.
+        const lateCompletionMs = 10_000 + CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS + 5_000;
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          unconfirmedRateLimitTranscript(scenario, [
+            {
+              type: "emit_inbound",
+              label: "turn/completed/late",
+              afterMs: lateCompletionMs,
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                },
+              },
+            },
+          ]),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        yield* TestClock.adjust("10 seconds");
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS} millis`);
+        yield* harness.awaitTerminal(1);
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.threadDisposition, "broken");
+
+        // adjust returns once the late turn/completed has been handled.
+        yield* TestClock.adjust("5 seconds");
+        assert.lengthOf(harness.terminalEvents(), 1, "a late turn/completed must not end it twice");
+        assert.lengthOf(failedProviderTurns(harness.events), 1);
+        assert.notInclude(
+          harness.events.map((event) =>
+            event.type === "provider_turn.updated" ? event.providerTurn.status : null,
+          ),
+          "interrupted",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps an exhausted 429 turn active when its interrupt request fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-interrupt-error";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          unconfirmedRateLimitTranscript(scenario, [
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/deadline",
+              afterMs: 1_000,
+              frame: { id: 4, error: { code: -32_603, message: "Interrupt failed" } },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/stop",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/stop", frame: { id: 5, result: {} } },
+            {
+              type: "emit_inbound",
+              label: "turn/completed/interrupted",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                },
+              },
+            },
+          ]),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        // adjust returns once the interrupt's error response has been handled.
+        yield* TestClock.adjust("1 second");
+        assert.lengthOf(
+          harness.terminalEvents(),
+          0,
+          "a failed interrupt must not make the thread idle",
+        );
+        assert.lengthOf(failedProviderTurns(harness.events), 0);
+
+        const providerTurnId = harness.events.find(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > => event.type === "provider_turn.updated",
+        )?.providerTurn.id;
+        assert.isDefined(providerTurnId);
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.equal(
+          terminal.threadDisposition,
+          "reusable",
+          "Codex confirmed the turn ended, so its thread stays reusable",
+        );
+
+        // The confirmed stop cancelled the fallback: passing its bound ends nothing.
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS} millis`);
+        assert.lengthOf(harness.terminalEvents(), 1);
+        assert.lengthOf(failedProviderTurns(harness.events), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("stops a nested turn that starts during the unconfirmed 429 wait", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-late-descendant";
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+            // Codex never answers the root's deadline interrupt.
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/root",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/child", frame: { id: 5, result: {} } },
+            // The subagent starts a nested turn while the root waits, unconfirmed.
+            {
+              type: "emit_inbound",
+              label: "turn/started/late-child",
+              afterMs: 20_000,
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({
+                    id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                    status: "inProgress",
+                  }),
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/late-child",
+              frame: {
+                id: 6,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/late-child",
+              frame: { id: 6, result: {} },
+            },
+          ],
+        });
+        const interrupts: Array<unknown> = [];
+        const rootInterruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method, params) =>
+            method === "turn/interrupt"
+              ? Effect.sync(() => interrupts.push(params)).pipe(
+                  Effect.andThen(Deferred.succeed(rootInterruptSent, undefined)),
+                  Effect.asVoid,
+                )
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(rootInterruptSent);
+        // The root interrupt times out; the existing child is stopped.
+        yield* TestClock.adjust("10 seconds");
+        // The late nested turn starts inside the unconfirmed wait.
+        yield* TestClock.adjust("20 seconds");
+        assert.lengthOf(harness.terminalEvents(), 0);
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.nativeTurnRef?.nativeId === INTERRUPT_LATE_CHILD_NATIVE_TURN,
+          ),
+          "the nested turn must have started before the bound",
+        );
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS} millis`);
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.equal(terminal.threadDisposition, "broken");
+        assert.isUndefined(
+          terminal.childTurnsContinue,
+          "a nested turn started during the unconfirmed wait may not keep the run active",
+        );
+        assert.deepInclude(interrupts, {
+          threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+          turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+        });
+        const lateChildSettled = harness.events.findLast(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === INTERRUPT_LATE_CHILD_NATIVE_TURN,
+        );
+        assert.isDefined(lateChildSettled);
+        assert.equal(lateChildSettled.providerTurn.status, "interrupted");
+        assert.isBelow(
+          harness.events.indexOf(lateChildSettled),
+          harness.events.indexOf(terminal),
+          "the nested turn must settle before the root fails",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "stops a nested turn that started during the unconfirmed 429 wait when Codex ends the root",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-rate-limit-unconfirmed-completed-late-descendant";
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...rateLimitSubagentEntries,
+              rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+              // Codex never answers the root's deadline interrupt.
+              {
+                type: "expect_outbound",
+                label: "turn/interrupt/root",
+                frame: {
+                  id: 4,
+                  method: "turn/interrupt",
+                  params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+                },
+              },
+              {
+                type: "expect_outbound",
+                label: "turn/interrupt/child",
+                frame: {
+                  id: 5,
+                  method: "turn/interrupt",
+                  params: {
+                    threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                    turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                  },
+                },
+              },
+              { type: "emit_inbound", label: "turn/interrupt/child", frame: { id: 5, result: {} } },
+              rateLimitTurnInterrupted(
+                "turn/completed/child",
+                INTERRUPT_CHILD_NATIVE_THREAD,
+                INTERRUPT_CHILD_NATIVE_TURN,
+              ),
+              // The subagent starts a nested turn while the root waits, unconfirmed.
+              {
+                type: "emit_inbound",
+                label: "turn/started/late-child",
+                afterMs: 20_000,
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                    turn: makeCodexReplayTurn({
+                      id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                      status: "inProgress",
+                    }),
+                  },
+                },
+              },
+              // Codex then confirms the root ended, well inside the unconfirmed bound.
+              {
+                type: "emit_inbound",
+                label: "turn/completed/root",
+                afterMs: 5_000,
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: INTERRUPT_NATIVE_THREAD,
+                    turn: makeCodexReplayTurn({ id: INTERRUPT_NATIVE_TURN, status: "interrupted" }),
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                label: "turn/interrupt/late-child",
+                frame: {
+                  id: 6,
+                  method: "turn/interrupt",
+                  params: {
+                    threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                    turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/interrupt/late-child",
+                frame: { id: 6, result: {} },
+              },
+              rateLimitTurnInterrupted(
+                "turn/completed/late-child",
+                INTERRUPT_CHILD_NATIVE_THREAD,
+                INTERRUPT_LATE_CHILD_NATIVE_TURN,
+              ),
+            ],
+          });
+          const interrupts: Array<unknown> = [];
+          const rootInterruptSent = yield* Deferred.make<void>();
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            () => Effect.void,
+            (method, params) =>
+              method === "turn/interrupt"
+                ? Effect.sync(() => interrupts.push(params)).pipe(
+                    Effect.andThen(Deferred.succeed(rootInterruptSent, undefined)),
+                    Effect.asVoid,
+                  )
+                : Effect.void,
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-${scenario}`),
+              text: INTERRUPT_PROMPT,
+            }),
+          );
+          yield* Deferred.await(rootInterruptSent);
+          // The root interrupt times out; the existing child is stopped.
+          yield* TestClock.adjust("10 seconds");
+          // The late nested turn starts inside the unconfirmed wait.
+          yield* TestClock.adjust("20 seconds");
+          assert.lengthOf(harness.terminalEvents(), 0);
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.nativeTurnRef?.nativeId === INTERRUPT_LATE_CHILD_NATIVE_TURN,
+            ),
+            "the nested turn must have started before the root ended",
+          );
+          yield* TestClock.adjust("5 seconds");
+          yield* harness.awaitTerminal(1);
+
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "failed");
+          if (terminal?.status !== "failed") return;
+          assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+          assert.isUndefined(
+            terminal.childTurnsContinue,
+            "a nested turn started during the unconfirmed wait may not outlive the root",
+          );
+          assert.deepInclude(interrupts, {
+            threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+            turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+          });
+          const lateChildSettled = harness.events.findLast(
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "provider_turn.updated" }
+            > =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.nativeTurnRef?.nativeId === INTERRUPT_LATE_CHILD_NATIVE_TURN,
+          );
+          assert.isDefined(lateChildSettled);
+          assert.equal(lateChildSettled.providerTurn.status, "interrupted");
+          assert.isBelow(
+            harness.events.indexOf(lateChildSettled),
+            harness.events.indexOf(terminal),
+            "the nested turn must settle before the root fails",
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  const lastChildThreadStatus = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+    events.findLast(
+      (
+        event,
+      ): event is Extract<
+        ProviderAdapter.ProviderAdapterV2Event,
+        { type: "provider_thread.updated" }
+      > =>
+        event.type === "provider_thread.updated" &&
+        event.providerThread.nativeThreadRef?.nativeId === INTERRUPT_CHILD_NATIVE_THREAD,
+    )?.providerThread.status;
+
+  it.effect("starts the unconfirmed 429 bound one interrupt bound after silent descendants", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-silent-descendants";
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/root",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+              },
+            },
+            // A second nested turn is active when the lineage is stopped.
+            {
+              type: "emit_inbound",
+              label: "turn/started/late-child",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({
+                    id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                    status: "inProgress",
+                  }),
+                },
+              },
+            },
+            // Codex accepts the root's interrupt but never reports it ended.
+            { type: "emit_inbound", label: "turn/interrupt/root", frame: { id: 4, result: {} } },
+            // Codex never answers either nested turn's interrupt.
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/late-child",
+              frame: {
+                id: 6,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+          ],
+        });
+        const rootInterruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(rootInterruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(rootInterruptSent);
+        const rootInterruptAt = DateTime.toEpochMillis(yield* DateTime.now);
+        for (let second = 0; second < 120 && harness.terminalEvents().length === 0; second++) {
+          yield* TestClock.adjust("1 seconds");
+        }
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        assert.equal(terminal?.threadDisposition, "broken");
+        const rootFailed = failedProviderTurns(harness.events)[0];
+        if (rootFailed?.type !== "provider_turn.updated") return assert.fail("root not failed");
+        const rootCompletedAt = rootFailed.providerTurn.completedAt;
+        assert.isNotNull(rootCompletedAt);
+        if (rootCompletedAt === null) return;
+        // Silent descendants share one 10s interrupt bound instead of adding
+        // 10s each; the clock steps 1s at a time, so allow one step.
+        const settledAfterMs = DateTime.toEpochMillis(rootCompletedAt) - rootInterruptAt;
+        assert.isAtLeast(settledAfterMs, 10_000 + CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS);
+        assert.isAtMost(
+          settledAfterMs,
+          10_000 + CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS + 1_000,
+          "the unconfirmed bound must not wait on each silent descendant in turn",
+        );
+        assert.equal(lastChildThreadStatus(harness.events), "error");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("settles a 429 lineage at the unconfirmed bound when a nested turn stays silent", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-silent-late-descendant";
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+            // Codex never answers the root's deadline interrupt.
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/root",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/child", frame: { id: 5, result: {} } },
+            rateLimitTurnInterrupted(
+              "turn/completed/child",
+              INTERRUPT_CHILD_NATIVE_THREAD,
+              INTERRUPT_CHILD_NATIVE_TURN,
+            ),
+            // The subagent starts a nested turn while the root waits, unconfirmed.
+            {
+              type: "emit_inbound",
+              label: "turn/started/late-child",
+              afterMs: 20_000,
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({
+                    id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                    status: "inProgress",
+                  }),
+                },
+              },
+            },
+            // Codex never answers the nested turn's interrupt either.
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/late-child",
+              frame: {
+                id: 6,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+          ],
+        });
+        const interrupts: Array<unknown> = [];
+        const rootInterruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method, params) =>
+            method === "turn/interrupt"
+              ? Effect.sync(() => interrupts.push(params)).pipe(
+                  Effect.andThen(Deferred.succeed(rootInterruptSent, undefined)),
+                  Effect.asVoid,
+                )
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(rootInterruptSent);
+        const rootInterruptAt = DateTime.toEpochMillis(yield* DateTime.now);
+        // The root interrupt times out and the unconfirmed bound starts.
+        yield* TestClock.adjust("10 seconds");
+        const boundAt = rootInterruptAt + 10_000 + CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS;
+        // The late nested turn starts inside the unconfirmed wait.
+        yield* TestClock.adjust("20 seconds");
+        assert.lengthOf(harness.terminalEvents(), 0);
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS - 20_000} millis`);
+        // Let a lineage cleanup that waits on the silent nested turn finish too, so a
+        // late settle is measured instead of hanging the test.
+        yield* TestClock.adjust("10 seconds");
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.equal(terminal.threadDisposition, "broken");
+        const rootFailed = failedProviderTurns(harness.events)[0];
+        assert.isDefined(rootFailed);
+        if (rootFailed?.type !== "provider_turn.updated") return;
+        const rootCompletedAt = rootFailed.providerTurn.completedAt;
+        assert.isNotNull(rootCompletedAt);
+        if (rootCompletedAt === null) return;
+        // The unconfirmed bound caps the whole lineage, not just the root.
+        assert.equal(
+          DateTime.toEpochMillis(rootCompletedAt) - boundAt,
+          0,
+          "the root must settle at the unconfirmed bound",
+        );
+        assert.deepInclude(interrupts, {
+          threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+          turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+        });
+        const lateChildSettled = harness.events.findLast(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === INTERRUPT_LATE_CHILD_NATIVE_TURN,
+        );
+        assert.isDefined(lateChildSettled);
+        assert.equal(lateChildSettled.providerTurn.status, "interrupted");
+        assert.isBelow(
+          harness.events.indexOf(lateChildSettled),
+          harness.events.indexOf(terminal),
+          "the nested turn must settle before the root fails",
+        );
+        // Its stop was never confirmed, so its thread may still be running.
+        assert.equal(lastChildThreadStatus(harness.events), "error");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("marks a descendant errored when the 429 deadline cannot interrupt it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-rate-limit-descendant-interrupt-error",
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/root",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/root", frame: { id: 4, result: {} } },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            // Codex rejects the child's interrupt, so it may still be running.
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/child",
+              frame: { id: 5, error: { code: -32_603, message: "Interrupt failed" } },
+            },
+            rateLimitTurnInterrupted(
+              "turn/completed/root",
+              INTERRUPT_NATIVE_THREAD,
+              INTERRUPT_NATIVE_TURN,
+            ),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-rate-limit-descendant-interrupt-error"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        assert.equal(
+          lastChildThreadStatus(harness.events),
+          "error",
+          "a descendant Codex never confirmed stopped must not be published as idle",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("marks a descendant errored when Codex only replies to its 429 interrupt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-descendant-interrupt-reply-only";
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/root",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/root", frame: { id: 4, result: {} } },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            // Codex accepts the child's interrupt but never reports it ended.
+            { type: "emit_inbound", label: "turn/interrupt/child", frame: { id: 5, result: {} } },
+            {
+              type: "emit_inbound",
+              label: "turn/completed/root",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: INTERRUPT_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({ id: INTERRUPT_NATIVE_TURN, status: "interrupted" }),
+                },
+              },
+            },
+          ],
+        });
+        const childInterruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method, params) =>
+            method === "turn/interrupt" &&
+            (params as { readonly threadId?: unknown } | undefined)?.threadId ===
+              INTERRUPT_CHILD_NATIVE_THREAD
+              ? Deferred.succeed(childInterruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(childInterruptSent);
+        yield* TestClock.adjust("10 seconds");
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        assert.equal(
+          lastChildThreadStatus(harness.events),
+          "error",
+          "a descendant Codex never reported ended must not be published as idle",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("marks a late descendant errored when the unconfirmed 429 bound cannot stop it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-late-descendant-error";
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+            // Codex never answers the root's deadline interrupt.
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/root",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/child", frame: { id: 5, result: {} } },
+            {
+              type: "emit_inbound",
+              label: "turn/started/late-child",
+              afterMs: 20_000,
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({
+                    id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                    status: "inProgress",
+                  }),
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/late-child",
+              frame: {
+                id: 6,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            // Codex rejects the late nested turn's interrupt as well.
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/late-child",
+              frame: { id: 6, error: { code: -32_603, message: "Interrupt failed" } },
+            },
+          ],
+        });
+        const rootInterruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(rootInterruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(rootInterruptSent);
+        yield* TestClock.adjust("10 seconds");
+        yield* TestClock.adjust("20 seconds");
+        assert.equal(
+          lastChildThreadStatus(harness.events),
+          "active",
+          "the nested turn must have started on the child thread before the bound",
+        );
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS} millis`);
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.threadDisposition, "broken");
+        const lateChildSettled = harness.events.findLast(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === INTERRUPT_LATE_CHILD_NATIVE_TURN,
+        );
+        assert.equal(lateChildSettled?.providerTurn.status, "interrupted");
+        assert.equal(
+          lastChildThreadStatus(harness.events),
+          "error",
+          "a nested turn Codex never confirmed stopped must not be published as idle",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("marks a late descendant errored when Codex only replies to Stop of its 429 turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const lateChildStartedIndex = interruptLateSubagentTurnTranscript.entries.findIndex(
+          (entry) => entry.type === "emit_inbound" && entry.label === "turn/started/late-child",
+        );
+        const lateChildStopIndex = interruptLateSubagentTurnTranscript.entries.findIndex(
+          (entry) =>
+            entry.type === "expect_outbound" && entry.label === "turn/interrupt/late-child",
+        );
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-rate-limit-late-descendant-stop-reply-only",
+          entries: [
+            ...interruptLateSubagentTurnTranscript.entries.slice(0, lateChildStartedIndex + 1),
+            // The late nested turn hits a 429 while Stop waits, and Codex
+            // rejects the deadline's interrupt, so its stop is unconfirmed.
+            rateLimitRetryNotice(INTERRUPT_CHILD_NATIVE_THREAD, INTERRUPT_LATE_CHILD_NATIVE_TURN),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/late-child-deadline",
+              frame: {
+                id: 7,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/late-child-deadline",
+              frame: { id: 7, error: { code: -32603, message: "interrupt failed" } },
+            },
+            ...interruptLateSubagentTurnTranscript.entries.slice(
+              lateChildStartedIndex + 1,
+              lateChildStopIndex,
+            ),
+            // Stop's late-descendant pass then interrupts it. Codex replies
+            // but never reports the nested turn ended.
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/late-child-stop",
+              frame: {
+                id: 8,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/late-child-stop",
+              frame: { id: 8, result: {} },
+            },
+            { type: "runtime_exit", status: "success" },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(
+              "attempt-codex-rate-limit-late-descendant-stop-reply-only",
+            ),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM &&
+              event.turnItem.status === "running",
+          ),
+        );
+        const providerTurnId = harness.events.find(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > => event.type === "provider_turn.updated" && event.threadId === harness.threadId,
+        )?.providerTurn.id;
+        assert.isDefined(providerTurnId);
+
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+        yield* harness.awaitTerminal(1);
+
+        assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+        const lateChildUpdates = harness.events.filter(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === INTERRUPT_LATE_CHILD_NATIVE_TURN,
+        );
+        assert.equal(lateChildUpdates.at(-1)?.providerTurn.status, "interrupted");
+        assert.equal(
+          lastChildThreadStatus(harness.events),
+          "error",
+          "a reply to Stop does not confirm the nested turn ended, so its thread must not be idle",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("marks an abandoned subagent 429 thread as errored rather than idle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-subagent-abandoned";
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_CHILD_NATIVE_THREAD, INTERRUPT_CHILD_NATIVE_TURN),
+            // Codex never answers the subagent's deadline interrupt.
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+          ],
+        });
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        yield* TestClock.adjust("10 seconds");
+        assert.notEqual(harness.subagentUpdates().at(-1)?.subagent.status, "failed");
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS} millis`);
+        yield* harness.until(() => harness.subagentUpdates().at(-1)?.subagent.status === "failed");
+
+        const childThreadUpdate = harness.events.findLast(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_thread.updated" }
+          > =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.nativeThreadRef?.nativeId === INTERRUPT_CHILD_NATIVE_THREAD,
+        );
+        assert.isDefined(childThreadUpdate);
+        assert.equal(
+          childThreadUpdate.providerThread.status,
+          "error",
+          "a subagent thread Codex never confirmed stopped must not be reused as idle",
+        );
+        assert.lengthOf(harness.terminalEvents(), 0, "the root turn keeps running");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps an unconfirmed subagent 429 thread idle once the root deadline stops it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-descendant-stopped-by-root";
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_CHILD_NATIVE_THREAD, INTERRUPT_CHILD_NATIVE_TURN),
+            // Codex never answers the subagent's own deadline interrupt.
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            // While the subagent waits unconfirmed, the root's retry stalls too.
+            {
+              ...rateLimitRetryNotice(INTERRUPT_NATIVE_THREAD, INTERRUPT_NATIVE_TURN),
+              afterMs: 20_000,
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/root",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: { threadId: INTERRUPT_NATIVE_THREAD, turnId: INTERRUPT_NATIVE_TURN },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/root", frame: { id: 5, result: {} } },
+            // The root's lineage stop interrupts the subagent, and Codex confirms it.
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child-again",
+              frame: {
+                id: 6,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/child-again",
+              frame: { id: 6, result: {} },
+            },
+            rateLimitTurnInterrupted(
+              "turn/completed/child",
+              INTERRUPT_CHILD_NATIVE_THREAD,
+              INTERRUPT_CHILD_NATIVE_TURN,
+            ),
+            rateLimitTurnInterrupted(
+              "turn/completed/root",
+              INTERRUPT_NATIVE_THREAD,
+              INTERRUPT_NATIVE_TURN,
+            ),
+          ],
+        });
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        // The subagent's interrupt times out, leaving its stop unconfirmed.
+        yield* TestClock.adjust("10 seconds");
+        assert.lengthOf(harness.terminalEvents(), 0);
+        // The root's 429 notice arrives inside the subagent's unconfirmed bound.
+        yield* TestClock.adjust("10 seconds");
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.isUndefined(terminal.childTurnsContinue);
+        assert.equal(
+          lastChildThreadStatus(harness.events),
+          "idle",
+          "a subagent whose interrupt Codex confirmed is stopped, not broken",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps an unconfirmed 429 thread broken when Stop cannot interrupt it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-stop-error";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          unconfirmedRateLimitTranscript(scenario, [
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/stop",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/interrupt/stop",
+              frame: { id: 5, error: { code: -32_603, message: "Interrupt failed" } },
+            },
+          ]),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        // The deadline's interrupt times out, so the turn waits unconfirmed.
+        yield* TestClock.adjust("10 seconds");
+        assert.lengthOf(harness.terminalEvents(), 0);
+
+        const providerTurnId = harness.events.find(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > => event.type === "provider_turn.updated",
+        )?.providerTurn.id;
+        assert.isDefined(providerTurnId);
+        // Stop arrives before the bound, and Codex rejects its interrupt too.
+        const stopped = yield* harness.runtime
+          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+          .pipe(Effect.result);
+        assert.equal(stopped._tag, "Failure");
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.isDefined(terminal);
+        assert.equal(
+          terminal.threadDisposition,
+          "broken",
+          "Codex confirmed neither stop, so the loaded thread must not be reused",
+        );
+
+        // Stop owns the terminal: passing the bound ends nothing again.
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS} millis`);
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps an unconfirmed 429 thread broken when Codex only replies to Stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-stop-reply-only";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const interruptSent = yield* Deferred.make<void>();
+        const stopInterruptSent = yield* Deferred.make<void>();
+        let interruptsSent = 0;
+        const harness = yield* makeCodexReplayHarness(
+          unconfirmedRateLimitTranscript(scenario, [
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/stop",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId },
+              },
+            },
+            // Codex accepts Stop's interrupt but never reports the turn ended.
+            { type: "emit_inbound", label: "turn/interrupt/stop", frame: { id: 5, result: {} } },
+          ]),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(
+                  ++interruptsSent === 1 ? interruptSent : stopInterruptSent,
+                  undefined,
+                ).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        // The deadline's interrupt times out, so the turn waits unconfirmed.
+        yield* TestClock.adjust("10 seconds");
+        assert.lengthOf(harness.terminalEvents(), 0);
+
+        const providerTurnId = harness.events.find(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > => event.type === "provider_turn.updated",
+        )?.providerTurn.id;
+        assert.isDefined(providerTurnId);
+        // Stop arrives before the bound. Codex replies to its interrupt, so
+        // Stop waits for turn/completed until its 10s interrupt timeout.
+        const stopFiber = yield* harness.runtime
+          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(stopInterruptSent);
+        for (let second = 0; second < 9; second++) {
+          yield* TestClock.adjust("1 seconds");
+        }
+        assert.isUndefined(stopFiber.pollUnsafe(), "Stop waits for turn/completed");
+        // Stepping lets the reply be handled before the timeout is counted.
+        for (let second = 0; second < 3 && stopFiber.pollUnsafe() === undefined; second++) {
+          yield* TestClock.adjust("1 seconds");
+        }
+        yield* Fiber.join(stopFiber);
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "interrupted");
+        assert.equal(
+          terminal?.threadDisposition,
+          "broken",
+          "a reply to Stop does not confirm the turn ended, so the loaded thread must not be reused",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("reuses an unconfirmed 429 thread once turn/completed follows Stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-stop-completed";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          unconfirmedRateLimitTranscript(scenario, [
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/stop",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/stop", frame: { id: 5, result: {} } },
+            rateLimitTurnInterrupted("turn/completed/stop", nativeThreadId, nativeTurnId),
+          ]),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        // The deadline's interrupt times out, so the turn waits unconfirmed.
+        yield* TestClock.adjust("10 seconds");
+        assert.lengthOf(harness.terminalEvents(), 0);
+
+        const providerTurnId = harness.events.find(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > => event.type === "provider_turn.updated",
+        )?.providerTurn.id;
+        assert.isDefined(providerTurnId);
+        // Codex reports the turn ended after Stop's interrupt.
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.isDefined(terminal);
+        assert.equal(
+          terminal.threadDisposition,
+          "reusable",
+          "turn/completed confirmed the stop, so the loaded thread stays reusable",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "keeps a 429 thread broken when Stop ends it before the deadline's stop is confirmed",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-rate-limit-stop-before-deadline-confirmed";
+          const nativeThreadId = `native-${scenario}-thread`;
+          const nativeTurnId = `native-${scenario}-turn`;
+          const stopInterruptSent = yield* Deferred.make<void>();
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario,
+              entries: [
+                ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Run pwd." }),
+                {
+                  type: "expect_outbound",
+                  label: "turn/interrupt/stop",
+                  frame: {
+                    id: 4,
+                    method: "turn/interrupt",
+                    params: { threadId: nativeThreadId, turnId: nativeTurnId },
+                  },
+                },
+                // Codex accepts Stop's interrupt but never reports the turn ended.
+                {
+                  type: "emit_inbound",
+                  label: "turn/interrupt/stop",
+                  frame: { id: 4, result: {} },
+                },
+                // The retry deadline fires while Stop still waits for turn/completed.
+                { ...rateLimitRetryNotice(nativeThreadId, nativeTurnId), afterMs: 3_000 },
+                // Codex never answers the deadline's interrupt either.
+                {
+                  type: "expect_outbound",
+                  label: "turn/interrupt/deadline",
+                  frame: {
+                    id: 5,
+                    method: "turn/interrupt",
+                    params: { threadId: nativeThreadId, turnId: nativeTurnId },
+                  },
+                },
+              ],
+            }),
+            () => Effect.void,
+            (method) =>
+              method === "turn/interrupt"
+                ? Deferred.succeed(stopInterruptSent, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-${scenario}`),
+              text: "Run pwd.",
+            }),
+          );
+          const providerTurnId = () =>
+            harness.events.find(
+              (
+                event,
+              ): event is Extract<
+                ProviderAdapter.ProviderAdapterV2Event,
+                { type: "provider_turn.updated" }
+              > => event.type === "provider_turn.updated",
+            )?.providerTurn.id;
+          yield* harness.until(() => providerTurnId() !== undefined);
+          const stopFiber = yield* harness.runtime
+            .interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId: providerTurnId()!,
+            })
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(stopInterruptSent);
+          // Stop's 10s wait ends before the deadline's own interrupt wait does.
+          for (let second = 0; second < 15 && stopFiber.pollUnsafe() === undefined; second++) {
+            yield* TestClock.adjust("1 seconds");
+          }
+          yield* Fiber.join(stopFiber);
+          yield* harness.awaitTerminal(1);
+
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "interrupted");
+          assert.equal(
+            terminal?.threadDisposition,
+            "broken",
+            "neither interrupt was confirmed by turn/completed, so the loaded thread must not be reused",
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("keeps the 429 retry metadata when compaction starts after the deadline", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-compaction";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          unconfirmedRateLimitTranscript(scenario, [
+            // Compaction starts while the stopped turn waits, unconfirmed.
+            {
+              type: "emit_inbound",
+              label: "item/started/compaction",
+              afterMs: 12_000,
+              frame: {
+                method: "item/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  startedAtMs: 1782622445000,
+                  item: { type: "contextCompaction", id: `${scenario}-compaction` },
+                },
+              },
+            },
+          ]),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        const compactionStarted = () =>
+          harness.events.some(
+            (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+          );
+        for (let second = 0; second < 15 && !compactionStarted(); second++) {
+          yield* TestClock.adjust("1 seconds");
+        }
+        assert.isTrue(compactionStarted());
+        assert.lengthOf(harness.terminalEvents(), 0);
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS} millis`);
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.deepEqual(
+          terminal.retry,
+          { attempt: 1, maxAttempts: 5, retryDelayMs: null },
+          "the exhausted retry keeps its metadata on the failure",
+        );
+        const retryStatuses = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "error" &&
+          event.turnItem.retry !== undefined
+            ? [event.turnItem.status]
+            : [],
+        );
+        assert.notInclude(retryStatuses, "completed", "an exhausted retry never completes");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps the latest goal when an unconfirmed 429 marks the thread errored", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-unconfirmed-goal";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          unconfirmedRateLimitTranscript(scenario, [
+            // Codex updates the thread's goal while the stopped turn waits.
+            {
+              type: "emit_inbound",
+              label: "thread/goal/updated",
+              afterMs: 12_000,
+              frame: {
+                method: "thread/goal/updated",
+                params: {
+                  threadId: nativeThreadId,
+                  goal: {
+                    threadId: nativeThreadId,
+                    objective: "Run pwd.",
+                    status: "complete",
+                    tokenBudget: null,
+                    tokensUsed: 1200,
+                    timeUsedSeconds: 3,
+                    createdAt: 1782622440,
+                    updatedAt: 1782622450,
+                  },
+                },
+              },
+            },
+          ]),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* Deferred.await(interruptSent);
+        const rootThreadUpdates = () =>
+          harness.events.filter(
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "provider_thread.updated" }
+            > =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.nativeThreadRef?.nativeId === nativeThreadId,
+          );
+        for (let second = 0; second < 15 && rootThreadUpdates().length === 0; second++) {
+          yield* TestClock.adjust("1 seconds");
+        }
+        const goalUpdate = rootThreadUpdates()[0];
+        assert.isDefined(goalUpdate);
+        assert.equal(goalUpdate?.providerThread.goal?.status, "complete");
+        yield* TestClock.adjust(`${CODEX_RATE_LIMIT_UNCONFIRMED_STOP_TIMEOUT_MS} millis`);
+        yield* harness.awaitTerminal(1);
+
+        const errored = rootThreadUpdates().findLast(
+          (event) => event.providerThread.status === "error",
+        );
+        assert.isDefined(errored);
+        assert.deepEqual(
+          errored?.providerThread.goal,
+          goalUpdate?.providerThread.goal,
+          "marking the thread errored must not rewind its goal",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps the 429 failure when a final error arrives during the interrupt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-rate-limit-late-error";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Run pwd." }),
+            rateLimitRetryNotice(nativeThreadId, nativeTurnId),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId },
+              },
+            },
+            // Codex gives up on its own retry while the interrupt is pending.
+            {
+              type: "emit_inbound",
+              label: "error/final",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: false,
+                  error: {
+                    message: "exceeded retry limit, last status: 500 Internal Server Error",
+                    codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 500 } },
+                  },
+                },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt", frame: { id: 4, result: {} } },
+            {
+              type: "emit_inbound",
+              label: "turn/completed/interrupted",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript, () => Effect.void);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Run pwd.",
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "rateLimitRetryExhausted");
+        assert.equal(terminal.failure.class, "usage_limit");
+        assert.isDefined(terminal.failure.resetAt, "the Retry-After reset time must survive");
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("fails an exhausted subagent 429 retry with the usage-limit failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-rate-limit-subagent",
+          entries: [
+            ...rateLimitSubagentEntries,
+            rateLimitRetryNotice(INTERRUPT_CHILD_NATIVE_THREAD, INTERRUPT_CHILD_NATIVE_TURN),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt/child", frame: { id: 4, result: {} } },
+            {
+              type: "emit_inbound",
+              label: "turn/completed/child",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({
+                    id: INTERRUPT_CHILD_NATIVE_TURN,
+                    status: "interrupted",
+                  }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-rate-limit-subagent"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        // The subagent update is the last event of the child's terminalization.
+        yield* harness.until(() => harness.subagentUpdates().at(-1)?.subagent.status === "failed");
+
+        const childRetryItems = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "error" &&
+          event.turnItem.retry !== undefined &&
+          event.turnItem.threadId !== harness.threadId
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          childRetryItems.map((item) => item.status),
+          ["running", "failed"],
+        );
+        const [notice, exhausted] = childRetryItems;
+        assert.isDefined(notice);
+        assert.isDefined(exhausted);
+        assert.equal(exhausted.failure.code, "rateLimitRetryExhausted");
+        assert.equal(exhausted.failure.class, "usage_limit");
+        assert.equal(exhausted.failure.retryable, true);
+        assert.equal(
+          exhausted.failure.resetAt,
+          DateTime.formatIso(DateTime.add(notice.updatedAt, { milliseconds: 384_882_000 })),
+        );
+        assert.deepEqual(exhausted.retry, { attempt: 1, maxAttempts: 5, retryDelayMs: null });
+        assert.lengthOf(harness.terminalEvents(), 0, "the root turn keeps running");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect.each([
