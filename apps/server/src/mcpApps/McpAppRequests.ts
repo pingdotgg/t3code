@@ -111,9 +111,16 @@ const make = Effect.gen(function* () {
     name: string,
   ) {
     const tools = yield* resolved.mcpApps
-      .listTools({ providerThread: resolved.providerThread, server: resolved.app.server })
+      .listTools({
+        providerThread: resolved.providerThread,
+        server: resolved.app.server,
+        sourceTool: resolved.app.tool,
+      })
       .pipe(Effect.mapError((cause) => fail(threadId, "request-failed", cause)));
-    return tools.find((tool) => tool.name === name);
+    const exact = tools.find((tool) => tool.name === name);
+    if (exact !== undefined) return exact;
+    const matches = tools.filter((tool) => tool.appToolName === name);
+    return matches.length === 1 ? matches[0] : undefined;
   });
 
   const toolInfo = Effect.fn("McpAppRequests.toolInfo")(function* (input: McpAppToolInfoInput) {
@@ -139,7 +146,7 @@ const make = Effect.gen(function* () {
       .callTool({
         providerThread: resolved.providerThread,
         server: resolved.app.server,
-        tool: input.name,
+        tool: tool.name,
         arguments: input.arguments,
       })
       .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
