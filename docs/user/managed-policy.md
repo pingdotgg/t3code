@@ -133,7 +133,8 @@ A few settings need care:
   compaction choice still wins over `idleCompaction`.
 - A provider instance's fields override each other, so lock `providerInstances.<id>` as a whole,
   or pin single fields with [`providers.instances`](#providers). T3 Code refuses a lock on one
-  field inside an instance.
+  field inside an instance. A whole-instance lock covers only that instance; to cover every
+  instance of a provider, use `providers.instances`.
 
 ## Limits
 

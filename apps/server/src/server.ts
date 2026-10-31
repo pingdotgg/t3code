@@ -905,13 +905,16 @@ const layerMakeServer = Layer.unwrap(
             }),
             (configured) =>
               configured
-                ? Effect.all([
-                    readTailscaleServeRoutesTo({
-                      host: configured.localHost,
-                      port: configured.localPort,
-                    }),
-                    readTailscaleStatus,
-                  ]).pipe(
+                ? Effect.all(
+                    [
+                      readTailscaleServeRoutesTo({
+                        host: configured.localHost,
+                        port: configured.localPort,
+                      }),
+                      readTailscaleStatus,
+                    ],
+                    { concurrency: 2 },
+                  ).pipe(
                     // Another service may hold the root route by now, or it may sit under a
                     // former name, where `off` would act on the current one; only ours goes.
                     Effect.map(([routes, status]) =>
