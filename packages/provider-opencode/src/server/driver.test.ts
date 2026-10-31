@@ -266,37 +266,21 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.effect.each([
-    { name: "recovers", enabled: true, demand: true, intervalOff: false, unsupported: false },
-    {
-      name: "skips without demand",
-      enabled: true,
-      demand: false,
-      intervalOff: false,
-      unsupported: false,
-    },
-    {
-      name: "respects a disabled interval",
-      enabled: true,
-      demand: true,
-      intervalOff: true,
-      unsupported: false,
-    },
-    {
-      name: "skips disabled instances",
-      enabled: false,
-      demand: true,
-      intervalOff: false,
-      unsupported: false,
-    },
-    {
-      name: "skips unsupported usage",
+  it.effect.each(
+    [
+      { name: "recovers" },
+      { name: "skips without demand", demand: false },
+      { name: "respects a disabled interval", intervalOff: true },
+      { name: "skips disabled instances", enabled: false },
+      { name: "skips unsupported usage", unsupported: true },
+    ].map((scenario) => ({
       enabled: true,
       demand: true,
       intervalOff: false,
-      unsupported: true,
-    },
-  ])("Go usage recovery $name without restarting a ready catalog", (scenario) =>
+      unsupported: false,
+      ...scenario,
+    })),
+  )("Go usage recovery $name without restarting a ready catalog", (scenario) =>
     Effect.gen(function* () {
       const usageStarted = yield* Deferred.make<void>();
       let usageReads = 0;
