@@ -11,10 +11,16 @@ export function WizardPopup({
   size = "default",
   ...props
 }: Omit<ComponentProps<typeof DialogPopup>, "className" | "style"> & {
-  readonly size?: "default" | "wide";
+  readonly size?: "default" | "wide" | "setup";
 }) {
   return (
-    <DialogPopup {...props} className={size === "wide" ? "max-w-3xl" : "max-w-xl"}>
+    <DialogPopup
+      {...props}
+      className={cn(
+        size === "wide" ? "max-w-3xl" : "max-w-xl",
+        size === "setup" && "rounded-[16px]",
+      )}
+    >
       <ScrollArea className="*:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4">
         <div className="flex min-h-0 flex-col">{children}</div>
       </ScrollArea>
@@ -27,14 +33,21 @@ export function WizardHeader({
   description,
   identity,
   children,
+  layout = "stacked",
 }: {
+  readonly layout?: "stacked" | "inline";
   readonly title: ReactNode;
   readonly description?: ReactNode;
   readonly identity?: ReactNode;
   readonly children?: ReactNode;
 }) {
   return (
-    <DialogHeader>
+    <DialogHeader
+      className={cn(
+        layout === "inline" &&
+          "flex-row flex-wrap items-center justify-between gap-3 px-6 pt-6 pb-5",
+      )}
+    >
       <DialogTitle className={identity ? "sr-only" : undefined}>{title}</DialogTitle>
       {identity}
       {description ? <DialogDescription>{description}</DialogDescription> : null}
@@ -188,7 +201,7 @@ export function WizardPanel({
 }: {
   readonly children: ReactNode;
   readonly holdHeight?: boolean;
-  readonly surface?: "default" | "bare";
+  readonly surface?: "default" | "bare" | "setup";
   readonly className?: string;
 }) {
   return (
@@ -198,6 +211,7 @@ export function WizardPanel({
       className={cn(
         "min-w-0 space-y-4 px-6 py-5",
         surface === "default" && "bg-muted ring-1 ring-hairline",
+        surface === "setup" && "pt-0 pb-6",
         className,
       )}
     >

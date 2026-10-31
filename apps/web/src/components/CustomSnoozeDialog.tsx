@@ -169,6 +169,7 @@ function CustomSnoozeDialog() {
                         <PopoverTrigger
                           render={
                             <Button
+                              size="standard"
                               id={`${id}-date`}
                               variant="secondary"
                               className="w-full justify-between"
@@ -222,6 +223,7 @@ function CustomSnoozeDialog() {
                       <div className="grid grid-cols-3 gap-2">
                         {DURATION_FIELDS.map((field) => (
                           <NumberField
+                            size="sm"
                             key={field.key}
                             id={`${id}-${field.key}`}
                             min={0}
@@ -275,6 +277,7 @@ function CustomSnoozeDialog() {
           </DialogPanel>
           <DialogFooter>
             <Button
+              size="standard"
               type="button"
               variant="ghost-muted"
               className="sm:mr-auto"
@@ -289,10 +292,10 @@ function CustomSnoozeDialog() {
               <Settings2Icon />
               Edit snooze options
             </Button>
-            <Button type="button" variant="secondary" onClick={() => finish(null)}>
+            <Button size="standard" type="button" variant="secondary" onClick={() => finish(null)}>
               Cancel
             </Button>
-            <Button type="submit">
+            <Button size="standard" type="submit">
               Snooze
               <SubmitKbd />
             </Button>

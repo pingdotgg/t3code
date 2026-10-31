@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createFileRoute, Link, redirect, useLocation } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useLocation, useNavigate } from "@tanstack/react-router";
 import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -26,6 +26,7 @@ import {
 } from "../components/ui/select";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
+import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
 import { newProjectId } from "../lib/utils";
 import { agentSessionImport, agentSessionScan } from "../state/agentSessions";
 import { readProjects } from "../state/entities";
@@ -57,6 +58,7 @@ export const Route = createFileRoute("/welcome")({
 function ImportConversationsPage() {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
   const requestedEnvironmentId = hash.startsWith("agents:")
     ? Option.getOrUndefined(decodeEnvironmentId(hash.slice("agents:".length)))
@@ -71,62 +73,81 @@ function ImportConversationsPage() {
     ) ?? connected[0];
 
   return (
-    <StandalonePage>
-      <StandalonePageHeader
-        title="Import conversations"
-        description="Bring your recent Claude Code, Codex and Pi conversations into T3 Code."
-      />
-      <div className="mt-6 flex flex-col gap-4">
-        {environment ? (
-          <>
-            <Select
-              value={environment.environmentId}
-              items={environments.map((entry) => ({
-                value: entry.environmentId,
-                label: entry.label,
-              }))}
-              onValueChange={(value) => setSelectedEnvironmentId(value)}
-            >
-              <SelectTrigger aria-label="Import from environment">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectPopup>
-                {environments.map((entry) => (
-                  <SelectItem key={entry.environmentId} value={entry.environmentId}>
-                    {entry.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            {environment.connection.phase === "connected" ? (
-              <EnvironmentImports
-                key={environment.environmentId}
-                environmentId={environment.environmentId}
-              />
-            ) : (
-              <p className="text-body text-muted-foreground">
-                Connect this environment to import its conversations.
-              </p>
-            )}
-          </>
-        ) : (
-          <p className="text-body text-muted-foreground">
-            Connect an environment to import its conversations.
+    <>
+      {hash === "setup" ? (
+        <WelcomeWizard
+          localAvailable={primaryEnvironmentId !== null}
+          onDone={async () => {
+            await navigate({ to: "/" });
+          }}
+        />
+      ) : null}
+      <StandalonePage>
+        <StandalonePageHeader
+          title="Import conversations"
+          description="Bring your recent Claude Code, Codex and Pi conversations into T3 Code."
+        />
+        <div className="mt-6 flex flex-col gap-4">
+          {environment ? (
+            <>
+              <Select
+                value={environment.environmentId}
+                items={environments.map((entry) => ({
+                  value: entry.environmentId,
+                  label: entry.label,
+                }))}
+                onValueChange={(value) => setSelectedEnvironmentId(value)}
+              >
+                <SelectTrigger aria-label="Import from environment">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                  {environments.map((entry) => (
+                    <SelectItem key={entry.environmentId} value={entry.environmentId}>
+                      {entry.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+              {environment.connection.phase === "connected" ? (
+                <EnvironmentImports
+                  key={environment.environmentId}
+                  environmentId={environment.environmentId}
+                />
+              ) : (
+                <p className="text-body text-muted-foreground">
+                  Connect this environment to import its conversations.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-body text-muted-foreground">
+              Connect an environment to import its conversations.
+            </p>
+          )}
+          <p className="text-meta text-muted-foreground">
+            Pi is off by default. Enable it in{" "}
+            <InlineButton render={<Link to="/settings/providers" />}>
+              provider settings
+            </InlineButton>
+            , then refresh. Imports use each enabled provider's session directory and resume Pi's
+            active branch.
           </p>
-        )}
-        <p className="text-meta text-muted-foreground">
-          Pi is off by default. Enable it in{" "}
-          <InlineButton render={<Link to="/settings/providers" />}>provider settings</InlineButton>,
-          then refresh. Imports use each enabled provider's session directory and resume Pi's active
-          branch.
-        </p>
-        <div className="flex justify-end">
-          <Button variant="secondary" render={<Link to="/" />}>
-            Back to app
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              size="standard"
+              variant="ghost-muted"
+              render={<Link to="/welcome" hash="setup" />}
+            >
+              Set up T3 Code
+            </Button>
+            <Button variant="secondary" render={<Link to="/" />}>
+              Back to app
+            </Button>
+          </div>
         </div>
-      </div>
-    </StandalonePage>
+      </StandalonePage>
+    </>
   );
 }
 
@@ -230,9 +251,29 @@ function EnvironmentImports({ environmentId }: { readonly environmentId: Environ
         </p>
       ) : null}
       {scan.data?.truncated ? (
-        <p className="text-meta text-warning-foreground">
-          The scan reached its limit. Some projects or conversations may be missing.
-        </p>
+        <Alert variant="warning">
+          <AlertDescription>
+            The scan reached its limit. You can import the projects below or scan more to look
+            further through your conversation history.
+          </AlertDescription>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button
+              size="standard"
+              variant="secondary"
+              disabled={pendingPath !== null || scan.isPending}
+              onClick={scan.refresh}
+            >
+              {scan.isPending ? "Scanning…" : "Scan more"}
+            </Button>
+            <Button
+              size="standard"
+              variant="ghost-muted"
+              render={<Link to="/settings/providers" />}
+            >
+              Check session folders
+            </Button>
+          </div>
+        </Alert>
       ) : null}
       {scan.data?.candidates.length === 0 ? (
         <p className="text-body text-muted-foreground">
@@ -260,7 +301,10 @@ function EnvironmentImports({ environmentId }: { readonly environmentId: Environ
                     />
                   </span>
                 ))}
-                <span>{candidate.threadCount} conversations</span>
+                <span>
+                  {candidate.threadCount}{" "}
+                  {candidate.threadCount === 1 ? "conversation" : "conversations"}
+                </span>
               </div>
             </div>
             <Button
