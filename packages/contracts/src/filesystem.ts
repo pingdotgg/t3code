@@ -64,6 +64,8 @@ export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseEr
     failure: Schema.optional(FilesystemBrowseFailure),
     parentPath: Schema.optional(TrimmedNonEmptyString),
     platform: Schema.optional(TrimmedNonEmptyString),
+    /** Set when the directory does not exist; older clients ignore it. */
+    pathMissing: Schema.optional(Schema.Boolean),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -75,6 +77,7 @@ export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseEr
     readonly failure: FilesystemBrowseFailure;
     readonly parentPath?: string;
     readonly platform?: string;
+    readonly pathMissing?: boolean;
     readonly cause?: unknown;
   }) {
     const cwd = props.cwd === undefined ? "" : ` from '${props.cwd}'`;

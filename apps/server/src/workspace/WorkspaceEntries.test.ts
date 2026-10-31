@@ -699,5 +699,30 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         });
       }),
     );
+
+    it.effect("marks only a missing directory as missing when browsing fails", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-missing-" });
+        yield* writeTextFile(cwd, "file.txt", "");
+
+        const missing = yield* workspaceEntries
+          .browse({ partialPath: `${path.join(cwd, "absent", "nested")}${path.sep}` })
+          .pipe(Effect.flip);
+        const underFile = yield* workspaceEntries
+          .browse({ partialPath: `${path.join(cwd, "file.txt")}${path.sep}` })
+          .pipe(Effect.flip);
+
+        expect(missing).toMatchObject({
+          _tag: "WorkspaceEntriesReadDirectoryError",
+          pathMissing: true,
+        });
+        expect(underFile).toMatchObject({
+          _tag: "WorkspaceEntriesReadDirectoryError",
+          pathMissing: false,
+        });
+      }),
+    );
   });
 });

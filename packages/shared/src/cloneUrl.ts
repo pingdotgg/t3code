@@ -1,3 +1,5 @@
+import { isWindowsDrivePath } from "./path.ts";
+
 export type CloneProtocol = "ssh" | "https";
 
 const SCP_LIKE_URL = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/;
@@ -34,4 +36,27 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
   return protocol === "ssh"
     ? `git@${parsed.host}:${parsed.path}`
     : `https://${parsed.host}/${parsed.path}`;
+}
+
+const UNSAFE_SEGMENT = /^\.{1,2}$|[\\:*?"<>|\p{Cc}]|[ .]$/u;
+const WINDOWS_DEVICE_NAME =
+  /^(?:con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(?: *\.| *$)/i;
+
+/**
+ * The `<host>/<owner>/<repo>` folders ghq clones a URL into, or null for local paths and
+ * anything with a folder that could leave the root.
+ */
+export function cloneUrlRepositoryPath(url: string): string | null {
+  if (isWindowsDrivePath(url.trim())) return null;
+  const parsed = parseCloneUrl(url);
+  if (!parsed) return null;
+  const segments = [parsed.host, ...parsed.path.split(/[?#]/)[0]!.split("/").filter(Boolean)];
+  const last = segments.at(-1)!;
+  if (last.endsWith(".git")) segments[segments.length - 1] = last.slice(0, -".git".length);
+  if (
+    segments.length < 2 ||
+    segments.some((s) => s === "" || UNSAFE_SEGMENT.test(s) || WINDOWS_DEVICE_NAME.test(s))
+  )
+    return null;
+  return segments.join("/");
 }

@@ -10,7 +10,8 @@ import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
-  getCloneDirectoryName,
+  getCloneDirectoryLeafName,
+  getCloneDirectoryPath,
   getDefaultCloneUrl,
   getNewProjectPathPreview,
   getNewProjectPublishTarget,
@@ -590,7 +591,11 @@ function OpenCommandPaletteDialog(props: {
   const isRemoteProjectRepositoryStep = addProjectCloneFlow?.step === "repository";
   const pinnedCloneDirectoryName =
     addProjectCloneFlow?.step === "confirm"
-      ? getCloneDirectoryName(
+      ? getCloneDirectoryLeafName(
+          addProjectCloneFlow.remoteUrl,
+          environments.find(
+            (candidate) => candidate.environmentId === addProjectCloneFlow.environmentId,
+          )?.serverConfig?.settings.ghqCloneLayout === true,
           addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.remoteUrl,
         )
       : "";
@@ -1826,8 +1831,20 @@ function OpenCommandPaletteDialog(props: {
     if (created.value) setOpen(false);
   }
 
-  function getDefaultCloneParentPath(environmentId: EnvironmentId): string {
-    return getAddProjectInitialQueryForEnvironment(environmentId);
+  function getDefaultCloneDestination(
+    environmentId: EnvironmentId,
+    remoteUrl: string,
+    repository: string,
+  ): string {
+    const environment = environments.find((candidate) => candidate.environmentId === environmentId);
+    return getCloneDestinationPath(
+      getAddProjectInitialQueryForEnvironment(environmentId),
+      getCloneDirectoryPath(
+        remoteUrl,
+        environment?.serverConfig?.settings.ghqCloneLayout === true,
+        repository,
+      ),
+    );
   }
 
   async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
@@ -1853,9 +1870,11 @@ function OpenCommandPaletteDialog(props: {
 
       const provider = addProjectRemoteSourceProvider(addProjectCloneFlow.source);
       if (!provider) {
-        const destinationPath = getCloneDestinationPath(
-          getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
-          getCloneDirectoryName(rawRepository),
+        const remoteUrl = normalizePastedCloneUrl(rawRepository);
+        const destinationPath = getDefaultCloneDestination(
+          addProjectCloneFlow.environmentId,
+          remoteUrl,
+          rawRepository,
         );
         setAddProjectCloneFlow({
           step: "confirm",
@@ -1863,7 +1882,7 @@ function OpenCommandPaletteDialog(props: {
           source: addProjectCloneFlow.source,
           repositoryInput: rawRepository,
           repository: null,
-          remoteUrl: normalizePastedCloneUrl(rawRepository),
+          remoteUrl,
         });
         setHighlightedItemValue(null);
         setQuery(destinationPath);
@@ -1895,9 +1914,11 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       const repository = lookupResult.value;
-      const destinationPath = getCloneDestinationPath(
-        getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
-        getCloneDirectoryName(repository.nameWithOwner),
+      const remoteUrl = getDefaultCloneUrl(repository);
+      const destinationPath = getDefaultCloneDestination(
+        addProjectCloneFlow.environmentId,
+        remoteUrl,
+        repository.nameWithOwner,
       );
       setAddProjectCloneFlow({
         step: "confirm",
@@ -1905,7 +1926,7 @@ function OpenCommandPaletteDialog(props: {
         source: addProjectCloneFlow.source,
         repositoryInput: rawRepository,
         repository,
-        remoteUrl: getDefaultCloneUrl(repository),
+        remoteUrl,
       });
       setHighlightedItemValue(null);
       setQuery(destinationPath);
