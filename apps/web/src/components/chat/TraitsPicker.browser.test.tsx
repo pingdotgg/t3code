@@ -130,7 +130,7 @@ it.each([2, 6])("steps through %i model levels and keeps the other traits", asyn
   await userEvent.keyboard("{ArrowLeft}{End}");
   await expect.element(slider).toHaveValue(String(count - 1));
   await userEvent.keyboard("{ArrowDown}");
-  await expect.element(page.getByRole("radio", { name: "Normal" })).toHaveFocus();
+  await expect.element(page.getByRole("button", { name: "Context window: Normal" })).toHaveFocus();
   await userEvent.keyboard("{ArrowUp}");
   await expect.element(slider).toHaveFocus();
 });
