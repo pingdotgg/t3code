@@ -66,8 +66,9 @@ function decodeHtmlEntities(value: string): string {
 
 const HTML_TAG = /<!--[\s\S]*?-->|<\/?[a-z](?:[^>"']|"[^"]*"|'[^']*')*>/gi;
 
+/** A valueless (boolean) attribute such as `open` reads as "". */
 function attribute(tag: string, name: string): string | null {
-  const attributes = /([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+  const attributes = /([\w:-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
   for (const match of tag.matchAll(attributes)) {
     if (match[1]?.toLowerCase() === name) {
       return decodeHtmlEntities(match[2] ?? match[3] ?? match[4] ?? "");
@@ -282,6 +283,236 @@ export function markdownWithHtml(markdown: string): string {
   for (const edit of edits.reverse())
     markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
   return markdown;
+}
+
+export type MarkdownDetailsSegment =
+  | { readonly kind: "markdown"; readonly markdown: string; readonly sourceOffset: number }
+  | {
+      readonly kind: "details";
+      readonly summary: string;
+      readonly body: string;
+      readonly open: boolean;
+      readonly sourceOffset: number;
+    };
+
+const DETAILS_TAG = /^<(\/?)details(?=[\s/>])/i;
+const SUMMARY_TAG = /^<summary(?=[\s/>])/i;
+const SUMMARY_CLOSE_TAG = /^<\/summary\s*>$/i;
+const ARTIFACT_TEMPLATE_START = "::artifact-template{";
+
+/**
+ * Spans of the directives `splitCodexArtifactTemplateMarkdown` renders as cards, each through
+ * the `}` that closes it (quoted values may hold `}`). Resuming where a scan stopped keeps it linear.
+ */
+function artifactTemplateRanges(markdown: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let from = 0;
+  for (;;) {
+    const start = markdown.indexOf(ARTIFACT_TEMPLATE_START, from);
+    if (start === -1) return ranges;
+    let at = start + ARTIFACT_TEMPLATE_START.length;
+    let quote: string | null = null;
+    for (; at < markdown.length && markdown[at] !== "\n"; at += 1) {
+      const char = markdown[at];
+      if (quote !== null) {
+        if (char === quote) quote = null;
+      } else if (char === '"' || char === "'") quote = char;
+      else if (char === "}") break;
+    }
+    if (markdown[at] === "}") ranges.push({ start, end: at + 1 });
+    from = at + 1;
+  }
+}
+
+interface HtmlToken {
+  readonly at: number;
+  readonly tag: string;
+  /** Only a tag in a top-level HTML block can start a fold. */
+  readonly topLevel: boolean;
+}
+
+interface DetailsFold {
+  readonly start: number;
+  readonly bodyStart: number;
+  readonly summary: string;
+  readonly open: boolean;
+}
+
+export interface MarkdownReferenceDefinition {
+  /** Lowercased label as written, escapes included. */
+  readonly label: string;
+  /** Source text rather than the decoded URL, so a Windows path keeps its backslashes. */
+  readonly source: string;
+}
+
+export interface MarkdownDetailsSplit {
+  readonly segments: ReadonlyArray<MarkdownDetailsSegment>;
+  readonly definitions: ReadonlyArray<MarkdownReferenceDefinition>;
+}
+
+function referenceDefinition(source: string): MarkdownReferenceDefinition | null {
+  let end = 1;
+  while (end < source.length && source[end] !== "]") end += source[end] === "\\" ? 2 : 1;
+  if (source[0] !== "[" || end >= source.length) return null;
+  return {
+    label: source.slice(1, end).replace(/\s+/g, " ").toLowerCase(),
+    // A definition may sit on one line, so drop the quote markers and indent of its continuations.
+    source: source.replace(/\n[ \t>]*/g, " "),
+  };
+}
+
+/** Each fragment renders as its own document, so it carries the definitions it mentions. */
+export function withReferenceDefinitions(
+  markdown: string,
+  definitions: ReadonlyArray<MarkdownReferenceDefinition>,
+): string {
+  if (definitions.length === 0 || !markdown.includes("[")) return markdown;
+  const text = markdown.toLowerCase().replace(/\s+/g, " ");
+  const used = definitions.filter((definition) => text.includes(`[${definition.label}]`));
+  return used.length === 0
+    ? markdown
+    : `${used.map((definition) => definition.source).join("\n")}\n\n${markdown}`;
+}
+
+/** The summary only counts once its closing tag arrives, as the fold's first child. */
+function detailsSummary(
+  markdown: string,
+  tokens: readonly HtmlToken[],
+  index: number,
+): { readonly text: string; readonly end: number } | null {
+  const opening = tokens[index]!;
+  let end = opening.at + opening.tag.length;
+  let next = index + 1;
+  while (tokens[next]?.tag.startsWith("<!--") && !markdown.slice(end, tokens[next]!.at).trim()) {
+    end = tokens[next]!.at + tokens[next]!.tag.length;
+    next += 1;
+  }
+  const summary = tokens[next];
+  if (!summary || !SUMMARY_TAG.test(summary.tag)) return null;
+  if (markdown.slice(end, summary.at).trim()) return null;
+  let text = "";
+  end = summary.at + summary.tag.length;
+  for (next += 1; next < tokens.length; next += 1) {
+    const token = tokens[next]!;
+    if (DETAILS_TAG.test(token.tag)) return null;
+    text += markdown.slice(end, token.at);
+    end = token.at + token.tag.length;
+    if (SUMMARY_CLOSE_TAG.test(token.tag)) {
+      return { text: decodeHtmlEntities(text).replace(/\s+/g, " ").trim() || "Details", end };
+    }
+  }
+  return null;
+}
+
+/**
+ * Splits top-level `<details>` blocks out as folds. Folds inside containers stay Markdown for
+ * `markdownWithHtml` to flatten, but an open fold closes at any `</details>` outside code, as
+ * web's HTML parser does. An unclosed fold runs to the end while a reply streams.
+ */
+export function splitMarkdownDetails(markdown: string): MarkdownDetailsSplit {
+  const whole = {
+    segments: [{ kind: "markdown" as const, markdown, sourceOffset: 0 }],
+    definitions: [],
+  };
+  if (!/<details/i.test(markdown)) return whole;
+  let tokens: HtmlToken[] = [];
+  const collect = (node: MarkdownNode) => {
+    if (!("children" in node)) return;
+    for (const child of node.children) {
+      if (child.type !== "html") {
+        collect(child);
+        continue;
+      }
+      const start = child.position?.start.offset;
+      const end = child.position?.end.offset;
+      if (start === undefined || end === undefined) continue;
+      // Source offsets, not `value`, which drops container markers such as "> ".
+      for (const tag of markdownHtmlTags(markdown.slice(start, end)))
+        tokens.push({ at: start + tag.index, tag: tag[0], topLevel: node.type === "root" });
+    }
+  };
+  collect(parser.parse(markdown));
+  // An artifact template directive's attributes are literal text, so a `<details>` in its label
+  // is not a tag. Tokens arrive in source order, so one pass drops those inside a directive.
+  const directives = artifactTemplateRanges(markdown);
+  if (directives.length > 0) {
+    let next = 0;
+    const literal = (at: number) => {
+      while (next < directives.length) {
+        const directive = directives[next]!;
+        if (at < directive.start) return false;
+        if (at < directive.end) return true;
+        next += 1;
+      }
+      return false;
+    };
+    tokens = tokens.filter((token) => !literal(token.at));
+  }
+  // Read definitions after flattening, which exposes ones a raw HTML block hides from this parse.
+  const definitions: MarkdownReferenceDefinition[] = [];
+  if (markdown.includes("]:")) {
+    const flattened = markdownWithHtml(markdown);
+    const visit = (node: MarkdownNode) => {
+      if (node.type === "definition") {
+        const definition = referenceDefinition(
+          flattened.slice(node.position?.start.offset, node.position?.end.offset),
+        );
+        if (definition) definitions.push(definition);
+      }
+      if ("children" in node) node.children.forEach(visit);
+    };
+    visit(parser.parse(flattened));
+  }
+  const segments: MarkdownDetailsSegment[] = [];
+  let cursor = 0;
+  const pushMarkdown = (end: number) => {
+    const text = markdown.slice(cursor, end);
+    if (text.trim()) segments.push({ kind: "markdown", markdown: text, sourceOffset: cursor });
+  };
+  const pushFold = (fold: DetailsFold, end: number) => {
+    pushMarkdown(fold.start);
+    segments.push({
+      kind: "details",
+      summary: fold.summary,
+      body: markdown.slice(fold.bodyStart, end),
+      open: fold.open,
+      sourceOffset: fold.start,
+    });
+  };
+  let fold: DetailsFold | null = null;
+  let depth = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const { at, tag, topLevel } = tokens[index]!;
+    const details = DETAILS_TAG.exec(tag);
+    if (!details) continue;
+    if (details[1]) {
+      if (depth === 0 || --depth > 0 || !fold) continue;
+      pushFold(fold, at);
+      cursor = at + tag.length;
+      fold = null;
+      continue;
+    }
+    if (depth > 0) {
+      depth += 1;
+      continue;
+    }
+    if (!topLevel) continue;
+    const summary = detailsSummary(markdown, tokens, index);
+    fold = {
+      start: at,
+      bodyStart: summary?.end ?? at + tag.length,
+      summary: summary?.text ?? "Details",
+      open: attribute(tag, "open") !== null,
+    };
+    depth = 1;
+  }
+  if (fold) {
+    pushFold(fold, markdown.length);
+    cursor = markdown.length;
+  }
+  if (segments.length === 0) return whole;
+  pushMarkdown(markdown.length);
+  return { segments, definitions };
 }
 
 // Start only at the beginning of a backtick run to avoid retrying every suffix.

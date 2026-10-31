@@ -5,6 +5,8 @@ import {
   markdownWithHtml,
   markdownWithFileEmbeds,
   parseMarkdownDocument,
+  splitMarkdownDetails,
+  withReferenceDefinitions,
   type MarkdownNode,
 } from "./markdownDocument";
 import { markdownImageSources } from "./markdownImageSources";
@@ -115,6 +117,216 @@ describe("HTML in native Markdown", () => {
 
   it("keeps anchor text unlinked for unsafe hrefs", () => {
     expect(markdownWithHtml('Run <a href="javascript:alert(1)">this</a> now')).toBe("Run this now");
+  });
+});
+
+describe("details folds in chat Markdown", () => {
+  const split = (markdown: string) => splitMarkdownDetails(markdown).segments;
+
+  it("splits a closed fold out with its summary and keeps the text around it", () => {
+    const markdown =
+      "Short answer.\n\n<details>\n<summary>Long &amp; <b>details</b></summary>\n\nA long paragraph.\n\n</details>\n\nAfter.";
+    expect(split(markdown)).toEqual([
+      { kind: "markdown", markdown: "Short answer.\n\n", sourceOffset: 0 },
+      {
+        kind: "details",
+        summary: "Long & details",
+        body: "\n\nA long paragraph.\n\n",
+        open: false,
+        sourceOffset: 15,
+      },
+      { kind: "markdown", markdown: "\n\nAfter.", sourceOffset: markdown.indexOf("\n\nAfter.") },
+    ]);
+  });
+
+  it("opens a fold with the open attribute and splits a fold written as one HTML block", () => {
+    expect(
+      split('<details open class="x"><summary>Logs</summary>\n\nBody\n\n</details>'),
+    ).toMatchObject([{ kind: "details", summary: "Logs", body: "\n\nBody\n\n", open: true }]);
+    expect(
+      split('<details data-x="open">\nBody\n</details>\n<details><summary>B</summary>b</details>'),
+    ).toMatchObject([
+      { kind: "details", summary: "Details", body: "\nBody\n", open: false },
+      { kind: "details", summary: "B", body: "b" },
+    ]);
+  });
+
+  it("keeps a nested fold in the outer fold's body", () => {
+    const inner = "<details open><summary>B</summary>\n\nb\n\n</details>";
+    expect(split(`<details><summary>A</summary>\n\n${inner}\n\n</details>\n\nAfter`)).toMatchObject(
+      [
+        { kind: "details", summary: "A", body: `\n\n${inner}\n\n`, open: false },
+        { kind: "markdown", markdown: "\n\nAfter" },
+      ],
+    );
+  });
+
+  it("takes fold boundaries and the summary only from real tags", () => {
+    expect(
+      split(
+        '<details><summary title="a > b">Logs</summary>\n<!-- </details> -->\nBody\n</details>',
+      ),
+    ).toMatchObject([{ kind: "details", summary: "Logs", body: "\n<!-- </details> -->\nBody\n" }]);
+  });
+
+  it("reads open only as a boolean attribute", () => {
+    expect(split("<details title= open>\nBody\n</details>")).toMatchObject([
+      { kind: "details", open: false },
+    ]);
+    expect(split("<details title=x open>\nBody\n</details>")).toMatchObject([
+      { kind: "details", open: true },
+    ]);
+  });
+
+  it("gives each final fragment the definitions it mentions, as written", () => {
+    const markdown =
+      "See [config][c] and [Docs][a\\]b].\n\n<details>\n<summary>A</summary>\n\n![B][a\\]b]\n\n</details>\n\nUnrelated.\n\n[c]: C:\\work\\.t3\\settings.json\n> [a\\]b]: https://example.com/a";
+    const { segments, definitions } = splitMarkdownDetails(markdown);
+    const destinations = (text: string) => {
+      const urls: string[] = [];
+      const visit = (node: MarkdownNode) => {
+        if (node.type === "definition") urls.push(node.url);
+        if ("children" in node) node.children.forEach(visit);
+      };
+      visit(parseMarkdownDocument(text));
+      return urls.toSorted();
+    };
+    const [before, fold, after] = segments;
+    expect(
+      before?.kind === "markdown" &&
+        destinations(withReferenceDefinitions(before.markdown, definitions)),
+    ).toEqual(destinations(markdown));
+    expect(
+      fold?.kind === "details" && destinations(withReferenceDefinitions(fold.body, definitions)),
+    ).toEqual(["https://example.com/a"]);
+    expect(after?.kind === "markdown" && withReferenceDefinitions("Unrelated.", definitions)).toBe(
+      "Unrelated.",
+    );
+  });
+
+  it.each([
+    ["on its own line", "\n\n"],
+    ["right after the summary", ""],
+  ])("does not count a <details> in an artifact template label %s", (_, gap) => {
+    const directive =
+      '::artifact-template{skill_name="artifact-template-x" skill_directory="/tmp/x" display_name="<details> demo" artifact_kind="document"}';
+    expect(
+      split(`<details>\n<summary>A</summary>${gap}${directive}\n\n</details>\n\nOutside.`),
+    ).toMatchObject([
+      { kind: "details", summary: "A", body: `${gap}${directive}\n\n` },
+      { kind: "markdown", markdown: "\n\nOutside." },
+    ]);
+  });
+
+  it("closes a fold at a </details> after an artifact template directive on the same line", () => {
+    const directive =
+      '::artifact-template{skill_name="artifact-template-x" skill_directory="/tmp/x" display_name="<details> {demo}" artifact_kind="document"}';
+    expect(
+      split(`<details>\n<summary>A</summary>${directive}</details>\n\nOutside.`),
+    ).toMatchObject([
+      { kind: "details", summary: "A", body: directive },
+      { kind: "markdown", markdown: "\n\nOutside." },
+    ]);
+  });
+
+  it("carries a quoted definition that wraps onto a continuation line", () => {
+    const { segments, definitions } = splitMarkdownDetails(
+      'See [d].\n\n<details><summary>A</summary>a</details>\n\n> [d]:\n> https://example.com\n> "Title"',
+    );
+    const before = segments[0];
+    expect(
+      before?.kind === "markdown" && withReferenceDefinitions(before.markdown, definitions),
+    ).toBe('[d]: https://example.com "Title"\n\nSee [d].\n\n');
+  });
+
+  it("finds definitions inside a compact HTML block and labels that wrap", () => {
+    const markdown =
+      "See [the\n  doc].\n\n<details><summary>A</summary>a</details>\n[The Doc]: https://example.com";
+    const { segments, definitions } = splitMarkdownDetails(markdown);
+    const before = segments[0];
+    expect(
+      before?.kind === "markdown" && withReferenceDefinitions(before.markdown, definitions),
+    ).toBe("[The Doc]: https://example.com\n\nSee [the\n  doc].\n\n");
+  });
+
+  it.each([
+    [
+      "a paragraph",
+      "<details>\n<summary>A</summary>\n\nSome text.</details>\n\nAfter the fold, important.",
+      "\n\nSome text.",
+      "\n\nAfter the fold, important.",
+    ],
+    [
+      "a list item",
+      "<details>\n<summary>A</summary>\n\n- item\n  </details>\n\nAfter.",
+      "\n\n- item\n  ",
+      "\n\nAfter.",
+    ],
+    [
+      "a paragraph after a compact opener",
+      "<details><summary>A</summary>\n\nHidden</details> tail\n\nVisible answer.",
+      "\n\nHidden",
+      " tail\n\nVisible answer.",
+    ],
+  ])("closes a fold at a closing tag inside %s", (_, markdown, body, after) => {
+    expect(split(markdown)).toMatchObject([
+      { kind: "details", summary: "A", body },
+      { kind: "markdown", markdown: after },
+    ]);
+  });
+
+  it("splits compact sibling folds with text between them in one HTML block", () => {
+    expect(
+      split(
+        "<details><summary>A</summary>a</details>\nExplanation\n<details><summary>B</summary>b</details>",
+      ),
+    ).toMatchObject([
+      { kind: "details", summary: "A", body: "a" },
+      { kind: "markdown", markdown: "\nExplanation\n" },
+      { kind: "details", summary: "B", body: "b" },
+    ]);
+  });
+
+  it("reads the summary after a comment", () => {
+    expect(split("<details> <!-- c -->\n<summary>A</summary>\n\nBody\n</details>")).toMatchObject([
+      { kind: "details", summary: "A", body: "\n\nBody\n" },
+    ]);
+  });
+
+  it("folds an unclosed fold to the end while the reply streams", () => {
+    const markdown = "Answer\n\n<details>\n<summary>Still streaming</summary>\n\nPartial";
+    expect(split(markdown)).toEqual([
+      { kind: "markdown", markdown: "Answer\n\n", sourceOffset: 0 },
+      {
+        kind: "details",
+        summary: "Still streaming",
+        body: "\n\nPartial",
+        open: false,
+        sourceOffset: 8,
+      },
+    ]);
+    expect(split("Answer\n\n<details>\n<summary>Still")).toMatchObject([
+      { kind: "markdown", sourceOffset: 0 },
+      { kind: "details", summary: "Details", body: "\n<summary>Still", sourceOffset: 8 },
+    ]);
+  });
+
+  it.each([
+    ["a fold inside a list item", "- <details><summary>A</summary>\n\n  body\n\n  </details>"],
+    [
+      "a fold inside a fenced code block",
+      "```html\n<details>\n<summary>A</summary>\n</details>\n```",
+    ],
+    ["a fold inside inline code", "Use `<details>` and `</details>`."],
+  ])("leaves %s as Markdown", (_, markdown) => {
+    expect(split(markdown)).toEqual([{ kind: "markdown", markdown, sourceOffset: 0 }]);
+  });
+
+  it("does not count a closing tag inside fenced code in the fold body", () => {
+    const markdown = "<details>\n<summary>A</summary>\n\n```html\n</details>\n```\n\n</details>";
+    expect(split(markdown)).toMatchObject([
+      { kind: "details", summary: "A", body: "\n\n```html\n</details>\n```\n\n" },
+    ]);
   });
 });
 
