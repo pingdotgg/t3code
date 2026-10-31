@@ -514,6 +514,18 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
   }
 
+  if (platform === "win32") {
+    // ShellExecute honours replacement folder handlers that explorer.exe bypasses.
+    return {
+      ...powerShellFileManagerLaunch(
+        input.cwd,
+        `Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(normalizeWindowsFileManagerPath(input.cwd))}`,
+        resolvePowerShellPath(env),
+      ),
+      detached: WINDOWS_POWERSHELL_DETACHED,
+    };
+  }
+
   return {
     editor: editorDef.id,
     target: input.cwd,
@@ -521,19 +533,16 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
         ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
-        : platform === "win32"
-          ? // Explorer interprets / as a switch and silently opens a fallback folder.
-            [normalizeWindowsFileManagerPath(input.cwd)]
-          : [input.cwd],
+        : [input.cwd],
   };
 });
 
-// A replacement manager registers a default Directory shell verb; stock Windows
-// uses "none". Explorer needs its /select argument passed verbatim through
+// Replacement managers can register under Directory, Drive, or Folder. Explorer
+// needs its /select argument passed verbatim through
 // PowerShell because Node's argument quoting changes how Explorer parses it.
 function buildFileManagerRevealPowerShellSource(target: string, parent: string): string {
   const literal = escapePowerShellStringLiteral(target);
-  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
+  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = 'Directory', 'Drive', 'Folder' | ForEach-Object { (Get-ItemProperty -LiteralPath "Registry::HKEY_CLASSES_ROOT\\$_\\shell" -ErrorAction SilentlyContinue).'(default)' } | Where-Object { $_ -and $_ -ne 'none' }; if ($folderVerb) { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
 }
 
 function powerShellFileManagerLaunch(

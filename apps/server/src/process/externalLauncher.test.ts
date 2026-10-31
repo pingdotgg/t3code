@@ -256,6 +256,85 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.live.skipIf(!windowsHost)("opens Windows folders through the default shell handler", () =>
+  Effect.gen(function* () {
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({
+        editor: "file-manager",
+        cwd: "C:/workspace [draft]/author's $media",
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: "C:\\Windows", PATHEXT: ".EXE" },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+    assert.ok(spawned);
+    assert.equal(spawned.options.detached, false);
+    const source = Buffer.from(spawned.args.at(-1) ?? "", "base64").toString("utf16le");
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const output = yield* spawner.string(
+      ChildProcess.make(spawned.command, [
+        ...spawned.args.slice(0, -1),
+        Buffer.from(
+          `function Invoke-Item { param($LiteralPath) Write-Output $LiteralPath }; ${source}`,
+          "utf16le",
+        ).toString("base64"),
+      ]),
+    );
+    assert.equal(output.trim(), "C:\\workspace [draft]\\author's $media");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+for (const replacement of ["none", "Directory", "Drive", "Folder"]) {
+  it.live.skipIf(!windowsHost)(
+    `reveals Windows files with the ${replacement} replacement registration`,
+    () =>
+      Effect.gen(function* () {
+        let spawned: ChildProcess.StandardCommand | undefined;
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          yield* launcher.launchEditor({
+            editor: "file-manager",
+            cwd: "C:/repo/file.txt",
+            reveal: true,
+          });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "win32",
+              env: { PATH: "C:\\Windows", PATHEXT: ".EXE" },
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+        assert.ok(spawned);
+        const source = Buffer.from(spawned.args.at(-1) ?? "", "base64").toString("utf16le");
+        const stubs = `function Get-ItemProperty { param($LiteralPath, $ErrorAction) @{ '(default)' = if ($LiteralPath -eq 'Registry::HKEY_CLASSES_ROOT\\${replacement}\\shell') { 'openindopus' } else { 'none' } } }; function Invoke-Item { param($LiteralPath) Write-Output "shell:$LiteralPath" }; function Start-Process { param($FilePath, $ArgumentList) Write-Output "$FilePath $ArgumentList" }; `;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const output = yield* spawner.string(
+          ChildProcess.make(spawned.command, [
+            ...spawned.args.slice(0, -1),
+            Buffer.from(stubs + source, "utf16le").toString("base64"),
+          ]),
+        );
+        assert.equal(
+          output.trim(),
+          replacement === "none" ? 'explorer.exe /select,"C:\\repo\\file.txt"' : "shell:C:\\repo",
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
 it.effect.skipIf(windowsHost)(
   "reveals a WSL file in Windows File Explorer through its UNC path",
   () =>
@@ -305,7 +384,7 @@ it.effect.skipIf(windowsHost)(
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.equal(
         decodedCommand,
-        "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4' + '\"') }",
+        "$ProgressPreference = 'SilentlyContinue'; $folderVerb = 'Directory', 'Drive', 'Folder' | ForEach-Object { (Get-ItemProperty -LiteralPath \"Registry::HKEY_CLASSES_ROOT\\$_\\shell\" -ErrorAction SilentlyContinue).'(default)' } | Where-Object { $_ -and $_ -ne 'none' }; if ($folderVerb) { Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4' + '\"') }",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
