@@ -1,5 +1,6 @@
 import type {
   EnvironmentContextRecord,
+  LinearIssueContextRecord,
   PreviewAnnotationPayload,
   ThreadContextRecord,
 } from "@t3tools/contracts";
@@ -25,6 +26,7 @@ export interface RetainedContextPayloads extends RetainedAttachmentContextPayloa
   reviewComments: Map<string, ReviewCommentContext>;
   threads: Map<string, ThreadContextRecord>;
   environments: Map<string, EnvironmentContextRecord>;
+  linear: Map<string, LinearIssueContextRecord>;
 }
 
 function createRetainedContextPayloads(): RetainedContextPayloads {
@@ -33,6 +35,7 @@ function createRetainedContextPayloads(): RetainedContextPayloads {
     reviewComments: new Map(),
     threads: new Map(),
     environments: new Map(),
+    linear: new Map(),
     files: new Map(),
     previewAnnotations: new Map(),
   };

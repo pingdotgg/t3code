@@ -299,6 +299,14 @@
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"
     },
+    "./linearWriteBack": {
+      "types": "./src/linearWriteBack.ts",
+      "import": "./src/linearWriteBack.ts"
+    },
+    "./linearLaunch": {
+      "types": "./src/linearLaunch.ts",
+      "import": "./src/linearLaunch.ts"
+    },
     "./composerContextLegacy": {
       "types": "./src/composerContextLegacy.ts",
       "import": "./src/composerContextLegacy.ts"

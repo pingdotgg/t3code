@@ -29,6 +29,7 @@ const contextChipVariants = cva(
         model: "[--context-chip-accent:var(--context-chip-model)]",
         thread: "[--context-chip-accent:var(--context-chip-thread)]",
         environment: "[--context-chip-accent:var(--context-chip-environment)]",
+        "linear-issue": "[--context-chip-accent:var(--context-chip-linear-issue)]",
         citation: "[--context-chip-accent:var(--context-chip-citation)]",
         "doc-pdf": "[--context-chip-accent:var(--context-chip-doc-pdf)]",
         "doc-word": "[--context-chip-accent:var(--context-chip-doc-word)]",

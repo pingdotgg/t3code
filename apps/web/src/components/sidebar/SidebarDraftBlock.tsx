@@ -27,6 +27,8 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   composer: ComposerThreadDraftState;
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
+  /** Set when the draft was started from a Linear issue, e.g. "ATT-612". */
+  linearIdentifier: string | null;
   isActive: boolean;
   onNavigate: (draftId: DraftId) => void;
   onDiscard: (draftId: DraftId) => void;
@@ -106,6 +108,11 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
               {props.projectDisplayName}
             </span>
+            {props.linearIdentifier ? (
+              <span className="shrink-0 text-2xs text-muted-foreground">
+                Draft · from {props.linearIdentifier}
+              </span>
+            ) : null}
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
               <Tooltip>
                 <TooltipTrigger
@@ -215,6 +222,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             composer={composer}
             project={props.projectByKey.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
+            linearIdentifier={session.linearIssue?.identifier ?? null}
             isActive={draftId === props.routeDraftId}
             onNavigate={props.onNavigateToDraft}
             onDiscard={discardComposerDraft}

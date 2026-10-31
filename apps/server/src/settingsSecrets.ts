@@ -5,6 +5,7 @@ import {
   CodexSettings,
   EasDeviceHostConfig,
   type ProviderInstanceConfig,
+  LinearSettings,
   type ServerSettings,
   type SettingsSecretValue,
   SimlockDeviceHostConfig,
@@ -49,6 +50,7 @@ const providerSecretFields = new Map([
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
 const textGeneratorSecretFields = secretSettingsFields(TextGeneratorConfig);
 const voiceSecretFields = secretSettingsFields(CloudSpeechCredentials);
+const linearSecretFields = secretSettingsFields(LinearSettings);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
@@ -247,6 +249,12 @@ function mapSecretFieldGroups(
       ) as SimlockDeviceHostConfig,
   );
 
+  const linear = mapFields(
+    settings.linear,
+    linearSecretFields,
+    (field) => `linear-${field.replace(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`)}`,
+  ) as ServerSettings["linear"];
+
   return {
     ...settings,
     cloudSpeechCredentials: mapFields(
@@ -254,6 +262,7 @@ function mapSecretFieldGroups(
       voiceSecretFields,
       (provider) => `voice-cloud-${provider}`,
     ) as ServerSettings["cloudSpeechCredentials"],
+    linear,
     providerInstances,
     sourceControlHosts,
     usageLimitSources,

@@ -35,6 +35,7 @@ import {
   type ProviderOptionSelection,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { buildLinearIssueContextRecord } from "@t3tools/shared/linearLaunch";
 import { createModelSelection } from "@t3tools/shared/model";
 
 const CODEX_INSTANCE = ProviderInstanceId.make("codex");
@@ -813,6 +814,90 @@ describe("composerDraftStore environment contexts", () => {
     const store = useComposerDraftStore.getState();
     store.addEnvironmentContexts(threadRef, [vps]);
     store.setEnvironmentContexts(threadRef, []);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+});
+
+describe("composerDraftStore linear issue drafts", () => {
+  const draftId = DraftId.make("linear-issue-draft");
+  const threadId = ThreadId.make("thread-from-linear-issue");
+  const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-linear"));
+  const record = buildLinearIssueContextRecord({
+    issue: {
+      id: "issue-1",
+      identifier: "ATT-612",
+      title: "Handshake",
+      url: "https://linear.app/acme/issue/ATT-612",
+      state: { id: "s", name: "Todo", type: "unstarted", color: "#999" },
+      priorityLabel: "High",
+      assignee: null,
+      labels: [],
+      milestone: null,
+      project: null,
+      team: { id: "t", key: "ATT", name: "Attraccess" },
+      branchName: "jan/att-612",
+      linkedPullRequests: [],
+    },
+    description: "Body",
+    milestoneProgress: null,
+    subIssues: [],
+    comments: [],
+    attachments: [],
+  } as never);
+  const launch = {
+    issueId: "issue-1",
+    identifier: "ATT-612",
+    branchName: "jan/att-612",
+    mappedProjectId: "project-linear",
+    moveTo: { id: "prog", name: "In Progress" },
+    moveEnabled: true,
+    commentEnabled: false,
+  };
+
+  beforeEach(resetComposerDraftStore);
+
+  it("keeps the attached issue and the launch through persistence", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.addLinearContexts(draftId, [record, { ...record, title: "renamed" }]);
+    store.setDraftLinearIssue(draftId, launch);
+
+    expect(draftByKey(draftId)?.linearContexts).toEqual([record]);
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const hydrated = merge(
+      JSON.parse(
+        JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+      ),
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(hydrated.draftsByThreadKey[draftId]?.linearContexts).toEqual([record]);
+    expect(hydrated.draftThreadsByThreadKey[draftId]?.linearIssue).toEqual(launch);
+  });
+
+  it("keeps the launch when the draft's workspace changes", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftLinearIssue(draftId, launch);
+    store.setDraftThreadContext(draftId, { branch: "develop", envMode: "worktree" });
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.linearIssue).toEqual(launch);
+  });
+
+  it("lets the launch be edited and cleared", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftLinearIssue(draftId, launch);
+    store.setDraftLinearIssue(draftId, { ...launch, moveEnabled: false });
+    expect(
+      useComposerDraftStore.getState().getDraftSession(draftId)?.linearIssue?.moveEnabled,
+    ).toBe(false);
+    store.setDraftLinearIssue(draftId, null);
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.linearIssue).toBeUndefined();
+  });
+
+  it("drops the chip with the record", () => {
+    const store = useComposerDraftStore.getState();
+    store.addLinearContexts(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId), [record]);
+    store.setLinearContexts(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId), []);
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 });

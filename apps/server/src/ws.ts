@@ -119,6 +119,7 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
+import * as LinearService from "./linear/LinearService.ts";
 import * as PipelineService from "./pipelines/PipelineService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
@@ -666,7 +667,13 @@ const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 // crosses TypeScript's instantiation limit and the layer's requirements degrade to
 // `any`, so the handlers are registered as two disjoint, smaller groups.
 type ServerWsRpc = RpcGroup.Rpcs<typeof ServerWsRpcGroup>;
-const SPLIT_WS_RPC_PREFIXES = ["server", "pullRequests", "provider", "orchestration"] as const;
+const SPLIT_WS_RPC_PREFIXES = [
+  "server",
+  "pullRequests",
+  "provider",
+  "orchestration",
+  "linear",
+] as const;
 type SplitWsRpc = Extract<
   ServerWsRpc,
   { readonly _tag: `${(typeof SPLIT_WS_RPC_PREFIXES)[number]}.${string}` }
@@ -1446,6 +1453,7 @@ export const layerWsRpc = (
       const pipelines = yield* PipelineService.PipelineService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
+      const linear = yield* LinearService.LinearService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -2696,6 +2704,23 @@ export const layerWsRpc = (
                 Effect.forkScoped,
               ),
           ),
+        [WS_METHODS.linearStatus]: () => linear.status,
+        [WS_METHODS.linearConnect]: (input) => linear.connect(input),
+        [WS_METHODS.linearDisconnect]: () => linear.disconnect,
+        [WS_METHODS.linearResync]: () => linear.resync,
+        [WS_METHODS.linearRefresh]: () => linear.refresh,
+        [WS_METHODS.linearTeams]: () => linear.teams,
+        [WS_METHODS.linearTeamMetadata]: (input) => linear.teamMetadata(input.teamId),
+        [WS_METHODS.linearProjects]: (input) => linear.projects(input.teamId),
+        [WS_METHODS.linearMilestones]: (input) => linear.milestones(input.projectId),
+        [WS_METHODS.linearIssues]: (input) => linear.issues(input),
+        [WS_METHODS.linearIssueDetail]: (input) => linear.issueDetail(input.issueId),
+        [WS_METHODS.linearSubIssues]: (input) => linear.subIssues(input.issueId),
+        [WS_METHODS.linearViews]: () => linear.views,
+        [WS_METHODS.linearSearch]: (input) => linear.search(input.term),
+        [WS_METHODS.linearActivity]: () => linear.activity,
+        [WS_METHODS.linearRecordLaunch]: (input) => linear.recordLaunch(input),
+        [WS_METHODS.linearSubscribeRefreshes]: () => linear.subscribeRefreshes,
         [WS_METHODS.pullRequestsList]: (input) => pullRequests.list(input),
         [WS_METHODS.pullRequestsListStats]: (input) => pullRequests.listStats(input),
         [WS_METHODS.pullRequestsFilterOptions]: (input) => pullRequests.filterOptions(input),

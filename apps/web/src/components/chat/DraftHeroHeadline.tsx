@@ -50,6 +50,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
+import { LinearDraftProjectHint } from "../linear/LinearDraftProjectHint";
 import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
 import { TriageDraftHero } from "./TriageDraftHero";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -428,6 +429,9 @@ export function DraftHeroHeadline({
           )}
         </h1>
       )}
+      {draftId ? (
+        <LinearDraftProjectHint draftId={draftId} activeProjectId={activeProject?.id ?? null} />
+      ) : null}
       {scratchWorkspaceRoot === null ? null : (
         <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
           {isScratchDraft ? projectSelector : orStartWithoutProject}

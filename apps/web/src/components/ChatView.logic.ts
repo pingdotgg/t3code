@@ -37,6 +37,7 @@ import {
   type ScopedThreadRef,
   type ThreadContextRecord,
   type EnvironmentContextRecord,
+  type LinearIssueContextRecord,
   type ThreadId,
   type ThreadLinkedPullRequest,
   type RunId,
@@ -1249,6 +1250,7 @@ export interface ComposerSendContents {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+  readonly linearContexts: ReadonlyArray<LinearIssueContextRecord>;
 }
 
 /**
@@ -1269,6 +1271,7 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     reviewComments: [...contents.reviewComments],
     threadContexts: [...contents.threadContexts],
     environmentContexts: [...contents.environmentContexts],
+    linearContexts: [...contents.linearContexts],
     messageText: contents.terminalContexts
       .filter((context) => !terminalContexts.includes(context))
       .reduce(
