@@ -33,7 +33,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import { loadSubscriberShellSnapshot } from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
-import { projectContextHandoffForWire, projectThreadProjectionForWire } from "./WireProjection.ts";
+import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 const isThreadTranscriptTooLargeError = Schema.is(
   ThreadManagementService.ThreadTranscriptTooLargeError,
@@ -227,12 +227,7 @@ export const layer = HttpApiBuilder.group(
             args.query.deferWork === "1",
           ).pipe(traceLocalHandlerWork);
           const bounded = buildBoundedThreadProjection({
-            projection: {
-              ...snapshot.projection,
-              contextHandoffs: snapshot.projection.contextHandoffs.map(
-                projectContextHandoffForWire,
-              ),
-            },
+            projection: snapshot.projection,
             snapshotSequence: snapshot.snapshotSequence,
           });
           return {
