@@ -288,19 +288,39 @@ describe("GuestPage", () => {
       .spyOn(window, "fetch")
       .mockImplementation(async () => new Response(null, { status: 204 }));
     const sources: Array<EventTarget> = [];
-    // Enough turns that the thread overflows the page.
+    // Completed turns stay visible while the running turn uses its compact working window.
     const longItems = Array.from({ length: 12 }, (_, index) =>
       reply(
         `reply-${index}`,
         index,
         `Reply ${index}\n\n${"A long paragraph about the change. ".repeat(20)}`,
+        `history-${index}`,
       ),
     );
-    using _stream = vi
-      .spyOn(window, "EventSource")
-      .mockImplementation(
-        fakeEventSource(opening([run("run-1", 1, "running")], longItems), sources) as never,
-      );
+    using _stream = vi.spyOn(window, "EventSource").mockImplementation(
+      fakeEventSource(
+        opening(
+          [
+            ...longItems.map((_, index) => run(`history-${index}`, index + 1, "completed")),
+            run("run-1", 13, "running"),
+          ],
+          [
+            ...longItems,
+            {
+              ...itemBase("current-prompt", 12),
+              type: "user_message",
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("current-prompt"),
+              inputIntent: "turn_start",
+              text: "Check the login flow",
+              attachments: [],
+            },
+          ],
+        ),
+        sources,
+      ) as never,
+    );
     const send = (event: GuestStreamEvent) =>
       sources.at(-1)!.dispatchEvent(new MessageEvent("message", { data: encodeEvent(event) }));
     const container = document.createElement("div");
@@ -336,6 +356,7 @@ describe("GuestPage", () => {
     // The guest reads back a little, then sends: their message comes into view anyway, as the
     // owner's own send does.
     const node = scroller();
+    expect(node.scrollHeight - node.clientHeight).toBeGreaterThan(400);
     node.dispatchEvent(new WheelEvent("wheel", { deltaY: -400, bubbles: true }));
     node.scrollTop = node.scrollTop - 400;
     node.dispatchEvent(new Event("scroll"));
@@ -354,9 +375,9 @@ describe("GuestPage", () => {
 
     // The owner sends it: the run ends, the message becomes a row, and a new run's reply grows.
     const sent = { ...waiting, status: "sent" as const };
-    send(threadEvent(3, { type: "run.updated", payload: run("run-1", 1, "completed") }));
+    send(threadEvent(3, { type: "run.updated", payload: run("run-1", 13, "completed") }));
     send({ type: "view", view: { ...view, messages: [sent] } });
-    send(threadEvent(4, { type: "run.updated", payload: run("run-2", 2, "running") }));
+    send(threadEvent(4, { type: "run.updated", payload: run("run-2", 14, "running") }));
     send(
       threadEvent(5, {
         type: "turn-item.updated",
