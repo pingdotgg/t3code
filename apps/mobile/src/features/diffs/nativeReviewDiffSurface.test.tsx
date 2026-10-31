@@ -31,11 +31,11 @@ function RawView({
   ref: nativeRef,
   onDebug,
   initialFileId,
-  contentResetKey,
+  contentResetKey = "",
 }: NativeReviewDiffViewProps & { ref: Ref<unknown> }) {
   const [content, setContent] = useState({ resetKey: contentResetKey, rows: "" });
   // Native setContentResetKey clears rows unless the key is unchanged.
-  const setContentResetKey = (resetKey: string | undefined) =>
+  const setContentResetKey = (resetKey: string) =>
     setContent((current) => (current.resetKey === resetKey ? current : { resetKey, rows: "" }));
   const [tokenRowIds, setTokenRowIds] = useState<string[]>([]);
   // Android Fabric can apply a prop update after an AsyncFunction call made later.
