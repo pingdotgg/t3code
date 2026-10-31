@@ -2986,6 +2986,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const request = yield* sdkCall("session.command", commandPayload, (signal) =>
             client.session.command(commandPayload, {
               signal: AbortSignal.any([signal, abortController.signal]),
+              fetch: OpenCodeRuntime.fetchWithoutResponseTimeouts,
             }),
           ).pipe(
             Effect.asVoid,
@@ -2994,9 +2995,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               turn.finalized ||
               turn.admissionGeneration !== generation
                 ? Effect.void
-                : finalizeTurn(state, turn, "failed", {
-                    failure: makeProviderFailure({ cause, class: "provider_error" }),
-                  }),
+                : Effect.logWarning("OpenCode command request failed.", {
+                    errorTag: cause._tag,
+                  }).pipe(
+                    Effect.andThen(
+                      finalizeTurn(state, turn, "failed", {
+                        failure: makeProviderFailure({ cause, class: "provider_error" }),
+                      }),
+                    ),
+                  ),
             ),
             Effect.ensuring(
               Effect.sync(() => {

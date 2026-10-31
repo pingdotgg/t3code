@@ -222,6 +222,32 @@ export const loadOpenCodeCommands = (client: OpencodeClient) =>
     ),
   );
 
+// undici's Dispatcher: built-in fetch accepts one through the non-standard `dispatcher` init field.
+interface FetchDispatcher {
+  readonly dispatch: (options: object, handler: unknown) => boolean;
+}
+
+// Built-in fetch on undici 6/7 (Node 22/24) reads the v1 global; undici 8 reads v2 and keeps v1 as a wrapper.
+const builtinFetchDispatcherKey = Symbol.for(
+  Number.parseInt(process.versions.undici ?? "", 10) >= 8
+    ? "undici.globalDispatcher.2"
+    : "undici.globalDispatcher.1",
+);
+
+// Reuses the process dispatcher (pools, env proxy) and only drops undici's 300s response timeouts.
+const untimedFetchDispatcher: FetchDispatcher = {
+  dispatch: (options, handler) =>
+    (Reflect.get(globalThis, builtinFetchDispatcherKey) as FetchDispatcher).dispatch(
+      { ...options, headersTimeout: 0, bodyTimeout: 0 },
+      handler,
+    ),
+};
+
+/** OpenCode answers `session.command` only when the whole run ends; AbortSignal still cancels it. */
+export const fetchWithoutResponseTimeouts: typeof fetch = (input, init) =>
+  // @effect-diagnostics-next-line globalFetch:off - The OpenCode SDK takes a fetch implementation.
+  fetch(input, { ...init, dispatcher: untimedFetchDispatcher } as RequestInit);
+
 export interface ParsedOpenCodeModelSlug {
   readonly providerID: string;
   readonly modelID: string;
