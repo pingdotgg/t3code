@@ -38,6 +38,8 @@ The mobile app has a Linear tab. Browse teams, projects, milestones and issues, 
 
 ## Things to know
 
+- Links to issues in your connected Linear workspace open in the Linear page instead of the
+  browser. Hold ⌘ (Ctrl on Windows and Linux) while clicking to open them in the browser.
 - The page refreshes when you return to it, every minute while it is open, and when you choose
   refresh. It does not poll while closed.
 - When Linear is unreachable or rate limited, the page shows the last data it loaded with a banner.

@@ -6,6 +6,7 @@ import {
   type LinearStepTone,
 } from "@t3tools/client-runtime/linear/activity";
 import { formatProgressPercent } from "@t3tools/client-runtime/linear/issue-list";
+import { linearIssueMatchesRoute } from "@t3tools/client-runtime/linear/issue-link";
 import {
   EnvironmentId,
   ThreadId,
@@ -34,6 +35,7 @@ import { useNavigateToPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { LinearActivityPill } from "./LinearIssueRow";
+import { useOpenLinearIssueLink } from "./useOpenLinearIssueLink";
 import {
   LinearAvatar,
   LinearGlyph,
@@ -162,9 +164,18 @@ function ActivityRow(props: {
   );
 }
 
+/** Issue links open in the app; everything else stays limited to web and mail links. */
+function useOpenMarkdownLink() {
+  const openLinearIssue = useOpenLinearIssueLink();
+  return (href: string) => {
+    if (!openLinearIssue(href)) void tryOpenWebLink(href, "markdown-link");
+  };
+}
+
 function CommentRow(props: { readonly comment: LinearComment }) {
   const styles = useMarkdownPreviewStyles();
   const { comment } = props;
+  const openMarkdownLink = useOpenMarkdownLink();
   return (
     <View className="flex-row gap-2.5">
       <LinearAvatar user={comment.author} size={22} />
@@ -176,7 +187,7 @@ function CommentRow(props: { readonly comment: LinearComment }) {
         <SelectableMarkdownText
           markdown={comment.body}
           textStyle={styles.nativeTextStyle}
-          onLinkPress={(href) => void tryOpenWebLink(href, "markdown-link")}
+          onLinkPress={openMarkdownLink}
         />
       </View>
     </View>
@@ -216,6 +227,7 @@ function DetailBody(props: {
   const launch = useLinearLaunch(environmentId);
   const openThread = useOpenLinearThread();
   const navigateToPullRequest = useNavigateToPullRequest();
+  const openMarkdownLink = useOpenMarkdownLink();
   const activityQuery = useLinearActivity(environmentId);
   const markdownStyles = useMarkdownPreviewStyles();
   const [branchCopied, setBranchCopied] = useState(false);
@@ -392,7 +404,7 @@ function DetailBody(props: {
           <SelectableMarkdownText
             markdown={detail.description}
             textStyle={markdownStyles.nativeTextStyle}
-            onLinkPress={(href) => void tryOpenWebLink(href, "markdown-link")}
+            onLinkPress={openMarkdownLink}
           />
         </View>
       )}
@@ -525,7 +537,8 @@ export function LinearIssueRouteScreen({
   useLinearAutoRefresh(true, [status, query, activity]);
   const degradation = useLinearDegradation(environmentId, [query.failure], false);
   // The issue switched but its answer has not landed: never show the previous issue's body.
-  const detail = query.data?.issue.id === issueId ? query.data : null;
+  const detail =
+    query.data && linearIssueMatchesRoute(query.data.issue, issueId) ? query.data : null;
   const issue = detail?.issue;
   const team = status.data?.teams.find((entry) => entry.id === issue?.team.id);
   return (

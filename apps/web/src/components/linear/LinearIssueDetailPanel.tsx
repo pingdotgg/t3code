@@ -48,6 +48,7 @@ import {
   LinearTeamBadge,
 } from "./linearIcons";
 import { formatProgressPercent } from "@t3tools/client-runtime/linear/issue-list";
+import { linearIssueMatchesRoute } from "@t3tools/client-runtime/linear/issue-link";
 import {
   activityStatusLabel,
   pickActivityPill,
@@ -527,7 +528,8 @@ export function LinearIssueDetailPanel({
 }) {
   const query = useLinearIssueDetail(issueId);
   // The issue switched but its answer has not landed: never show the previous issue's body.
-  const detail = query.data?.issue.id === issueId ? query.data : null;
+  const detail =
+    query.data && linearIssueMatchesRoute(query.data.issue, issueId) ? query.data : null;
   const { copyToClipboard } = useCopyToClipboard<string>({
     target: "issue details",
     timeout: 0,

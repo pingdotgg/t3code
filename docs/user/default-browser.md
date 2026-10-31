@@ -9,7 +9,8 @@ Choose **T3 Code** under **System Settings → Desktop & Dock → Default web br
 choose another browser there.
 
 Pull request links for a connected project open in the pull request view when opening pull
-request links in the app is enabled. Other links still open in the browser panel.
+request links in the app is enabled. Linear issue links in your connected workspace open in the
+Linear page. Other links still open in the browser panel.
 
 HTML files you open from Finder open the same way. [Prompt links](prompt-links.md) to
 app.t3.codes open in the app as a draft.

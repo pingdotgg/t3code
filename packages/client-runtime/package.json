@@ -51,6 +51,10 @@
       "types": "./src/linear/recordLaunch.ts",
       "default": "./src/linear/recordLaunch.ts"
     },
+    "./linear/issue-link": {
+      "types": "./src/linear/issueLink.ts",
+      "default": "./src/linear/issueLink.ts"
+    },
     "./linear/activity": {
       "types": "./src/linear/activity.ts",
       "default": "./src/linear/activity.ts"

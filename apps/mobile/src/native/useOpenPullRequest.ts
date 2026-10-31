@@ -6,6 +6,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import { appAtomRegistry } from "../state/atom-registry";
+import { useOpenLinearIssueLink } from "../features/linear/useOpenLinearIssueLink";
 import { environmentServerConfigsAtom } from "../state/server";
 import { withKnownPullRequestSummary } from "../state/use-thread-pr";
 
@@ -19,8 +20,10 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const projects = useProjects();
+  const openLinearIssue = useOpenLinearIssueLink();
   const replace = options?.replace;
   return async (url: string, context: PullRequestContext | null) => {
+    if (openLinearIssue(url)) return true;
     // Read at press time so a config push does not hand every link a new handler.
     const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
     const destination = nativePullRequestDestination(url, context, projects, (environmentId) =>
