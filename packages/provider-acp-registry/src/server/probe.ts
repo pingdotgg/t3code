@@ -29,7 +29,10 @@ import {
   findModelConfigOption,
   parseSessionModeState,
 } from "@t3tools/provider-acp/server/runtimeModel";
-import { acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
+import {
+  acpProviderOptionDescriptors,
+  flattenSelectChoices,
+} from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
@@ -40,8 +43,6 @@ const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
 const MAX_COMMANDS = 128;
 const MAX_COMMAND_LINE_LENGTH = 2_048;
-// Covers a cold package command launch and ACP initialization after registry
-// preparation globally installs the exact package.
 const PROBE_TIMEOUT_SECONDS = 60;
 const PROBE_TIMEOUT = `${PROBE_TIMEOUT_SECONDS} seconds`;
 const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
@@ -58,40 +59,40 @@ export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
   return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
 }
 
+function normalizedModel(id: string, candidate: AcpRegistryProbeModel): AcpRegistryProbeModel {
+  return {
+    id,
+    name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
+    description:
+      candidate.description === null
+        ? null
+        : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
+  };
+}
+
 function normalizeModels(
-  modelOption: ReturnType<typeof findModelConfigOption>,
+  candidates: ReadonlyArray<AcpRegistryProbeModel>,
+  currentModelId: string | null,
 ): ReadonlyArray<AcpRegistryProbeModel> {
-  // Model discovery is the model config option's base models; ACP has no
-  // other portable model inventory. Later model-category options are session
-  // options, not more models.
-  const choices = (modelOption?.options ?? []).flatMap((candidate) =>
-    "value" in candidate ? [candidate] : candidate.options,
-  );
-  const candidates = choices.map((model) => ({
-    id: model.value,
-    name: model.name,
-    description: model.description ?? null,
-  }));
   const seen = new Set<string>();
   const models: Array<AcpRegistryProbeModel> = [];
   for (const candidate of candidates) {
+    if (models.length === MAX_MODELS) break;
     const id = boundedOpaqueValue(candidate.id, MAX_ID_LENGTH);
     if (id === undefined || seen.has(id)) continue;
     seen.add(id);
-    models.push({
-      id,
-      name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
-      description:
-        candidate.description === null
-          ? null
-          : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
-    });
-    if (models.length === MAX_MODELS) break;
+    models.push(normalizedModel(id, candidate));
+  }
+  // Keep the running model visible even when its advertised position exceeds the cap.
+  if (currentModelId !== null && models.length === MAX_MODELS && !seen.has(currentModelId)) {
+    const current = candidates.find((candidate) => candidate.id === currentModelId);
+    if (current !== undefined) {
+      models[MAX_MODELS - 1] = normalizedModel(currentModelId, current);
+    }
   }
   return models;
 }
 
-/** Agent spawn recipe used to compose runnable terminal-auth command lines. */
 export interface AcpRegistryAuthSpawnContext {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -178,13 +179,7 @@ export type AcpRegistryModelOptions = ReadonlyMap<
   AcpRegistryLiveConfiguration["configOptions"]
 >;
 
-/**
- * Records a session's option descriptors against the model they describe.
- * ACP config options belong to the session's current model, so they are
- * dropped when that model is not one the agent lists. Every option, modes
- * included, is treated as model-specific: ACP marks none as independent of
- * the model, and agents re-send the whole set after a model switch.
- */
+/** ACP options belong to the current model, including modes. */
 export function recordAcpRegistryModelOptions(
   known: AcpRegistryModelOptions,
   configuration: Pick<AcpRegistryLiveConfiguration, "models" | "currentModelId" | "configOptions">,
@@ -200,13 +195,28 @@ export function recordAcpRegistryModelOptions(
 export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
+  modelState?: EffectAcpSchema.SessionModelState | null,
 ): AcpRegistryLiveConfiguration {
   const modelOption = findModelConfigOption(configOptions);
-  const boundedCurrentModelId =
+  const currentModelId =
+    modelOption?.type === "select" ? modelOption.currentValue : modelState?.currentModelId;
+  const candidates =
     modelOption === undefined
+      ? (modelState?.availableModels ?? []).map((model) => ({
+          id: model.modelId,
+          name: model.name,
+          description: model.description ?? null,
+        }))
+      : flattenSelectChoices(modelOption.options).map((model) => ({
+          id: model.value,
+          name: model.name,
+          description: model.description ?? null,
+        }));
+  const boundedCurrentModelId =
+    currentModelId === undefined
       ? null
-      : (boundedOpaqueValue(modelOption.currentValue, MAX_ID_LENGTH) ?? null);
-  const models = normalizeModels(modelOption);
+      : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
+  const models = normalizeModels(candidates, boundedCurrentModelId);
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)
@@ -221,7 +231,6 @@ const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({
   skills: [],
 });
 
-/** Splits the latest ACP command advertisement into T3's `/` and `$` menus. */
 export function normalizeAcpRegistryCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
 ): AcpRegistryAvailableCommands {
@@ -260,7 +269,6 @@ export function normalizeAcpRegistryCommands(
   return { slashCommands, skills };
 }
 
-/** Builds the bounded wire result from a successfully created disposable ACP session. */
 export function acpRegistryProbeResult(
   instanceId: ProviderInstanceId,
   started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
@@ -270,6 +278,7 @@ export function acpRegistryProbeResult(
   const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
     started.sessionSetupResult.configOptions ?? [],
     parseSessionModeState(started.sessionSetupResult),
+    started.sessionSetupResult.models,
   );
   return AcpRegistryProbeResult.make({
     instanceId,
@@ -327,7 +336,6 @@ export type AcpRegistryConfigurationProbe<Requirements = never> = (
   input: AcpRegistryConfigurationProbeInput,
 ) => Effect.Effect<AcpRegistryConfigurationProbeResult, AcpRegistryOperationError, Requirements>;
 
-/** Starts and immediately disposes an ACP session for one already-decoded configuration. */
 export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeConfiguration")(
   function* (
     input: AcpRegistryConfigurationProbeInput,
@@ -342,9 +350,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
 
     const result = yield* Effect.gen(function* () {
-      // Resolution may install a missing registry package. Keep it inside the
-      // probe deadline so a provider refresh cannot inherit the installer's
-      // much longer timeout.
+      // Resolution may install packages; bound it by the probe deadline.
       const resolved = yield* catalog
         .resolve(input.settings, input.cwd, input.environment)
         .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError));

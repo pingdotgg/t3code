@@ -17,23 +17,23 @@ private final class FilePreviewController: QLPreviewController {
   }
 }
 
-/// Quick Look owns image and document controls, zooming, and source-view transitions.
 final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   QLPreviewControllerDelegate, UIAdaptivePresentationControllerDelegate {
   let identifier: String
   private var controller: UIViewController?
   private let completion: (Error?) -> Void
   private weak var sources: T3PresentationSources?
-  private let sourceIdentifier: String
+  private let sourceIdentifiers: [String]
   private var items: [FilePreviewItem] = []
   private var loading: Task<Void, Never>?
   private var dismissRequested = false
   private var finished = false
 
-  init(identifier: String, sources: T3PresentationSources, sourceIdentifier: String, completion: @escaping (Error?) -> Void) {
+  init(identifier: String, sources: T3PresentationSources, sourceIdentifiers: [String],
+       completion: @escaping (Error?) -> Void) {
     self.identifier = identifier
     self.sources = sources
-    self.sourceIdentifier = sourceIdentifier
+    self.sourceIdentifiers = sourceIdentifiers
     self.completion = completion
     super.init()
   }
@@ -107,14 +107,21 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     items[index]
   }
 
+  private func sourceView(for item: QLPreviewItem) -> UIView? {
+    guard !UIAccessibility.isReduceMotionEnabled,
+      let index = items.firstIndex(where: { $0 === item }),
+      sourceIdentifiers.indices.contains(index)
+    else { return nil }
+    return sources?.view(for: sourceIdentifiers[index])
+  }
+
   func previewController(_ controller: QLPreviewController, transitionViewFor item: QLPreviewItem) -> UIView? {
-    guard !UIAccessibility.isReduceMotionEnabled else { return nil }
-    return sources?.view(for: sourceIdentifier)
+    sourceView(for: item)
   }
 
   func previewController(_ controller: QLPreviewController, frameFor item: QLPreviewItem,
                          inSourceView view: AutoreleasingUnsafeMutablePointer<UIView?>) -> CGRect {
-    guard !UIAccessibility.isReduceMotionEnabled, let source = sources?.view(for: sourceIdentifier) else { return .zero }
+    guard let source = sourceView(for: item) else { return .zero }
     view.pointee = source
     return source.bounds
   }
@@ -159,9 +166,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
         try FileManager.default.moveItem(at: temporaryFile, to: download)
       }
       try Task.checkCancellation()
-      // Pictures and PDFs are identified by content so a misnamed file still opens correctly.
-      // Anything else keeps its own extension: Quick Look decides from that whether it can
-      // render the document (Office, iWork, RTF and more) and refuses before we present.
+      // Detect images and PDFs by content; preserve other extensions so Quick Look can decide support.
       let filename = URL(fileURLWithPath: title).lastPathComponent as NSString
       let originalExtension = filename.pathExtension
       var type: UTType?

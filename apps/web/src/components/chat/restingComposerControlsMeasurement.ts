@@ -24,8 +24,6 @@ function providerModelPickerNaturalWidth(picker: HTMLElement): number {
   if (renderedWidth === 0) return 0;
   const style = getComputedStyle(picker);
   const label = picker.querySelector<HTMLElement>('[data-chat-provider-model-picker-label="true"]');
-  // Narrow composers deliberately collapse the label with w-0 and flex-none.
-  // A flexible label squeezed to zero still needs its natural width recovered.
   const labelIsCollapsed = label?.clientWidth === 0 && getComputedStyle(label).flexGrow === "0";
   const hiddenLabelWidth =
     label && !labelIsCollapsed ? Math.max(0, label.scrollWidth - label.clientWidth) : 0;
@@ -47,12 +45,9 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
   let natural = elementOuterWidth(block);
   let iconOnly = natural;
   for (const label of block.querySelectorAll<HTMLElement>("[data-composer-control-label]")) {
-    // Labels remain mounted at natural width when icons replace them. Reading
-    // both variants from one tree avoids duplicate controls or write/read probes.
     const labelStyle = getComputedStyle(label);
     const inFlow = labelStyle.position !== "absolute";
-    // Phone widths already hide the build label with sr-only. Its clipping
-    // remains in effect even when compact styles replace its one-pixel width.
+    // Phone sr-only clipping survives compact styles overriding the label width.
     if (!inFlow && (!compact || labelStyle.clip !== "auto")) continue;
     const labelWidth = label.scrollWidth;
     const renderedWidth = inFlow ? label.getBoundingClientRect().width : 0;
@@ -69,17 +64,7 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
   return { natural, iconOnly: Math.min(natural, iconOnly) };
 }
 
-/**
- * Read the natural widths of the resting composer controls from the DOM.
- *
- * Both the composer (deciding which blocks move into overflow) and the
- * context strip (deciding whether its labels may expand) read the same
- * numbers, so neither decision depends on what the other one hid last render.
- *
- * Hidden blocks and the unused overflow trigger stay mounted out of flow at
- * full size. The picker is the one flexible item: its intended width is
- * recovered from the truncated label.
- */
+/** Measure independently of controls hidden by the previous render. */
 export function measureRestingComposerControls(
   controls: HTMLElement,
 ): RestingComposerControlsMeasurement | null {
@@ -88,7 +73,6 @@ export function measureRestingComposerControls(
   const leadingControl =
     picker ?? controls.querySelector<HTMLElement>('[data-chat-provider-unavailable="true"]');
   if (!leadingControl) return null;
-  // Separators are display:none on phone widths; a hidden one takes no gap.
   const separator = controls.querySelector<HTMLElement>("[data-resting-controls-separator]");
   const separatorWidth = separator ? elementOuterWidth(separator) : 0;
   const overflow = controls.querySelector<HTMLElement>("[data-resting-controls-overflow]");

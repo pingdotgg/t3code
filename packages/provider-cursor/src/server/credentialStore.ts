@@ -21,11 +21,6 @@ const Credentials = Schema.fromJsonString(
 const decodeCredentials = Schema.decodeUnknownEffect(Credentials);
 const encodeCredentials = Schema.encodeEffect(Credentials);
 
-/**
- * The SDK owns the credential format; persistence uses the environment's secret store.
- * `legacyFile` is the SDK file store earlier versions used; its sign-in moves into
- * the secret store once and the file is deleted.
- */
 export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(function* (
   instanceId: ProviderInstanceId,
   legacyFile?: string,
@@ -36,7 +31,6 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
     yield* Effect.gen(function* () {
       const legacy = yield* fileSystem.readFileString(legacyFile).pipe(Effect.option);
       if (Option.isNone(legacy)) return;
-      // A stored sign-in wins unless it is damaged; the SDK would ignore it anyway.
       const stored = yield* credentials.get;
       const storedIsValid =
         Option.isSome(stored) &&
@@ -56,12 +50,14 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
       ),
     );
   }
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const store: SdkCredentialStore = {
     load: () =>
-      Effect.runPromise(
+      runPromise(
         credentials.get.pipe(
           Effect.flatMap(
             Option.match({
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - The SDK credential API requires undefined, not void.
               onNone: () => Effect.succeed(undefined),
               onSome: (bytes) =>
                 decodeCredentials(new TextDecoder().decode(bytes)).pipe(
@@ -71,9 +67,14 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
           ),
         ),
       ),
-    save: (value) =>
-      Effect.runPromise(
-        encodeCredentials(value).pipe(
+    // The SDK can supply undefined optional fields despite its exact optional types.
+    save: ({ email, apiKeyExpiresAtMs, ...requiredFields }) =>
+      runPromise(
+        encodeCredentials({
+          ...requiredFields,
+          ...(email === undefined ? {} : { email }),
+          ...(apiKeyExpiresAtMs === undefined ? {} : { apiKeyExpiresAtMs }),
+        }).pipe(
           Effect.mapError(
             () =>
               new ProviderSetupError({
@@ -85,7 +86,7 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
           Effect.flatMap((encoded) => credentials.set(new TextEncoder().encode(encoded))),
         ),
       ),
-    clear: () => Effect.runPromise(credentials.remove),
+    clear: () => runPromise(credentials.remove),
   };
   return { store, binding: credentials.binding };
 });

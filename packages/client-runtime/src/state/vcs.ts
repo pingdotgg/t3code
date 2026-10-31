@@ -35,8 +35,6 @@ import {
 
 const OFFLINE_BRANCH_LIST_LIMIT = 100;
 const VCS_REFS_IDLE_TTL_MS = 30_000;
-// Rows keep the last status they rendered, so the live stream only needs a
-// short grace period when virtualization or scrolling releases its consumer.
 const VCS_STATUS_IDLE_TTL_MS = 10_000;
 const VCS_REFS_RETRY_SCHEDULE = Schedule.exponential("1 second").pipe(
   Schedule.modifyDelay(({ duration }) =>
@@ -115,7 +113,6 @@ export const commitVcsRefsRefresh = Effect.fn("CachedVcsRefsState.commitRefresh"
 });
 
 /**
- * Retains the last unfiltered branch-list response for the new-task picker.
  * Filtered or paginated lists intentionally stay live-only: treating a
  * partial result as a complete offline list would make branch selection
  * misleading.
@@ -182,17 +179,16 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
       }),
     ),
   );
-  const refreshedRefs = Stream.concat(
-    Stream.fromEffect(SubscriptionRef.get(supervisor.state)),
-    SubscriptionRef.changes(supervisor.state),
-  ).pipe(
-    Stream.map((connection) => (connection.phase === "connected" ? connection.generation : null)),
+  const refreshedRefs = SubscriptionRef.changes(supervisor.session).pipe(
+    Stream.map(Option.getOrNull),
     Stream.changes,
-    Stream.switchMap((generation) =>
-      generation === null
+    Stream.switchMap((session) =>
+      session === null
         ? Stream.empty
         : Stream.fromEffect(
             refresh().pipe(
+              // Session removal can precede switchMap cancelling this refresh.
+              Effect.catchTags({ EnvironmentRpcUnavailableError: () => Effect.never }),
               Effect.tapError((error) =>
                 Effect.logWarning("Could not refresh Git refs.").pipe(
                   Effect.annotateLogs({
@@ -280,6 +276,12 @@ export function createVcsEnvironmentAtoms<R, E>(
 
   return {
     listRefs,
+    // An uncached read for decisions that must match the repository now, not
+    // the persisted list a picker renders from.
+    readRefs: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:read-refs",
+      tag: WS_METHODS.vcsListRefs,
+    }),
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
       idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
@@ -315,9 +317,6 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
-    // Live stages of a bootstrap worktree setup. Null until the server begins
-    // tracking, then a snapshot per change, then null again after the setup
-    // is dropped. Short TTL so a closed thread releases its subscription.
     worktreeSetup: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:worktree-setup",
       tag: WS_METHODS.subscribeWorktreeSetup,
@@ -361,3 +360,4 @@ export function createVcsEnvironmentAtoms<R, E>(
 export * from "./gitActions.ts";
 export * from "./vcsAction.ts";
 export * from "./vcsRef.ts";
+export * from "./vcsStatusRevalidation.ts";

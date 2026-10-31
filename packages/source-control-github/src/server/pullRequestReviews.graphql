@@ -1,0 +1,258 @@
+# The review conversation: threads, their comments, and what the people on the review said.
+
+# A reaction group as every reactable node reports it. `reactors` is bounded rather than paged: a
+# hover says who reacted, and a hundred and forty names is a count, not a sentence.
+fragment Reactions on Reactable {
+  reactionGroups {
+    content
+    viewerHasReacted
+    reactors(first: 10) {
+      totalCount
+      nodes {
+        ... on User {
+          login
+        }
+        ... on Bot {
+          login
+        }
+        ... on Organization {
+          login
+        }
+        ... on Mannequin {
+          login
+        }
+      }
+    }
+  }
+}
+
+fragment ThreadComment on PullRequestReviewComment {
+  id
+  author {
+    __typename
+    login
+    avatarUrl
+  }
+  body
+  createdAt
+  lastEditedAt
+  url
+  ...Reactions
+}
+
+# One page of review threads with their comments, and the people on the review. `$after` is null
+# for the first page and the last page's `endCursor` after that, so a pull request with more
+# threads than one page holds is walked rather than cut off.
+#
+# `viewer` rides along: GitHub names who reacted but never says whether that is the reader, so the
+# comparison is made locally rather than paid for with a request of its own.
+#
+# Reviewers come from here because `reviewRequests` holds only requests still outstanding, so
+# anyone who has already reviewed drops off it; `latestReviews` adds them back. A reviewer can be a
+# person or an app, and both are asked for by name because they are different GraphQL types.
+#
+# `viewerCanUpdate` and `viewerDidAuthor` belong to the pull request this query is already
+# standing on, so what the reader may do with it arrives with the conversation.
+query ReviewThreads(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $after: String
+  $requestedReviewers: Int!
+) {
+  viewer {
+    login
+  }
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        totalCount
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          # Null once the thread's line has left the diff, which `isOutdated` reports.
+          line
+          diffSide
+          # Only ten comments ride with each thread. A hundred threads times a hundred comments
+          # made GitHub reserve 10,000 nested rows and charge 104 points; unfinished threads are
+          # paged from their own cursor by `ReviewThreadComments`.
+          comments(first: 10) {
+            totalCount
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              ...ThreadComment
+            }
+          }
+        }
+      }
+      viewerCanUpdate
+      viewerDidAuthor
+      author {
+        __typename
+        login
+        avatarUrl
+      }
+      ...Reactions
+      comments(first: 100) {
+        nodes {
+          id
+          lastEditedAt
+          author {
+            __typename
+            login
+            avatarUrl
+          }
+          ...Reactions
+        }
+      }
+      # For their reactions and edit times: the words and the verdict arrive with the activity read.
+      reviews(first: 100) {
+        nodes {
+          id
+          lastEditedAt
+          author {
+            __typename
+            login
+            avatarUrl
+          }
+          ...Reactions
+        }
+      }
+      reviewRequests(first: $requestedReviewers) {
+        nodes {
+          # Null for nobody. A team goes by its `org/slug`; a mannequin answers with neither and
+          # names nobody to show. A team's name and avatar are aliased apart from a person's,
+          # since their nullability differs.
+          requestedReviewer {
+            ... on User {
+              login
+              name
+              avatarUrl
+            }
+            ... on Bot {
+              login
+              avatarUrl
+            }
+            ... on Team {
+              combinedSlug
+              teamName: name
+              teamAvatarUrl: avatarUrl
+            }
+          }
+        }
+      }
+      latestReviews(first: 50) {
+        nodes {
+          state
+          author {
+            __typename
+            login
+            avatarUrl
+          }
+        }
+      }
+      reviewDismissals: timelineItems(itemTypes: [REVIEW_DISMISSED_EVENT], first: 100) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          ... on ReviewDismissedEvent {
+            dismissalMessage
+            review {
+              id
+            }
+          }
+        }
+      }
+      # `last` rather than `first`: a pull request with more than a hundred commits keeps the
+      # newest ones, which is what a reader scoping a diff wants.
+      commits(last: 100) {
+        nodes {
+          commit {
+            oid
+            messageHeadline
+            committedDate
+            authors(first: 3) {
+              nodes {
+                name
+                avatarUrl
+                user {
+                  login
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# The rest of one thread's conversation. GraphQL pages a connection nested inside another only
+# from the inner node itself, so a thread longer than a page is followed on its own: a request
+# GitHub makes necessary, and one no ordinary pull request ever provokes.
+query ReviewThreadComments(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $threadId: ID!
+  $after: String
+) {
+  viewer {
+    login
+  }
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+    }
+  }
+  node(id: $threadId) {
+    ... on PullRequestReviewThread {
+      pullRequest {
+        id
+      }
+      comments(first: 100, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          ...ThreadComment
+        }
+      }
+    }
+  }
+}
+
+# The dismissal events past the page the thread read carries. A pull request rarely has any: this
+# is followed only while the embedded page reports more.
+query ReviewDismissals($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      timelineItems(itemTypes: [REVIEW_DISMISSED_EVENT], first: 100, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          ... on ReviewDismissedEvent {
+            dismissalMessage
+            review {
+              id
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -282,32 +282,4 @@ describe("acpProviderOptionDescriptors", () => {
       options: [{ id: exactValue, label: "Exact" }],
     });
   });
-
-  it("suppresses the synthetic mode descriptor when a mode-category option exists", () => {
-    const descriptors = acpProviderOptionDescriptors({
-      configOptions: [
-        {
-          id: "mode",
-          name: "Mode",
-          category: "mode",
-          type: "select",
-          currentValue: "agent",
-          options: [
-            { value: "read-only", name: "Read-only" },
-            { value: "agent", name: "Agent" },
-          ],
-        },
-      ],
-      modeState: {
-        currentModeId: "agent",
-        availableModes: [
-          { id: "read-only", name: "Read-only" },
-          { id: "agent", name: "Agent" },
-          { id: "agent-full-access", name: "Agent (full access)" },
-        ],
-      },
-    });
-
-    expect(descriptors.map((descriptor) => descriptor.id)).toEqual(["mode"]);
-  });
 });

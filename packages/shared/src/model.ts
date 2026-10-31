@@ -14,7 +14,6 @@ import { copySorted } from "./Array.ts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 
-/** Choose the command for a model change against the thread's current provider instance. */
 export function modelSelectionCommandType(
   currentInstanceId: ProviderInstanceId,
   selection: ModelSelection,
@@ -53,7 +52,7 @@ function getProviderOptionSelectionValue(
   return getRawSelectionValueById(selections, id);
 }
 
-export function getProviderOptionStringSelectionValue(
+function getProviderOptionStringSelectionValue(
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
   id: string,
 ): string | undefined {
@@ -61,7 +60,7 @@ export function getProviderOptionStringSelectionValue(
   return typeof value === "string" ? value : undefined;
 }
 
-export function getProviderOptionBooleanSelectionValue(
+function getProviderOptionBooleanSelectionValue(
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
   id: string,
 ): boolean | undefined {
@@ -103,10 +102,6 @@ function canonicalModelSelectionOptions(
   );
 }
 
-/**
- * Compares the complete provider selection while treating option ordering and
- * an omitted empty option list as presentation details.
- */
 export function modelSelectionsEqual(left: ModelSelection, right: ModelSelection): boolean {
   if (left.instanceId !== right.instanceId || left.model !== right.model) {
     return false;
@@ -119,6 +114,20 @@ export function modelSelectionsEqual(left: ModelSelection, right: ModelSelection
       ([id, value], index) => id === rightOptions[index]?.[0] && value === rightOptions[index]?.[1],
     )
   );
+}
+
+/**
+ * Whether a composer's draft model pick is what the thread already runs. Web sends
+ * `fastMode: false` for models with a fast toggle while mobile omits it, so off counts as unset.
+ */
+export function draftModelPickMatchesThread(pick: ModelSelection, thread: ModelSelection): boolean {
+  const withoutFastModeOff = (selection: ModelSelection) =>
+    createModelSelection(
+      selection.instanceId,
+      selection.model,
+      selection.options?.filter((option) => option.id !== "fastMode" || option.value !== false),
+    );
+  return modelSelectionsEqual(withoutFastModeOff(pick), withoutFastModeOff(thread));
 }
 
 function resolveDescriptorChoiceValue(
@@ -224,6 +233,17 @@ function getReportedOptionValue(
   return getRawSelectionValueById(reportedSelection.options, id);
 }
 
+export function getProviderOptionStatedValue(
+  id: string,
+  selection?: ModelSelection | null,
+  reportedSelection?: ModelSelection | null,
+) {
+  return (
+    getRawSelectionValueById(selection?.options, id) ??
+    getReportedOptionValue(id, selection, reportedSelection)
+  );
+}
+
 export function getProviderOptionCurrentValue(
   descriptor: ProviderOptionDescriptor | null | undefined,
   selection?: ModelSelection | null,
@@ -291,13 +311,7 @@ export function buildProviderOptionSelectionsFromDescriptors(
   return nextSelections.length > 0 ? nextSelections : undefined;
 }
 
-/**
- * The selections to store after the user changes option `changedId`: every
- * option at its current value, except a `selectsModel` option the user
- * neither changes now nor saved in `savedSelections`. That option's current
- * value is only the agent's default model, and storing it would pin a model
- * the user never picked.
- */
+/** Preserve secondary model choices only when explicitly picked. */
 export function buildProviderOptionSelectionsAfterChange(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
   changedId: string,
@@ -332,7 +346,6 @@ export function isClaudeUltrathinkPrompt(text: string | null | undefined): boole
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }
 
-/** Compare Codex model families without changing provider-owned dispatch identifiers. */
 export function codexModelFamily(slug: string): string {
   return slug.startsWith("openai.gpt-") ? slug.slice("openai.".length) : slug;
 }
@@ -382,7 +395,6 @@ export function normalizeCustomModelSlug(model: string | null | undefined): stri
   return model.trim() || null;
 }
 
-/** A custom model setting with its optional fields resolved. */
 export interface CustomModelDefinition {
   readonly slug: string;
   readonly name: string;
@@ -391,13 +403,6 @@ export interface CustomModelDefinition {
 
 const decodeCustomModelCapabilities = Schema.decodeUnknownOption(ModelCapabilities);
 
-/**
- * Read a `customModels` setting into resolved definitions. Accepts the typed
- * union as well as the opaque `providerInstances[id].config` blob clients see,
- * so it tolerates bare slugs, malformed rows, and unparseable capabilities
- * (dropped rather than failing the whole list). Slugs are trimmed and
- * deduplicated, first occurrence wins; `name` falls back to the slug.
- */
 export function readCustomModelEntries(value: unknown): CustomModelDefinition[] {
   if (!Array.isArray(value)) return [];
   const entries: CustomModelDefinition[] = [];
@@ -430,10 +435,6 @@ export function readCustomModelEntries(value: unknown): CustomModelDefinition[] 
   return entries;
 }
 
-/**
- * Write a definition back to the compact stored shape: a bare slug when it
- * carries nothing custom, otherwise an entry with only the set fields.
- */
 export function toCustomModelSetting(entry: CustomModelDefinition): CustomModelSetting {
   const descriptors = entry.capabilities?.optionDescriptors ?? [];
   const name = entry.name !== entry.slug ? entry.name : undefined;
@@ -487,7 +488,6 @@ export function resolveSelectableModel(
   return resolved ? resolved.slug : null;
 }
 
-/** Trim a string, returning null for empty/missing values. */
 function trimOrNull<T extends string>(value: T | null | undefined): T | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim() as T;
@@ -513,14 +513,6 @@ export function createModelSelection(
   return selections.length > 0 ? { ...base, options: selections } : base;
 }
 
-/**
- * Returns the effort value if it is a prompt-injected value according to
- * any select descriptor in the given capabilities, or null otherwise.
- *
- * Unlike a single `find`, this checks every descriptor so that the
- * correct descriptor's `promptInjectedValues` list is consulted even when
- * multiple select descriptors exist.
- */
 export function resolvePromptInjectedEffort(
   caps: ModelCapabilities,
   rawEffort: string | null | undefined,
@@ -544,10 +536,7 @@ export function applyClaudePromptEffortPrefix(
   if (!trimmed) {
     return trimmed;
   }
-  // Prefixing a slash command turns it into plain prose, so Claude never
-  // runs it. Command names come from arbitrary file names ("/deploy.prod",
-  // "/plugin:skill"), so accept any first token without a second slash;
-  // absolute paths like "/home/theo/app.ts" keep the prefix.
+  // Prefixing slash commands prevents Claude invocation; command names allow any token without a second slash.
   if (effort !== "ultrathink" || /^\/[^\s/]+(?:\s|$)/u.test(trimmed)) {
     return trimmed;
   }

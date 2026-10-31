@@ -3,27 +3,9 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { type AcpSessionModeState, findModelConfigOption } from "./runtimeModel.ts";
 
-/**
- * Maps ACP session configuration and session modes onto T3's provider option
- * descriptors so the existing model-options UI can drive them.
- *
- * The model picker owns the first `category: "model"` select
- * (`findModelConfigOption`), so that option is excluded here. Later model
- * options, such as Cline's `model` after its `provider`, are ordinary
- * descriptors written under their own ID and marked `selectsModel`. Session
- * modes advertised through the modes API (rather than a config option) are
- * folded into one synthetic descriptor that the ACP adapter routes to
- * `session/set_mode`.
- */
-
-/** Synthetic descriptor ID for agents that expose modes outside config options. */
 export const ACP_SESSION_MODE_OPTION_ID = "_t3/session-mode";
 
-/**
- * Choice ID for a select value that is exactly `""`. Agents use it for a real
- * choice (GitHub Copilot's default agent), but T3 option IDs must be
- * non-empty. The ACP adapter maps it back to `""` before applying a selection.
- */
+/** Encodes a valid empty ACP choice as a non-empty T3 ID; map back before applying. */
 export const ACP_EMPTY_OPTION_VALUE = "_t3/empty";
 
 const MAX_OPTION_DESCRIPTORS = 16;
@@ -40,7 +22,7 @@ const boundedOpaqueValue = (value: string, maximumLength: number): string | unde
 const choiceId = (value: string): string | undefined =>
   value === "" ? ACP_EMPTY_OPTION_VALUE : boundedOpaqueValue(value, MAX_TEXT_LENGTH);
 
-function flattenSelectChoices(
+export function flattenSelectChoices(
   options: EffectAcpSchema.SessionConfigSelectOptions,
 ): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
   return options.flatMap((candidate) => ("value" in candidate ? [candidate] : candidate.options));
@@ -139,10 +121,7 @@ export function acpProviderOptionDescriptors(input: {
       })),
     );
     const currentValue = choiceId(modeState.currentModeId);
-    // Some agents mirror one knob through both the modes API and a config
-    // option (codex-acp advertises its thinking levels as modes too). Skip
-    // the synthetic descriptor when an existing descriptor already exposes
-    // the same choice set, so the composer shows the knob once.
+    // Some agents duplicate modes in config options; show each control once.
     const duplicatesKnownModeDescriptor = mirroredModeChoiceSets.some(
       (choiceIds) =>
         choiceIds.size === choices.length && choices.every((choice) => choiceIds.has(choice.id)),

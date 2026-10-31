@@ -5,26 +5,14 @@ import * as Layer from "effect/Layer";
 
 import { Agent, createAgentPlatform, SqliteLocalAgentStore } from "./sdk.ts";
 
-/**
- * The Cursor Agent SDK runs in this process and spawns a shell for tool
- * calls. The command is Cursor's sandbox wrapper (`dump_zsh_state`,
- * `dump_bash_state`, `__CURSOR_SANDBOX_ENV_RESTORE`). A bad working directory
- * makes Node report `spawn /bin/zsh ENOENT`. The SDK listens for that error,
- * then rejects an internal promise nothing awaits. Node exits on that
- * unhandled rejection and takes the server with it.
- *
- * The guard ignores only that rejection. Every other unhandled rejection
- * still prints and exits when this is the process's only listener, matching
- * Node's default. `child_process.spawn` itself is left alone, so git,
- * terminals, and other providers keep their own error handling.
- */
+// The SDK leaves a shell-error promise unhandled, which would exit the server.
 const CURSOR_SHELL_SPAWN_MARKERS = [
   "dump_zsh_state",
   "dump_bash_state",
   "__CURSOR_SANDBOX_ENV_RESTORE",
 ] as const;
 
-export function isCursorShellSpawnFailure(reason: unknown): boolean {
+function isCursorShellSpawnFailure(reason: unknown): boolean {
   if (typeof reason !== "object" || reason === null) {
     return false;
   }
@@ -43,12 +31,24 @@ export function isCursorShellSpawnFailure(reason: unknown): boolean {
   );
 }
 
+/**
+ * After a local exec fails, the SDK writes a final frame to the exec's stream from
+ * a promise nothing awaits. If that stream has already closed, the write rejects.
+ * The SDK's class is minified, so only its `name` identifies it.
+ */
+function isCursorClosedStreamWrite(reason: unknown): boolean {
+  return reason instanceof Error && reason.name === "WriteIterableClosedError";
+}
+
 function onUnhandledRejection(reason: unknown): void {
   if (isCursorShellSpawnFailure(reason)) {
     console.error("Cursor shell spawn failed. The server will keep running.", reason);
     return;
   }
-  // Another handler registered besides this one owns the decision.
+  if (isCursorClosedStreamWrite(reason)) {
+    console.error("Cursor SDK wrote to a closed exec stream. The server will keep running.");
+    return;
+  }
   if (process.listenerCount("unhandledRejection") > 1) {
     return;
   }
@@ -56,10 +56,7 @@ function onUnhandledRejection(reason: unknown): void {
   process.exit(1);
 }
 
-/**
- * The SDK entry points that run agents in this process. Reaching them through
- * this service keeps the shell spawn guard armed while they are in use.
- */
+/** Keeps the shell spawn guard armed while in-process agents run. */
 export class CursorSdk extends Context.Service<
   CursorSdk,
   {

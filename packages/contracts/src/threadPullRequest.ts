@@ -16,11 +16,6 @@ import {
   PullRequestState,
 } from "./pullRequest.ts";
 
-/**
- * Legacy single-PR link. Still emitted as the thread's derived current pull
- * request (see `@t3tools/shared/threadPullRequests`) so clients from before
- * `pullRequests` keep working independently of their release schedule.
- */
 export const ThreadLinkedPullRequest = Schema.Struct({
   projectId: ProjectId,
   repository: TrimmedNonEmptyString,
@@ -29,9 +24,7 @@ export const ThreadLinkedPullRequest = Schema.Struct({
 });
 export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
 
-/** Who created a thread ↔ pull request link. `stack-dismissed` is a tombstone
- * for a native-stack member the user unlinked, so the sync reactor does not
- * re-add it; clients hide it. */
+/** stack-dismissed hides an unlinked native member and prevents sync from re-adding it. */
 export const ThreadPullRequestLinkSource = Schema.Literals([
   "manual",
   "created",
@@ -41,11 +34,6 @@ export const ThreadPullRequestLinkSource = Schema.Literals([
 ]);
 export type ThreadPullRequestLinkSource = typeof ThreadPullRequestLinkSource.Type;
 
-/**
- * Host state persisted on a link by the sync reactor; null until first sync. The overview
- * fields are optional: a host whose cheap read lacks them leaves them out, and snapshots
- * written before they existed still decode.
- */
 export const ThreadPullRequestSnapshot = Schema.Struct({
   state: PullRequestState,
   title: TrimmedNonEmptyString,
@@ -73,7 +61,7 @@ export const ThreadPullRequestStackLayer = Schema.Struct({
 });
 export type ThreadPullRequestStackLayer = typeof ThreadPullRequestStackLayer.Type;
 
-/** A host-native stack the pull request belongs to. Layers run bottom to top. */
+/** Layers run bottom to top. */
 export const ThreadPullRequestStack = Schema.Struct({
   kind: Schema.Literal("native"),
   id: TrimmedNonEmptyString,
@@ -84,8 +72,6 @@ export const ThreadPullRequestStack = Schema.Struct({
 });
 export type ThreadPullRequestStack = typeof ThreadPullRequestStack.Type;
 
-/** Identity of a pull request as a thread link sees it: host-level, so the
- * same PR linked from two projects (or two environments) compares equal. */
 export const ThreadPullRequestKey = Schema.Struct({
   host: TrimmedNonEmptyString,
   repository: TrimmedNonEmptyString,
@@ -93,44 +79,41 @@ export const ThreadPullRequestKey = Schema.Struct({
 });
 export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
-/**
- * Present while the server watches the pull request for its thread. The server wakes the
- * thread's agent when checks finish on the head commit, someone else comments, or the branch
- * starts to conflict. The other fields record what the agent was last told, so each change is
- * reported once.
- */
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
-  /** Head commit at the last pass; null where the host does not report one. */
   headSha: Schema.NullOr(TrimmedNonEmptyString),
-  /** Failed checks on that commit the agent was told about; a rerun that fails again is news. */
   failedChecks: Schema.Array(TrimmedNonEmptyString),
-  /** The agent was told the required checks on that commit passed. */
   passed: Schema.Boolean,
-  /**
-   * Names in the passing gate on that commit, so a required check that first shows up already
-   * passed is news. Empty on watches saved before this field existed.
-   */
   passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  /** Remarks from others created up to this host time were reported. */
+  /** Checks still pending when required ones passed early, owed one wake once all settle. */
+  owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   remarksThrough: IsoDateTime,
-  /** Remarks created exactly at `remarksThrough` that were reported, so a late one still counts. */
+  /** Reported remarks at remarksThrough, so late arrivals at that timestamp still count. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
-  /** Comment-only wakes in a row. Watching stops at a limit, so bots cannot loop it. */
+  /** Consecutive comment-only wakes; limited to prevent bot loops. */
   wakes: NonNegativeInt,
+  /**
+   * When the head was first read without any check, until a check shows up or the agent is told
+   * none did. Null once either happened; absent on watches saved before it existed.
+   */
+  checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 
 export const ThreadPullRequestLink = Schema.Struct({
   ...ThreadPullRequestKey.fields,
   url: TrimmedNonEmptyString,
+  /** An actual browser or clone URL; older agent display URLs may be synthesized. */
+  repositoryWebUrl: Schema.optional(TrimmedNonEmptyString),
   source: ThreadPullRequestLinkSource,
   linkedAt: IsoDateTime,
   snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
   stack: Schema.NullOr(ThreadPullRequestStack),
   watch: Schema.optional(ThreadPullRequestWatch),
+  /** Resume from the ended watch to avoid duplicate notifications. */
+  endedWatch: Schema.optional(ThreadPullRequestWatch),
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;

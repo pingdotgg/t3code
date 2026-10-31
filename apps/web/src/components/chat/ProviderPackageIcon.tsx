@@ -4,10 +4,6 @@ import type { ProviderIcon } from "@t3tools/provider-core/client";
 
 import { cn } from "~/lib/utils";
 
-/**
- * Draws a provider package's plain-data glyph. Theme colors travel as CSS
- * variables so the `.dark` class switches them without a re-render.
- */
 export function ProviderPackageIcon({
   icon,
   className,
@@ -19,7 +15,6 @@ export function ProviderPackageIcon({
       {...props}
       viewBox={icon.viewBox}
       fill="none"
-      // Lets monochrome renderings dim the whole glyph once instead of each path.
       data-provider-package-icon
       className={cn("fill-(--icon-light) dark:fill-(--icon-dark)", className)}
       style={
@@ -55,9 +50,7 @@ export function ProviderPackageIcon({
           key={path.d}
           d={path.d}
           fillRule={path.fillRule}
-          // An attribute, so monochrome renderings can still override it from CSS.
           fill={path.gradient ? `url(#${gradientId}-${index})` : undefined}
-          // Monochrome renderings (the collapsed composer) clear these detail paths.
           data-icon-detail={path.fill ? true : undefined}
           className={path.fill ? "fill-(--path-light) dark:fill-(--path-dark)" : undefined}
           style={
