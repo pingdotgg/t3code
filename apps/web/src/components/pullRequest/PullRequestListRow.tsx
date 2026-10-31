@@ -95,7 +95,7 @@ export function PullRequestRowLines({
         {page ? null : number}
         <span
           className={cn(
-            "min-w-0 truncate text-sm text-foreground",
+            "min-w-0 truncate text-body text-foreground",
             page ? "font-normal" : "font-medium",
           )}
         >
@@ -118,7 +118,7 @@ export function PullRequestRowLines({
       >
         {meta}
         {page ? (
-          <span className="ml-auto flex min-w-0 max-w-3/5 shrink-0 flex-col items-end gap-0.5 pl-2">
+          <span className="ml-auto flex min-w-0 max-w-3/5 shrink-0 items-center gap-2 pl-2">
             {metaStatus}
             {time}
           </span>
