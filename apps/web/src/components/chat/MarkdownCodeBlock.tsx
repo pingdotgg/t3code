@@ -144,7 +144,7 @@ export function MarkdownCodeBlock({
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
-  onRunShellCommand?: ((command: string) => void) | undefined;
+  onRunShellCommand?: ((command: string, placement?: "drawer" | "right-panel") => void) | undefined;
   isStreaming: boolean;
   viewToggle?: ReactNode;
   canWrap?: boolean;
@@ -247,14 +247,18 @@ export function MarkdownCodeBlock({
                     type="button"
                     variant="ghost-muted"
                     size="icon-xs"
-                    onClick={() => onRunShellCommand(command)}
+                    onClick={(event) =>
+                      onRunShellCommand(command, event.altKey ? "right-panel" : "drawer")
+                    }
                     aria-label="Run in terminal"
                   />
                 }
               >
                 <PlayIcon className="size-3" />
               </TooltipTrigger>
-              <TooltipPopup side="top">Run in terminal</TooltipPopup>
+              <TooltipPopup side="top">
+                Run in terminal (Alt/Option-click for right panel)
+              </TooltipPopup>
             </Tooltip>
           ) : null}
           {viewToggle}

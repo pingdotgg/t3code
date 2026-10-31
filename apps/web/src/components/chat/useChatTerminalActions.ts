@@ -33,6 +33,7 @@ import { openUrlInPreview } from "../../browser/openFileInPreview";
 import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { confirmTerminalClose } from "../../lib/terminalCloseConfirm";
+import { revealThreadTerminal } from "../../lib/revealThreadTerminal";
 import { findReusableProjectScriptTerminal } from "../../lib/projectScriptTerminal";
 import { type TerminalContextSelection } from "../../lib/terminalContext";
 import {
@@ -81,7 +82,7 @@ interface ChatTerminalActionsInput {
 
 /**
  * The thread's terminals: the drawer's and the right panel's, and project scripts and chat
- * code blocks, which run in a reused or new drawer terminal.
+ * code blocks, which run in a reused or new terminal in the requested surface.
  */
 export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const {
@@ -207,6 +208,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       preferNewTerminal?: boolean;
       rememberAsLastInvoked?: boolean;
       shellHistory?: "preserve" | "suppress";
+      placement?: "drawer" | "right-panel";
     },
   ) => {
     if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
@@ -217,18 +219,23 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       });
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
+    const placement = options?.placement ?? "drawer";
     const reusableTerminalId =
       options?.preferNewTerminal ||
       !canReuseTerminal ||
       !readEnvironmentScope(environmentId, AuthTerminalReadScope)
         ? null
         : findReusableProjectScriptTerminal({
-            // Server sessions cover drawer terminals this client has not opened yet, such as a
-            // worktree setup shell; the helper drops the panel-owned ones.
+            // Include server-created shells that this client has not opened yet;
+            // placement keeps drawer and panel ownership separate.
             drawerTerminalIds: [
               ...new Set([...terminalUiState.terminalIds, ...activeServerOrderedTerminalIds]),
             ],
-            activeTerminalId: terminalUiState.activeTerminalId,
+            activeTerminalId:
+              placement === "right-panel" && activeRightPanelSurface?.kind === "terminal"
+                ? activeRightPanelSurface.activeTerminalId
+                : terminalUiState.activeTerminalId,
+            placement,
             panelTerminalIds,
             runningTerminalIds,
           });
@@ -246,10 +253,19 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     const launched = terminalActions.launchTerminal({
       // The drawer opens with the target already placed: opening it empty would claim
       // DEFAULT_THREAD_TERMINAL_ID, which a right-panel terminal may already own.
-      place: (terminalId) =>
-        reusableTerminalId === null
-          ? storeNewTerminal(activeThreadRef, terminalId)
-          : storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
+      place: (terminalId) => {
+        if (placement === "right-panel") {
+          if (reusableTerminalId !== null) {
+            revealThreadTerminal(activeThreadRef, terminalId);
+          } else {
+            useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
+          }
+        } else if (reusableTerminalId === null) {
+          storeNewTerminal(activeThreadRef, terminalId);
+        } else {
+          storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
+        }
+      },
       ...(reusableTerminalId === null
         ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
         : { terminalId: reusableTerminalId }),
@@ -308,7 +324,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   };
   const runProjectScriptStable = useStableCallback(runProjectScript);
 
-  const runShellCommand = (command: string) => {
+  const runShellCommand = (command: string, placement: "drawer" | "right-panel" = "drawer") => {
     void runProjectScript(
       {
         id: "chat-code-block",
@@ -317,7 +333,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         icon: "play",
         runOnWorktreeCreate: false,
       },
-      { rememberAsLastInvoked: false, shellHistory: "preserve" },
+      { rememberAsLastInvoked: false, shellHistory: "preserve", placement },
     );
   };
   const runShellCommandStable = useStableCallback(runShellCommand);

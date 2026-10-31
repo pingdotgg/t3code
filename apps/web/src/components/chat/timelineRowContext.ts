@@ -64,7 +64,7 @@ export interface TimelineRowSharedState {
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onSendAppMessage: ((text: string) => Promise<void>) | undefined;
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
-  onRunShellCommand: ((command: string) => void) | undefined;
+  onRunShellCommand: ((command: string, placement?: "drawer" | "right-panel") => void) | undefined;
   findActive: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;

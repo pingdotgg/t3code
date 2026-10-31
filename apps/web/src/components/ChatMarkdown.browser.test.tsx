@@ -220,7 +220,11 @@ describe("ChatMarkdown streaming", () => {
 
     await rerender(message("```bash\necho hello\n```"));
     await act(async () => runButtons()[0]!.click());
-    expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith("echo hello");
+    expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith("echo hello", "drawer");
+    await act(async () => {
+      runButtons()[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, altKey: true }));
+    });
+    expect(onRunShellCommand).toHaveBeenLastCalledWith("echo hello", "right-panel");
 
     for (const text of [
       "~~~bash\necho tilde\n~~~",

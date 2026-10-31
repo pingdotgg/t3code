@@ -237,7 +237,7 @@ interface ChatMarkdownProps {
   lineBreaks?: boolean;
   parseRawHtml?: boolean;
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
-  onRunShellCommand?: ((command: string) => void) | undefined;
+  onRunShellCommand?: ((command: string, placement?: "drawer" | "right-panel") => void) | undefined;
   imageBaseDir?: string | undefined;
   workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
