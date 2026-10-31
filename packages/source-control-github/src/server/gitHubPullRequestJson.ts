@@ -1197,7 +1197,8 @@ export function toPullRequestCheckContextsPage(result: PullRequestCheckContexts.
 
 /**
  * A check the base branch requires is matched by exact name and appears on the head only once it
- * starts (a job with `needs:`), so a required name no context carries yet is still pending.
+ * starts (a job with `needs:`), so a required name no context carries yet is still pending. A head
+ * with no context at all stays empty, so a watch can still tell that no check ever reported.
  */
 export function pullRequestChecksFromContexts(
   contexts: ReadonlyArray<GitHubCheckContext>,
@@ -1208,6 +1209,7 @@ export function pullRequestChecksFromContexts(
 } {
   const checks = toChecks(contexts);
   const checksState = rollupChecksState(contexts);
+  if (contexts.length === 0) return { checks, checksState };
   // Raw names, since deduping prefixes same-named jobs of different workflows with the workflow.
   const started = new Set(contexts.map((c) => trimmed(c.name) ?? trimmed(c.context)));
   const missing = requiredCheckNames.flatMap((name) =>

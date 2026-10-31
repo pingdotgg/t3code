@@ -554,6 +554,15 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("passing");
   });
 
+  it("adds no required check to a head no check has reported on", () => {
+    const detail = detailOf([], {
+      baseRef: { compare: null, refUpdateRule: { requiredStatusCheckContexts: ["Done"] } },
+    });
+
+    expect(detail.checks).toEqual([]);
+    expect(detail.checksState).toBeNull();
+  });
+
   it("reads an auto-merge request and strategy, and its null as off", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
