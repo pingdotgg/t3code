@@ -26,6 +26,18 @@ export interface LinearSearch {
 
 export type LinearLevel = "workspace" | "team" | "project" | "milestone";
 
+/** Priority filter choices in Linear's order; 0 ("No priority") sorts last there too. */
+export const LINEAR_PRIORITY_OPTIONS: ReadonlyArray<{
+  readonly value: LinearPriority;
+  readonly label: string;
+}> = [
+  { value: 1, label: "Urgent" },
+  { value: 2, label: "High" },
+  { value: 3, label: "Medium" },
+  { value: 4, label: "Low" },
+  { value: 0, label: "No priority" },
+];
+
 /** T3-only saved view: issues that have at least one linked chat or pipeline run. */
 export const T3_ACTIVITY_VIEW = "t3-activity";
 export const NO_MILESTONE_ID = "none";

@@ -1,7 +1,5 @@
-import {
-  recordLinearLaunch as recordLaunch,
-  type RecordLinearLaunchInput,
-} from "@t3tools/client-runtime/linear/record-launch";
+import type { RecordLinearLaunchInput } from "@t3tools/client-runtime/linear/launch-plan";
+import { recordLinearLaunch as recordLaunch } from "@t3tools/client-runtime/linear/record-launch";
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { appAtomRegistry } from "../../rpc/atomRegistry";

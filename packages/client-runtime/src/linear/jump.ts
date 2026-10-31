@@ -46,20 +46,29 @@ function matches(haystack: string, needle: string): boolean {
 }
 
 /**
- * Local half of the jump search: teams, projects and milestones that are already loaded.
- * Issues come from the server's `linear.search`.
+ * Jump-search results: loaded teams, projects and milestones that match, then the server's issue
+ * matches (`linear.search`). A project naming no team is placed in `fallbackTeamId`, the open team.
  */
-export function matchLinearJumpTargets(
+export function buildLinearJumpTargets(
   term: string,
   loaded: {
     readonly teams: ReadonlyArray<LinearTeam>;
     readonly projects: ReadonlyArray<LinearProject>;
     readonly milestones: ReadonlyArray<LinearMilestone>;
-    readonly projectScopes: ReadonlyMap<string, LinearScope>;
+    readonly issues: ReadonlyArray<LinearIssue>;
+    readonly fallbackTeamId?: string | undefined;
   },
 ): ReadonlyArray<LinearJumpTarget> {
   const needle = term.trim().toLowerCase();
   if (needle === "") return [];
+  const uniqueProjects = [
+    ...new Map(loaded.projects.map((project) => [project.id, project])).values(),
+  ];
+  const projectScopes = new Map<string, LinearScope>();
+  for (const project of uniqueProjects) {
+    const teamId = project.teamIds[0] ?? loaded.fallbackTeamId;
+    if (teamId !== undefined) projectScopes.set(project.id, { team: teamId, project: project.id });
+  }
   const teams = loaded.teams
     .filter((team) => matches(team.name, needle) || matches(team.key, needle))
     .slice(0, MAX_LOCAL_MATCHES)
@@ -69,11 +78,11 @@ export function matchLinearJumpTargets(
       label: `${team.key} · ${team.name}`,
       scope: { team: team.id },
     }));
-  const projects = loaded.projects
+  const projects = uniqueProjects
     .filter((project) => matches(project.name, needle))
     .slice(0, MAX_LOCAL_MATCHES)
     .flatMap((project): Array<LinearJumpTarget> => {
-      const scope = loaded.projectScopes.get(project.id);
+      const scope = projectScopes.get(project.id);
       return scope === undefined
         ? []
         : [{ kind: "project", id: project.id, label: project.name, scope }];
@@ -82,7 +91,7 @@ export function matchLinearJumpTargets(
     .filter((milestone) => matches(milestone.name, needle))
     .slice(0, MAX_LOCAL_MATCHES)
     .flatMap((milestone): Array<LinearJumpTarget> => {
-      const project = loaded.projectScopes.get(milestone.projectId);
+      const project = projectScopes.get(milestone.projectId);
       return project === undefined
         ? []
         : [
@@ -94,19 +103,14 @@ export function matchLinearJumpTargets(
             },
           ];
     });
-  return [...teams, ...projects, ...milestones];
-}
-
-export function linearIssueJumpTargets(
-  issues: ReadonlyArray<LinearIssue>,
-): ReadonlyArray<LinearJumpTarget> {
-  return issues.map((issue) => ({
+  const issues = loaded.issues.map((issue): LinearJumpTarget => ({
     kind: "issue",
     id: issue.id,
     identifier: issue.identifier,
     label: issue.title,
     scope: scopeOfLinearIssue(issue),
   }));
+  return [...teams, ...projects, ...milestones, ...issues];
 }
 
 /** "Nov 14" for a Linear `YYYY-MM-DD` target date; the raw string when unparseable. */

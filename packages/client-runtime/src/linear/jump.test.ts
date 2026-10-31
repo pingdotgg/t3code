@@ -1,26 +1,34 @@
-import type { LinearMilestone, LinearProject, LinearTeam } from "@t3tools/contracts";
+import type { LinearIssue, LinearMilestone, LinearProject, LinearTeam } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatLinearTargetDate, matchLinearJumpTargets } from "./jump.ts";
+import { buildLinearJumpTargets, formatLinearTargetDate } from "./jump.ts";
 
 const team = { id: "t1", key: "ATT", name: "Attraccess" } as LinearTeam;
-const project = { id: "p1", name: "Attraccess project" } as LinearProject;
+const project = {
+  id: "p1",
+  name: "Attraccess project",
+  teamIds: ["t1"],
+} as unknown as LinearProject;
 const milestone = { id: "m1", projectId: "p1", name: "v1.12.0" } as LinearMilestone;
+const issue = {
+  id: "i1",
+  identifier: "ATT-612",
+  title: "Handshake",
+  team: { id: "t1" },
+  project: { id: "p1" },
+  milestone: null,
+} as unknown as LinearIssue;
 
-describe("matchLinearJumpTargets", () => {
-  const loaded = {
-    teams: [team],
-    projects: [project],
-    milestones: [milestone],
-    projectScopes: new Map([["p1", { team: "t1", project: "p1" }]]),
-  };
+describe("buildLinearJumpTargets", () => {
+  const loaded = { teams: [team], projects: [project], milestones: [milestone], issues: [issue] };
 
-  it("matches loaded teams, projects and milestones by name or key", () => {
-    expect(matchLinearJumpTargets("att", loaded).map((target) => target.kind)).toEqual([
+  it("lists loaded teams, projects and milestones that match, then the server's issues", () => {
+    expect(buildLinearJumpTargets("att", loaded).map((target) => target.kind)).toEqual([
       "team",
       "project",
+      "issue",
     ]);
-    expect(matchLinearJumpTargets("1.12", loaded)).toEqual([
+    expect(buildLinearJumpTargets("1.12", { ...loaded, issues: [] })).toEqual([
       {
         kind: "milestone",
         id: "m1",
@@ -28,11 +36,29 @@ describe("matchLinearJumpTargets", () => {
         scope: { team: "t1", project: "p1", milestone: "m1" },
       },
     ]);
+    expect(buildLinearJumpTargets("x", loaded).at(-1)).toMatchObject({
+      kind: "issue",
+      identifier: "ATT-612",
+      scope: { team: "t1", project: "p1", milestone: "none" },
+    });
   });
 
-  it("returns nothing for an empty term and skips projects without a known team", () => {
-    expect(matchLinearJumpTargets("  ", loaded)).toEqual([]);
-    expect(matchLinearJumpTargets("project", { ...loaded, projectScopes: new Map() })).toEqual([]);
+  it("places a project naming no team in the open team, else skips it", () => {
+    const loose = { ...project, teamIds: [] } as unknown as LinearProject;
+    const input = { ...loaded, projects: [loose, loose], issues: [] };
+    expect(buildLinearJumpTargets("project", input)).toEqual([]);
+    expect(buildLinearJumpTargets("project", { ...input, fallbackTeamId: "t9" })).toEqual([
+      {
+        kind: "project",
+        id: "p1",
+        label: "Attraccess project",
+        scope: { team: "t9", project: "p1" },
+      },
+    ]);
+  });
+
+  it("returns nothing for a blank term", () => {
+    expect(buildLinearJumpTargets("  ", loaded)).toEqual([]);
   });
 });
 

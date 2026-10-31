@@ -3,7 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   pickActivityPill,
-  recentActivityIssueIds,
+  jumpBackInIssueIds,
+  orderJumpBackInIssues,
   runningCountByTeam,
   stepTone,
   threadIdentifiersFromActivity,
@@ -107,17 +108,22 @@ describe("activity summaries", () => {
     expect(counts.has("t2")).toBe(false);
   });
 
-  it("orders recent activity newest first and caps", () => {
+  it("picks the most recent issues for Jump back in, sorting ids so reorders keep the query", () => {
+    const recent = [
+      activity({ issueId: "old", latestActivityAt: "2026-01-01T00:00:00.000Z" }),
+      activity({ issueId: "new", latestActivityAt: "2026-03-01T00:00:00.000Z" }),
+      activity({ issueId: "mid", latestActivityAt: "2026-02-01T00:00:00.000Z" }),
+    ];
+    expect(jumpBackInIssueIds(recent, 2)).toEqual(["mid", "new"]);
+    const reordered = recent.map((entry) =>
+      entry.issueId === "mid" ? { ...entry, latestActivityAt: "2026-04-01T00:00:00.000Z" } : entry,
+    );
+    expect(jumpBackInIssueIds(reordered, 2)).toEqual(["mid", "new"]);
     expect(
-      recentActivityIssueIds(
-        [
-          activity({ issueId: "old", latestActivityAt: "2026-01-01T00:00:00.000Z" }),
-          activity({ issueId: "new", latestActivityAt: "2026-03-01T00:00:00.000Z" }),
-          activity({ issueId: "mid", latestActivityAt: "2026-02-01T00:00:00.000Z" }),
-        ],
-        2,
+      orderJumpBackInIssues([issue("old"), issue("mid"), issue("new")], reordered).map(
+        (entry) => entry.id,
       ),
-    ).toEqual(["new", "mid"]);
+    ).toEqual(["mid", "new", "old"]);
   });
 
   it("maps every linked thread, pipeline parents included, to its issue identifier", () => {

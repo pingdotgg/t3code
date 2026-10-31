@@ -1,12 +1,8 @@
 import { useAtomSet } from "@effect/atom-react";
-import { topLevelIssues } from "@t3tools/client-runtime/linear/issue-list";
+import { buildLinearJumpTargets, type LinearJumpTarget } from "@t3tools/client-runtime/linear/jump";
 import {
-  linearIssueJumpTargets,
-  matchLinearJumpTargets,
-  type LinearJumpTarget,
-} from "@t3tools/client-runtime/linear/jump";
-import {
-  recentActivityIssueIds,
+  jumpBackInIssueIds,
+  orderJumpBackInIssues,
   runningCountByTeam,
 } from "@t3tools/client-runtime/linear/activity";
 import type { LinearScope } from "@t3tools/client-runtime/linear/search";
@@ -115,7 +111,7 @@ export function LinearTabScreen(props: {
   const activity = useLinearActivity(environmentId, connected);
   const term = tab.searchMode === "resting" ? "" : tab.query.trim();
   const debouncedTerm = useDebouncedValue(term, JUMP_SEARCH_DEBOUNCE_MS);
-  const jumpBackInIds = connected ? recentActivityIssueIds(activity.issues) : EMPTY_LIST;
+  const jumpBackInIds = connected ? jumpBackInIssueIds(activity.issues) : EMPTY_LIST;
   const jumpBackIn = useLinearIssues(
     environmentId,
     jumpBackInIds.length === 0
@@ -137,35 +133,21 @@ export function LinearTabScreen(props: {
     activityByIssueId: activity.byIssueId,
     onSelect: navigation.openIssue,
   };
-  const jumpTargets = ((): ReadonlyArray<LinearJumpTarget> => {
-    if (term === "") return EMPTY_LIST;
-    const projectScopes = new Map<string, LinearScope>();
-    for (const project of allProjects.data ?? EMPTY_LIST) {
-      const teamId = project.teamIds[0];
-      if (teamId !== undefined)
-        projectScopes.set(project.id, { team: teamId, project: project.id });
-    }
-    return [
-      ...matchLinearJumpTargets(term, {
-        teams,
-        projects: allProjects.data ?? EMPTY_LIST,
-        milestones: EMPTY_LIST,
-        projectScopes,
-      }),
-      ...linearIssueJumpTargets(jumpIssues.data ?? EMPTY_LIST),
-    ];
-  })();
+  const jumpTargets = buildLinearJumpTargets(term, {
+    teams,
+    projects: allProjects.data ?? EMPTY_LIST,
+    milestones: EMPTY_LIST,
+    issues: jumpIssues.data ?? EMPTY_LIST,
+  });
   const openJumpTarget = (target: LinearJumpTarget) =>
     target.kind === "issue" ? navigation.openIssue(target.id) : navigation.openScope(target.scope);
 
   const connectedEnvironments = environments.filter(
     (environment) => environment.isEnabled && environment.connectionState === "connected",
   );
-  const activityOrder = new Map(
-    activity.issues.map((entry) => [entry.issueId, Date.parse(entry.latestActivityAt)]),
-  );
-  const jumpBackInIssues = [...topLevelIssues(jumpBackIn.data?.issues ?? EMPTY_LIST)].sort(
-    (a, b) => (activityOrder.get(b.id) ?? 0) - (activityOrder.get(a.id) ?? 0),
+  const jumpBackInIssues = orderJumpBackInIssues(
+    jumpBackIn.data?.issues ?? EMPTY_LIST,
+    activity.issues,
   );
   const items: ReadonlyArray<TabItem> = !connected
     ? EMPTY_LIST

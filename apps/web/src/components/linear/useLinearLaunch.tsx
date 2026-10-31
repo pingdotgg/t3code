@@ -3,12 +3,12 @@ import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runt
 import {
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
+  type LinearIssueContextRecord,
   type LinearIssueDetail,
   type LinearSettings,
   type LinearWorkflowState,
   type ProjectId,
 } from "@t3tools/contracts";
-import { resolveLinearMapping, type LinearMappingResolution } from "@t3tools/shared/linearLaunch";
 import { type ReactNode, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -34,11 +34,11 @@ import { toastManager } from "../ui/toast";
 import { LinearPipelineDialog } from "./LinearPipelineDialog";
 import { LinearProjectSelect } from "./LinearProjectSelect";
 import {
-  buildLinearChatLaunchPlan,
-  findLinearMappedProject,
+  resolveLinearChatLaunch,
+  type LinearLaunchActions,
   type LinearLaunchWorkspace,
 } from "@t3tools/client-runtime/linear/launch-plan";
-import { type LinearLaunchActions, LinearLaunchActionsProvider } from "./linearLaunchTypes";
+import { LinearLaunchActionsProvider } from "./linearLaunchTypes";
 import { useLinearEnvironmentId } from "./useLinearData";
 
 const QUIET = { reportFailure: false, reportDefect: false } as const;
@@ -66,59 +66,56 @@ interface PendingProjectChoice {
   readonly environmentId: EnvironmentId;
   readonly detail: LinearIssueDetail;
   readonly settings: LinearSettings;
-  readonly workspace: LinearLaunchWorkspace;
+  readonly workspace: LinearLaunchWorkspace | undefined;
   readonly teamStates: ReadonlyArray<LinearWorkflowState> | null;
 }
 
-/** Opens a new-thread draft for the issue: project, workspace, attached snapshot and prompt. */
-function useOpenLinearChatDraft() {
+const formatLinearReference = (record: LinearIssueContextRecord) =>
+  formatInlineContextReference(linearContextReference(record));
+
+/**
+ * Opens a new-thread draft for the issue: project, workspace, attached snapshot and prompt. Asks
+ * for a project when none was chosen and no mapping resolves to one.
+ */
+function useOpenLinearChat(askForProject: (choice: PendingProjectChoice) => void) {
   const newThread = useNewThreadHandler();
-  return useStableCallback(
-    async (input: {
-      readonly environmentId: EnvironmentId;
-      readonly projectId: ProjectId;
-      readonly mapping: LinearMappingResolution | null;
-      readonly detail: LinearIssueDetail;
-      readonly settings: LinearSettings;
-      readonly workspace: LinearLaunchWorkspace;
-      readonly teamStates: ReadonlyArray<LinearWorkflowState> | null;
-    }) => {
-      const { detail, settings } = input;
-      const plan = buildLinearChatLaunchPlan({
-        detail,
-        settings,
-        mapping: input.mapping,
-        workspace: input.workspace,
-        teamStates: input.teamStates,
-        formatReference: (record) => formatInlineContextReference(linearContextReference(record)),
+  return useStableCallback(async (choice: PendingProjectChoice, chosenProjectId?: ProjectId) => {
+    const launch = resolveLinearChatLaunch({
+      ...choice,
+      projects: readProjects(),
+      chosenProjectId,
+      formatReference: formatLinearReference,
+    });
+    if (launch.kind === "needs-project") {
+      askForProject(choice);
+      return;
+    }
+    const { plan } = launch;
+    const opened = await newThread(scopeProjectRef(choice.environmentId, launch.projectId), {
+      ...plan.workspace,
+      prompt: plan.prompt,
+    }).then(
+      (result) => result,
+      () => null,
+    );
+    if (opened === null) {
+      toastManager.add({
+        type: "error",
+        title: `Could not open a chat for ${choice.detail.issue.identifier}`,
+        description: "Try again from the project, or open a thread first.",
       });
-      const opened = await newThread(scopeProjectRef(input.environmentId, input.projectId), {
-        ...plan.workspace,
-        prompt: plan.prompt,
-      }).then(
-        (result) => result,
-        () => null,
-      );
-      if (opened === null) {
-        toastManager.add({
-          type: "error",
-          title: `Could not open a chat for ${detail.issue.identifier}`,
-          description: "Try again from the project, or open a thread first.",
-        });
-        return;
-      }
-      const store = useComposerDraftStore.getState();
-      store.addLinearContexts(opened.draftId, [plan.record], { appendReference: false });
-      store.setDraftLinearIssue(opened.draftId, plan.draftIssue);
-    },
-  );
+      return;
+    }
+    const store = useComposerDraftStore.getState();
+    store.addLinearContexts(opened.draftId, [plan.record], { appendReference: false });
+    store.setDraftLinearIssue(opened.draftId, plan.draftIssue);
+  });
 }
 
 function useStartLinearChat(
-  askForProject: (choice: PendingProjectChoice) => void,
+  openChat: (choice: PendingProjectChoice) => Promise<void>,
 ): LinearLaunchActions["startChat"] {
   const environmentId = useLinearEnvironmentId();
-  const openDraft = useOpenLinearChatDraft();
   return useStableCallback((issueId: string, options?: { workspace?: LinearLaunchWorkspace }) => {
     if (environmentId === null) return;
     void (async () => {
@@ -137,27 +134,12 @@ function useStartLinearChat(
         return;
       }
       const detail = detailResult.value;
-      const settings = readLinearSettings(environmentId);
-      const workspace = options?.workspace ?? settings.defaultWorkspace;
-      const teamStates = await readTeamStates(environmentId, detail.issue.team.id);
-      const mapping = resolveLinearMapping(detail.issue, settings.mappings);
-      const mappedProject = findLinearMappedProject({
+      await openChat({
         environmentId,
-        mapping,
-        projects: readProjects(),
-      });
-      if (mapping === null || mappedProject === undefined) {
-        askForProject({ environmentId, detail, settings, workspace, teamStates });
-        return;
-      }
-      await openDraft({
-        environmentId,
-        projectId: mappedProject.id,
-        mapping,
         detail,
-        settings,
-        workspace,
-        teamStates,
+        settings: readLinearSettings(environmentId),
+        workspace: options?.workspace,
+        teamStates: await readTeamStates(environmentId, detail.issue.team.id),
       });
     })();
   });
@@ -165,12 +147,13 @@ function useStartLinearChat(
 
 function ProjectChoiceDialog({
   choice,
+  onChoose,
   onClose,
 }: {
   readonly choice: PendingProjectChoice;
+  readonly onChoose: (projectId: ProjectId) => void;
   readonly onClose: () => void;
 }) {
-  const openDraft = useOpenLinearChatDraft();
   const projects = useProjects().filter(
     (project) => project.environmentId === choice.environmentId,
   );
@@ -207,7 +190,7 @@ function ProjectChoiceDialog({
             onClick={() => {
               if (projectId === null) return;
               onClose();
-              void openDraft({ ...choice, projectId, mapping: null });
+              onChoose(projectId);
             }}
           >
             Open chat
@@ -228,16 +211,21 @@ export function LinearLaunchProvider({ children }: { readonly children: ReactNod
     readonly issueId: string;
     readonly pipelineId: string | undefined;
   } | null>(null);
-  const startChat = useStartLinearChat(setProjectChoice);
-  const openPipelineDialog = useStableCallback((issueId: string, pipelineId?: string) =>
+  const openChat = useOpenLinearChat(setProjectChoice);
+  const startChat = useStartLinearChat(openChat);
+  const openPipeline = useStableCallback((issueId: string, pipelineId?: string) =>
     setPipelineRequest({ issueId, pipelineId }),
   );
-  const actions: LinearLaunchActions = { startChat, openPipelineDialog };
+  const actions: LinearLaunchActions = { startChat, openPipeline };
   return (
     <LinearLaunchActionsProvider value={actions}>
       {children}
       {projectChoice !== null ? (
-        <ProjectChoiceDialog choice={projectChoice} onClose={() => setProjectChoice(null)} />
+        <ProjectChoiceDialog
+          choice={projectChoice}
+          onChoose={(projectId) => void openChat(projectChoice, projectId)}
+          onClose={() => setProjectChoice(null)}
+        />
       ) : null}
       {pipelineRequest !== null ? (
         <LinearPipelineDialog

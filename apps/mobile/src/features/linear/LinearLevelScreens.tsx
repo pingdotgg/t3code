@@ -1,4 +1,5 @@
 import type { StaticScreenProps } from "@react-navigation/native";
+import { listLinearMilestones } from "@t3tools/client-runtime/linear/issue-list";
 import {
   clearLinearFilters,
   hasActiveLinearFilters,
@@ -125,16 +126,15 @@ export function LinearProjectScreen({
   const team = status.data?.teams.find((entry) => entry.id === scope.team);
   const project = projects.data?.find((entry) => entry.id === scope.project);
   const showCompleted = filters.showCompleted === true;
-  const all = milestones.data ?? EMPTY_LIST;
-  const completedCount = all.filter((milestone) => milestone.completed).length;
+  const { visible, completedCount } = listLinearMilestones(
+    milestones.data ?? EMPTY_LIST,
+    showCompleted,
+  );
   const items: ReadonlyArray<MilestoneListItem> =
     milestones.data === null
       ? []
       : [
-          ...all
-            .filter((milestone) => showCompleted || !milestone.completed)
-            .sort((a, b) => a.sortOrder - b.sortOrder)
-            .map((milestone): MilestoneListItem => ({ type: "milestone", milestone })),
+          ...visible.map((milestone): MilestoneListItem => ({ type: "milestone", milestone })),
           { type: "none" },
           ...(completedCount > 0 ? [{ type: "toggle", count: completedCount } as const] : []),
         ];

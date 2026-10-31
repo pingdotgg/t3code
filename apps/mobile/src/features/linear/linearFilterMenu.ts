@@ -1,6 +1,7 @@
 import {
   DEFAULT_LINEAR_GROUP,
   LINEAR_ASSIGNEE_ANYONE,
+  LINEAR_PRIORITY_OPTIONS,
   T3_ACTIVITY_VIEW,
   defaultLinearAssignee,
   linearAssignee,
@@ -18,14 +19,6 @@ import type {
 import type { MenuProps } from "../../components/ui/Menu.types";
 
 type LinearFilterField = "assignee" | "state" | "priority" | "label" | "cycle" | "view" | "group";
-
-const LINEAR_PRIORITY_OPTIONS: ReadonlyArray<{ value: LinearPriority; label: string }> = [
-  { value: 1, label: "Urgent" },
-  { value: 2, label: "High" },
-  { value: 3, label: "Medium" },
-  { value: 4, label: "Low" },
-  { value: 0, label: "No priority" },
-];
 
 const LINEAR_GROUP_OPTIONS: ReadonlyArray<{ value: LinearGroupBy; label: string }> = [
   { value: "state", label: "State" },

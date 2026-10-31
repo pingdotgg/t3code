@@ -1,5 +1,7 @@
 import type { LinearIssue, LinearIssueActivity } from "@t3tools/contracts";
 
+import { topLevelIssues } from "./issueList.ts";
+
 export type LinearActivityPillKind = "pipeline-failed" | "pipeline-running" | "pr-opened" | "chats";
 
 export interface LinearActivityPill {
@@ -71,15 +73,32 @@ export function runningCountByTeam(
 
 const MAX_JUMP_BACK_IN = 20;
 
-/** "Jump back in": the issues with the most recent T3 activity first, capped. */
-export function recentActivityIssueIds(
+/**
+ * "Jump back in" issue ids: the ones with the most recent T3 activity, capped. Sorted by id so
+ * new activity that only reorders them keeps the same issues query.
+ */
+export function jumpBackInIssueIds(
   issues: ReadonlyArray<LinearIssueActivity>,
   limit = MAX_JUMP_BACK_IN,
 ): ReadonlyArray<string> {
   return [...issues]
     .sort((a, b) => Date.parse(b.latestActivityAt) - Date.parse(a.latestActivityAt))
     .slice(0, limit)
-    .map((entry) => entry.issueId);
+    .map((entry) => entry.issueId)
+    .sort();
+}
+
+/** The fetched "Jump back in" issues, most recent T3 activity first; sub-issues of listed parents nest. */
+export function orderJumpBackInIssues(
+  issues: ReadonlyArray<LinearIssue>,
+  activity: ReadonlyArray<LinearIssueActivity>,
+): ReadonlyArray<LinearIssue> {
+  const latest = new Map(
+    activity.map((entry) => [entry.issueId, Date.parse(entry.latestActivityAt)]),
+  );
+  return [...topLevelIssues(issues)].sort(
+    (a, b) => (latest.get(b.id) ?? 0) - (latest.get(a.id) ?? 0),
+  );
 }
 
 export type LinearStepTone = "ok" | "running" | "failed" | "idle";

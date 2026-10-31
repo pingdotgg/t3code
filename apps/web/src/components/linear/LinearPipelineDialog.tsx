@@ -1,18 +1,13 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { nextPipelineStartAttempt } from "@t3tools/client-runtime/pipeline-start";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import {
-  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  type EnvironmentId,
-  type LinearIssueDetail,
-  type PipelineDefinition,
-  type ProjectId,
+import type {
+  EnvironmentId,
+  LinearIssueDetail,
+  PipelineDefinition,
+  ProjectId,
 } from "@t3tools/contracts";
-import {
-  resolveLinearMapping,
-  resolveLinearMoveTarget,
-  type LinearIssueIncludes,
-} from "@t3tools/shared/linearLaunch";
+import type { LinearIssueIncludes } from "@t3tools/shared/linearLaunch";
 import { useNavigate } from "@tanstack/react-router";
 import { WorkflowIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -45,15 +40,16 @@ import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { LinearStateIcon } from "./linearIcons";
 import { LinearProjectSelect } from "./LinearProjectSelect";
-import { linearWriteBackOf } from "@t3tools/client-runtime/linear/launch-plan";
 import type { LinearLaunchWorkspace } from "@t3tools/client-runtime/linear/launch-plan";
 import {
   includesFromSettings,
   pipelineInputSummary,
   pipelineInputText,
+  pipelineLaunchRecord,
   pipelineWorkspaceStrategy,
   readLastUsedPipelineId,
   resolveInitialPipelineId,
+  resolvePipelineLaunch,
   writeLastUsedPipelineId,
 } from "@t3tools/client-runtime/linear/pipeline-dialog";
 import { recordLinearLaunch } from "./recordLinearLaunch";
@@ -186,20 +182,6 @@ function PipelineDialogBody({
   });
   const attemptRef = useRef<ReturnType<typeof nextPipelineStartAttempt> | null>(null);
 
-  const mapping = resolveLinearMapping(issue, settings.mappings);
-  const mappedProjectId =
-    mapping !== null && projects.some((project) => project.id === mapping.projectRef)
-      ? mapping.projectRef
-      : null;
-  const moveTarget =
-    states === null
-      ? null
-      : resolveLinearMoveTarget({
-          currentStateType: issue.state.type,
-          teamStates: states,
-          preferredStateId: settings.moveToStateId,
-        });
-
   const [pipelineChoice, setPipelineChoice] = useState<string | null>(null);
   const [tab, setTab] = useState<"preview" | "edit">("preview");
   const [edited, setEdited] = useState<string | null>(null);
@@ -222,26 +204,26 @@ function PipelineDialogBody({
       lastUsed,
     });
   const pipeline = pipelines.pipelines.find((candidate) => candidate.id === pipelineId) ?? null;
-  const projectId = projectChoice ?? mappedProjectId;
+  const launch = resolvePipelineLaunch({
+    issue,
+    settings,
+    teamStates: states,
+    projectIds: projects.map((candidate) => candidate.id),
+    choices: { projectId: projectChoice, move: moveChoice, comment: commentChoice },
+  });
+  const { mappedProjectId, projectId, moveTarget, moveEnabled, commentEnabled } = launch;
   const project = projects.find((candidate) => candidate.id === projectId) ?? null;
-  const moveEnabled = (moveChoice ?? settings.moveToStateEnabled) && moveTarget !== null;
-  const commentEnabled = commentChoice ?? settings.commentEnabled;
 
   const projectStatus = useEnvironmentQuery(
-    project !== null && mapping?.baseBranch == null
+    project !== null && launch.mappedBaseBranch === null
       ? vcsEnvironment.status({ environmentId, input: { cwd: project.workspaceRoot } })
       : null,
   );
-  const baseRef =
-    projectId !== null && projectId === mappedProjectId && mapping?.baseBranch
-      ? mapping.baseBranch
-      : (projectStatus.data?.refName ?? null);
+  const baseRef = launch.mappedBaseBranch ?? projectStatus.data?.refName ?? null;
 
   const text = pipelineInputText({ detail, includes, edited });
   const summary = pipelineInputSummary({ detail, text });
-  const overLimit = text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
-  const canStart =
-    !pending && pipeline !== null && project !== null && text.trim().length > 0 && !overLimit;
+  const canStart = !pending && pipeline !== null && project !== null && summary.startable;
 
   const updateIncludes = (key: keyof LinearIssueIncludes, checked: boolean) => {
     setIncludes((current) => ({ ...current, [key]: checked }));
@@ -281,20 +263,15 @@ function PipelineDialogBody({
     const run = result.value.run;
     writeLastUsedPipelineId(storage, pipeline.id);
     // The run exists; linking it is best effort and never delays or blocks the launch.
-    void recordLinearLaunch({
-      environmentId,
-      issueId: issue.id,
-      identifier: issue.identifier,
-      teamId: issue.team.id,
-      projectId: issue.project?.id,
-      target: {
-        kind: "pipeline_run",
-        targetId: run.id,
-        threadId: run.parentThreadId,
-        title: `${pipeline.name}: ${issue.identifier} ${issue.title}`,
-      },
-      writeBack: linearWriteBackOf({ moveTo: moveTarget, moveEnabled, commentEnabled }),
-    });
+    void recordLinearLaunch(
+      pipelineLaunchRecord({
+        environmentId,
+        issue,
+        pipelineName: pipeline.name,
+        run,
+        writeBack: { moveTo: moveTarget, moveEnabled, commentEnabled },
+      }),
+    );
     onClose();
     const parentRef = scopeThreadRef(environmentId, run.parentThreadId);
     toastManager.add(
@@ -417,11 +394,9 @@ function PipelineDialogBody({
                   </label>
                 ))}
                 <span
-                  className={`ms-auto ${overLimit ? "text-destructive-foreground" : "text-muted-foreground"}`}
+                  className={`ms-auto ${summary.overLimit ? "text-destructive-foreground" : "text-muted-foreground"}`}
                 >
-                  {overLimit
-                    ? `${summary.tokens} · over the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString()} character limit`
-                    : summary.tokens}
+                  {summary.sizeLabel}
                 </span>
               </div>
             </div>

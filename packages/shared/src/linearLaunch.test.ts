@@ -15,6 +15,7 @@ import {
   buildLinearIssueMarkdown,
   buildLinearIssuePrompt,
   formatTokenEstimate,
+  linearIssueExtrasSummary,
   linearIssueIncludeCounts,
   resolveLinearMapping,
   resolveLinearMoveTarget,
@@ -221,6 +222,18 @@ describe("linearIssueIncludeCounts", () => {
         makeDetail({ subIssues: Array.from({ length: 80 }, (_, i) => makeIssue({ id: `s${i}` })) }),
       ).subIssues,
     ).toBe(50);
+  });
+});
+
+describe("linearIssueExtrasSummary", () => {
+  it("counts sub-issues and comments in singular or plural, and is null without either", () => {
+    expect(linearIssueExtrasSummary({ subIssues: [{}, {}], comments: [{}] })).toBe(
+      "+ 2 sub-issues, 1 comment",
+    );
+    expect(linearIssueExtrasSummary({ subIssues: [{}], comments: [{}, {}] })).toBe(
+      "+ 1 sub-issue, 2 comments",
+    );
+    expect(linearIssueExtrasSummary({ subIssues: [], comments: [] })).toBeNull();
   });
 });
 

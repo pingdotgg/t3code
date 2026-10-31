@@ -1,7 +1,12 @@
-import type { LinearIssue } from "@t3tools/contracts";
+import type { LinearIssue, LinearMilestone } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupLinearIssues, linearBadgeTextTone, topLevelIssues } from "./issueList.ts";
+import {
+  groupLinearIssues,
+  linearBadgeTextTone,
+  listLinearMilestones,
+  topLevelIssues,
+} from "./issueList.ts";
 
 function issue(
   id: string,
@@ -100,5 +105,22 @@ describe("linearBadgeTextTone", () => {
     expect(linearBadgeTextTone("#5e6ad2")).toBe("light");
     expect(linearBadgeTextTone("#000000ff")).toBe("light");
     expect(linearBadgeTextTone("#12345")).toBe("light");
+  });
+});
+
+describe("listLinearMilestones", () => {
+  const milestone = (id: string, sortOrder: number, completed = false) =>
+    ({ id, sortOrder, completed }) as LinearMilestone;
+  const milestones = [milestone("b", 2), milestone("done", 0, true), milestone("a", 1)];
+
+  it("lists open milestones in Linear's order and counts the completed ones", () => {
+    const { visible, completedCount } = listLinearMilestones(milestones, false);
+    expect(visible.map((entry) => entry.id)).toEqual(["a", "b"]);
+    expect(completedCount).toBe(1);
+    expect(listLinearMilestones(milestones, true).visible.map((entry) => entry.id)).toEqual([
+      "done",
+      "a",
+      "b",
+    ]);
   });
 });

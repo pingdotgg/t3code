@@ -307,7 +307,7 @@ function DetailBody(props: {
           label="Run pipeline"
           icon="point.3.connected.trianglepath.dotted"
           disabled={!launch.canRunPipeline}
-          onPress={() => launch.openPipelineSheet(issue.id)}
+          onPress={() => launch.openPipeline(issue.id)}
         />
       </View>
 

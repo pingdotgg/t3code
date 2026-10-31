@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { LinearLaunchActions } from "@t3tools/client-runtime/linear/launch-plan";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { Platform } from "react-native";
 
@@ -7,7 +8,6 @@ import { useServerConfigs } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { startLinearChatDraft } from "./linearChatDraft";
-import type { LinearLaunchActions } from "./linearLaunchActions";
 import { useLinearEnvironmentId } from "./useLinearData";
 
 /** The thread route params for a started draft. */
@@ -27,8 +27,11 @@ export function linearDraftRoute(draft: {
   };
 }
 
-/** Launch flows from an issue: a chat in the new-task draft, or a pipeline run from the sheet. */
-export function useLinearLaunch(): LinearLaunchActions {
+/**
+ * Launch flows from an issue: a chat in the new-task draft, or a pipeline run from the sheet.
+ * `canRunPipeline` is false without the pipelines capability; the screen disables "Run pipeline".
+ */
+export function useLinearLaunch(): LinearLaunchActions & { readonly canRunPipeline: boolean } {
   const navigation = useNavigation();
   const environmentId = useLinearEnvironmentId();
   const selectDetail = useSelectWorkspaceDetail();
@@ -74,7 +77,7 @@ export function useLinearLaunch(): LinearLaunchActions {
         }
       });
     },
-    openPipelineSheet: (issueId, pipelineId) => {
+    openPipeline: (issueId, pipelineId) => {
       if (environmentId === null) return;
       navigation.dispatch(
         StackActions.push("LinearPipeline", {

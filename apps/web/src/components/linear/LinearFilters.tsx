@@ -1,9 +1,4 @@
-import type {
-  LinearCustomView,
-  LinearPriority,
-  LinearTeamMetadata,
-  LinearViewer,
-} from "@t3tools/contracts";
+import type { LinearCustomView, LinearTeamMetadata, LinearViewer } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   CircleDotIcon,
@@ -32,6 +27,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { LinearAvatar, LinearPriorityIcon, LinearStateIcon } from "./linearIcons";
 import {
   LINEAR_ASSIGNEE_ANYONE,
+  LINEAR_PRIORITY_OPTIONS,
   T3_ACTIVITY_VIEW,
   DEFAULT_LINEAR_GROUP,
   defaultLinearAssignee,
@@ -42,13 +38,6 @@ import {
 } from "@t3tools/client-runtime/linear/search";
 
 const SEARCH_COMMIT_DELAY_MS = 250;
-const PRIORITY_OPTIONS: ReadonlyArray<{ value: LinearPriority; label: string }> = [
-  { value: 1, label: "Urgent" },
-  { value: 2, label: "High" },
-  { value: 3, label: "Medium" },
-  { value: 4, label: "Low" },
-  { value: 0, label: "No priority" },
-];
 
 function FilterPill({
   icon,
@@ -379,7 +368,7 @@ export function LinearFilters({
         <MultiFilter
           icon={<LayersIcon aria-hidden />}
           label="Priority"
-          options={PRIORITY_OPTIONS.map((option) => ({
+          options={LINEAR_PRIORITY_OPTIONS.map((option) => ({
             value: option.value,
             label: option.label,
             icon: <LinearPriorityIcon priority={option.value} />,

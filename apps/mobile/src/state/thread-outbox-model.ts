@@ -25,8 +25,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import type { LinearDraftIssue } from "@t3tools/client-runtime/linear/launch-plan";
-import { LinearDraftIssueSchema } from "../features/linear/linearDraftIssueSchema";
+import { LinearDraftIssue } from "@t3tools/client-runtime/linear/launch-plan";
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
@@ -46,7 +45,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
   startFromOrigin: Schema.optional(Schema.Boolean),
   pullRequestReference: Schema.optional(Schema.String),
   worktreeBranchName: Schema.optional(Schema.String),
-  linearIssue: Schema.optional(LinearDraftIssueSchema),
+  linearIssue: Schema.optional(LinearDraftIssue),
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({

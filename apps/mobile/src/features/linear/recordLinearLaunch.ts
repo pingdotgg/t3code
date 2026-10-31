@@ -1,7 +1,5 @@
-import {
-  recordLinearLaunch as recordLaunch,
-  type RecordLinearLaunchInput,
-} from "@t3tools/client-runtime/linear/record-launch";
+import type { RecordLinearLaunchInput } from "@t3tools/client-runtime/linear/launch-plan";
+import { recordLinearLaunch as recordLaunch } from "@t3tools/client-runtime/linear/record-launch";
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 
 import * as Dialog from "../../components/ui/Dialog";

@@ -1,4 +1,4 @@
-import type { LinearIssue, LinearStateType } from "@t3tools/contracts";
+import type { LinearIssue, LinearMilestone, LinearStateType } from "@t3tools/contracts";
 
 import { NO_MILESTONE_ID, type LinearGroupBy } from "./search.ts";
 
@@ -72,6 +72,25 @@ export function groupLinearIssues(
   return [...groups.values()]
     .sort((a, b) => a.order - b.order || a.group.label.localeCompare(b.group.label))
     .map((entry) => entry.group);
+}
+
+/** A project's milestones in Linear's order; completed ones only when shown, but always counted. */
+export function listLinearMilestones(
+  milestones: ReadonlyArray<LinearMilestone>,
+  showCompleted: boolean,
+): { readonly visible: ReadonlyArray<LinearMilestone>; readonly completedCount: number } {
+  return {
+    visible: milestones
+      .filter((milestone) => showCompleted || !milestone.completed)
+      .sort((a, b) => a.sortOrder - b.sortOrder),
+    completedCount: milestones.filter((milestone) => milestone.completed).length,
+  };
+}
+
+/** "1 issue", "12 issues", or "50+ issues" when Linear's count is capped. */
+export function formatLinearIssueCount(count: number, capped: boolean): string {
+  if (capped) return `${count}+ issues`;
+  return `${count} ${count === 1 ? "issue" : "issues"}`;
 }
 
 export function formatProgressPercent(progress: number): number {

@@ -124,6 +124,5 @@ describe("contextChipPresentation", () => {
     expect(
       composerChipSizeSuffix({ kind: "linear-issue", subIssues: [{}, {}], comments: [{}] }),
     ).toBe("+ 2 sub-issues, 1 comment");
-    expect(composerChipSizeSuffix({ kind: "linear-issue", subIssues: [], comments: [] })).toBe("");
   });
 });

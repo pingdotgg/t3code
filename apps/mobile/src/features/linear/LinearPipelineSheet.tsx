@@ -1,13 +1,14 @@
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { linearWriteBackOf } from "@t3tools/client-runtime/linear/launch-plan";
 import type { LinearLaunchWorkspace } from "@t3tools/client-runtime/linear/launch-plan";
 import {
   includesFromSettings,
   pipelineInputSummary,
   pipelineInputText,
+  pipelineLaunchRecord,
   pipelineWorkspaceStrategy,
   readLastUsedPipelineId,
   resolveInitialPipelineId,
+  resolvePipelineLaunch,
   writeLastUsedPipelineId,
 } from "@t3tools/client-runtime/linear/pipeline-dialog";
 import { nextPipelineStartAttempt } from "@t3tools/client-runtime/pipeline-start";
@@ -16,17 +17,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import {
-  EnvironmentId,
-  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  type PipelineId,
-  type ProjectId,
-} from "@t3tools/contracts";
-import {
-  resolveLinearMapping,
-  resolveLinearMoveTarget,
-  type LinearIssueIncludes,
-} from "@t3tools/shared/linearLaunch";
+import { EnvironmentId, type PipelineId, type ProjectId } from "@t3tools/contracts";
+import type { LinearIssueIncludes } from "@t3tools/shared/linearLaunch";
 import * as SecureStore from "expo-secure-store";
 import { useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
@@ -152,23 +144,21 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
   const issue = detail?.issue ?? null;
   const includes = includeChoice ?? includesFromSettings(settings);
   const workspace = workspaceChoice ?? settings.defaultWorkspace;
-  const mapping = issue ? resolveLinearMapping(issue, settings.mappings) : null;
-  const mappedProjectId =
-    mapping !== null && projects.some((project) => project.id === mapping.projectRef)
-      ? mapping.projectRef
-      : null;
-  const projectId = projectChoice ?? mappedProjectId;
+  const launch = issue
+    ? resolvePipelineLaunch({
+        issue,
+        settings,
+        teamStates,
+        projectIds: projects.map((candidate) => candidate.id),
+        choices: { projectId: projectChoice, move: moveChoice, comment: commentChoice },
+      })
+    : null;
+  const mappedProjectId = launch?.mappedProjectId ?? null;
+  const projectId = launch?.projectId ?? null;
   const project = projects.find((candidate) => candidate.id === projectId) ?? null;
-  const moveTarget =
-    issue === null || teamStates === null
-      ? null
-      : resolveLinearMoveTarget({
-          currentStateType: issue.state.type,
-          teamStates,
-          preferredStateId: settings.moveToStateId,
-        });
-  const moveEnabled = (moveChoice ?? settings.moveToStateEnabled) && moveTarget !== null;
-  const commentEnabled = commentChoice ?? settings.commentEnabled;
+  const moveTarget = launch?.moveTarget ?? null;
+  const moveEnabled = launch?.moveEnabled ?? false;
+  const commentEnabled = launch?.commentEnabled ?? settings.commentEnabled;
   const pipelineId = resolveInitialPipelineId({
     pipelineIds: pipelines.map((candidate) => candidate.id),
     requested: pipelineChoice ?? params.pipelineId,
@@ -176,26 +166,17 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
   });
   const pipeline = pipelines.find((candidate) => candidate.id === pipelineId) ?? null;
 
+  const mappedBaseBranch = launch?.mappedBaseBranch ?? null;
   const projectStatus = useEnvironmentQuery(
-    project !== null && mapping?.baseBranch == null
+    project !== null && mappedBaseBranch === null
       ? vcsEnvironment.status({ environmentId, input: { cwd: project.workspaceRoot } })
       : null,
   );
-  const baseRef =
-    projectId !== null && projectId === mappedProjectId && mapping?.baseBranch
-      ? mapping.baseBranch
-      : (projectStatus.data?.refName ?? null);
+  const baseRef = mappedBaseBranch ?? projectStatus.data?.refName ?? null;
 
   const text = detail ? pipelineInputText({ detail, includes, edited }) : "";
   const summary = detail ? pipelineInputSummary({ detail, text }) : null;
-  const overLimit = text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
-  const canStart =
-    !pending &&
-    detail !== null &&
-    pipeline !== null &&
-    project !== null &&
-    text.trim().length > 0 &&
-    !overLimit;
+  const canStart = !pending && pipeline !== null && project !== null && summary?.startable === true;
 
   const start = async () => {
     if (!canStart || issue === null || pipeline === null || project === null) return;
@@ -234,20 +215,15 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
     attemptRef.current = null;
     writeLastUsedPipelineId(lastPipelineStorage, pipeline.id);
     // The run exists; linking it is best effort and never delays or blocks the launch.
-    void recordLinearLaunch({
-      environmentId,
-      issueId: issue.id,
-      identifier: issue.identifier,
-      teamId: issue.team.id,
-      projectId: issue.project?.id,
-      target: {
-        kind: "pipeline_run",
-        targetId: run.id,
-        threadId: run.parentThreadId,
-        title: `${pipeline.name}: ${issue.identifier} ${issue.title}`,
-      },
-      writeBack: linearWriteBackOf({ moveTo: moveTarget, moveEnabled, commentEnabled }),
-    });
+    void recordLinearLaunch(
+      pipelineLaunchRecord({
+        environmentId,
+        issue,
+        pipelineName: pipeline.name,
+        run,
+        writeBack: { moveTo: moveTarget, moveEnabled, commentEnabled },
+      }),
+    );
     // The thread route treats a shell that has not arrived yet as an unavailable thread.
     const shellReady = await waitForThreadShell(
       { environmentId, threadId: run.parentThreadId },
@@ -420,12 +396,10 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                 <Text
                   className={cn(
                     "text-xs",
-                    overLimit ? "text-danger-text" : "text-foreground-muted",
+                    summary?.overLimit ? "text-danger-text" : "text-foreground-muted",
                   )}
                 >
-                  {overLimit
-                    ? `${summary?.tokens} · over the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString("en-US")} character limit`
-                    : summary?.tokens}
+                  {summary?.sizeLabel}
                   {" · the first step receives this as text"}
                 </Text>
               </View>

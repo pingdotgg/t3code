@@ -1,11 +1,22 @@
-import type { EnvironmentId, LinearWorkflowState, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  type EnvironmentId,
+  type LinearIssueDetail,
+  type LinearSettings,
+  type LinearWorkflowState,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildDraftLinearIssue,
+  buildLinearChatLaunchPlan,
+  findLinearMappedProject,
   linearMoveHint,
   linearThreadUrl,
   linearWriteBackOf,
+  resolveLinearChatLaunch,
   resolveLinearChatWorkspace,
 } from "./launchPlan.ts";
 
@@ -124,5 +135,140 @@ describe("linearMoveHint", () => {
       linearMoveHint({ identifier: "ATT-612", moveTo: { id: "p", name: "In Progress" } }),
     ).toBe("Moves ATT-612 to In Progress");
     expect(linearMoveHint({ identifier: "ATT-612", moveTo: null })).toBeNull();
+  });
+});
+
+const env = "env-1" as EnvironmentId;
+const mappedProject = ProjectId.make("proj-mapped");
+const fullDetail = {
+  issue: {
+    id: "issue-1",
+    identifier: "ATT-612",
+    title: "Handshake",
+    url: "https://linear.app/acme/issue/ATT-612",
+    state: { id: "s", name: "Todo", type: "unstarted", color: "#999" },
+    priority: 2,
+    priorityLabel: "High",
+    assignee: null,
+    labels: [],
+    cycle: null,
+    milestone: null,
+    project: null,
+    team: { id: "team-1", key: "ATT", name: "Attraccess" },
+    parent: null,
+    subIssueCount: 0,
+    completedSubIssueCount: 0,
+    branchName: "jan/att-612",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    linkedPullRequests: [],
+  },
+  description: "Body",
+  milestoneProgress: null,
+  subIssues: [],
+  subIssuesFailed: false,
+  comments: [
+    {
+      id: "c1",
+      author: null,
+      body: "Use the traces.",
+      createdAt: "2026-01-02T00:00:00.000Z",
+    },
+  ],
+  attachments: [],
+} as LinearIssueDetail;
+const chatSettings: LinearSettings = {
+  ...DEFAULT_SERVER_SETTINGS.linear,
+  includeComments: false,
+  commentEnabled: true,
+  mappings: [
+    {
+      id: "m",
+      kind: "team",
+      linearId: "team-1",
+      linearName: "Attraccess",
+      projectId: mappedProject,
+      baseBranch: "develop",
+    },
+  ],
+};
+const formatReference = (record: { readonly label: string }) => `@${record.label}`;
+
+describe("findLinearMappedProject", () => {
+  const projects = [
+    { id: mappedProject, environmentId: "env-2" },
+    { id: mappedProject, environmentId: env },
+  ];
+
+  it("finds the mapped project only in the given environment", () => {
+    const mapping = { projectRef: mappedProject };
+    expect(findLinearMappedProject({ environmentId: env, mapping, projects })).toBe(projects[1]);
+    expect(findLinearMappedProject({ environmentId: "env-3", mapping, projects })).toBeUndefined();
+  });
+
+  it("finds nothing without a mapping", () => {
+    expect(
+      findLinearMappedProject({ environmentId: env, mapping: null, projects }),
+    ).toBeUndefined();
+  });
+});
+
+describe("buildLinearChatLaunchPlan", () => {
+  it("attaches the issue per the settings, starts off the mapped base branch, and prompts", () => {
+    const plan = buildLinearChatLaunchPlan({
+      detail: fullDetail,
+      settings: chatSettings,
+      mapping: { projectRef: mappedProject, baseBranch: "develop", source: "team", mappingId: "m" },
+      workspace: "worktree",
+      teamStates: states,
+      formatReference,
+    });
+    expect(plan.record).toMatchObject({ kind: "linear-issue", issueId: "issue-1", comments: [] });
+    expect(plan.workspace).toEqual({ envMode: "worktree", branch: "develop", worktreePath: null });
+    expect(plan.prompt).toBe(
+      `@${plan.record.label}\n\nImplement ATT-612: Handshake.\n\nRead the attached issue, its sub-issues and comments first.\n\nWhen done, open a PR. Keep the branch name so Linear links it.`,
+    );
+    expect(plan.draftIssue).toMatchObject({
+      issueId: "issue-1",
+      mappedProjectId: mappedProject,
+      moveTo: { id: "prog", name: "In Progress" },
+      commentEnabled: true,
+    });
+  });
+});
+
+describe("resolveLinearChatLaunch", () => {
+  const base = {
+    environmentId: env,
+    detail: fullDetail,
+    settings: chatSettings,
+    teamStates: states,
+    projects: [{ id: mappedProject, environmentId: env }],
+    workspace: undefined,
+    formatReference,
+  };
+
+  it("starts in the mapped project, with the settings' default workspace", () => {
+    const launch = resolveLinearChatLaunch({ ...base, chosenProjectId: undefined });
+    expect(launch).toMatchObject({
+      kind: "ready",
+      projectId: mappedProject,
+      plan: { workspace: { envMode: "worktree", branch: "develop" } },
+    });
+  });
+
+  it("asks for a project when the mapped one is not in this environment", () => {
+    expect(resolveLinearChatLaunch({ ...base, projects: [], chosenProjectId: undefined })).toEqual({
+      kind: "needs-project",
+    });
+  });
+
+  it("starts in a hand-picked project without the mapping's hint or base branch", () => {
+    const picked = ProjectId.make("proj-picked");
+    const launch = resolveLinearChatLaunch({ ...base, projects: [], chosenProjectId: picked });
+    expect(launch).toMatchObject({
+      kind: "ready",
+      projectId: picked,
+      plan: { workspace: { branch: null }, draftIssue: { mappedProjectId: null } },
+    });
   });
 });

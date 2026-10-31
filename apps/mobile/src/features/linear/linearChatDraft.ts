@@ -1,18 +1,11 @@
 import {
-  buildLinearChatLaunchPlan,
-  findLinearMappedProject,
+  resolveLinearChatLaunch,
+  type LinearChatLaunchPlan,
   type LinearLaunchWorkspace,
 } from "@t3tools/client-runtime/linear/launch-plan";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import {
-  type EnvironmentId,
-  type LinearIssueDetail,
-  type LinearSettings,
-  type LinearWorkflowState,
-  type ProjectId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
-import { resolveLinearMapping, type LinearMappingResolution } from "@t3tools/shared/linearLaunch";
 
 import { appAtomRegistry } from "../../state/atom-registry";
 import { linearEnvironment } from "../../state/linear";
@@ -31,21 +24,10 @@ import { linearDraftWorkspaceSelection, linearSettingsOf } from "./linearLaunchH
 async function createLinearChatDraft(input: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
-  readonly detail: LinearIssueDetail;
-  readonly settings: LinearSettings;
-  readonly mapping: LinearMappingResolution | null;
-  readonly workspace: LinearLaunchWorkspace;
-  readonly teamStates: ReadonlyArray<LinearWorkflowState> | null;
+  readonly plan: LinearChatLaunchPlan;
 }): Promise<string> {
+  const { plan } = input;
   await waitForComposerDraftsLoaded();
-  const plan = buildLinearChatLaunchPlan({
-    detail: input.detail,
-    settings: input.settings,
-    mapping: input.mapping,
-    workspace: input.workspace,
-    teamStates: input.teamStates,
-    formatReference: formatComposerContextReference,
-  });
   const draftKey = createNewTaskDraft({
     environmentId: input.environmentId,
     projectId: input.projectId,
@@ -104,23 +86,26 @@ export async function startLinearChatDraft(input: {
     linearEnvironment.teamMetadata({ environmentId, input: { teamId: detail.issue.team.id } }),
     QUIET,
   );
-  const mapping = resolveLinearMapping(detail.issue, settings.mappings);
-  const mappedProject = findLinearMappedProject({
+  const launch = resolveLinearChatLaunch({
     environmentId,
-    mapping,
-    projects: appAtomRegistry.get(environmentProjects.projectsAtom),
-  });
-  const projectId = input.projectId ?? mappedProject?.id;
-  if (projectId === undefined) return { kind: "needs-project" };
-  const draftKey = await createLinearChatDraft({
-    environmentId,
-    projectId,
     detail,
     settings,
-    // A project chosen by hand is not "from mapping", and has no mapped base branch.
-    mapping: input.projectId === undefined ? mapping : null,
-    workspace: input.workspace ?? settings.defaultWorkspace,
     teamStates: teamResult._tag === "Success" ? teamResult.value.states : null,
+    projects: appAtomRegistry.get(environmentProjects.projectsAtom),
+    chosenProjectId: input.projectId,
+    workspace: input.workspace,
+    formatReference: formatComposerContextReference,
   });
-  return { kind: "opened", draftKey, projectId, identifier: detail.issue.identifier };
+  if (launch.kind === "needs-project") return launch;
+  const draftKey = await createLinearChatDraft({
+    environmentId,
+    projectId: launch.projectId,
+    plan: launch.plan,
+  });
+  return {
+    kind: "opened",
+    draftKey,
+    projectId: launch.projectId,
+    identifier: detail.issue.identifier,
+  };
 }

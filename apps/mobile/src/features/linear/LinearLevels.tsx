@@ -1,4 +1,7 @@
-import { formatProgressPercent } from "@t3tools/client-runtime/linear/issue-list";
+import {
+  formatLinearIssueCount,
+  formatProgressPercent,
+} from "@t3tools/client-runtime/linear/issue-list";
 import { formatLinearTargetDate } from "@t3tools/client-runtime/linear/jump";
 import type {
   LinearMilestone,
@@ -17,11 +20,6 @@ import {
   LinearStateIcon,
   LinearTeamBadge,
 } from "./linearIcons";
-
-function formatIssueCount(count: number, capped: boolean): string {
-  if (capped) return `${count}+ issues`;
-  return `${count} ${count === 1 ? "issue" : "issues"}`;
-}
 
 export function LinearTeamCard(props: {
   readonly team: LinearTeam;
@@ -119,7 +117,7 @@ export function LinearMilestoneRow(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${milestone.name}, ${formatProgressPercent(milestone.progress)} percent, ${formatIssueCount(milestone.issueCount, milestone.issueCountCapped)}${target ? `, target ${target}` : ""}`}
+      accessibilityLabel={`${milestone.name}, ${formatProgressPercent(milestone.progress)} percent, ${formatLinearIssueCount(milestone.issueCount, milestone.issueCountCapped)}${target ? `, target ${target}` : ""}`}
       onPress={() => props.onOpen(milestone.id)}
       className="min-h-14 flex-row items-center gap-3 px-4 active:bg-row-hover"
     >
@@ -140,7 +138,7 @@ export function LinearMilestoneRow(props: {
             {formatProgressPercent(milestone.progress)}%
           </Text>
           <Text className="min-w-0 shrink text-2xs text-foreground-muted" numberOfLines={1}>
-            {[formatIssueCount(milestone.issueCount, milestone.issueCountCapped), target]
+            {[formatLinearIssueCount(milestone.issueCount, milestone.issueCountCapped), target]
               .filter(Boolean)
               .join(" · ")}
           </Text>
@@ -184,7 +182,7 @@ export function LinearProgressSummary(props: {
         {formatProgressPercent(props.progress)}%
       </Text>
       <Text className="text-xs tabular-nums text-foreground-muted">
-        · {formatIssueCount(props.issueCount, props.issueCountCapped)}
+        · {formatLinearIssueCount(props.issueCount, props.issueCountCapped)}
       </Text>
       {target ? <Text className="text-xs text-foreground-muted">· Target {target}</Text> : null}
     </View>

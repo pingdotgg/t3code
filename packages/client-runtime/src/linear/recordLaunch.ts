@@ -1,24 +1,9 @@
-import type {
-  EnvironmentId,
-  LinearLaunchTarget,
-  LinearRecordLaunchInput,
-} from "@t3tools/contracts";
+import type { EnvironmentId, LinearRecordLaunchInput } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 
 import { runAtomCommand, squashAtomCommandFailure } from "../state/runtime.ts";
 import type { LinearEnvironmentAtoms } from "../state/linear.ts";
-import { linearThreadUrl } from "./launchPlan.ts";
-
-export interface RecordLinearLaunchInput {
-  readonly environmentId: EnvironmentId;
-  readonly issueId: string;
-  readonly identifier: string;
-  /** Ids the client already holds, so the launch is linked even when Linear can't be read. */
-  readonly teamId: string | undefined;
-  readonly projectId: string | undefined;
-  readonly target: LinearLaunchTarget;
-  readonly writeBack: LinearRecordLaunchInput["writeBack"];
-}
+import { linearThreadUrl, type RecordLinearLaunchInput } from "./launchPlan.ts";
 
 /** The client's side of the call: its registry, the record-launch command, and a linkable origin. */
 export interface RecordLinearLaunchDeps {

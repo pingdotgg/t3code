@@ -1,4 +1,4 @@
-import { linearWriteBackOf } from "@t3tools/client-runtime/linear/launch-plan";
+import { linearChatLaunchRecord } from "@t3tools/client-runtime/linear/launch-plan";
 import { recordLinearLaunch } from "../features/linear/recordLinearLaunch";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import * as Dialog from "../components/ui/Dialog";
@@ -1138,23 +1138,17 @@ export function createThreadOutboxDelivery(): {
     recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
     // The thread now exists, so a task started from a Linear issue links to it.
     if (creation.linearIssue) {
-      void recordLinearLaunch({
-        environmentId: queuedMessage.environmentId,
-        issueId: creation.linearIssue.issueId,
-        identifier: creation.linearIssue.identifier,
-        teamId: creation.linearIssue.teamId,
-        projectId: creation.linearIssue.projectId,
-        target: {
-          kind: "thread",
-          targetId: queuedMessage.threadId,
+      void recordLinearLaunch(
+        linearChatLaunchRecord({
+          environmentId: queuedMessage.environmentId,
+          draftIssue: creation.linearIssue,
           threadId: queuedMessage.threadId,
           title: deriveThreadTitleSeed({
             text: queuedMessage.text,
             attachments: queuedMessage.attachments,
           }),
-        },
-        writeBack: linearWriteBackOf(creation.linearIssue),
-      });
+        }),
+      );
     }
     const outcome = await completeQueuedMessageDelivery(
       persistedMessage,

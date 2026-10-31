@@ -1,13 +1,22 @@
-import type { LinearIssueDetail } from "@t3tools/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  ProjectId,
+  type EnvironmentId,
+  type LinearIssueDetail,
+  type LinearWorkflowState,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   includesFromSettings,
   pipelineInputSummary,
   pipelineInputText,
+  pipelineLaunchRecord,
   pipelineWorkspaceStrategy,
   readLastUsedPipelineId,
   resolveInitialPipelineId,
+  resolvePipelineLaunch,
   writeLastUsedPipelineId,
 } from "./pipelineDialog.ts";
 
@@ -92,6 +101,135 @@ describe("pipelineInputSummary", () => {
     expect(pipelineInputSummary({ detail, text: "x".repeat(7_600) })).toEqual({
       counts: { subIssues: 0, comments: 0, linkedPrs: 0 },
       tokens: "~1.9k tokens",
+      overLimit: false,
+      startable: true,
+      sizeLabel: "~1.9k tokens",
+    });
+  });
+
+  it("refuses blank input and input over the provider limit", () => {
+    expect(pipelineInputSummary({ detail, text: "  \n" }).startable).toBe(false);
+    const over = pipelineInputSummary({
+      detail,
+      text: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS + 1),
+    });
+    expect(over).toMatchObject({ overLimit: true, startable: false });
+    expect(over.sizeLabel).toBe(
+      `${over.tokens} · over the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString("en-US")} character limit`,
+    );
+    expect(
+      pipelineInputSummary({ detail, text: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS) })
+        .startable,
+    ).toBe(true);
+  });
+});
+
+describe("resolvePipelineLaunch", () => {
+  const mapped = ProjectId.make("proj-mapped");
+  const other = ProjectId.make("proj-other");
+  const teamStates: ReadonlyArray<LinearWorkflowState> = [
+    { id: "prog", name: "In Progress", type: "started", color: "#f90", position: 1 },
+  ];
+  const settings = {
+    mappings: [
+      {
+        id: "m",
+        kind: "team" as const,
+        linearId: "t",
+        linearName: "Attraccess",
+        projectId: mapped,
+        baseBranch: "develop",
+      },
+    ],
+    moveToStateId: null,
+    moveToStateEnabled: true,
+    commentEnabled: false,
+  };
+  const noChoices = { projectId: null, move: null, comment: null };
+
+  it("defaults to the mapped project, its base branch, and the settings' write-backs", () => {
+    expect(
+      resolvePipelineLaunch({
+        issue: detail.issue,
+        settings,
+        teamStates,
+        projectIds: [mapped, other],
+        choices: noChoices,
+      }),
+    ).toEqual({
+      mappedProjectId: mapped,
+      projectId: mapped,
+      mappedBaseBranch: "develop",
+      moveTarget: { id: "prog", name: "In Progress" },
+      moveEnabled: true,
+      commentEnabled: false,
+    });
+  });
+
+  it("lets choices win, dropping the mapped base branch for another project", () => {
+    expect(
+      resolvePipelineLaunch({
+        issue: detail.issue,
+        settings,
+        teamStates,
+        projectIds: [mapped, other],
+        choices: { projectId: other, move: false, comment: true },
+      }),
+    ).toMatchObject({
+      mappedProjectId: mapped,
+      projectId: other,
+      mappedBaseBranch: null,
+      moveEnabled: false,
+      commentEnabled: true,
+    });
+  });
+
+  it("has no mapped project outside this environment and no move without team states", () => {
+    expect(
+      resolvePipelineLaunch({
+        issue: detail.issue,
+        settings,
+        teamStates: null,
+        projectIds: [other],
+        choices: noChoices,
+      }),
+    ).toMatchObject({
+      mappedProjectId: null,
+      projectId: null,
+      mappedBaseBranch: null,
+      moveTarget: null,
+      moveEnabled: false,
+    });
+  });
+});
+
+describe("pipelineLaunchRecord", () => {
+  it("links the run's parent thread under the pipeline and issue name", () => {
+    expect(
+      pipelineLaunchRecord({
+        environmentId: "env-1" as EnvironmentId,
+        issue: detail.issue,
+        pipelineName: "Ship it",
+        run: { id: "run-1", parentThreadId: "thr-1" as ThreadId },
+        writeBack: {
+          moveTo: { id: "prog", name: "In Progress" },
+          moveEnabled: true,
+          commentEnabled: false,
+        },
+      }),
+    ).toEqual({
+      environmentId: "env-1",
+      issueId: "i",
+      identifier: "ATT-612",
+      teamId: "t",
+      projectId: undefined,
+      target: {
+        kind: "pipeline_run",
+        targetId: "run-1",
+        threadId: "thr-1",
+        title: "Ship it: ATT-612 Handshake",
+      },
+      writeBack: { moveToStateId: "prog", comment: false },
     });
   });
 });

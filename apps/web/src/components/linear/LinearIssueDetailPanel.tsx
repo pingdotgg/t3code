@@ -258,7 +258,7 @@ function LaunchControls({ issueId }: { issueId: string }) {
               pipelines.map((pipeline) => (
                 <MenuItem
                   key={pipeline.id}
-                  onClick={() => launch?.openPipelineDialog(issueId, pipeline.id)}
+                  onClick={() => launch?.openPipeline(issueId, pipeline.id)}
                 >
                   <span className="flex min-w-0 flex-col">
                     <span className="truncate">{pipeline.name}</span>
@@ -271,10 +271,7 @@ function LaunchControls({ issueId }: { issueId: string }) {
             )}
           </MenuGroup>
           {pipelines.length > 0 ? <MenuSeparator /> : null}
-          <MenuItem
-            disabled={pipelines.length === 0}
-            onClick={() => launch?.openPipelineDialog(issueId)}
-          >
+          <MenuItem disabled={pipelines.length === 0} onClick={() => launch?.openPipeline(issueId)}>
             Choose in dialog…
           </MenuItem>
         </MenuPopup>

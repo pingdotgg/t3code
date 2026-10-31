@@ -1,11 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  linearThreadKey,
-  resolveLinearEnvironmentId,
-  resolveLinearTabState,
-} from "./linearEnvironment";
+import { resolveLinearEnvironmentId, resolveLinearTabState } from "./linearEnvironment";
 
 const env = (id: string, connectionState = "connected", isEnabled = true) => ({
   environmentId: id as EnvironmentId,
@@ -50,9 +46,5 @@ describe("resolveLinearTabState", () => {
     expect(resolveLinearTabState({ ...base, failure: new Error("offline"), hasError: true })).toBe(
       "unreachable",
     );
-  });
-
-  it("keys thread identifiers by environment", () => {
-    expect(linearThreadKey("a", "t")).not.toBe(linearThreadKey("b", "t"));
   });
 });

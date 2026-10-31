@@ -32,8 +32,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 
-import type { LinearDraftIssue } from "@t3tools/client-runtime/linear/launch-plan";
-import { LinearDraftIssueSchema } from "../features/linear/linearDraftIssueSchema";
+import { LinearDraftIssue } from "@t3tools/client-runtime/linear/launch-plan";
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
 import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
@@ -476,7 +475,7 @@ const PersistedComposerContextSchema = Schema.Struct({
 const ComposerDraftSchema = Schema.Struct({
   text: Schema.String,
   context: Schema.optional(PersistedComposerContextSchema),
-  linearIssue: Schema.optional(LinearDraftIssueSchema),
+  linearIssue: Schema.optional(LinearDraftIssue),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   importedShareIds: Schema.optional(Schema.Array(Schema.String)),
   modelSelection: Schema.optional(ModelSelectionSchema),

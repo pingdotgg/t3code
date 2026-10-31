@@ -36,6 +36,7 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+import { LinearDraftIssue } from "@t3tools/client-runtime/linear/launch-plan";
 import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
@@ -309,24 +310,7 @@ type LegacyPersistedComposerDraftStoreState = PersistedComposerDraftStoreState &
   LegacyStickyModelFields &
   LegacyV2StoreFields;
 
-/** A draft started from a Linear issue: what to record, and write back, once it is sent. */
-export const DraftLinearIssue = Schema.Struct({
-  issueId: Schema.String,
-  identifier: Schema.String,
-  /** Lets the launch still be linked when Linear can't be read at send time. */
-  teamId: Schema.optionalKey(Schema.String),
-  projectId: Schema.optionalKey(Schema.String),
-  /** The issue's Linear branch name; the new worktree takes it. */
-  branchName: Schema.String,
-  /** The T3 project the mapping chose, for the "from mapping" hint; null when unmapped. */
-  mappedProjectId: Schema.NullOr(Schema.String),
-  /** The state this launch moves the issue to; null when the issue is not eligible. */
-  moveTo: Schema.NullOr(Schema.Struct({ id: Schema.String, name: Schema.String })),
-  moveEnabled: Schema.Boolean,
-  commentEnabled: Schema.Boolean,
-});
-export type DraftLinearIssue = typeof DraftLinearIssue.Type;
-const isDraftLinearIssue = Schema.is(DraftLinearIssue);
+const isLinearDraftIssue = Schema.is(LinearDraftIssue);
 
 const PersistedDraftThreadState = Schema.Struct({
   threadId: ThreadId,
@@ -342,7 +326,7 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  linearIssue: Schema.optionalKey(DraftLinearIssue),
+  linearIssue: Schema.optionalKey(LinearDraftIssue),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -438,7 +422,7 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
-  linearIssue?: DraftLinearIssue;
+  linearIssue?: LinearDraftIssue;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -529,7 +513,7 @@ interface ComposerDraftStoreState {
   /** Marks a draft as started from a Linear issue (or, with null, as no longer one). */
   setDraftLinearIssue: (
     threadRef: ComposerThreadTarget,
-    linearIssue: DraftLinearIssue | null,
+    linearIssue: LinearDraftIssue | null,
   ) => void;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
   clearProjectDraftThreadById: (
@@ -1598,8 +1582,8 @@ function isDraftThreadPromoting(draftThread: DraftThreadState | null | undefined
 }
 
 function draftLinearIssuesEqual(
-  left: DraftLinearIssue | undefined,
-  right: DraftLinearIssue | undefined,
+  left: LinearDraftIssue | undefined,
+  right: LinearDraftIssue | undefined,
 ): boolean {
   if (left === undefined || right === undefined) return left === right;
   return (
@@ -1778,7 +1762,7 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
-        ...(isDraftLinearIssue(candidateDraftThread.linearIssue)
+        ...(isLinearDraftIssue(candidateDraftThread.linearIssue)
           ? { linearIssue: candidateDraftThread.linearIssue }
           : {}),
         ...(candidateDraftThread.environmentSelection === "manual" ||
