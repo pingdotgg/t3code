@@ -92,7 +92,13 @@ const readCodexCutTurnTranscripts = Effect.fn("readCodexCutTurnTranscripts")(fun
     workspace,
   );
   const { entries } = recorded;
-  type Frame = { readonly params?: Record<string, any> };
+  type Frame = {
+    readonly params?: {
+      readonly input?: unknown;
+      readonly turn?: { readonly id?: string };
+      readonly turnId?: string;
+    };
+  };
   const frameOf = (entry: (typeof entries)[number] | undefined): Frame | undefined =>
     entry === undefined || entry.type === "runtime_exit" ? undefined : (entry.frame as Frame);
   const firstStart = entries.findIndex(
