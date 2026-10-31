@@ -399,6 +399,74 @@ describe("handoff budget", () => {
 });
 
 describe("handoff delivery", () => {
+  it.effect("delivers intact history with a bounded reserve in a million-token native thread", () =>
+    Effect.gen(function* () {
+      const target = {
+        ...providerThread,
+        contextUsage: { usedTokens: 775_260, maxTokens: 1_000_000 },
+      };
+      const input = {
+        tokenCap: 16_000,
+        userText: "Continue",
+        attachments: [],
+        providerThread: target,
+        nativeContextEstimate: 0,
+        modelContextWindow: 1_000_000,
+      };
+      const budget = handoffBudget(input);
+      let durable = handoff;
+      const delivery = yield* deliverContextHandoffs({
+        handoffs: [handoff],
+        providerThread: target,
+        budget,
+        alreadyDeliveredItemIds: new Set(),
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      });
+      assert.equal(budget, 16_000);
+      assert.include(delivery.context, messages[0]!.text);
+      assert.include(delivery.context, messages[1]!.text);
+      assert.include(delivery.context, "Selected 2 intact items; omitted 0 items");
+      yield* delivery.delivered;
+      assert.deepEqual(durable.delivery, {
+        nativeThreadId: "native:target",
+        status: "inline",
+        itemIds: messages.map((item) => item.itemId),
+        omittedItemIds: [],
+      });
+
+      for (const { contextUsage, expectedBudget } of [
+        {
+          contextUsage: { usedTokens: 970_000, maxTokens: 1_000_000 },
+          expectedBudget: 0,
+        },
+        {
+          contextUsage: { ...target.contextUsage, autoCompactThreshold: 800_000 },
+          expectedBudget: 0,
+        },
+        {
+          contextUsage: { usedTokens: 920_000, maxTokens: 1_000_000 },
+          expectedBudget: 15_990,
+        },
+        {
+          contextUsage: { usedTokens: 0, maxTokens: 32_000 },
+          expectedBudget: 15_990,
+        },
+        {
+          contextUsage: { usedTokens: 60_000, maxTokens: 100_000 },
+          expectedBudget: 14_990,
+        },
+      ]) {
+        assert.equal(
+          handoffBudget({ ...input, providerThread: { ...target, contextUsage } }),
+          expectedBudget,
+        );
+      }
+    }),
+  );
+
   it.effect.each([
     { native: true, label: "injected" },
     { native: false, label: "inline" },
