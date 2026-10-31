@@ -1,4 +1,10 @@
-import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  sourceControlClients,
+  type ReferenceAutolink,
+} from "@t3tools/client-runtime/source-control-clients";
+import type { PluggableList } from "unified";
+import { rehypePullRequestMentions } from "./pullRequestMentions";
 
 export {
   splitPullRequestBody,
@@ -59,4 +65,37 @@ export function rehypePullRequestAutolinks(options: {
     }
   };
   return (tree: MarkdownNode) => visit(tree);
+}
+
+const NO_AUTOLINK_PLUGINS: PluggableList = [];
+const autolinkPlugins = new Map<string, PluggableList>();
+
+/**
+ * One plugin list per repository, so every comment of a pull request shares one markdown
+ * renderer and its parse cache instead of parsing again on each render.
+ */
+export function pullRequestRehypePlugins(
+  changeRequest: {
+    readonly provider: string;
+    readonly url: string;
+    readonly viewer?: string | null;
+  } | null,
+): PluggableList {
+  if (changeRequest === null) return NO_AUTOLINK_PLUGINS;
+  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
+    .repositoryUrl;
+  if (repositoryUrl === undefined) return NO_AUTOLINK_PLUGINS;
+  const key = `rehype\u0000${changeRequest.provider}\u0000${repositoryUrl}\u0000${changeRequest.viewer ?? ""}`;
+  let plugins = autolinkPlugins.get(key);
+  if (plugins === undefined) {
+    const autolinks = changeRequestReferenceAutolinker(changeRequest);
+    const github = changeRequest.provider === "github";
+    plugins = [];
+    if (github)
+      plugins.push([rehypePullRequestMentions, { repositoryUrl, viewer: changeRequest.viewer }]);
+    if (autolinks)
+      plugins.push([rehypePullRequestAutolinks, { autolinks, userMentionsHandled: github }]);
+    autolinkPlugins.set(key, plugins);
+  }
+  return plugins;
 }

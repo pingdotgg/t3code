@@ -5,7 +5,7 @@ import {
 import {
   audioMimeTypeFromExtension,
   mediaMimeTypeFromExtension,
-} from "@t3tools/shared/filePreview";
+} from "@t3tools/shared/mediaPreview";
 import { splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import { parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
 import {

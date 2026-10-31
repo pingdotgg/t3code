@@ -5,7 +5,7 @@ import { Atom } from "effect/reactivity";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { type AtomCommand, runAtomCommand } from "./runtime.ts";
 import { claimThreadOpen } from "./threadSearch.ts";
-import type { VisitThreadInput } from "./threadCommands.ts";
+import type { VisitThreadInput } from "../operations/commands.ts";
 
 // During an active turn the thread's updatedAt advances several times per
 // second, and every server-side visit is a full command dispatch plus a
@@ -56,7 +56,7 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
     return Atom.make((get) => {
       const registry = get.registry;
       // Showing the thread is the open, whether or not its shell has arrived;
-      // the shell only decides whether the server hears about it now.
+      // the shell only decides when the server hears about it.
       // Recorded even when the server cannot take opens, so recents follow
       // it. A palette pick already sent the open with its query.
       let openPending = claimThreadOpen(ref.environmentId, ref.threadId, Date.now());
@@ -94,10 +94,6 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
 
       const onShell = (shell: VisitedShell | null) => {
         clearTimer();
-        // Only a shell present when the thread is shown carries the open; one
-        // that arrives later is an ordinary visit.
-        const opened = openPending;
-        openPending = false;
         if (shell === null) return;
 
         const shellUpdatedAtMs = Date.parse(shell.updatedAt);
@@ -110,13 +106,17 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
           options.markLocalVisit?.(ref, visitedAt);
           return;
         }
-        if (opened) {
+        // The open rides on the first visit the server hears, however late
+        // the shell arrives, so it still counts toward search ranking.
+        if (openPending) {
+          openPending = false;
           dispatch(shell, visitedAt, true);
           return;
         }
         const lastVisitedAtMs = shell.lastVisitedAt ? Date.parse(shell.lastVisitedAt) : NaN;
         if (!Number.isNaN(lastVisitedAtMs) && lastVisitedAtMs >= updatedAtMs) return;
-        if (lastDispatchedUpdatedAt === visitedAt) return;
+        if (lastDispatchedUpdatedAt !== null && Date.parse(lastDispatchedUpdatedAt) >= updatedAtMs)
+          return;
 
         const completedAtMs = shell.latestRun?.completedAt
           ? Date.parse(shell.latestRun.completedAt)

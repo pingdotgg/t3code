@@ -1,9 +1,6 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
-import {
-  sourceControlClients,
-  type ReferenceAutolink,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   SOURCE_CONTROL_MEDIA_ASSET,
   type AssetResource,
@@ -11,7 +8,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { createContext, useContext } from "react";
-import type { Options as ReactMarkdownOptions } from "react-markdown";
+import type { PluggableList } from "unified";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
@@ -19,14 +16,11 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
-import { rehypePullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
-
-import { rehypePullRequestMentions } from "./pullRequestMentions";
+import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
-  autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
-  repositoryUrl: string | null;
-  viewer: string | null;
+  rehypePlugins: PluggableList;
+  lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
@@ -63,32 +57,20 @@ export function PullRequestMarkdown({
   cwd,
   environmentId,
   threadRef,
+  lineBreaks,
   className,
 }: {
   text: string;
   cwd: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | null;
+  lineBreaks?: boolean;
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
-  const autolinks = context?.autolinks;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
-  const extraRehypePlugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [];
-  // Check authored mentions before reference links split text and discard positions.
-  if (context?.repositoryUrl) {
-    extraRehypePlugins.push([
-      rehypePullRequestMentions,
-      { repositoryUrl: context.repositoryUrl, viewer: context.viewer },
-    ]);
-  }
-  if (autolinks) {
-    extraRehypePlugins.push([
-      rehypePullRequestAutolinks,
-      { autolinks, userMentionsHandled: Boolean(context?.repositoryUrl) },
-    ]);
-  }
+
   return (
     <div
       className={cn(
@@ -108,7 +90,8 @@ export function PullRequestMarkdown({
               threadRef={resolvedThreadRef}
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
-              extraRehypePlugins={extraRehypePlugins}
+              {...(context ? { extraRehypePlugins: context.rehypePlugins } : {})}
+              lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
               sourceControlMedia
             />
           );

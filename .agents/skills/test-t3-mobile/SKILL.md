@@ -38,8 +38,14 @@ This installs the dev client for the checkout's native fingerprint: from the
 device, the local cache, or the shared cache in seconds, building once only
 when no machine has that fingerprint yet (5-15 minutes, logged to the file it
 names). The device id may be omitted when exactly one device is booted. It
-prints one JSON line; on failure it names the next command. Authorized mobile
-verification includes that step unless the user prohibits it.
+prints one JSON line; on failure it names the next command. Mobile verification
+includes that step unless the user prohibits it.
+
+For a device you opened in an agent-device session elsewhere (a device pool,
+cloud, or remote host), run `vp run mobile:install <ios|android> --session <s>`
+from the directory you opened the session in. It installs the cached build into
+that session (`--abi arm64-v8a` for an ARM Android device; `--metro <url>` also
+opens it against Metro) and never builds.
 
 Start `vp run dev:client` from `apps/mobile`, or reuse a healthy Metro belonging
 to this checkout. Open its printed development-client URL with AgentDevice

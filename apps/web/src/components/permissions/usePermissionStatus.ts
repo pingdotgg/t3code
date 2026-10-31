@@ -1,5 +1,6 @@
 import { useState, useSyncExternalStore } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { getDocumentActivity, subscribeDocumentActivity } from "~/lib/documentActivity";
 
 const POLL_INTERVAL_MS = 1500;
@@ -61,16 +62,16 @@ export function createPermissionPoller<Id extends string>(
 const noopSubscribe = () => () => {};
 
 /**
- * `check` and `initialStatus` are read once, when the component mounts, so the
- * subscription only restarts when `enabled` flips. Key the component if what it
- * checks can change.
+ * Each check calls the latest `check`, since callers close over props. `initialStatus` is
+ * read once, when the component mounts, and the subscription only restarts when `enabled` flips.
  */
 export function usePermissionStatus<Id extends string>(
   check: () => Promise<Record<Id, boolean>>,
   initialStatus: Record<Id, boolean>,
   enabled = true,
 ) {
-  const [poller] = useState(() => createPermissionPoller(check, initialStatus));
+  const checkLatest = useStableCallback(check);
+  const [poller] = useState(() => createPermissionPoller(checkLatest, initialStatus));
   const { status, error } = useSyncExternalStore(
     enabled ? poller.subscribe : noopSubscribe,
     poller.getSnapshot,

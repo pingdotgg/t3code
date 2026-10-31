@@ -41,6 +41,11 @@ log file it prints (`T3_NATIVE_CLIENT_VERBOSE=1` streams it instead). Builds are
 your task-cache login (`bash infra/task-cache/install.sh`) can write. `T3_NATIVE_CLIENT_CACHE=read`
 skips the upload and `off` skips the shared cache. Physical iPhones still use `vp run ios:dev`.
 
+`--session <name>` installs into an agent-device session opened elsewhere, such as a device pool
+or a cloud simulator, instead of a local device: `vp run mobile:install android --session pool-1
+--metro http://<this-machine>:8081`. It uses only the cached build (x86_64 by default; `--abi`
+for ARM) and fails with the next step when no machine has built this fingerprint yet.
+
 For a read-only decision, run `node ../../scripts/mobile-native-client.ts check <ios|android>
 [device]`: exit 0 means compatible, 2 means an install is needed, and 1 means an operational error.
 An externally installed client is unverified until the helper installs it once.
