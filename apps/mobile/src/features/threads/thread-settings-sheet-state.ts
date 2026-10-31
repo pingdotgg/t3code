@@ -1,10 +1,5 @@
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import type {
-  EnvironmentId,
-  ModelSelection,
-  ProviderInstanceId,
-  ServerSettings,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 
 export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
   return `${provider}:${model}`;
@@ -79,11 +74,8 @@ export function providerSectionIsCollapsed(input: {
   return input.defaultExpanded ? input.hasExpansionOverride : !input.hasExpansionOverride;
 }
 
-/** A local visibility toggle shown until the write settles and a newer settings snapshot replaces `baseline`. */
 export type HiddenModelOverride = {
   readonly hidden: boolean;
-  readonly baseline: ServerSettings;
-  readonly pending: boolean;
 };
 
 export function hiddenModelOverrideKey(
@@ -96,25 +88,29 @@ export function hiddenModelOverrideKey(
 export function withHiddenModelOverrides(
   groups: ReadonlyArray<ProviderGroup>,
   environmentId: EnvironmentId | null,
-  settings: ServerSettings | undefined,
   overrides: ReadonlyMap<string, HiddenModelOverride>,
-): ReadonlyArray<ProviderGroup> {
-  if (!environmentId || overrides.size === 0) return groups;
-  return groups.map((group) => ({
-    ...group,
-    models: group.models.map((model) => {
-      const override = overrides.get(hiddenModelOverrideKey(environmentId, model.selection));
-      if (
-        !override ||
-        !model.canHide ||
-        (!override.pending && override.baseline !== settings) ||
-        override.hidden === (model.isHidden === true)
-      ) {
-        return model;
-      }
-      return { ...model, isHidden: override.hidden };
-    }),
-  }));
+  includeHidden = true,
+) {
+  if (!environmentId || overrides.size === 0) return { providerGroups: groups, overrides };
+  let reconciled: Map<string, HiddenModelOverride> | undefined;
+  const providerGroups = groups
+    .map((group) => ({
+      ...group,
+      models: group.models.flatMap((model) => {
+        const key = hiddenModelOverrideKey(environmentId, model.selection);
+        const override = model.canHide ? overrides.get(key) : undefined;
+        if (override && override.hidden === (model.isHidden === true)) {
+          (reconciled ??= new Map(overrides)).delete(key);
+        }
+        const effective =
+          override && override.hidden !== (model.isHidden === true)
+            ? { ...model, isHidden: override.hidden }
+            : model;
+        return includeHidden || !effective.isHidden ? [effective] : [];
+      }),
+    }))
+    .filter((group) => group.models.length > 0);
+  return { providerGroups, overrides: reconciled ?? overrides };
 }
 
 export function settleHiddenModelOverride(
@@ -122,14 +118,9 @@ export function settleHiddenModelOverride(
   key: string,
   override: HiddenModelOverride,
   succeeded: boolean,
-  currentSettings: ServerSettings | undefined,
 ): ReadonlyMap<string, HiddenModelOverride> {
-  if (overrides.get(key) !== override) return overrides;
+  if (succeeded || overrides.get(key) !== override) return overrides;
   const next = new Map(overrides);
-  if (succeeded && currentSettings === override.baseline) {
-    next.set(key, { ...override, pending: false });
-  } else {
-    next.delete(key);
-  }
+  next.delete(key);
   return next;
 }

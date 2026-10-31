@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
 import {
-  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProviderInstanceId,
   type ProviderOptionSelection,
@@ -171,50 +170,64 @@ describe("thread settings sheet state", () => {
   });
 
   // regression: #28318 hiding a model waited for the settings write before the eye changed
-  it("shows a visibility toggle at once and reconciles it with server snapshots", () => {
+  it("shows visibility changes until the server confirms them and uses them throughout the picker", () => {
     const environmentId = EnvironmentId.make("env-a");
     const model = { ...modelOption("gpt-next"), canHide: true, isHidden: false };
     const groups = (isHidden: boolean) => [
       { providerKey: "codex", providerLabel: "Codex", models: [{ ...model, isHidden }] },
     ];
     const isHidden = (shown: ReturnType<typeof withHiddenModelOverrides>): boolean | undefined =>
-      shown[0]?.models[0]?.isHidden;
+      shown.providerGroups[0]?.models[0]?.isHidden;
     const key = hiddenModelOverrideKey(environmentId, model.selection);
-    const before = { ...DEFAULT_SERVER_SETTINGS };
-    const override = { hidden: true, baseline: before, pending: true };
+    const override = { hidden: true };
     const overrides = new Map([[key, override]]);
 
+    expect(isHidden(withHiddenModelOverrides(groups(false), environmentId, overrides))).toBe(true);
     expect(
-      isHidden(withHiddenModelOverrides(groups(false), environmentId, before, overrides)),
-    ).toBe(true);
+      isHidden(withHiddenModelOverrides(groups(false), EnvironmentId.make("env-b"), overrides)),
+    ).toBe(false);
     expect(
-      isHidden(
-        withHiddenModelOverrides(groups(false), EnvironmentId.make("env-b"), before, overrides),
+      withHiddenModelOverrides(groups(false), environmentId, overrides, false).providerGroups,
+    ).toEqual([]);
+    expect(
+      canCommitPendingModel(
+        model,
+        withHiddenModelOverrides(groups(false), environmentId, overrides).providerGroups,
       ),
     ).toBe(false);
-    const unrelated = { ...DEFAULT_SERVER_SETTINGS };
-    expect(
-      isHidden(withHiddenModelOverrides(groups(false), environmentId, unrelated, overrides)),
-    ).toBe(true);
 
-    const succeeded = settleHiddenModelOverride(overrides, key, override, true, before);
+    const succeeded = settleHiddenModelOverride(overrides, key, override, true);
+    const unrelatedUpdate = withHiddenModelOverrides(groups(false), environmentId, succeeded);
+    expect(isHidden(unrelatedUpdate)).toBe(true);
+    expect(unrelatedUpdate.overrides).toBe(succeeded);
+    const confirmed = withHiddenModelOverrides(groups(true), environmentId, succeeded);
+    expect(isHidden(confirmed)).toBe(true);
+    expect(confirmed.overrides.size).toBe(0);
+    const confirmedDuringWrite = withHiddenModelOverrides(groups(true), environmentId, overrides);
     expect(
-      isHidden(withHiddenModelOverrides(groups(false), environmentId, before, succeeded)),
-    ).toBe(true);
-    const after = { ...DEFAULT_SERVER_SETTINGS };
-    expect(isHidden(withHiddenModelOverrides(groups(true), environmentId, after, succeeded))).toBe(
-      true,
-    );
-    expect(isHidden(withHiddenModelOverrides(groups(false), environmentId, after, succeeded))).toBe(
-      false,
-    );
-    expect(settleHiddenModelOverride(overrides, key, override, true, after).has(key)).toBe(false);
+      settleHiddenModelOverride(confirmedDuringWrite.overrides, key, override, true).size,
+    ).toBe(0);
+    expect(
+      isHidden(withHiddenModelOverrides(groups(false), environmentId, confirmed.overrides)),
+    ).toBe(false);
 
-    const failed = settleHiddenModelOverride(overrides, key, override, false, before);
-    expect(isHidden(withHiddenModelOverrides(groups(false), environmentId, before, failed))).toBe(
-      false,
-    );
-    const superseding = new Map([[key, { ...override, hidden: false }]]);
-    expect(settleHiddenModelOverride(superseding, key, override, false, before)).toBe(superseding);
+    const failed = settleHiddenModelOverride(overrides, key, override, false);
+    expect(isHidden(withHiddenModelOverrides(groups(false), environmentId, failed))).toBe(false);
+    const showOverride = { hidden: false };
+    const superseding = new Map([[key, showOverride]]);
+    expect(settleHiddenModelOverride(superseding, key, override, false)).toBe(superseding);
+
+    const showing = withHiddenModelOverrides(groups(true), environmentId, superseding, false);
+    expect(isHidden(showing)).toBe(false);
+    expect(canCommitPendingModel(model, showing.providerGroups)).toBe(true);
+    expect(showing.overrides).toBe(superseding);
+    const shown = settleHiddenModelOverride(superseding, key, showOverride, true);
+    expect(
+      canCommitPendingModel(
+        model,
+        withHiddenModelOverrides(groups(true), environmentId, shown, false).providerGroups,
+      ),
+    ).toBe(true);
+    expect(withHiddenModelOverrides(groups(false), environmentId, shown).overrides.size).toBe(0);
   });
 });

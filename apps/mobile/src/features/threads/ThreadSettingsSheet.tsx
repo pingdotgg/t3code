@@ -354,8 +354,8 @@ function ThreadSettingsSessionProvider(
   const [hiddenOverrides, setHiddenOverrides] = useState<ReadonlyMap<string, HiddenModelOverride>>(
     () => new Map(),
   );
-  const providerGroups = withHiddenModelOverrides(
-    manageHidden && config
+  const visibility = withHiddenModelOverrides(
+    (manageHidden || hiddenOverrides.size > 0) && config
       ? groupByProvider(
           buildModelOptions(
             config,
@@ -367,9 +367,11 @@ function ThreadSettingsSessionProvider(
         )
       : props.providerGroups,
     props.environmentId,
-    settings,
     hiddenOverrides,
+    manageHidden,
   );
+  if (visibility.overrides !== hiddenOverrides) setHiddenOverrides(visibility.overrides);
+  const providerGroups = visibility.providerGroups;
   const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
     : EMPTY_MODEL_FAVORITES;
@@ -472,7 +474,7 @@ function ThreadSettingsSessionProvider(
     if (!baseline || !environmentId || !option.canHide || pendingHidden.current.has(option.key))
       return;
     const overrideKey = hiddenModelOverrideKey(environmentId, option.selection);
-    const override = { hidden: !option.isHidden, baseline, pending: true };
+    const override = { hidden: !option.isHidden };
     pendingHidden.current.add(option.key);
     setPendingHiddenKeys(new Set(pendingHidden.current));
     setHiddenOverrides((current) => new Map(current).set(overrideKey, override));
@@ -491,17 +493,8 @@ function ThreadSettingsSessionProvider(
         },
       },
     }).then((result) => {
-      const currentSettings = registry
-        .get(environmentServerConfigsAtom)
-        .get(environmentId)?.settings;
       setHiddenOverrides((current) =>
-        settleHiddenModelOverride(
-          current,
-          overrideKey,
-          override,
-          AsyncResult.isSuccess(result),
-          currentSettings,
-        ),
+        settleHiddenModelOverride(current, overrideKey, override, AsyncResult.isSuccess(result)),
       );
       pendingHidden.current.delete(option.key);
       setPendingHiddenKeys(new Set(pendingHidden.current));
@@ -534,7 +527,7 @@ function ThreadSettingsSessionProvider(
   const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
   const displayedModel =
     pendingModel ??
-    props.providerGroups.flatMap((group) => group.models).find((option) => isApplied(option)) ??
+    providerGroups.flatMap((group) => group.models).find((option) => isApplied(option)) ??
     null;
   const runtimeModeChoices = runtimeModeChoicesForSupportedModes(
     displayedModel?.supportedRuntimeModes,
@@ -544,12 +537,12 @@ function ThreadSettingsSessionProvider(
     runtimeModeChoices,
   );
 
-  const hasLegacyModels = props.providerGroups.some((group) =>
+  const hasLegacyModels = providerGroups.some((group) =>
     group.models.some((model) => model.isLegacy),
   );
   const commitPendingModel = () => {
     if (pendingModel) {
-      if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
+      if (!canCommitPendingModel(pendingModel, providerGroups)) {
         Dialog.alert(
           "Model unavailable",
           "Set up this provider on web or desktop, or select another model.",
