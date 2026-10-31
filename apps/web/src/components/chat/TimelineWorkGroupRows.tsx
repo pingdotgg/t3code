@@ -59,7 +59,10 @@ import ChatMarkdown from "../ChatMarkdown";
 import {
   Minimize2Icon,
   XIcon,
-  ZapIcon,
+  BellIcon,
+  ActivityIcon,
+  TerminalIcon,
+  UsersIcon,
   ChevronRightIcon,
   CircleXIcon,
   MessageCircleQuestionMarkIcon,
@@ -728,14 +731,44 @@ export function BackgroundActivityTimelineRow({
   row: Extract<TimelineRow, { kind: "background-activity" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  const label = `${row.active ? "Handling" : "Handled"} ${row.updateCount} ${row.updateCount === 1 ? "update" : "updates"}${row.active ? "…" : ""}`;
+  const label = `${row.updateCount} ${row.updateCount === 1 ? "wake-up" : "wake-ups"}${row.active ? "…" : ""}`;
+  const summary = row.updates.map((update) => update.summary).join(", ");
+  const sources = new Map<string, number>();
+  for (const update of row.updates) {
+    sources.set(update.source.kind, (sources.get(update.source.kind) ?? 0) + 1);
+  }
   return (
     <WorkLogButton
-      aria-label={label}
+      aria-label={`${label}: ${summary}`}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.id, row.id)}
-      icon={<ZapIcon className="size-3.5 text-muted-foreground" />}
-      label={label}
+      icon={<BellIcon aria-hidden className="size-3.5 text-muted-foreground" />}
+      label={
+        <span className="flex min-w-0 items-center gap-1.5" title={summary}>
+          <span className="shrink-0 text-label">{label}</span>
+          {[...sources].map(([kind, count]) => {
+            const Icon =
+              kind === "monitor"
+                ? ActivityIcon
+                : kind === "command"
+                  ? TerminalIcon
+                  : kind === "subagent" || kind === "delegated_task"
+                    ? UsersIcon
+                    : BellIcon;
+            return (
+              <span
+                key={kind}
+                aria-label={`${count} ${kind.replaceAll("_", " ")}`}
+                className="inline-flex shrink-0 items-center gap-1 text-dim-foreground"
+              >
+                <Icon aria-hidden className="size-3" />
+                {count}
+              </span>
+            );
+          })}
+          <span className="min-w-0 truncate text-meta text-muted-foreground">{summary}</span>
+        </span>
+      }
       trailing={
         <ChevronRightIcon
           aria-hidden
