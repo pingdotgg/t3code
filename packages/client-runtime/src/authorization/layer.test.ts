@@ -602,6 +602,42 @@ describe("RemoteEnvironmentAuthorization", () => {
       }),
   );
 
+  it.effect("renews a live socket's token in the minute before each expiry", () =>
+    Effect.gen(function* () {
+      const puts = yield* Queue.unbounded<void>();
+      const harness = yield* makeHarness({
+        initialToken: persistedToken({ expiresAtEpochMs: 3_600_000 }),
+        responses: [
+          Response.json(DESCRIPTOR),
+          accessToken("renewed-1"),
+          Response.json(DESCRIPTOR),
+          accessToken("renewed-2"),
+        ],
+        beforePut: Queue.offer(puts, undefined).pipe(Effect.asVoid),
+      });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        yield* remote
+          .renewDpopBeforeExpiry({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            expiresAtEpochMs: 3_600_000,
+          })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust(3_540_000 - 1);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+        yield* TestClock.adjust(1);
+        yield* Queue.take(puts);
+        // Renewed at 0:59, so the next renewal is at 1:58.
+        yield* TestClock.adjust(7_080_000 - 3_540_000 - 1);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+        yield* TestClock.adjust(1);
+        yield* Queue.take(puts);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+    }),
+  );
+
   it.effect("evicts an auth-invalid cached token and obtains a fresh bootstrap", () =>
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({

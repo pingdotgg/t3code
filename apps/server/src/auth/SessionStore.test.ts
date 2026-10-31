@@ -98,10 +98,10 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
             Effect.forkScoped({ startImmediately: true }),
           );
         const first = yield* sessions
-          .awaitInvalidation(client.sessionId)
+          .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
           .pipe(Effect.forkScoped({ startImmediately: true }));
         const second = yield* sessions
-          .awaitInvalidation(client.sessionId)
+          .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
           .pipe(Effect.forkScoped({ startImmediately: true }));
         if (operation === "revoke") yield* sessions.revoke(client.sessionId);
         else if (operation === "revokeAllExcept") yield* sessions.revokeAllExcept(owner.sessionId);
@@ -120,7 +120,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       yield* sessions.markConnected(client.sessionId);
       const invalidated = yield* Deferred.make<void>();
       const watcher = yield* sessions
-        .awaitInvalidation(client.sessionId)
+        .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
         .pipe(
           Effect.andThen(Deferred.succeed(invalidated, undefined)),
           Effect.forkScoped({ startImmediately: true }),
@@ -130,6 +130,45 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       yield* TestClock.adjust(Duration.minutes(1));
       yield* Fiber.join(watcher);
       yield* sessions.awaitInvalidation(client.sessionId);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect.each([
+    { name: "a renewal for the same key", renewal: {}, closesAtMinute: 119 },
+    {
+      name: "a renewal for another key",
+      renewal: { proofKeyThumbprint: "other-proof-key" },
+      closesAtMinute: 60,
+    },
+    {
+      name: "a renewal with fewer scopes",
+      renewal: { scopes: ["orchestration:read"] as const },
+      closesAtMinute: 60,
+    },
+    {
+      name: "a renewal, until the original is revoked",
+      renewal: {},
+      closesAtMinute: 90,
+      revokeOriginal: true,
+    },
+  ])("keeps a DPoP socket past expiry after $name", (testCase) =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue(relaySessionInput);
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      yield* TestClock.adjust(Duration.minutes(59));
+      yield* sessions.issue({ ...relaySessionInput, ...testCase.renewal });
+      yield* TestClock.adjust(Duration.millis((testCase.closesAtMinute - 59) * 60_000 - 1));
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      yield* TestClock.adjust(Duration.millis(1));
+      if (testCase.revokeOriginal) yield* sessions.revoke(client.sessionId);
+      yield* Fiber.join(watcher);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
