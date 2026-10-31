@@ -672,6 +672,20 @@ describe("AssetAccess", () => {
         const error = yield* issueAssetUrl({ resource }).pipe(Effect.flip);
         expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
       }
+
+      const icon = path.join(config.baseDir, "icon.png");
+      yield* fs.symlink(stateFile, icon);
+      yield* fs.writeFileString(path.join(config.baseDir, "page.html"), '<img src="icon.png">');
+      const page = yield* issueAssetUrl({
+        resource: { _tag: "draft-workspace-file", cwd: config.baseDir, path: "page.html" },
+      });
+      const pageToken = page.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(pageToken, "icon.png")).toBeNull();
+      const faviconError = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+        projectFaviconPath: icon,
+      }).pipe(Effect.flip);
+      expect(faviconError._tag).toBe("AssetProjectFaviconNotFoundError");
     }).pipe(Effect.provide(layerTest)),
   );
 

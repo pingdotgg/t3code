@@ -282,7 +282,9 @@ const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(funct
   if (Option.isNone(canonicalFile)) return null;
 
   const info = yield* ProjectFaviconResolver.optionOnNotFound(fileSystem.stat(canonicalFile.value));
-  return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
+  if (Option.isNone(info) || info.value.type !== "File") return null;
+  const isServerInternalPath = yield* makeIsServerInternalPath;
+  return (yield* isServerInternalPath(canonicalFile.value)) ? null : canonicalFile.value;
 });
 
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
@@ -310,7 +312,9 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
     const info = yield* ProjectFaviconResolver.optionOnNotFound(
       fileSystem.stat(canonicalFile.value),
     );
-    return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
+    if (Option.isNone(info) || info.value.type !== "File") return null;
+    const isServerInternalPath = yield* makeIsServerInternalPath;
+    return (yield* isServerInternalPath(canonicalFile.value)) ? null : canonicalFile.value;
   },
 );
 
@@ -376,14 +380,11 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
       ),
     );
-    const isServerInternalPath = yield* makeIsServerInternalPath;
     // The workspace caller pins its containment-checked path; never follow a
     // replacement symlink to a different file during this second resolution.
     if (
       !canonicalFile ||
-      (input.expectedCanonicalPath !== undefined &&
-        canonicalFile !== input.expectedCanonicalPath) ||
-      (yield* isServerInternalPath(canonicalFile))
+      (input.expectedCanonicalPath !== undefined && canonicalFile !== input.expectedCanonicalPath)
     ) {
       return yield* new AssetWorkspaceAssetNotFoundError({
         resource: input.resource,
@@ -483,8 +484,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           }),
       ),
     );
-    const isServerInternalPath = yield* makeIsServerInternalPath;
-    if (!canonicalFile || (yield* isServerInternalPath(canonicalFile))) {
+    if (!canonicalFile) {
       return yield* new AssetWorkspaceAssetNotFoundError({
         resource: input.resource,
       });
