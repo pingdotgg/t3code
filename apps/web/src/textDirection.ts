@@ -6,15 +6,11 @@ const RTL_LETTER = /[֐-ࣿיִ-﷿ﹰ-﻿\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]
 const LETTER = /\p{L}/u;
 
 /**
- * The base direction for a block of prose, or undefined when it has no letters.
- *
- * `dir="auto"` follows the first letter, which lays out an Arabic line that
- * opens with an English term (`StrictMode: يعيد الـ render مرتين`) left to
- * right, and developers write that way constantly. Counting words keeps such a
- * line right to left, while English with one quoted Arabic word stays left to
- * right. A tie goes to the first word, as `dir="auto"` would.
+ * `dir="auto"` misreads Arabic prose that opens with an English term.
+ * Count words so mixed prose follows its main language; break ties with the first word.
  */
 export function textDirection(text: string): TextDirection | undefined {
+  if (!RTL_LETTER.test(text)) return LETTER.test(text) ? "ltr" : undefined;
   let rtlWords = 0;
   let ltrWords = 0;
   let first: TextDirection | undefined;
