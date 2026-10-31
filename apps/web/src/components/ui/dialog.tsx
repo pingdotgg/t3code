@@ -24,6 +24,9 @@ import {
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { createPartPresence } from "~/components/ui/part-presence";
+
+const { PartPresenceContext, useParts, usePart } = createPartPresence<"header">();
 
 const ControlledOpenContext = createContext<boolean | undefined>(undefined);
 
@@ -140,6 +143,7 @@ function DialogPopup({
   placement?: "center" | "content-top";
   contentInset?: number;
 }) {
+  const [parts, registerPart] = useParts();
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
   const popup = useRender({
     ref: popupRef,
@@ -163,12 +167,13 @@ function DialogPopup({
             DIALOG_MOBILE_SHEET_CLASS,
           className,
         )}
+        data-has-header={parts.length > 0 ? "" : undefined}
         data-slot="dialog-popup"
         initialFocus={initialFocus}
         render={renderRetainedPopup}
         {...props}
       >
-        {children}
+        <PartPresenceContext value={registerPart}>{children}</PartPresenceContext>
         {showCloseButton && (
           <DialogPrimitive.Close
             aria-label="Close"
@@ -227,6 +232,7 @@ function DialogAction(props: DialogActionProps) {
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+  usePart("header");
   return (
     <div
       className={cn("flex flex-col gap-1 px-5 pt-5 pb-4", className)}
@@ -291,7 +297,7 @@ function DialogPanel({
     <ScrollArea scrollFade={scrollFade}>
       <div
         className={cn(
-          "space-y-4 px-5 pt-5 pb-4 in-[[data-slot=dialog-popup]:has([data-slot=dialog-header])]:pt-0",
+          "space-y-4 px-5 pt-5 pb-4 in-[[data-slot=dialog-popup][data-has-header]]:pt-0",
           className,
         )}
         data-slot="dialog-panel"
