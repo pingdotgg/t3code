@@ -116,6 +116,8 @@ export interface TimelineRowActivityState {
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
   providerStartingLabel: string | null;
+  /** The setup card is on screen with its own header, so the working row steps aside. */
+  worktreeSetupCardOwnsHeader: boolean;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
   liveAnswerPreview: string | null;

@@ -199,7 +199,7 @@ export function WorkspaceTitlebarControls(props: { readonly children: ReactNode 
       )}
       data-workspace-titlebar-controls
     >
-      <div className="pointer-events-auto flex h-full items-center">{props.children}</div>
+      <div className="pointer-events-auto flex h-full items-center gap-1.5">{props.children}</div>
     </div>
   );
 }

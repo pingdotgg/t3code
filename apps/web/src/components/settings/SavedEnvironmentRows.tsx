@@ -764,7 +764,7 @@ export function CloudLinkRow({
 
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
   return (
-    <Empty className="min-h-52">
+    <Empty size="compact">
       <EmptyMedia variant="icon">
         <ChevronsLeftRightEllipsisIcon />
       </EmptyMedia>
