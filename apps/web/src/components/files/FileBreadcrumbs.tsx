@@ -1,11 +1,11 @@
-import { InlineButton } from "~/components/ui/button";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ArrowLeftIcon, ChevronRightIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
+import { Button, InlineButton } from "~/components/ui/button";
 import {
   Menu,
   MenuGroup,
@@ -32,9 +32,14 @@ import {
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
 interface FileBreadcrumbsProps {
+  /**
+   * Only the file, for a panel tab ("Files › file.tsx", pen r7Vc3). It opens
+   * its folder's menu, which climbs to the parents.
+   */
+  readonly compact?: boolean;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
-  readonly isFolder: boolean;
+  readonly isFolder?: boolean;
   /** Navigates to a folder; an empty path is the workspace root. */
   readonly onNavigateFolder: (relativePath: string) => void;
   readonly onOpenFile: (relativePath: string) => void;
@@ -82,6 +87,7 @@ function BreadcrumbMenuContent(props: {
   readonly onDirectoryChange: (path: string) => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly onOpenFile: (path: string) => void;
+  readonly onNavigateFolder?: (path: string) => void;
   readonly projectName: string;
   readonly rootPath: string;
   readonly workspaceMutationId: string | null;
@@ -116,6 +122,19 @@ function BreadcrumbMenuContent(props: {
         props.onDirectoryChange(parentPath);
       }}
     >
+      {props.onNavigateFolder ? (
+        <>
+          <MenuItem
+            onClick={() => {
+              props.onOpenChange(false);
+              props.onNavigateFolder?.(props.directoryPath);
+            }}
+          >
+            Open folder
+          </MenuItem>
+          <MenuSeparator />
+        </>
+      ) : null}
       {canGoBack && parentPath !== null ? (
         <>
           <MenuItem closeOnClick={false} onClick={() => props.onDirectoryChange(parentPath)}>
@@ -216,7 +235,13 @@ function BreadcrumbMenuContent(props: {
   );
 }
 
-function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: FileBreadcrumb }) {
+function FolderContentsMenu(
+  props: FileBreadcrumbsProps & {
+    readonly crumb: FileBreadcrumb;
+    /** Shown instead of the folder's name, with its own tooltip. */
+    readonly label?: { readonly content: ReactNode; readonly tooltip: string };
+  },
+) {
   const [open, setOpen] = useState(false);
   const [directoryPath, setDirectoryPath] = useState(props.crumb.path);
   const [shownFor, setShownFor] = useState({
@@ -236,18 +261,66 @@ function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: File
 
   return (
     <Menu open={open} onOpenChange={handleOpenChange}>
-      <MenuTrigger
-        render={
-          <button
-            type="button"
-            aria-label={`Browse ${props.crumb.label}`}
-            className="relative mx-0.5 flex h-5 w-4 shrink-0 cursor-pointer items-center justify-center rounded-kbd text-dim-foreground outline-none pointer-coarse:after:absolute pointer-coarse:after:-inset-3 hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:surface-selected data-popup-open:text-foreground"
-          />
-        }
-      >
-        <ChevronRightIcon className="size-3.5" />
-      </MenuTrigger>
-      {open ? (
+      {props.label ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={`Browse ${props.crumb.label}`}
+                    className="relative block min-w-0 max-w-40 cursor-pointer rounded-kbd px-0.5 text-left text-muted-foreground outline-none data-[current]:max-w-56 data-[current]:text-foreground pointer-coarse:after:-inset-y-3 pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:surface-selected data-popup-open:text-foreground"
+                    data-current={props.label ? "" : undefined}
+                  />
+                }
+              />
+            }
+          >
+            {props.label ? (
+              props.label.content
+            ) : (
+              <span className="block truncate">{props.crumb.label}</span>
+            )}
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {props.label?.tooltip ?? (props.crumb.path || props.projectName)}
+          </TooltipPopup>
+        </Tooltip>
+      ) : (
+        <MenuTrigger
+          render={
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
+              aria-label={`Browse ${props.crumb.label}`}
+            />
+          }
+        >
+          <ChevronRightIcon className="size-3.5" />
+        </MenuTrigger>
+      )}
+      {open && props.label && isHostPath(props.relativePath) ? (
+        <MenuPopup align="start" side="bottom">
+          {fileBreadcrumbs(props.projectName, props.trail)
+            .filter(
+              (crumb) =>
+                crumb.path !== breadcrumbPathOf(props.relativePath) &&
+                isListableHostFolder(crumb.path),
+            )
+            .map((crumb) => (
+              <MenuItem
+                key={crumb.path}
+                onClick={() => {
+                  handleOpenChange(false);
+                  props.onNavigateFolder(crumb.path);
+                }}
+              >
+                {crumb.label}
+              </MenuItem>
+            ))}
+        </MenuPopup>
+      ) : open ? (
         <BreadcrumbMenuContent
           cwd={props.cwd}
           currentFilePath={props.relativePath}
@@ -255,9 +328,19 @@ function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: File
           environmentId={props.environmentId}
           onDirectoryChange={setDirectoryPath}
           onOpenChange={handleOpenChange}
-          onOpenFile={props.onOpenFile}
+          onOpenFile={(path) => {
+            if (
+              breadcrumbPathOf(props.trail) !== breadcrumbPathOf(props.relativePath) &&
+              breadcrumbPathOf(path) === breadcrumbPathOf(props.trail)
+            ) {
+              props.onNavigateFolder(path);
+            } else {
+              props.onOpenFile(path);
+            }
+          }}
+          {...(props.label ? { onNavigateFolder: props.onNavigateFolder } : {})}
           projectName={props.projectName}
-          rootPath={props.crumb.path}
+          rootPath={props.label ? "" : props.crumb.path}
           workspaceMutationId={props.workspaceMutationId}
         />
       ) : null}
@@ -297,6 +380,31 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
   const breadcrumbs = fileBreadcrumbs(props.projectName, props.trail);
   const currentPath = breadcrumbPathOf(props.relativePath);
   const currentIndex = breadcrumbs.findIndex((crumb) => crumb.path === currentPath);
+
+  if (props.compact) {
+    const file = breadcrumbs[currentIndex];
+    if (!file) return null;
+    const folder = props.isFolder ? file : breadcrumbs[currentIndex - 1];
+    const content = (
+      <span className="flex min-w-0 items-center gap-1">
+        <PierreEntryIcon
+          pathValue={file.path}
+          kind={props.isFolder || file.kind === "project" ? "directory" : "file"}
+          theme={resolvedTheme}
+          className="size-3.5"
+        />
+        <span className="block min-w-0 truncate">{file.label}</span>
+      </span>
+    );
+    if (!folder) {
+      return (
+        <span aria-current="page" className="flex min-w-0 items-center text-foreground">
+          {content}
+        </span>
+      );
+    }
+    return <FolderContentsMenu {...props} crumb={folder} label={{ content, tooltip: file.path }} />;
+  }
 
   return (
     <nav aria-label="File path" className="flex h-full">
