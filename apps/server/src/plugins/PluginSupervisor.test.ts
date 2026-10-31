@@ -352,6 +352,7 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
         const stalling = yield* supervisor
           .invoke(stalled.manifest.id, "stall", null, { timeout: "1 second" })
           .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* awaitLog(subscription, stalled.manifest.id, "stall-started");
         yield* TestClock.adjust("1 second");
         expect((yield* Fiber.join(stalling))._tag).toBe("PluginTimeoutError");
         // Retries after the timeout are refused while the plugin still holds the call.
