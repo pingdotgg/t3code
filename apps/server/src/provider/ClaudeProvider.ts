@@ -242,7 +242,10 @@ export type ClaudeCapabilitiesProbe = {
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   /** Undefined means get_usage failed; absent windows on success mean no subscription windows, as with API keys. */
-  readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
+  readonly usage?: Pick<
+    SDKControlGetUsageResponse,
+    "rate_limits_available" | "rate_limits" | "subscription_type"
+  >;
   readonly usageCheckedAt?: string;
 };
 
@@ -368,6 +371,7 @@ const probeClaudeCapabilities = (
             ? {
                 rate_limits_available: usageResult.success.rate_limits_available,
                 rate_limits: usageResult.success.rate_limits,
+                subscription_type: usageResult.success.subscription_type,
               }
             : undefined;
         const account = init.account as
