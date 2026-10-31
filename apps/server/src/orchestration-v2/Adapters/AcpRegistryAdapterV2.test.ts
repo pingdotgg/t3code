@@ -1346,7 +1346,6 @@ describe("AcpRegistryAdapterV2", () => {
         [
           { usedTokens: 2_500, maxTokens: 10_000, cost: { amount: 0.42, currency: "USD" } },
           { usedTokens: 2_500, maxTokens: 10_000, cost: { amount: 0.42, currency: "USD" } },
-          { usedTokens: 3_000 },
         ],
       );
       assert.deepEqual(childThreads.at(-1)?.nativeMetadata, {
