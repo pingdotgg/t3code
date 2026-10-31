@@ -4037,62 +4037,82 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect("checks out submodules in a new worktree", () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const pathService = yield* Path.Path;
+    it.effect.each([false, true])(
+      "checks out submodules in a new worktree with borrowing failure %s",
+      (failBorrowing) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
 
-        // Git blocks file submodule transports (CVE-2022-39253) despite repo config; local fixtures need env permission.
-        const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
-        process.env.GIT_ALLOW_PROTOCOL = "file";
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            if (previousAllowedProtocol === undefined) {
-              delete process.env.GIT_ALLOW_PROTOCOL;
-            } else {
-              process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
+          // Git blocks file submodule transports (CVE-2022-39253) despite repo config; local fixtures need env permission.
+          const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
+          process.env.GIT_ALLOW_PROTOCOL = "file";
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              if (previousAllowedProtocol === undefined) {
+                delete process.env.GIT_ALLOW_PROTOCOL;
+              } else {
+                process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
+              }
+            }),
+          );
+
+          const submoduleRepo = yield* makeTmpDir("git-submodule-");
+          yield* initRepoWithCommit(submoduleRepo);
+          yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
+          yield* git(submoduleRepo, ["add", "."]);
+          yield* git(submoduleRepo, ["commit", "-m", "shared"]);
+
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(cwd, ["submodule", "add", submoduleRepo, "shared"]);
+          yield* git(cwd, ["commit", "-m", "add submodule"]);
+          // The remote still advertises its refs but can no longer serve objects, so the
+          // worktree can only populate the submodule from the source's `.git/modules`.
+          const remoteObjects = pathService.join(submoduleRepo, ".git", "objects");
+          if (!failBorrowing) {
+            yield* fileSystem.remove(remoteObjects, { recursive: true });
+            yield* fileSystem.makeDirectory(pathService.join(remoteObjects, "pack"), {
+              recursive: true,
+            });
+          }
+
+          const worktreePath = pathService.join(
+            yield* makeTmpDir("git-worktrees-"),
+            "submodule-worktree",
+          );
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          let borrowingFailed = false;
+          const spawner = ChildProcessSpawner.make((command) => {
+            if (
+              failBorrowing &&
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("--dissociate")
+            ) {
+              borrowingFailed = true;
+              return Effect.succeed(makeFailedHandle("error: unknown option 'dissociate'"));
             }
-          }),
-        );
+            return delegate.spawn(command);
+          });
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/submodules",
+          });
 
-        const submoduleRepo = yield* makeTmpDir("git-submodule-");
-        yield* initRepoWithCommit(submoduleRepo);
-        yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
-        yield* git(submoduleRepo, ["add", "."]);
-        yield* git(submoduleRepo, ["commit", "-m", "shared"]);
-
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        yield* git(cwd, ["submodule", "add", submoduleRepo, "shared"]);
-        yield* git(cwd, ["commit", "-m", "add submodule"]);
-        // The remote still advertises its refs but can no longer serve objects, so the
-        // worktree can only populate the submodule from the source's `.git/modules`.
-        const remoteObjects = pathService.join(submoduleRepo, ".git", "objects");
-        yield* fileSystem.remove(remoteObjects, { recursive: true });
-        yield* fileSystem.makeDirectory(pathService.join(remoteObjects, "pack"), {
-          recursive: true,
-        });
-
-        const worktreePath = pathService.join(
-          yield* makeTmpDir("git-worktrees-"),
-          "submodule-worktree",
-        );
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.createWorktree({
-          cwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/submodules",
-        });
-
-        assert.equal(
-          yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
-          true,
-        );
-        // The borrowed objects were copied, so the worktree survives the source losing them.
-        yield* fileSystem.remove(pathService.join(cwd, ".git", "modules"), { recursive: true });
-        yield* git(pathService.join(worktreePath, "shared"), ["fsck", "--no-progress"]);
-      }),
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
+            true,
+          );
+          assert.equal(borrowingFailed, failBorrowing);
+          // The borrowed objects were copied, so the worktree survives the source losing them.
+          yield* fileSystem.remove(pathService.join(cwd, ".git", "modules"), { recursive: true });
+          yield* git(pathService.join(worktreePath, "shared"), ["fsck", "--no-progress"]);
+        }),
     );
 
     it.effect("still creates the worktree when submodule checkout fails", () =>
