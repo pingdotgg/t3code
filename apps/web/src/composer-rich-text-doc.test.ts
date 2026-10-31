@@ -30,6 +30,7 @@ import {
   serializeSelection,
   skillChipReplacements,
   stepCaretAcrossStyledEdge,
+  surroundSelectionWithMark,
 } from "./composer-rich-text-doc";
 
 function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
@@ -1114,5 +1115,85 @@ describe("inline code entry", () => {
     expect(editor.state.doc.toJSON()).toEqual(before);
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);
     expect(editor.state.doc.toJSON()).toEqual(before);
+  });
+});
+
+describe("surroundSelectionWithMark", () => {
+  it("keeps markers inside math literal across draft restoration", () => {
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text("$x$"))]);
+    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 2, 3) });
+    expect(surroundSelectionWithMark(state, 2, 3, "*")).toBeNull();
+  });
+
+  it.each([
+    ["`", "hello", "say `hello` now"],
+    ["*", "hello", "say *hello* now"],
+    ["_", "hello", "say *hello* now"],
+    ["`", "   ", "say `   ` now"],
+  ])("formats a selection with %s like typed markers (%j)", (marker, selected, expected) => {
+    const doc = schema.node("doc", null, [
+      schema.node("paragraph", null, schema.text(`say ${selected} now`)),
+    ]);
+    const to = 5 + selected.length;
+    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 5, to) });
+    const tr = surroundSelectionWithMark(state, 5, to, marker);
+    expect(tr).not.toBeNull();
+    const formatted = state.apply(tr!);
+    const typed = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(`say ${marker}${selected}${marker} now`, (name) => ({
+        label: name,
+        description: null,
+      })),
+    );
+    expect(formatted.doc.eq(typed)).toBe(true);
+    expect(serializeEditorDoc(formatted.doc).value).toBe(expected);
+    expect(formatted.doc.textBetween(formatted.selection.from, formatted.selection.to)).toBe(
+      selected,
+    );
+  });
+
+  it.each([
+    ["*", "   "],
+    ["_", "   "],
+    ["*", "a*b"],
+    ["`", "foo`bar"],
+  ])("leaves %s around %j to literal wrapping when the mark cannot round-trip", (marker, text) => {
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text(text))]);
+    const to = 1 + text.length;
+    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 1, to) });
+    expect(surroundSelectionWithMark(state, 1, to, marker)).toBeNull();
+  });
+
+  it.each([
+    [
+      "plain mode",
+      plainSchema.node("doc", null, [plainSchema.node("paragraph", null, plainSchema.text("one"))]),
+    ],
+    [
+      "paragraphs",
+      schema.node("doc", null, [
+        schema.node("paragraph", null, schema.text("one")),
+        schema.node("paragraph", null, schema.text("two")),
+      ]),
+    ],
+    [
+      "a hard break",
+      schema.node("doc", null, [
+        schema.node("paragraph", null, [
+          schema.text("one"),
+          schema.node("hardBreak"),
+          schema.text("two"),
+        ]),
+      ]),
+    ],
+    [
+      "a code block",
+      schema.node("doc", null, [schema.node("codeBlock", null, schema.text("one"))]),
+    ],
+  ])("leaves selections in %s to literal wrapping", (_, doc) => {
+    doc.check();
+    const state = EditorState.create({ doc });
+    expect(surroundSelectionWithMark(state, 1, doc.content.size - 1, "`")).toBeNull();
   });
 });
