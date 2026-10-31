@@ -1890,6 +1890,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           .sources[0]!;
         assert.equal(rootSource.baseRef, emptyTree);
         assert.include(rootSource.diff, "+# test");
+        const rootFile = yield* driver.getReviewDiffPreview({
+          cwd: upstream,
+          commitSha: root,
+          baseRef: "missing-branch",
+          file: { path: "README.md", previousPath: null, sourceKind: "commit" },
+        });
+        assert.equal(rootFile.sources[0]?.baseRef, emptyTree);
+        assert.include(rootFile.sources[0]!.diff, "+# test");
 
         yield* writeTextFile(upstream, "README.md", "# boundary\n");
         yield* git(upstream, ["commit", "-am", "boundary"]);
@@ -2010,6 +2018,311 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           oldContents: "# test\n",
           newContents: "# side commit\n",
         });
+      }),
+    );
+
+    it.effect.each([4, 5])(
+      "shares preparation in bounded batches of %s files without changing the real index",
+      (fileCount) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, "tracked.txt", "before\n");
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "tracked file"]);
+          yield* git(cwd, ["update-index", "--split-index"]);
+          yield* git(cwd, ["mv", "README.md", "renamed.md"]);
+          yield* writeTextFile(cwd, "tracked.txt", "after\n");
+          yield* writeTextFile(
+            cwd,
+            (yield* HostProcess.Platform) === "win32" ? "[literal]new.txt" : ":(exclude)new.txt",
+            "literal\n",
+          );
+          yield* writeTextFile(cwd, "nested/new.txt", "new\n");
+          yield* writeTextFile(cwd, "extra.txt", "extra\n");
+          const indexBefore = yield* git(cwd, ["hash-object", ".git/index"]);
+          const commands: ReadonlyArray<string>[] = [];
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) => {
+                if (ChildProcess.isStandardCommand(command)) commands.push(command.args);
+                return delegate.spawn(command);
+              }),
+            ),
+            Effect.provide(layerServerConfig),
+          );
+          const files = [
+            { path: "tracked.txt", previousPath: null },
+            { path: "renamed.md", previousPath: "README.md" },
+            {
+              path:
+                (yield* HostProcess.Platform) === "win32"
+                  ? "[literal]new.txt"
+                  : ":(exclude)new.txt",
+              previousPath: null,
+            },
+            { path: "nested/new.txt", previousPath: null },
+            { path: "extra.txt", previousPath: null },
+          ].slice(0, fileCount);
+          const previews = yield* Effect.forEach(
+            files,
+            (file) =>
+              driver.getReviewDiffPreview({
+                cwd: `${cwd}/nested`,
+                file: { ...file, sourceKind: "working-tree" },
+              }),
+            { concurrency: "unbounded" },
+          );
+          const batches = Math.ceil(fileCount / 4);
+          assert.equal(
+            commands.filter((args) => args.includes("--git-common-dir")).length,
+            batches,
+          );
+          assert.equal(commands.filter((args) => args.includes("ls-files")).length, batches);
+          assert.equal(commands.filter((args) => args.includes("--intent-to-add")).length, batches);
+          for (const [index, preview] of previews.entries()) {
+            const source = preview.sources.find((source) => source.kind === "working-tree")!;
+            assert.deepStrictEqual(
+              source.files?.map(({ path, previousPath }) => ({ path, previousPath })),
+              [files[index]],
+            );
+            assert.isFalse(source.truncated);
+            assert.isEmpty(preview.sources.find((source) => source.kind === "branch-range")!.diff);
+          }
+          assert.include(previews[0]!.sources[0]!.diff, "+after");
+          assert.include(previews[1]!.sources[0]!.diff, "rename from README.md");
+          assert.include(previews[2]!.sources[0]!.diff, "+literal");
+          assert.include(previews[3]!.sources[0]!.diff, "+new");
+          assert.equal(yield* git(cwd, ["hash-object", ".git/index"]), indexBefore);
+          yield* writeTextFile(cwd, "nested/new.txt", "fresh contents\n");
+          const fresh = yield* driver.getReviewDiffPreview({
+            cwd,
+            file: { path: "nested/new.txt", previousPath: null, sourceKind: "working-tree" },
+          });
+          assert.include(fresh.sources[0]!.diff, "+fresh contents");
+        }),
+    );
+
+    it.effect("separates concurrent comparisons by source, base ref, and whitespace mode", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["checkout", "-b", "feature/batched"]);
+        yield* writeTextFile(cwd, "README.md", "one two\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "change"]);
+        yield* writeTextFile(cwd, "README.md", "one  two\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const file = { path: "README.md", previousPath: null };
+        const [hidden, shown, branch, current] = yield* Effect.all(
+          [
+            driver.getReviewDiffPreview({
+              cwd,
+              ignoreWhitespace: true,
+              file: { ...file, sourceKind: "working-tree" },
+            }),
+            driver.getReviewDiffPreview({
+              cwd,
+              ignoreWhitespace: false,
+              file: { ...file, sourceKind: "working-tree" },
+            }),
+            driver.getReviewDiffPreview({
+              cwd,
+              baseRef: initialBranch,
+              ignoreWhitespace: true,
+              file: { ...file, sourceKind: "branch-range" },
+            }),
+            driver.getReviewDiffPreview({
+              cwd,
+              baseRef: "feature/batched",
+              ignoreWhitespace: true,
+              file: { ...file, sourceKind: "branch-range" },
+            }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        assert.isEmpty(hidden.sources[0]!.diff);
+        assert.include(shown.sources[0]!.diff, "+one  two");
+        assert.include(branch.sources[1]!.diff, "-# test");
+        assert.isEmpty(current.sources[1]!.diff);
+      }),
+    );
+
+    it.effect("isolates a file failure from the other readers in its batch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "good.txt", "visible\n");
+        yield* writeTextFile(cwd, "bad.txt", "unavailable\n");
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) =>
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("--patch") &&
+              command.args.includes(":(top,literal)bad.txt")
+                ? Effect.succeed(makeNonRepositoryHandle())
+                : delegate.spawn(command),
+            ),
+          ),
+          Effect.provide(layerServerConfig),
+        );
+        const [good, bad] = yield* Effect.forEach(
+          ["good.txt", "bad.txt"],
+          (path) =>
+            driver
+              .getReviewDiffPreview({
+                cwd,
+                file: { path, previousPath: null, sourceKind: "working-tree" },
+              })
+              .pipe(Effect.result),
+          { concurrency: "unbounded" },
+        );
+        assert.isTrue(Result.isSuccess(good!));
+        if (Result.isSuccess(good!)) assert.include(good.success.sources[0]!.diff, "+visible");
+        assert.isTrue(Result.isFailure(bad!));
+      }),
+    );
+
+    it.effect("keeps the shared temporary index alive when one reader is cancelled", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "good.txt", "visible\n");
+        yield* writeTextFile(cwd, "cancelled.txt", "cancelled\n");
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) =>
+              ChildProcess.isStandardCommand(command) && command.args.includes("--patch")
+                ? Deferred.succeed(started, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.andThen(delegate.spawn(command)),
+                  )
+                : delegate.spawn(command),
+            ),
+          ),
+          Effect.provide(layerServerConfig),
+        );
+        const read = (path: string) =>
+          driver.getReviewDiffPreview({
+            cwd,
+            file: { path, previousPath: null, sourceKind: "working-tree" },
+          });
+        const good = yield* read("good.txt").pipe(Effect.forkChild);
+        const cancelled = yield* read("cancelled.txt").pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(cancelled);
+        yield* Deferred.succeed(release, undefined);
+        assert.include((yield* Fiber.join(good)).sources[0]!.diff, "+visible");
+      }),
+    );
+
+    it.effect.each([
+      { blockedArgument: "--intent-to-add", completeFirst: false },
+      { blockedArgument: "--patch", completeFirst: false },
+      { blockedArgument: "--patch", completeFirst: true },
+    ])(
+      "cleans abandoned batches during $blockedArgument (finished reader: $completeFirst)",
+      ({ blockedArgument, completeFirst }) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, "first.txt", "first\n");
+          yield* writeTextFile(cwd, "second.txt", "second\n");
+          const started = yield* Deferred.make<void>();
+          const cleaned = yield* Deferred.make<void>();
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const fs = yield* FileSystem.FileSystem;
+          const indexes: string[] = [];
+          let activeProcesses = 0;
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              makeTempFileScoped: (options) =>
+                Effect.acquireRelease(
+                  fs
+                    .makeTempFile(options)
+                    .pipe(Effect.tap((path) => Effect.sync(() => indexes.push(path)))),
+                  (path) =>
+                    fs
+                      .remove(path)
+                      .pipe(Effect.orDie, Effect.andThen(Deferred.succeed(cleaned, undefined))),
+                ),
+            }),
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) => {
+                if (
+                  !ChildProcess.isStandardCommand(command) ||
+                  !command.args.includes(blockedArgument) ||
+                  (completeFirst && command.args.includes(":(top,literal)first.txt"))
+                ) {
+                  return delegate.spawn(command);
+                }
+                return Effect.acquireRelease(
+                  Effect.gen(function* () {
+                    activeProcesses++;
+                    yield* Deferred.succeed(started, undefined);
+                    return { ...makeSuccessfulHandle(""), exitCode: Effect.never };
+                  }),
+                  () =>
+                    Effect.sync(() => {
+                      activeProcesses--;
+                    }),
+                );
+              }),
+            ),
+            Effect.provide(layerServerConfig),
+          );
+          const readers = yield* Effect.forEach(["first.txt", "second.txt"], (path) =>
+            driver
+              .getReviewDiffPreview({
+                cwd,
+                file: { path, previousPath: null, sourceKind: "working-tree" },
+              })
+              .pipe(Effect.forkChild),
+          );
+          yield* Deferred.await(started);
+          assert.lengthOf(indexes, 1);
+          assert.isTrue(yield* fs.exists(indexes[0]!));
+          if (completeFirst)
+            assert.include((yield* Fiber.join(readers[0]!)).sources[0]!.diff, "+first");
+          yield* Effect.forEach(readers, Fiber.interrupt, { concurrency: "unbounded" });
+          yield* Deferred.await(cleaned);
+          assert.equal(activeProcesses, 0);
+          assert.isFalse(yield* fs.exists(indexes[0]!));
+        }),
+    );
+
+    it.effect("keeps concurrent file reads in different repositories separate", () =>
+      Effect.gen(function* () {
+        const first = yield* makeTmpDir();
+        const second = yield* makeTmpDir();
+        yield* initRepoWithCommit(first);
+        yield* initRepoWithCommit(second);
+        yield* writeTextFile(first, "new.txt", "first repository\n");
+        yield* writeTextFile(second, "new.txt", "second repository\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const results = yield* Effect.forEach(
+          [first, second],
+          (cwd) =>
+            driver.getReviewDiffPreview({
+              cwd,
+              file: { path: "new.txt", previousPath: null, sourceKind: "working-tree" },
+            }),
+          { concurrency: "unbounded" },
+        );
+        assert.include(results[0]!.sources[0]!.diff, "+first repository");
+        assert.notInclude(results[0]!.sources[0]!.diff, "+second repository");
+        assert.include(results[1]!.sources[0]!.diff, "+second repository");
+        assert.notInclude(results[1]!.sources[0]!.diff, "+first repository");
       }),
     );
 

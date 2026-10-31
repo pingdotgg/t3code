@@ -4,6 +4,7 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -14,6 +15,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Request from "effect/Request";
+import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
@@ -29,6 +32,7 @@ import {
   type ReviewBranchCommitsInput,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
+  type ReviewDiffPreviewResult,
   type ReviewDiffFileStat,
   type ReviewDiffPreviewSource,
   type VcsRef,
@@ -79,6 +83,15 @@ const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
 const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
+class ReviewFileDiffRequest extends Request.Class<
+  {
+    input: ReviewDiffPreviewInput & { file: NonNullable<ReviewDiffPreviewInput["file"]> };
+    released: Deferred.Deferred<void>;
+  },
+  ReviewDiffPreviewResult,
+  GitCommandError
+> {}
+
 // Client patch parsers require a/ and b/ prefixes; override user diff prefix settings.
 export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
 const REVIEW_DIFF_ARGS = [
@@ -3018,7 +3031,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const prepareUntrackedReviewIndex = Effect.fn("prepareUntrackedReviewIndex")(function* (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
-    onlyPath?: string,
+    onlyPaths?: ReadonlySet<string>,
   ) {
     const untracked = yield* executeGit(
       "GitVcsDriver.review.listUntracked",
@@ -3033,7 +3046,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     if (untracked === null) return null;
     const paths = splitNullSeparatedGitStdoutPaths(untracked).filter(
-      (candidate) => onlyPath === undefined || candidate === onlyPath,
+      (candidate) => onlyPaths === undefined || onlyPaths.has(candidate),
     );
     if (paths.length === 0) return { env: undefined };
     if (paths.length > REVIEW_UNTRACKED_MAX_FILES) return null;
@@ -3289,8 +3302,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
-  const getReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
+  type PreparedReviewDiff = {
+    repository: Effect.Success<ReturnType<typeof resolveRepositoryPathsUncached>>;
+    review: { baseRef: string | null; mergeBase: string | null };
+    untracked: Effect.Success<ReturnType<typeof prepareUntrackedReviewIndex>>;
+  };
+
+  const readReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
     input: ReviewDiffPreviewInput,
+    prepared?: PreparedReviewDiff,
   ) {
     const pathArgs = input.file
       ? [input.file.path, ...(input.file.previousPath ? [input.file.previousPath] : [])].map(
@@ -3300,12 +3320,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const patchLimit = input.file
       ? REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES
       : REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES;
-    const repository = yield* resolveRepositoryPathsUncached(input.cwd).pipe(
-      Effect.catchTags({
-        GitCommandError: (error) =>
-          isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
-      }),
-    );
+    const repository = prepared
+      ? prepared.repository
+      : yield* resolveRepositoryPathsUncached(input.cwd).pipe(
+          Effect.catchTags({
+            GitCommandError: (error) =>
+              isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+          }),
+        );
     if (!repository?.worktreeRoot) {
       return {
         cwd: input.cwd,
@@ -3374,8 +3396,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const dirtyRef = input.file?.sourceKind === "branch-range" ? null : "HEAD";
-    const review =
-      input.file?.sourceKind === "working-tree"
+    const review = prepared
+      ? prepared.review
+      : input.file?.sourceKind === "working-tree"
         ? { baseRef: input.baseRef ?? null, mergeBase: null }
         : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
 
@@ -3430,7 +3453,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { ...patch, files: stat.files };
     });
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
-      const untracked = yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
+      const untracked = prepared
+        ? prepared.untracked
+        : yield* prepareUntrackedReviewIndex(
+            cwd,
+            pathArgs,
+            input.file ? new Set([input.file.path]) : undefined,
+          );
       const [dirty, base] =
         review.mergeBase === dirtyRef
           ? yield* readTrackedDiff(dirtyRef, untracked?.env).pipe(
@@ -3487,6 +3516,98 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       generatedAt: yield* DateTime.now,
       sources,
     };
+  });
+
+  // Share preparation only within a pending batch; a later read must observe Git changes.
+  const reviewFileDiffResolver = RequestResolver.makeWith<ReviewFileDiffRequest>({
+    batchKey: ({ request: { input } }) =>
+      JSON.stringify([
+        input.cwd,
+        input.baseRef,
+        input.ignoreWhitespace ?? false,
+        input.file.sourceKind,
+      ]),
+    delay: Effect.yieldNow,
+    collectWhile: (entries) => entries.size < 4,
+    // Named child spans cover batch I/O.
+    runAll: Effect.fnUntraced(
+      function* (entries) {
+        const input = entries[0].request.input;
+        const repository = yield* resolveRepositoryPathsUncached(input.cwd).pipe(
+          Effect.catchTags({
+            GitCommandError: (error) =>
+              isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+          }),
+        );
+        let prepared: PreparedReviewDiff = {
+          repository,
+          review: { baseRef: null, mergeBase: null },
+          untracked: null,
+        };
+        if (repository?.worktreeRoot) {
+          const cwd = repository.worktreeRoot;
+          const review =
+            input.file.sourceKind === "working-tree"
+              ? { baseRef: input.baseRef ?? null, mergeBase: null }
+              : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
+          const files = entries
+            .filter((entry) => !Deferred.isDoneUnsafe(entry.request.released))
+            .map((entry) => entry.request.input.file);
+          if (files.length === 0) return yield* Effect.interrupt;
+          const paths = [
+            ...new Set(
+              files.flatMap((file) => [
+                file.path,
+                ...(file.previousPath ? [file.previousPath] : []),
+              ]),
+            ),
+          ];
+          const untracked = yield* prepareUntrackedReviewIndex(
+            cwd,
+            paths.map((path) => `:(top,literal)${path}`),
+            new Set(files.map((file) => file.path)),
+          );
+          prepared = { repository, review, untracked };
+        }
+        yield* Effect.forEach(
+          entries,
+          (entry) =>
+            Effect.suspend(() =>
+              Deferred.isDoneUnsafe(entry.request.released)
+                ? Effect.interrupt
+                : readReviewDiffPreview(entry.request.input, prepared).pipe(
+                    Effect.raceFirst(
+                      Deferred.await(entry.request.released).pipe(Effect.andThen(Effect.interrupt)),
+                    ),
+                  ),
+            ).pipe(
+              Effect.exit,
+              Effect.map((exit) => entry.completeUnsafe(exit)),
+            ),
+          { concurrency: 4, discard: true },
+        );
+      },
+      (effect, entries) =>
+        Effect.raceFirst(
+          effect,
+          Effect.forEach(entries, (entry) => Deferred.await(entry.request.released), {
+            concurrency: "unbounded",
+            discard: true,
+          }).pipe(Effect.andThen(Effect.interrupt)),
+        ),
+      Effect.scoped,
+    ),
+  });
+  // readReviewDiffPreview already provides the operation span.
+  const getReviewDiffPreview = Effect.fnUntraced(function* (input: ReviewDiffPreviewInput) {
+    if (!input.file || input.commitSha !== undefined || input.file.sourceKind === "commit")
+      return yield* readReviewDiffPreview(input);
+    const released = yield* Deferred.make<void>();
+    // Effect's resolver detaches running batches, so callers must signal when they stop waiting.
+    return yield* Effect.request(
+      new ReviewFileDiffRequest({ input: { ...input, file: input.file }, released }),
+      reviewFileDiffResolver,
+    ).pipe(Effect.ensuring(Deferred.succeed(released, undefined)));
   });
 
   const reviewDiffFileError = (
