@@ -406,7 +406,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       >
         {props.effortColumn ? (
           <DockedPickerContext
-            value={{ modelLabel: triggerLabel, close: () => setIsMenuOpen(false) }}
+            value={{ modelLabel: triggerTitle, close: () => setIsMenuOpen(false) }}
           >
             <div className="flex flex-col">
               <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
