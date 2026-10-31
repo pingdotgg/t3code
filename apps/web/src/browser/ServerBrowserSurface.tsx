@@ -55,7 +55,12 @@ export interface ServerBrowserHandle {
 let handoffFrame: { key: string; canvas: HTMLCanvasElement } | null = null;
 
 /** Carry the displayed frame across a panel/mini-player handoff until its new stream paints. */
-export function handoffServerBrowserFrame(environmentId: EnvironmentId, threadId: string, tabId: string, source: HTMLCanvasElement | null): void {
+export function handoffServerBrowserFrame(
+  environmentId: EnvironmentId,
+  threadId: string,
+  tabId: string,
+  source: HTMLCanvasElement | null,
+): void {
   handoffFrame = null;
   if (!source || source.width < 1 || source.height < 1) return;
   const canvas = document.createElement("canvas");
@@ -66,7 +71,9 @@ export function handoffServerBrowserFrame(environmentId: EnvironmentId, threadId
   context.drawImage(source, 0, 0);
   const frame = { key: JSON.stringify([environmentId, threadId, tabId]), canvas };
   handoffFrame = frame;
-  window.setTimeout(() => { if (handoffFrame === frame) handoffFrame = null; }, 1000);
+  window.setTimeout(() => {
+    if (handoffFrame === frame) handoffFrame = null;
+  }, 1000);
 }
 
 const RESIZE_THROTTLE_MS = 150;
@@ -239,7 +246,13 @@ export function ServerBrowserSurface(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Paint the handoff frame before the destination becomes visible while its stream reconnects.
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
-    if (!visible || pdfUrl || !canvas || handoffFrame?.key !== JSON.stringify([environmentId, threadId, tabId])) return;
+    if (
+      !visible ||
+      pdfUrl ||
+      !canvas ||
+      handoffFrame?.key !== JSON.stringify([environmentId, threadId, tabId])
+    )
+      return;
     const seed = handoffFrame.canvas;
     handoffFrame = null;
     const context = canvas.getContext("2d");
