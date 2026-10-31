@@ -1133,7 +1133,9 @@ export const layerWithOptions = (
             detail: "Provider settings changed.",
             keepIfBusyOtherThan: [],
           }).pipe(logReleaseFailure(providerSessionId));
-          return (yield* Ref.get(sessions)).get(sessionKey(providerSessionId)) !== entry;
+          // Runtime, not entry: activity updates replace the entry of a session that was kept.
+          const live = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
+          return live?.runtime !== entry.runtime;
         },
       );
 

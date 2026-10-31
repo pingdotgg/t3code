@@ -1051,12 +1051,14 @@ it.effect(
 );
 
 it.effect(
-  "ProviderSessionManagerV2 keeps a session rebuilt settings made stale while a sibling turn runs on it",
+  "ProviderSessionManagerV2 keeps a session rebuilt settings made stale when a sibling turn starts while it is checked",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const replacementState = yield* Ref.make(emptyState);
       const replaced = yield* Ref.make(false);
+      const probeReached = yield* Deferred.make<void>();
+      const continueProbe = yield* Deferred.make<void>();
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1077,6 +1079,9 @@ it.effect(
           ],
         });
         const runtime = yield* open(busy);
+        yield* Ref.set(replaced, true);
+        const opening = yield* open(next).pipe(Effect.forkChild);
+        yield* Deferred.await(probeReached);
         const runId = idAllocator.derive.run({ threadId: busy, ordinal: 1 });
         yield* runtime.startTurn({
           appThread: (yield* projectionStore.getThreadProjection(busy)).thread,
@@ -1103,9 +1108,9 @@ it.effect(
           modelSelection,
           runtimePolicy,
         });
-        yield* Ref.set(replaced, true);
+        yield* Deferred.succeed(continueProbe, undefined);
 
-        assert.strictEqual(yield* open(next), runtime);
+        assert.strictEqual(yield* Fiber.join(opening), runtime);
         assert.equal((yield* Ref.get(state)).closeCount, 0);
         assert.equal((yield* Ref.get(replacementState)).openCount, 0);
       }).pipe(
@@ -1113,6 +1118,10 @@ it.effect(
           layerTest({
             state,
             idleTimeoutMs: 60_000,
+            hasPendingBackgroundWork: Deferred.succeed(probeReached, undefined).pipe(
+              Effect.andThen(Deferred.await(continueProbe)),
+              Effect.as(false),
+            ),
             replacementAdapter: { state: replacementState, active: replaced },
           }),
         ),
