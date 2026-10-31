@@ -11,6 +11,7 @@ import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
+import type { ChatShellRun } from "./chat/chatShellRun";
 
 const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
@@ -44,6 +45,13 @@ vi.mock(import("../state/server"), async (original) => {
     serverEnvironment: { ...actual.serverEnvironment, configValueAtom: (() => noConfig) as never },
   };
 });
+vi.mock(import("./ThreadTerminalDrawer"), async (original) => ({
+  ...(await original()),
+  TerminalViewport: ({ terminalId }: { terminalId: string }) => (
+    <div data-testid="run-terminal">{terminalId}</div>
+  ),
+}));
+
 vi.mock(import("../state/session"), async (original) => {
   const { AuthStandardClientScopes } = await import("@t3tools/contracts");
   const granted = new Set<string>(AuthStandardClientScopes);
@@ -59,6 +67,26 @@ vi.mock(import("../remoteOpen"), async (original) => ({
   ...(await original()),
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }) as never,
 }));
+const terminalOutput = vi.hoisted(() => ({ text: "" }));
+const sessionAtoms = vi.hoisted(() => new Map<string, unknown>());
+vi.mock(import("../state/terminalSessions"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  const attachedTerminalSessionAtom = (_environmentId: unknown, input: { terminalId: string }) => {
+    const cached = sessionAtoms.get(input.terminalId);
+    if (cached) return cached;
+    const atom = Atom.make({
+      output: { chunks: [{ data: terminalOutput.text }] },
+      error: null,
+      status: "running",
+    });
+    sessionAtoms.set(input.terminalId, atom);
+    return atom;
+  };
+  return {
+    ...(await original()),
+    attachedTerminalSessionAtom: attachedTerminalSessionAtom as never,
+  };
+});
 const { renderDiagram } = vi.hoisted(() => ({
   renderDiagram: vi.fn<(source: string) => Promise<string> | undefined>(),
 }));
@@ -112,6 +140,7 @@ it("keeps compact audio playback loaded across signed URL renewals", async () =>
 
 function setup() {
   parsedSources.length = 0;
+  sessionAtoms.clear();
   settingsOverrides.mathRenderingEnabled = false;
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
@@ -180,6 +209,60 @@ it("reuses the parse of a remounted message that has stable extra plugins", asyn
   expect(parsed).toHaveBeenCalledTimes(1);
 });
 
+describe("ChatMarkdown inline run output", () => {
+  const runId = "run1";
+  const run: ChatShellRun = {
+    id: runId,
+    environmentId: EnvironmentId.make("env-test"),
+    threadId: ThreadId.make("thread-test"),
+    terminalId: "terminal-test",
+    cwd: "/tmp/project",
+    worktreePath: null,
+  };
+  const runAndWait = async (container: HTMLElement) => {
+    await act(async () =>
+      buttonsLabelled(container, "Run in terminal and send output to Claude")[0]!.click(),
+    );
+  };
+
+  it("shows the output and exit status under the code block", async () => {
+    setup();
+    terminalOutput.text = `\u001b]7717;T3S;${runId}\u0007hello\n\u001b]7717;T3E;${runId};0\u0007`;
+    const onRunShellCommand = vi.fn((_command: string, onStarted: (run: ChatShellRun) => void) =>
+      onStarted(run),
+    );
+    await using screen = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"```bash\necho hello\n```"}
+        onRunShellCommand={onRunShellCommand}
+      />,
+    );
+    await runAndWait(screen.container);
+    await expect.element(screen.getByText("Exited with code 0")).toBeVisible();
+    await expect.element(screen.getByText("hello", { exact: true })).toBeVisible();
+    expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith(
+      "echo hello",
+      expect.any(Function),
+      undefined,
+    );
+  });
+
+  it("keeps a run without its end marker as running", async () => {
+    setup();
+    terminalOutput.text = `\u001b]7717;T3S;${runId}\u0007server starting\n`;
+    await using screen = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"```bash\nnpm run dev\n```"}
+        onRunShellCommand={(_command, onStarted) => onStarted(run)}
+      />,
+    );
+    await runAndWait(screen.container);
+    await expect.element(screen.getByText("Running…")).toBeVisible();
+  });
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     setup();
@@ -202,7 +285,7 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
-  it("runs only a complete single-line shell block after a click", async () => {
+  it("runs only a complete shell block after a click", async () => {
     setup();
     const onRunShellCommand = vi.fn();
     const message = (text: string, isStreaming = false) => (
@@ -215,12 +298,17 @@ describe("ChatMarkdown streaming", () => {
     );
     await using screen = await render(message("```bash\necho hello\n```", true));
     const { container, rerender } = screen;
-    const runButtons = () => buttonsLabelled(container, "Run in terminal");
+    const runButtons = () =>
+      buttonsLabelled(container, "Run in terminal and send output to Claude");
     expect(runButtons()).toHaveLength(0);
 
     await rerender(message("```bash\necho hello\n```"));
     await act(async () => runButtons()[0]!.click());
-    expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith("echo hello");
+    expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith(
+      "echo hello",
+      expect.any(Function),
+      undefined,
+    );
 
     for (const text of [
       "~~~bash\necho tilde\n~~~",
@@ -234,10 +322,8 @@ describe("ChatMarkdown streaming", () => {
     }
 
     for (const text of [
-      "```bash\necho one\necho two\n```",
       "```typescript\necho hello\n```",
       "```bash\n\n```",
-      "```bash\necho hello\n\n```",
       "```bash\necho hello\\\n```",
       "```bash\necho safe \u202e#\n```",
       "```bash\necho incomplete",

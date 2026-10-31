@@ -133,6 +133,7 @@ import {
   type TimelineListOpening,
   type TimelineViewport,
 } from "./timelineViewport";
+import type { ChatShellCommandRunner } from "./chatShellRun";
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
@@ -281,7 +282,7 @@ interface MessagesTimelineProps {
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onSendAppMessage?: (text: string) => Promise<void>;
-  onRunShellCommand?: (command: string) => void;
+  onRunShellCommand?: ChatShellCommandRunner;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;

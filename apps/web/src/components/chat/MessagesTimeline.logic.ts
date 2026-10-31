@@ -1,3 +1,4 @@
+import { isChatShellRunResultMessage } from "./chatShellRun";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -2020,6 +2021,13 @@ export function deriveMessagesTimelineRows(input: {
           active: pending,
         });
       }
+      continue;
+    }
+
+    if (
+      timelineEntry.message.role === "user" &&
+      isChatShellRunResultMessage(timelineEntry.message.text)
+    ) {
       continue;
     }
 

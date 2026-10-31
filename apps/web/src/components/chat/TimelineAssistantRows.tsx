@@ -57,6 +57,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
               headingLevelOffset={MESSAGE_HEADING_LEVEL}
               onUseArtifactTemplate={ctx.onUseArtifactTemplate}
               onRunShellCommand={ctx.onRunShellCommand}
+              shellRunScope={row.message.id}
               onImageExpand={ctx.onImageExpand}
             />
           </AssistantCitationSource>

@@ -51,6 +51,11 @@ import { previewEnvironment } from "../../state/preview";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
+import {
+  chatShellRunInput,
+  createChatShellRunId,
+  type ChatShellCommandRunner,
+} from "./chatShellRun";
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -207,6 +212,15 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       preferNewTerminal?: boolean;
       rememberAsLastInvoked?: boolean;
       shellHistory?: "preserve" | "suppress";
+      chatShellRun?: {
+        readonly id: string;
+        readonly terminalId: string | undefined;
+        readonly onLaunched: (launch: {
+          readonly terminalId: string;
+          readonly cwd: string;
+          readonly worktreePath: string | null;
+        }) => void;
+      };
     },
   ) => {
     if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
@@ -217,10 +231,11 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       });
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
-    const reusableTerminalId =
-      options?.preferNewTerminal ||
-      !canReuseTerminal ||
-      !readEnvironmentScope(environmentId, AuthTerminalReadScope)
+    const reusableTerminalId = options?.chatShellRun
+      ? (options.chatShellRun.terminalId ?? null)
+      : options?.preferNewTerminal ||
+          !canReuseTerminal ||
+          !readEnvironmentScope(environmentId, AuthTerminalReadScope)
         ? null
         : findReusableProjectScriptTerminal({
             // Server sessions cover drawer terminals this client has not opened yet, such as a
@@ -243,13 +258,19 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       return;
     }
 
+    const background = options?.chatShellRun !== undefined;
     const launched = terminalActions.launchTerminal({
       // The drawer opens with the target already placed: opening it empty would claim
       // DEFAULT_THREAD_TERMINAL_ID, which a right-panel terminal may already own.
-      place: (terminalId) =>
-        reusableTerminalId === null
-          ? storeNewTerminal(activeThreadRef, terminalId)
-          : storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
+      place: (terminalId) => {
+        if (background) {
+          storeEnsureTerminal(activeThreadRef, terminalId, { active: false });
+          if (!terminalUiState.terminalOpen) storeSetTerminalOpen(activeThreadRef, false);
+          return;
+        }
+        if (reusableTerminalId === null) storeNewTerminal(activeThreadRef, terminalId);
+        else storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
+      },
       ...(reusableTerminalId === null
         ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
         : { terminalId: reusableTerminalId }),
@@ -258,7 +279,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     });
     if (!launched) return;
     const targetTerminalId = launched.terminalId;
-    focusTerminal(activeThreadRef, targetTerminalId);
+    if (!background) focusTerminal(activeThreadRef, targetTerminalId);
+    options?.chatShellRun?.onLaunched({
+      terminalId: targetTerminalId,
+      cwd: targetCwd,
+      worktreePath: targetWorktreePath,
+    });
     const openResult = await launched.result;
     if (openResult._tag === "Failure") {
       if (!isAtomCommandInterrupted(openResult)) {
@@ -273,9 +299,11 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
 
     const writeResult = await terminalActions.writeToTerminal(
       targetTerminalId,
-      options?.shellHistory === "preserve"
-        ? `${script.command}\r`
-        : projectScriptTerminalInput(script.command),
+      options?.chatShellRun
+        ? chatShellRunInput(script.command, options.chatShellRun.id, targetCwd)
+        : options?.shellHistory === "preserve"
+          ? `${script.command}\r`
+          : projectScriptTerminalInput(script.command),
     );
     if (!writeResult) return;
     if (writeResult._tag === "Failure") {
@@ -308,7 +336,9 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   };
   const runProjectScriptStable = useStableCallback(runProjectScript);
 
-  const runShellCommand = (command: string) => {
+  const runShellCommand: ChatShellCommandRunner = (command, onStarted, terminalId) => {
+    if (!activeThreadRef) return;
+    const id = createChatShellRunId();
     void runProjectScript(
       {
         id: "chat-code-block",
@@ -317,7 +347,21 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         icon: "play",
         runOnWorktreeCreate: false,
       },
-      { rememberAsLastInvoked: false, shellHistory: "preserve" },
+      {
+        rememberAsLastInvoked: false,
+        shellHistory: "preserve",
+        chatShellRun: {
+          id,
+          terminalId,
+          onLaunched: (launch) =>
+            onStarted({
+              id,
+              environmentId: activeThreadRef.environmentId,
+              threadId: activeThreadRef.threadId,
+              ...launch,
+            }),
+        },
+      },
     );
   };
   const runShellCommandStable = useStableCallback(runShellCommand);
