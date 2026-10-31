@@ -2,10 +2,14 @@ import { DATABASE_COMPACTION_RECOMMENDED_BYTES } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
 import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
 
@@ -16,10 +20,37 @@ const formatBytes = (bytes: number) =>
       ? `${(bytes / 1024 ** 2).toFixed(1)} MiB`
       : `${Math.ceil(bytes / 1024)} KiB`;
 
+// Holding the server lock refuses a server launched mid-repair, such as one started over SSH.
+const lockServerHome = Effect.fn("runDoctor.lockServerHome")(function* (paths: {
+  readonly dbPath: string;
+  readonly serverRuntimeStatePath: string;
+}) {
+  yield* ServerOwnership.acquireServerOwnership(paths.serverRuntimeStatePath).pipe(
+    Effect.catchTags({
+      ServerAlreadyRunningError: (cause) =>
+        Effect.gen(function* () {
+          const owner = yield* readPersistedServerRuntimeState(paths.serverRuntimeStatePath).pipe(
+            Effect.map(Option.filter((state) => isProcessAlive(state.pid))),
+            Effect.orElseSucceed(() => Option.none()),
+          );
+          return yield* new DatabaseMaintenance.DatabaseInUseError({
+            path: paths.dbPath,
+            cause,
+            ...(Option.isSome(owner) && {
+              pid: owner.value.pid,
+              serviceManaged: owner.value.serviceManaged === true,
+            }),
+          });
+        }),
+    }),
+  );
+});
+
 export const runDoctor = Effect.fn("runDoctor")(function* (
-  databasePath: string,
+  paths: { readonly dbPath: string; readonly serverRuntimeStatePath: string },
   options: { readonly fix: boolean; readonly dryRun: boolean; readonly interactive?: boolean },
 ) {
+  const databasePath = paths.dbPath;
   const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
   const status = yield* maintenance.inspect(databasePath);
   yield* Console.log(
@@ -103,15 +134,15 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
     yield* Console.log("\nReclaiming database space. This can take several minutes...");
     // Report the repair before restarting, which can fail independently.
     yield* service.withStopped(
-      maintenance
-        .compact(databasePath)
-        .pipe(
-          Effect.tap((result) =>
-            Console.log(
-              `Done: ${formatBytes(result.beforeBytes)} -> ${formatBytes(result.afterBytes)}, ${result.deletedEventCount} superseded events removed.`,
-            ),
+      lockServerHome(paths).pipe(
+        Effect.andThen(maintenance.compact(databasePath)),
+        Effect.tap((result) =>
+          Console.log(
+            `Done: ${formatBytes(result.beforeBytes)} -> ${formatBytes(result.afterBytes)}, ${result.deletedEventCount} superseded events removed.`,
           ),
         ),
+        Effect.scoped,
+      ),
     );
   }
   if (selected.includes("legacy")) {
@@ -139,8 +170,10 @@ export const doctorCommand = Command.make("doctor", {
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
-      yield* runDoctor(config.dbPath, { fix: flags.fix, dryRun: flags.dryRun }).pipe(
-        Effect.provide(Layer.merge(DatabaseMaintenance.layer, CliService.layer(config))),
+      yield* runDoctor(config, { fix: flags.fix, dryRun: flags.dryRun }).pipe(
+        Effect.provide(
+          Layer.mergeAll(DatabaseMaintenance.layer, CliService.layer(config), ProcessRunner.layer),
+        ),
       );
     }),
   ),

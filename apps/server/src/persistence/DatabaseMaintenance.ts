@@ -24,9 +24,17 @@ export class DatabaseMissingError extends Schema.TaggedError<DatabaseMissingErro
 
 export class DatabaseInUseError extends Schema.TaggedError<DatabaseInUseError>()(
   "DatabaseInUseError",
-  { path: Schema.String, cause: Schema.Defect() },
+  {
+    path: Schema.String,
+    cause: Schema.Defect(),
+    pid: Schema.optional(Schema.Int),
+    serviceManaged: Schema.optional(Schema.Boolean),
+  },
 ) {
   override get message() {
+    if (this.pid !== undefined) {
+      return `Stop T3 Code server process ${this.pid}${this.serviceManaged ? "" : ", which the background service did not start,"} before repairing the database.`;
+    }
     return "Stop the T3 Code server and desktop app, including any version before 0.1.0, before repairing the database.";
   }
 }
