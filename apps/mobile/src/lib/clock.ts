@@ -36,3 +36,17 @@ export function useNowMinuteMs(): number {
     useSyncExternalStore(minuteTick.subscribe, minuteTick.getSnapshot, minuteTick.getSnapshot),
   );
 }
+
+/**
+ * Epoch ms that advances each wall-clock minute and the moment the next wake
+ * passes. The next wake is searched after the latest time returned, not the
+ * floored minute, so a second wake later in the same minute arms its own timer.
+ */
+export function useNowWithWakes(nextWakeAfter: (nowMs: number) => number | null): number {
+  const minuteMs = useNowMinuteMs();
+  const [latestMs, setLatestMs] = useState(minuteMs);
+  const afterWakeMs = useNowAfter(nextWakeAfter(Math.max(minuteMs, latestMs)));
+  const nowMs = Math.max(minuteMs, afterWakeMs, latestMs);
+  if (nowMs !== latestMs) setLatestMs(nowMs);
+  return nowMs;
+}

@@ -14,6 +14,8 @@ export type ModelRowProps = {
   readonly onToggleFavorite: () => void;
   readonly onToggleHidden?: () => void;
   readonly hiddenUpdatePending?: boolean;
+  /** The provider is out of tokens; the model stays selectable for when it refills. */
+  readonly dimmed?: boolean;
   readonly isFirst: boolean;
   readonly isLast: boolean;
 };
@@ -64,7 +66,10 @@ export function ModelRowContent(
         <View className="min-w-0 flex-1">
           <View className="flex-row items-center gap-2">
             <Text
-              className="min-w-0 shrink text-base font-t3-medium text-foreground"
+              className={cn(
+                "min-w-0 shrink text-base font-t3-medium",
+                props.dimmed ? "text-foreground-muted" : "text-foreground",
+              )}
               numberOfLines={props.labelNumberOfLines}
             >
               {props.option.label}

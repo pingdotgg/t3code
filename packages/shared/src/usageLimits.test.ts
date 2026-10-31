@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderUsageWindow,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -21,6 +22,7 @@ import {
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
+  providerQuotaStatus,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -1391,5 +1393,272 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("providerQuotaStatus", () => {
+  const checkedAt = "2026-09-03T11:00:00.000Z";
+  const weekly = {
+    id: "seven_day",
+    kind: "weekly",
+    label: "Weekly",
+    usedPercent: 20,
+    resetsAt: "2026-09-06T12:00:00.000Z",
+  } as const;
+  const claude = (
+    windows: readonly ServerProviderUsageWindow[],
+    resetCredits?: { availableCount: number },
+  ) =>
+    provider({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      usageLimits: { checkedAt, windows, ...(resetCredits ? { resetCredits } : {}) },
+    });
+
+  it("reports the tightest remaining allowance while usable", () => {
+    const selected = claude([{ ...window, usedPercent: 70 }, weekly]);
+    expect(providerQuotaStatus(selected.instanceId, [selected], [], now)).toEqual({
+      state: "available",
+      remainingPercent: 30,
+    });
+  });
+
+  it("is out of tokens until every spent allowance refills, with a reset when credits are banked", () => {
+    const selected = claude(
+      [
+        { ...window, usedPercent: 100 },
+        { ...weekly, usedPercent: 100 },
+      ],
+      { availableCount: 1 },
+    );
+    expect(providerQuotaStatus(selected.instanceId, [selected], [], now)).toEqual({
+      state: "exhausted",
+      resetsAt: Date.parse(weekly.resetsAt),
+      reset: { input: { instanceId: "claudeAgent" }, credits: { availableCount: 1 } },
+    });
+  });
+
+  it("treats a spent window whose reset has passed as refilled", () => {
+    const selected = claude([
+      { ...window, usedPercent: 100, resetsAt: "2026-09-03T11:30:00.000Z" },
+      weekly,
+    ]);
+    expect(providerQuotaStatus(selected.instanceId, [selected], [], now)).toEqual({
+      state: "available",
+      remainingPercent: 80,
+    });
+  });
+
+  it("ignores allowances that only block some models or extra usage", () => {
+    const selected = claude([
+      { ...weekly, id: "seven_day_opus", label: "Weekly · Opus", usedPercent: 100 },
+      { id: "monthly_spend", kind: "monthly", label: "Monthly spend", usedPercent: 100 },
+      { ...window, usedPercent: 10 },
+    ]);
+    expect(providerQuotaStatus(selected.instanceId, [selected], [], now)?.state).toBe("available");
+  });
+
+  it("does not borrow another instance's quota on the same driver", () => {
+    const spent = claude([{ ...window, usedPercent: 100 }]);
+    const proxy = provider({
+      instanceId: ProviderInstanceId.make("claudeAgent_kimi"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+    });
+    expect(providerQuotaStatus(proxy.instanceId, [spent, proxy], [], now)).toBeNull();
+  });
+
+  it("counts a Codex Free or Go monthly allowance", () => {
+    const selected = provider({
+      usageLimits: {
+        checkedAt,
+        windows: [
+          { ...window, id: "primary", kind: "monthly", label: "Monthly", usedPercent: 100 },
+        ],
+      },
+    });
+    expect(providerQuotaStatus(selected.instanceId, [selected], [], now)?.state).toBe("exhausted");
+  });
+
+  it("claims nothing for drivers whose windows are per model family", () => {
+    const selected = provider({
+      instanceId: ProviderInstanceId.make("antigravity"),
+      driver: ProviderDriverKind.make("antigravity"),
+      usageLimits: {
+        checkedAt,
+        windows: [
+          { ...weekly, id: "3p-weekly", label: "Claude & GPT (shared) · Weekly", usedPercent: 100 },
+        ],
+      },
+    });
+    expect(providerQuotaStatus(selected.instanceId, [selected], [], now)).toBeNull();
+  });
+
+  it("offers a sibling instance's credit for the same account", () => {
+    const spent = { checkedAt, windows: [{ ...window, usedPercent: 100 }] };
+    const auth = { status: "authenticated", email: "same@example.com" } as const;
+    const first = provider({ instanceId: ProviderInstanceId.make("a"), auth, usageLimits: spent });
+    const second = provider({
+      instanceId: ProviderInstanceId.make("b"),
+      auth,
+      usageLimits: {
+        ...spent,
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        resetCredits: { availableCount: 1 },
+      },
+    });
+    const status = providerQuotaStatus(first.instanceId, [first, second], [], now);
+    expect(status?.state === "exhausted" ? status.reset?.input : null).toEqual({
+      instanceId: "b",
+    });
+  });
+
+  it("offers no reset once a fresher read of the account shows the credits spent", () => {
+    const auth = { status: "authenticated", email: "same@example.com" } as const;
+    const spentWindows = [{ ...window, usedPercent: 100 }];
+    const older = provider({
+      instanceId: ProviderInstanceId.make("a"),
+      auth,
+      usageLimits: { checkedAt, windows: spentWindows, resetCredits: { availableCount: 1 } },
+    });
+    const newer = provider({
+      instanceId: ProviderInstanceId.make("b"),
+      auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:45:00.000Z",
+        windows: spentWindows,
+        resetCredits: { availableCount: 0 },
+      },
+    });
+    const hub = [
+      {
+        id: UsageLimitSourceId.make("hub"),
+        kind: "cliproxy" as const,
+        label: "Accounts",
+        checkedAt,
+        accounts: [
+          {
+            id: "same",
+            driver: older.driver,
+            email: "same@example.com",
+            usageLimits: {
+              checkedAt,
+              windows: spentWindows,
+              resetCredits: { availableCount: 1, nextCreditId: "credit" },
+            },
+          },
+        ],
+      },
+    ];
+    for (const sources of [[], hub]) {
+      const status = providerQuotaStatus(older.instanceId, [older, newer], sources, now);
+      expect(status).toMatchObject({ state: "exhausted", reset: null });
+    }
+  });
+
+  it("redeems natively when the hub's credit id is older than the latest balance", () => {
+    const auth = { status: "authenticated", email: "same@example.com" } as const;
+    const spentWindows = [{ ...window, usedPercent: 100 }];
+    const selected = provider({
+      auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:45:00.000Z",
+        windows: spentWindows,
+        resetCredits: { availableCount: 1 },
+      },
+    });
+    const hub = [
+      {
+        id: UsageLimitSourceId.make("hub"),
+        kind: "cliproxy" as const,
+        label: "Accounts",
+        checkedAt,
+        accounts: [
+          {
+            id: "same",
+            driver: selected.driver,
+            email: "same@example.com",
+            usageLimits: {
+              checkedAt,
+              windows: spentWindows,
+              resetCredits: { availableCount: 2, nextCreditId: "spent-credit" },
+            },
+          },
+        ],
+      },
+    ];
+    expect(providerQuotaStatus(selected.instanceId, [selected], hub, now)).toMatchObject({
+      reset: { input: { instanceId: "codex" }, credits: { availableCount: 1 } },
+    });
+  });
+
+  it("stays out of tokens when the reported reset predates the read", () => {
+    const selected = claude([
+      { ...window, usedPercent: 100, resetsAt: "2026-09-03T11:30:00.000Z" },
+    ]);
+    const stale = {
+      ...selected,
+      usageLimits: { ...selected.usageLimits!, checkedAt: "2026-09-03T11:45:00.000Z" },
+    };
+    expect(providerQuotaStatus(stale.instanceId, [stale], [], now)).toMatchObject({
+      state: "exhausted",
+      resetsAt: null,
+    });
+  });
+
+  it("follows the account once a sibling instance redeems and refreshes", () => {
+    const auth = { status: "authenticated", email: "same@example.com" } as const;
+    const stale = provider({
+      instanceId: ProviderInstanceId.make("a"),
+      auth,
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 100 }] },
+    });
+    const refreshed = provider({
+      instanceId: ProviderInstanceId.make("b"),
+      auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:45:00.000Z",
+        windows: [{ ...window, usedPercent: 0 }],
+      },
+    });
+    expect(providerQuotaStatus(stale.instanceId, [stale, refreshed], [], now)).toEqual({
+      state: "available",
+      remainingPercent: 100,
+    });
+  });
+
+  it("redeems through the hub that routes the account", () => {
+    const selected = provider({
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 100 }] },
+    });
+    const hub = [
+      {
+        id: UsageLimitSourceId.make("hub"),
+        kind: "cliproxy" as const,
+        label: "Accounts",
+        checkedAt,
+        accounts: [
+          {
+            id: "same",
+            driver: selected.driver,
+            email: "same@example.com",
+            usageLimits: {
+              checkedAt,
+              windows: [{ ...window, usedPercent: 100 }],
+              resetCredits: { availableCount: 2, nextCreditId: "credit" },
+            },
+          },
+        ],
+      },
+    ];
+    const sibling = provider({ ...selected, instanceId: ProviderInstanceId.make("sibling") });
+    for (const instanceId of [selected.instanceId, sibling.instanceId]) {
+      const status = providerQuotaStatus(instanceId, [selected, sibling], hub, now);
+      expect(status?.state === "exhausted" ? status.reset?.input : null).toEqual({
+        sourceId: "hub",
+        accountId: "same",
+        creditId: "credit",
+      });
+    }
   });
 });

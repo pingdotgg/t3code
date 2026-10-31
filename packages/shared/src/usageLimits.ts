@@ -10,6 +10,7 @@ import {
   type ServerProviderSlashCommand,
   isProviderAvailable,
   type ServerProvider,
+  type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
@@ -855,4 +856,162 @@ export function collectProviderUsageLimits(
     }
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
+}
+
+export type ProviderQuotaReset = {
+  readonly input: ProviderConsumeResetCreditInput;
+  readonly credits: ServerProviderResetCredits;
+};
+
+export type ProviderQuotaStatus =
+  | { readonly state: "available"; readonly remainingPercent: number }
+  | {
+      readonly state: "exhausted";
+      /** When every spent allowance has refilled; null when the provider gave no clock. */
+      readonly resetsAt: number | null;
+      readonly reset: ProviderQuotaReset | null;
+    };
+
+/**
+ * Only windows that stop every model. Codex has no model-scoped windows (Free/Go
+ * allowances are monthly); Claude's others are model-scoped or extra spend.
+ * Antigravity and Cursor split quota by model family, so none count.
+ */
+function gatesProvider(
+  driver: ServerProvider["driver"],
+  window: ServerProviderUsageWindow,
+): boolean {
+  if (driver === "codex") return true;
+  if (driver === "claudeAgent") return window.id === "five_hour" || window.id === "seven_day";
+  return false;
+}
+
+/**
+ * Every readable snapshot of the provider's account: its own, sibling instances
+ * on the same account, and hub entries for it. Redeeming a credit refreshes
+ * only the snapshot it went through, so status follows the freshest one.
+ */
+function accountSnapshots(
+  provider: ServerProvider,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+) {
+  const resolveKey = accountKeyResolver([
+    ...providers.filter((candidate) => candidate.enabled).map(nativeReport),
+    ...sources.flatMap((source) => source.accounts),
+  ]);
+  const key = resolveKey(nativeReport(provider));
+  const readable = (limits: ServerProviderUsageLimits | undefined) =>
+    limits !== undefined && limitsNotice(limits) === null;
+  const native = [
+    provider,
+    ...providersWithLimits(providers).filter(
+      (candidate) =>
+        key !== null &&
+        candidate.instanceId !== provider.instanceId &&
+        candidate.driver === provider.driver &&
+        resolveKey(nativeReport(candidate)) === key,
+    ),
+  ].flatMap((candidate) =>
+    candidate.usageLimits && readable(candidate.usageLimits)
+      ? [{ instanceId: candidate.instanceId, limits: candidate.usageLimits }]
+      : [],
+  );
+  const hub = sources.flatMap((source) =>
+    source.accounts.flatMap((account) =>
+      key !== null && resolveKey(account) === key && readable(account.usageLimits)
+        ? [{ source, account, limits: account.usageLimits }]
+        : [],
+    ),
+  );
+  return { native, hub };
+}
+
+const newestFirst = (
+  left: { readonly limits: ServerProviderUsageLimits },
+  right: { readonly limits: ServerProviderUsageLimits },
+) => Date.parse(right.limits.checkedAt) - Date.parse(left.limits.checkedAt);
+
+/**
+ * Redeems through whichever snapshot read the balance last: an older read's
+ * credit id may already be spent. A hub wins ties, since redeeming there also
+ * clears the hub's routing cooldown for the account.
+ */
+function resetCreditTarget({
+  native,
+  hub,
+}: ReturnType<typeof accountSnapshots>): ProviderQuotaReset | null {
+  const latest = [
+    ...hub.map((snapshot) => ({ ...snapshot, route: "hub" as const })),
+    ...native.map((snapshot) => ({ ...snapshot, route: "native" as const })),
+  ]
+    .filter(({ limits }) => limits.resetCredits !== undefined)
+    .sort(newestFirst)[0];
+  const credits = latest?.limits.resetCredits;
+  if (!latest || !credits || credits.availableCount === 0) return null;
+  if (latest.route === "native") return { input: { instanceId: latest.instanceId }, credits };
+  return credits.nextCreditId
+    ? {
+        input: {
+          sourceId: latest.source.id,
+          accountId: latest.account.id,
+          creditId: credits.nextCreditId,
+        },
+        credits,
+      }
+    : null;
+}
+
+/**
+ * Follows the provider's own account rather than every account on its driver,
+ * so a proxy instance on the Claude driver does not inherit Claude's quota.
+ */
+export function providerQuotaStatus(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): ProviderQuotaStatus | null {
+  const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  if (!provider) return null;
+  const snapshots = accountSnapshots(provider, providers, sources);
+  const limits = [...snapshots.native, ...snapshots.hub].sort(newestFirst)[0]?.limits;
+  if (!limits) return null;
+  const gates = limits.windows.filter((window) => gatesProvider(provider.driver, window));
+  if (gates.length === 0) return null;
+  // A reset that passed before the read is a stale clock, not a refill.
+  const checked = Date.parse(limits.checkedAt);
+  const refilled = (window: ServerProviderUsageWindow) => {
+    const at = resetMillis(window);
+    return at !== null && at > checked && at <= now;
+  };
+  const spent = gates.filter((window) => window.usedPercent >= 100 && !refilled(window));
+  if (spent.length === 0) {
+    return {
+      state: "available",
+      remainingPercent: Math.min(
+        ...gates.map((window) => (refilled(window) ? 100 : remainingPercent(window))),
+      ),
+    };
+  }
+  const resets = spent.map((window) => {
+    const at = resetMillis(window);
+    return at !== null && at > now ? at : null;
+  });
+  return {
+    state: "exhausted",
+    resetsAt: resets.every((at): at is number => at !== null) ? Math.max(...resets) : null,
+    reset: resetCreditTarget(snapshots),
+  };
+}
+
+/** The earliest moment a spent provider refills, so one timer covers the list. */
+export function nextProviderRefill(statuses: Iterable<ProviderQuotaStatus>): number | null {
+  let next: number | null = null;
+  for (const status of statuses) {
+    if (status.state === "exhausted" && status.resetsAt !== null) {
+      next = next === null ? status.resetsAt : Math.min(next, status.resetsAt);
+    }
+  }
+  return next;
 }
