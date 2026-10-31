@@ -149,9 +149,7 @@ export function PaneNotch({
     if (!notch || !marksHost) return;
     const unmarkPane = markNotchHost(
       notch.closest(
-        side === "right"
-          ? "[data-layout-tab-id], [data-pane-notch-host]"
-          : "[data-layout-tab-id]",
+        side === "right" ? "[data-layout-tab-id], [data-pane-notch-host]" : "[data-layout-tab-id]",
       ),
       side,
     );
@@ -175,7 +173,7 @@ export function PaneNotch({
         data-pane-notch={side === "left" ? "" : side}
         data-chrome-scope={isMobile ? undefined : ""}
         className={cn(
-          "relative isolate flex min-w-0 shrink items-center gap-1 self-stretch",
+          "relative isolate flex min-w-0 shrink items-center gap-1 self-stretch [--type-label:0.8125rem]",
           side === "left"
             ? "pe-(--pane-notch-tail) has-[>[data-pane-notch-add]]:pe-3.5"
             : "md:ps-(--pane-notch-tail)",
