@@ -110,7 +110,7 @@ function SettingsContentLayout({ children }: { children: ReactNode }) {
         >
           <header className="flex h-13 shrink-0 items-center gap-3 ps-5 pe-3">
             <SettingsBreadcrumb pathname={location.pathname} />
-            <div className="ms-auto flex shrink-0 items-center gap-1">
+            <div className="relative z-20 ms-auto flex shrink-0 items-center gap-1">
               {location.pathname === "/settings/general" ? (
                 <RestoreDeviceDefaultsButton
                   compact
