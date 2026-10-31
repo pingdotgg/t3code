@@ -61,7 +61,7 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
               {props.environmentLabel}
             </span>
             {!props.enabled && !props.readOnly ? (
-              <Button size="sm" variant="outline" onClick={props.onEnable}>
+              <Button size="sm" variant="secondary" onClick={props.onEnable}>
                 Enable Antigravity
               </Button>
             ) : null}
@@ -243,7 +243,7 @@ function ProviderSetupActions({
                 {installActive && installation.operationId ? (
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="secondary"
                     disabled={actionsDisabled}
                     onClick={() => {
                       const operationId = installation.operationId;
@@ -258,7 +258,7 @@ function ProviderSetupActions({
                 ) : !installActive && provider.setup?.canInstall ? (
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="secondary"
                     disabled={actionsDisabled || authActive}
                     onClick={() =>
                       void runCommand("Starting installation", () => startInstall(target))
@@ -317,7 +317,7 @@ function ProviderSetupActions({
           {queryError ? (
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               className="w-fit"
               onClick={() => {
                 authQuery.refresh();

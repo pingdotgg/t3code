@@ -61,8 +61,12 @@ export function createTerminalEnvironmentAtoms<R, E>(
           ),
         ),
     }),
+    // Attach opens a missing session, so it lives only while a view shows the
+    // terminal: kept idle, a closed terminal's attach would re-subscribe on
+    // the next reconnect and spawn a hidden shell.
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
+      idleTtlMs: 0,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) => {
         // Retry an unanswered first attach unchanged so it can still open the shell.
         let replied = false;

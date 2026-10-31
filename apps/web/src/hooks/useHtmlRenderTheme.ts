@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 
 import { appearanceFontStack } from "../appearanceFonts";
 import {
-  getStandardThemeColors,
+  getStockThemeColors,
   getThemeColorsForMode,
   getThemeDefinition,
   resolveThemeHalf,
@@ -23,7 +23,7 @@ function resolveActiveThemeColors(
 ) {
   const definition = getThemeDefinition(resolveThemeHalf(theme, halves, appearance));
   return definition === null
-    ? getStandardThemeColors(appearance)
+    ? getStockThemeColors(appearance)
     : (getThemeColorsForMode(definition, appearance) ?? definition.colors);
 }
 
@@ -33,7 +33,7 @@ export function useHtmlRenderTheme() {
   const colors = useSyncExternalStore(
     subscribeToCustomThemes,
     () => resolveActiveThemeColors(theme, themeHalves, resolvedTheme),
-    () => getStandardThemeColors(resolvedTheme),
+    () => getStockThemeColors(resolvedTheme),
   );
   const sans = useClientSettings((settings) => settings.fontFamilySans);
   const mono = useClientSettings((settings) => settings.fontFamilyCode);

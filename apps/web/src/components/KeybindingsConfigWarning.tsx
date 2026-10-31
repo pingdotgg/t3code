@@ -30,7 +30,7 @@ export function KeybindingsConfigWarning({
       <span className="mt-2 flex justify-end">
         <Button
           size="xs"
-          variant="outline"
+          variant="secondary"
           disabled={!canOpenEditor || !configPath || availableEditors.length === 0}
           onClick={async () => {
             if (!configPath) return;

@@ -2,21 +2,24 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 
+// Colors come from the nearest kbd-in-* / kbd-on-* context (buttons,
+// fields, menus, popovers, tooltips set one), falling back to the standalone
+// key hint: the kbd recipe with a muted label.
 function Kbd({
   className,
   variant = "default",
   ...props
 }: React.ComponentProps<"kbd"> & {
-  /** `outline` draws a physical key, so the hint stays distinct inside surrounding text. */
+  /** `outline` always draws the standalone key, so the hint stays distinct inside surrounding text. */
   variant?: "default" | "outline";
 }) {
   return (
     <kbd
       className={cn(
-        "pointer-events-none inline-flex h-5 min-w-5 select-none items-center justify-center gap-1 rounded px-1 font-medium font-sans text-muted-foreground text-xs [&_svg:not([class*='size-'])]:size-3",
+        "pointer-events-none inline-flex h-5 min-w-5 select-none items-center justify-center gap-1 rounded-[var(--kbd-radius,var(--radius-badge))] px-1 font-sans text-caption text-[color:var(--kbd-foreground,var(--contrast-muted-foreground))] [&_svg:not([class*='size-'])]:size-3",
         variant === "outline"
-          ? "border border-b-2 border-foreground/15 px-1.5"
-          : "bg-foreground/[0.07]",
+          ? "px-1.5 [background:var(--kbd-fill)] [box-shadow:var(--kbd-shadow)]"
+          : "[background:var(--kbd-background,var(--kbd-fill))] [box-shadow:var(--kbd-box-shadow,var(--kbd-shadow))]",
         className,
       )}
       data-slot="kbd"

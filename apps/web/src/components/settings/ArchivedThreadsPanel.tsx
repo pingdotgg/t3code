@@ -15,6 +15,7 @@ import { readLocalApi } from "../../localApi";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { RelativeTime } from "../RelativeTime";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -235,10 +236,18 @@ export function ArchivedThreadsPanel() {
                   title={thread.title}
                   description={
                     <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
-                      {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
-                      Archived <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
-                      {" \u00b7 Created "}
-                      <RelativeTime timestamp={thread.createdAt} />
+                      {hasMultipleEnvironments ? (
+                        <span className="mb-1 block">{thread.environmentLabel}</span>
+                      ) : null}
+                      <Tooltip>
+                        <TooltipTrigger render={<span tabIndex={0} />}>
+                          Archived{" "}
+                          <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">
+                          Created <RelativeTime timestamp={thread.createdAt} />
+                        </TooltipPopup>
+                      </Tooltip>
                     </span>
                   }
                   control={
@@ -249,7 +258,7 @@ export function ArchivedThreadsPanel() {
                             render={
                               <Button
                                 type="button"
-                                variant={action === "delete" ? "destructive-outline" : "outline"}
+                                variant={action === "delete" ? "destructive-outline" : "secondary"}
                                 size="icon-sm"
                                 aria-label={`${label} ${thread.title}`}
                                 disabled={pendingKeys.has(threadKey)}
