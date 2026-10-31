@@ -22,6 +22,9 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol("https://token@github.com/a/b.git", "ssh")).toBe(
       "git@github.com:a/b.git",
     );
+    expect(cloneUrlForProtocol("https://user:tok@en@github.com/a/b.git", "ssh")).toBe(
+      "git@github.com:a/b.git",
+    );
   });
 
   it("refuses rewrites that would guess wrong", () => {

@@ -2,7 +2,6 @@ export type CloneProtocol = "ssh" | "https";
 
 const SCP_LIKE_URL = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/;
 const SSH_URL = /^ssh:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
-const HTTPS_URL = /^https?:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
 
 function parseCloneUrl(
   url: string,
@@ -10,8 +9,23 @@ function parseCloneUrl(
   const trimmed = url.trim();
   const ssh = SSH_URL.exec(trimmed);
   if (ssh) return { protocol: "ssh", host: ssh[1]!, path: ssh[3]!, customPort: !!ssh[2] };
-  const https = HTTPS_URL.exec(trimmed);
-  if (https) return { protocol: "https", host: https[1]!, path: https[3]!, customPort: !!https[2] };
+  // URL() keeps userinfo past an @ in the password; a regex that stops at the first @
+  // would treat that remainder as the host.
+  try {
+    const https = new URL(trimmed);
+    if (https.protocol === "http:" || https.protocol === "https:") {
+      const path = https.pathname.replace(/^\/+/, "");
+      if (https.hostname.length === 0 || path.length === 0) return null;
+      return {
+        protocol: "https",
+        host: https.hostname,
+        path,
+        customPort: https.port !== "",
+      };
+    }
+  } catch {
+    // Not an absolute URL; try scp-like below.
+  }
   const scp = SCP_LIKE_URL.exec(trimmed);
   if (scp) return { protocol: "ssh", host: scp[1]!, path: scp[2]!, customPort: false };
   return null;
