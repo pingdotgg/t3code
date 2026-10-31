@@ -20,6 +20,7 @@ import {
   clearAgentAwarenessRegistrationRecord,
   loadAgentAwarenessRegistrationRecord,
   loadOrCreateAgentAwarenessDeviceId,
+  loadPreferences,
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
@@ -102,6 +103,8 @@ vi.mock("../../state/server", () => ({
 }));
 
 vi.mock("expo-notifications", () => ({
+  AndroidImportance: { NONE: 0, HIGH: 4 },
+  getNotificationChannelAsync: vi.fn(() => Promise.resolve(null)),
   addPushTokenListener: vi.fn(() => ({ remove: vi.fn() })),
   getDevicePushTokenAsync: vi.fn(() => Promise.resolve({ type: "ios", data: "apns-token" })),
   getPermissionsAsync: vi.fn(() => Promise.resolve({ granted: true })),
@@ -232,6 +235,11 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       type: "ios",
       data: "apns-token",
     });
+    vi.mocked(Notifications.getPermissionsAsync).mockReset();
+    vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
+      granted: true,
+    } as Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>);
+    vi.mocked(Notifications.getNotificationChannelAsync).mockResolvedValue(null);
     vi.unstubAllGlobals();
     vi.stubGlobal("__DEV__", false);
     secureStore.clear();
@@ -244,6 +252,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     vi.mocked(loadAgentAwarenessRegistrationRecord).mockClear();
     vi.mocked(clearAgentAwarenessRegistrationRecord).mockClear();
     vi.mocked(loadOrCreateAgentAwarenessDeviceId).mockResolvedValue("device-1");
+    vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: false });
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
     widgetMocks.start.mockClear();
@@ -608,6 +617,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
   it.effect.each(["ios", "android"] as const)(
     "does not enable %s notifications when a token rotates after permission is revoked",
     (os) => {
+      vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true });
       vi.spyOn(Platform, "OS", "get").mockReturnValue(os);
       vi.spyOn(Platform, "Version", "get").mockReturnValue(os === "ios" ? 18 : 36);
       vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
@@ -634,7 +644,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       return Effect.gen(function* () {
         yield* runBackgroundOperations();
         expect(registrations.at(-1)).toMatchObject({
-          preferences: { notificationsEnabled: true },
+          preferences: { notificationsEnabled: true, liveActivitiesEnabled: true },
         });
         vi.mocked(Notifications.getPermissionsAsync).mockResolvedValueOnce({
           granted: false,
@@ -643,9 +653,21 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         listener({ type: os, data: "rotated" });
         yield* runBackgroundOperations();
         expect(registrations.at(-1)).toMatchObject({
-          preferences: { notificationsEnabled: false },
+          preferences: { notificationsEnabled: false, liveActivitiesEnabled: os === "ios" },
         });
-        expect(registrations.at(-1)).not.toHaveProperty("pushToken");
+        if (os === "android") {
+          expect(registrations.at(-1)).toMatchObject({ pushToken: "rotated" });
+          vi.mocked(Notifications.getPermissionsAsync).mockResolvedValueOnce({
+            granted: false,
+          } as Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>);
+          yield* refreshAgentAwarenessRegistration();
+          expect(registrations.at(-1)).toMatchObject({
+            pushToken: "initial",
+            preferences: { notificationsEnabled: false, liveActivitiesEnabled: false },
+          });
+        } else {
+          expect(registrations.at(-1)).not.toHaveProperty("pushToken");
+        }
       }).pipe(
         Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
         Effect.provide(
@@ -653,6 +675,71 @@ describe("makeRelayDeviceRegistrationRequest", () => {
             Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
           ),
         ),
+      );
+    },
+  );
+  it.effect.each(["blocked", "unavailable"] as const)(
+    "keeps Android push delivery registered when the alert channel is %s",
+    (channelState) => {
+      vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true });
+      vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+      vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
+        type: "android",
+        data: "fcm-token",
+      });
+      vi.mocked(Notifications.getNotificationChannelAsync).mockResolvedValue({
+        id: "agent-alerts",
+        name: "Agent alerts",
+        importance: Notifications.AndroidImportance.NONE,
+      } as Awaited<ReturnType<typeof Notifications.getNotificationChannelAsync>>);
+      if (channelState === "unavailable") {
+        vi.mocked(Notifications.getNotificationChannelAsync).mockRejectedValue(
+          new Error("Android channel lookup failed"),
+        );
+      }
+      const registrations: unknown[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        if (request.url.endsWith("/v1/client/dpop-token")) {
+          return Response.json({
+            access_token: "dpop",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "DPoP",
+            expires_in: 300,
+            scope: "mobile:registration",
+          });
+        }
+        registrations.push(await request.json());
+        return Response.json({ ok: true });
+      });
+      Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk"), "user-a");
+      return Effect.gen(function* () {
+        yield* runBackgroundOperations();
+        expect(registrations.at(-1)).toMatchObject({
+          pushToken: "fcm-token",
+          preferences: { notificationsEnabled: false, liveActivitiesEnabled: true },
+        });
+        expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+
+        const listener = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)![0];
+        listener({ type: "android", data: "rotated-fcm-token" });
+        yield* runBackgroundOperations();
+        expect(registrations.at(-1)).toMatchObject({
+          pushToken: "rotated-fcm-token",
+          preferences: { notificationsEnabled: false, liveActivitiesEnabled: true },
+        });
+
+        vi.mocked(Notifications.getNotificationChannelAsync).mockResolvedValue(null);
+        yield* refreshAgentAwarenessRegistration();
+        expect(registrations.at(-1)).toMatchObject({
+          pushToken: "fcm-token",
+          preferences: { notificationsEnabled: true },
+        });
+      }).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provide(layerRelayTest),
       );
     },
   );

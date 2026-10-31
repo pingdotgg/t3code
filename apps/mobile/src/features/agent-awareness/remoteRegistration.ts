@@ -246,7 +246,7 @@ function iosMajorVersion(): number {
 const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushTokenRegistration")(
   function* (observedPushToken?: string) {
     if (!canRegisterPushNotifications() || !supportsAgentAwarenessPush()) {
-      return { notificationsEnabled: false, pushToken: null };
+      return { notificationsEnabled: false, pushToken: null, notificationPermissionGranted: false };
     }
     const permissions = yield* Effect.tryPromise({
       try: () => Notifications.getPermissionsAsync(),
@@ -256,11 +256,31 @@ const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushToke
           cause,
         }),
     });
-    if (!permissions.granted) {
-      return { notificationsEnabled: false, pushToken: null };
+    // Android FCM data delivery is independent of notification presentation permission.
+    if (!permissions.granted && Platform.OS !== "android") {
+      return { notificationsEnabled: false, pushToken: null, notificationPermissionGranted: false };
     }
+    const alertsEnabled =
+      permissions.granted &&
+      (Platform.OS === "android" && Number(Platform.Version) >= 26
+        ? yield* Effect.tryPromise({
+            try: () => Notifications.getNotificationChannelAsync("agent-alerts"),
+            catch: (cause) =>
+              new AgentAwarenessOperationError({
+                operation: "read-notification-permissions",
+                cause,
+              }),
+          }).pipe(
+            Effect.map((channel) => channel?.importance !== Notifications.AndroidImportance.NONE),
+            Effect.orElseSucceed(() => false),
+          )
+        : true);
     if (observedPushToken) {
-      return { notificationsEnabled: true, pushToken: observedPushToken };
+      return {
+        notificationsEnabled: alertsEnabled,
+        pushToken: observedPushToken,
+        notificationPermissionGranted: permissions.granted,
+      };
     }
     const token = yield* Effect.tryPromise({
       try: () => Notifications.getDevicePushTokenAsync(),
@@ -281,7 +301,11 @@ const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushToke
       token?.type === Platform.OS && typeof token.data === "string" && token.data.trim().length > 0
         ? token.data.trim()
         : null;
-    return { notificationsEnabled: pushToken !== null, pushToken };
+    return {
+      notificationsEnabled: alertsEnabled && pushToken !== null,
+      pushToken,
+      notificationPermissionGranted: permissions.granted,
+    };
   },
 );
 
@@ -670,7 +694,11 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
         Constants.deviceName?.trim() ||
         (Platform.OS === "android" ? "Android device" : "iOS device"),
       ...(Platform.OS === "android"
-        ? { platform: "android" as const, androidApiLevel: Number(Platform.Version) }
+        ? {
+            platform: "android" as const,
+            androidApiLevel: Number(Platform.Version),
+            notificationPermissionGranted: pushTokenRegistration.notificationPermissionGranted,
+          }
         : { platform: "ios" as const, iosMajorVersion: iosMajorVersion() }),
       appVersion: Constants.expoConfig?.version,
       ...(bundleId ? { bundleId } : {}),

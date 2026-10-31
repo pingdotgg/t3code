@@ -257,21 +257,21 @@ object AgentNotifications {
     )
     val presentation = ActivityPresentation(data, active)
     val openThread = contentIntent(context, scheme, data["activity_path"], ACTIVITY_ID)
+    // Retained results still need Android's ongoing flag to remain promoted.
+    val ongoing = active || Build.VERSION.SDK_INT >= 36
     val builder = base(context, ACTIVITY_CHANNEL)
-      .setOngoing(active).setOnlyAlertOnce(true).setSilent(true)
+      .setOngoing(ongoing).setOnlyAlertOnce(true).setSilent(true)
       .setTimeoutAfter(remainingMs)
       // Live Updates must remain uncolorized to qualify for promotion.
       .setColorized(false)
-      .setRequestPromotedOngoing(active)
-      .setShortCriticalText(presentation.chip)
+      .setRequestPromotedOngoing(ongoing)
+      .setShortCriticalText(if (ongoing) presentation.chip else null)
       .setContentIntent(openThread)
       .setDeleteIntent(dismissIntent)
     presentation.applyTo(builder, context)
     val action = presentation.action
-    if (action != null) {
-      if (openThread != null) builder.addAction(0, action, openThread)
-      builder.addAction(0, "Dismiss", dismissIntent)
-    }
+    if (action != null && openThread != null) builder.addAction(0, action, openThread)
+    if (ongoing) builder.addAction(0, "Dismiss", dismissIntent)
     manager(context).notify(ACTIVITY_TAG, ACTIVITY_ID, builder.build())
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
       // Notification timeouts were added in API 26. One inexact alarm also

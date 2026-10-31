@@ -523,8 +523,22 @@ describe("Android delivery routing", () => {
       });
       h.current.target.last_aggregate_json = encodeJson(aggregateFor([state]));
       yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent[1]?.data.active).toBe("false");
+      expect(h.sent[1]?.data.active).toBe("true");
       expect(h.sent[1]?.data.alert_id).toBeUndefined();
+      expect(h.marked.at(-1)?.kind).toBe("live_activity_update");
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("starts ongoing activity without ordinary notifications or a previous card", () => {
+    const h = harness();
+    h.current.target.preferences_json = encodeJson({ ...preferences, notificationsEnabled: false });
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process(h.job);
+      expect(h.sent).toHaveLength(1);
+      expect(h.sent[0]?.data.active).toBe("true");
+      expect(h.sent[0]?.alert).toBe(false);
+      expect(h.sent[0]?.data.alert_id).toBeUndefined();
     }).pipe(Effect.provide(h.layer));
   });
 
