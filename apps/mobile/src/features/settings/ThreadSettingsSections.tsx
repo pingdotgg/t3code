@@ -142,26 +142,25 @@ export function AutoSettleSettingsRows(props: {
               Select one server to change per-account reset settings.
             </Text>
           ) : displayTargets.length === 1 ? (
-            codexInstances.map(([instanceId, instance]) => (
-              <SettingsSwitchRow
-                key={instanceId}
-                icon="clock"
-                label={`Use banked Codex resets${instance.displayName ? ` for ${instance.displayName}` : ""}`}
-                value={
-                  referenceSettings.autoRedeemCodexResetCredits[
-                    ProviderInstanceId.make(instanceId)
-                  ] === true
-                }
-                disabled={disabled}
-                onValueChange={(value) =>
-                  writeToAll({
-                    autoRedeemCodexResetCredits: {
-                      [ProviderInstanceId.make(instanceId)]: value,
-                    },
-                  })
-                }
-              />
-            ))
+            codexInstances.map(([rawInstanceId, instance]) => {
+              const instanceId = ProviderInstanceId.make(rawInstanceId);
+              return (
+                <SettingsSwitchRow
+                  key={instanceId}
+                  icon="clock"
+                  label={`Use banked Codex resets${instance.displayName ? ` for ${instance.displayName}` : ""}`}
+                  value={referenceSettings.autoRedeemCodexResetCredits[instanceId] === true}
+                  disabled={disabled}
+                  onValueChange={(value) =>
+                    writeToAll({
+                      autoRedeemCodexResetCredits: {
+                        [instanceId]: value,
+                      },
+                    })
+                  }
+                />
+              );
+            })
           ) : null}
         </SettingsSection>
       ) : null}

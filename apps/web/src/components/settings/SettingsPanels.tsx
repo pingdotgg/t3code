@@ -1597,33 +1597,32 @@ export function ThreadsSettingsPanel() {
                   config.setupMode === "managed"
                 );
               })
-              .map(([instanceId, instance]) => (
-                <SettingsRow
-                  key={instanceId}
-                  serverScoped
-                  title={`Use banked Codex resets${instance.displayName ? ` for ${instance.displayName}` : ""}`}
-                  description="For native Codex accounts. When an included usage limit is exhausted, redeem one banked reset and resume eligible threads after Codex reports a reset and a fresh usage check shows the limit clear."
-                  settingKeys={["autoRedeemCodexResetCredits"]}
-                  control={
-                    <ScopedSwitch
-                      settingKeys={["autoRedeemCodexResetCredits"]}
-                      checked={
-                        settings.autoRedeemCodexResetCredits[
-                          ProviderInstanceId.make(instanceId)
-                        ] === true
-                      }
-                      onCheckedChange={(checked) =>
-                        updateSettings({
-                          autoRedeemCodexResetCredits: {
-                            [ProviderInstanceId.make(instanceId)]: Boolean(checked),
-                          },
-                        })
-                      }
-                      aria-label={`Automatically redeem Codex reset for ${instance.displayName ?? "this account"}`}
-                    />
-                  }
-                />
-              ))
+              .map(([rawInstanceId, instance]) => {
+                const instanceId = ProviderInstanceId.make(rawInstanceId);
+                return (
+                  <SettingsRow
+                    key={instanceId}
+                    serverScoped
+                    title={`Use banked Codex resets${instance.displayName ? ` for ${instance.displayName}` : ""}`}
+                    description="For native Codex accounts. When an included usage limit is exhausted, redeem one banked reset and resume eligible threads after Codex reports a reset and a fresh usage check shows the limit clear."
+                    settingKeys={["autoRedeemCodexResetCredits"]}
+                    control={
+                      <ScopedSwitch
+                        settingKeys={["autoRedeemCodexResetCredits"]}
+                        checked={settings.autoRedeemCodexResetCredits[instanceId] === true}
+                        onCheckedChange={(checked) =>
+                          updateSettings({
+                            autoRedeemCodexResetCredits: {
+                              [instanceId]: Boolean(checked),
+                            },
+                          })
+                        }
+                        aria-label={`Automatically redeem Codex reset for ${instance.displayName ?? "this account"}`}
+                      />
+                    }
+                  />
+                );
+              })
           : null}
         <SettingsRow
           serverScoped
