@@ -1,3 +1,8 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Exercise HTTP authentication with the real SDK.
+import * as NodeHttp from "node:http";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
@@ -50,6 +55,7 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeOpenCodeSettings = Schema.decodeEffect(OpenCodeSettings);
 const OPEN_CODE_TEST_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
   serverUrl: "http://test.invalid",
 });
@@ -240,6 +246,51 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect("classifies APIError 429 as a usage limit", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness("usage-limit", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.error",
+          properties: {
+            sessionID: "root",
+            error: {
+              name: "APIError",
+              data: {
+                message: "Provider rejected request",
+                statusCode: 429,
+                isRetryable: true,
+              },
+            },
+          },
+        }),
+      );
+      const terminal = (yield* Fiber.join(received)).find(
+        (event) => event.type === "turn.terminal",
+      );
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.class, "usage_limit");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("applies a changed runtime policy to the session on resume and turn start", () =>
     Effect.gen(function* () {
       const updates: Array<{ sessionID: string; permission: unknown }> = [];
@@ -2625,4 +2676,124 @@ it.effect.each([false, true])(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
     ),
+);
+
+it.live.each([true, false])("opens an authenticated OpenCode session (external=%s)", (external) =>
+  Effect.gen(function* () {
+    const password = external ? "settings-password" : "environment-password";
+    const requests: string[] = [];
+    let eventConnected!: () => void;
+    const eventRequest = new Promise<void>((resolve) => {
+      eventConnected = resolve;
+    });
+    const server = yield* Effect.acquireRelease(
+      Effect.promise(
+        () =>
+          new Promise<ReturnType<typeof NodeHttp.createServer>>((resolve) => {
+            const server = NodeHttp.createServer((request, response) => {
+              if (
+                request.headers.authorization !==
+                `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
+              ) {
+                response.writeHead(401).end("Unauthorized");
+                return;
+              }
+              const url = new URL(request.url!, "http://localhost");
+              requests.push(url.pathname);
+              if (url.pathname === "/event") {
+                response.writeHead(200, { "Content-Type": "text/event-stream" });
+                response.write(": connected\n\n");
+                eventConnected();
+                return;
+              }
+              response.writeHead(200, { "Content-Type": "application/json" });
+              response.end(
+                JSON.stringify(
+                  url.pathname.endsWith("/children")
+                    ? []
+                    : url.pathname === "/session"
+                      ? { id: "native-auth", time: { created: 1, updated: 1 } }
+                      : { healthy: true, version: "1.14.19" },
+                ),
+              );
+            });
+            server.listen(0, "127.0.0.1", () => resolve(server));
+          }),
+      ),
+      (server) =>
+        Effect.promise(
+          () =>
+            new Promise<void>((resolve) => {
+              server.closeAllConnections();
+              server.close(() => resolve());
+            }),
+        ),
+    );
+    const address = server.address();
+    assert.isNotNull(address);
+    if (!address || typeof address === "string") return;
+    const url = `http://127.0.0.1:${address.port}`;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    let managedStarts = 0;
+    const runtimeLayer = OpenCodeRuntime.layer.pipe(
+      Layer.provide(
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            assert.isTrue(ChildProcess.isStandardCommand(command));
+            if (!ChildProcess.isStandardCommand(command)) return Effect.die("Unexpected pipeline");
+            assert.include(command.args, "serve");
+            assert.equal(command.options.env?.OPENCODE_SERVER_PASSWORD, password);
+            managedStarts += 1;
+            return spawner.spawn(
+              ChildProcess.make(
+                process.execPath,
+                [
+                  "-e",
+                  `console.log("server listening on " + process.argv[1]); setInterval(() => {}, 1000)`,
+                  url,
+                ],
+                command.options,
+              ),
+            );
+          }),
+        ),
+      ),
+      Layer.provide(OpenCodeServerLedger.layerTest),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    const instanceId = ProviderInstanceId.make("opencode-auth");
+    const adapter = yield* makeOpenCodeAdapterV2({
+      instanceId,
+      settings: yield* decodeOpenCodeSettings({
+        serverUrl: external ? url : "",
+        ...(external ? { serverPassword: password } : {}),
+      }),
+      environment: { OPENCODE_SERVER_PASSWORD: "environment-password" },
+    }).pipe(Effect.provide(runtimeLayer));
+    const session = yield* adapter.openSession({
+      threadId: ThreadId.make("thread-opencode-auth"),
+      providerSessionId: ProviderSessionId.make("session-opencode-auth"),
+      modelSelection: { instanceId, model: "anthropic/claude-sonnet", options: [] },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+    });
+    yield* session.ensureThread({
+      threadId: ThreadId.make("thread-opencode-auth"),
+      modelSelection: { instanceId, model: "anthropic/claude-sonnet", options: [] },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+    });
+    assert.include(requests, "/session");
+    yield* Effect.promise(() => eventRequest);
+    assert.include(requests, "/event");
+    assert.include(requests, "/global/health");
+    assert.equal(managedStarts, external ? 0 : 1);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide([
+      NodeServices.layer,
+      TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+      IdAllocator.layer,
+      McpProviderSessions.layer,
+    ]),
+  ),
 );

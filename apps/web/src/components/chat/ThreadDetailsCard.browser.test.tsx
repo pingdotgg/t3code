@@ -42,10 +42,13 @@ function Card({
   threadRef,
   inline,
   fixture,
+  rows = 1,
 }: {
   threadRef: ScopedThreadRef;
   inline: boolean;
   fixture: ReturnType<typeof setup>;
+  /** Rows of 100px shown at full density. Compact always takes 50px. */
+  rows?: number;
 }) {
   return (
     // The web root renders in StrictMode, which re-runs ref callbacks on every mount.
@@ -63,8 +66,17 @@ function Card({
           detailsCardPlacement: inline ? placement : null,
         }}
       >
-        <ThreadDetailsCard threadRef={threadRef} anchor={fixture.anchor} handle={fixture.handle}>
-          {() => <p>Details for {threadRef.threadId}</p>}
+        <ThreadDetailsCard
+          threadRef={threadRef}
+          anchor={fixture.anchor}
+          handle={fixture.handle}
+          contentKey={String(rows)}
+        >
+          {(density) => (
+            <p style={{ height: density === "full" ? rows * 100 : 50 }}>
+              Details for {threadRef.threadId}
+            </p>
+          )}
         </ThreadDetailsCard>
       </ChatCanvasContext>
     </StrictMode>
@@ -135,4 +147,14 @@ it("reopens after a normal close", async () => {
   await expect.element(page.getByText("Details for thread-b")).not.toBeInTheDocument();
   await setOpen(true);
   await expect.element(page.getByText("Details for thread-b")).toBeVisible();
+});
+
+it("returns to full density when hidden items make the content fit", async () => {
+  using fixture = setup();
+  await using screen = await render(<Card threadRef={threadB} inline fixture={fixture} rows={6} />);
+  const card = page.getByRole("region", { name: "Thread details" });
+  await expect.element(card).toHaveAttribute("data-density", "compact");
+
+  await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={2} />);
+  await expect.element(card).toHaveAttribute("data-density", "full");
 });
