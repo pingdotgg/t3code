@@ -99,6 +99,8 @@ describe("searchSettings", () => {
 
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
+    expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "history-swipe-navigation")).toBe(true);
+    expect(searchSettings("horizontal wheel")).toEqual([]);
     expect(searchSettings("hold to quit")).toEqual([]);
     expect(searchSettings("wsl")).toEqual([]);
     expect(searchSettings("update track")).toEqual([]);

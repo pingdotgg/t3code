@@ -303,6 +303,19 @@ describe("ClientSettings quit confirmation", () => {
   });
 });
 
+describe("ClientSettings history swipe navigation", () => {
+  it.each([undefined, true, false])("decodes and round-trips %s", (historySwipeNavigation) => {
+    const input = historySwipeNavigation === undefined ? {} : { historySwipeNavigation };
+    const settings = decodeClientSettings(input);
+
+    expect(settings.historySwipeNavigation).toBe(historySwipeNavigation ?? true);
+    expect(decodeClientSettings(encodeClientSettings(settings)).historySwipeNavigation).toBe(
+      historySwipeNavigation ?? true,
+    );
+    expect(decodeClientSettingsPatch(input)).toEqual(input);
+  });
+});
+
 describe("provider enabled defaults", () => {
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");

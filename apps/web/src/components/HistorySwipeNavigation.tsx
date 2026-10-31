@@ -162,6 +162,7 @@ function SwipeIndicator({ direction, progress, y, bounds, tracking }: SwipeIndic
   return (
     <div
       aria-hidden="true"
+      data-testid="history-swipe-indicator"
       className="pointer-events-none fixed z-100 overflow-hidden"
       style={bounds}
     >
