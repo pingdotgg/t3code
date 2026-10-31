@@ -1643,6 +1643,188 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   it.effect(
+    "implicit delegation uses the fallback model when the parent's provider is out of usage",
+    () =>
+      Effect.gen(function* () {
+        const fallbackInstanceId = ProviderInstanceId.make("claudeAgent");
+        const fallbackModelSelection = {
+          instanceId: fallbackInstanceId,
+          model: "claude-sonnet-4-6",
+        };
+        const effortHigh = { id: "effort", value: "high" };
+        const exhaustedCodex: ServerProvider = {
+          ...providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+          usageLimits: {
+            checkedAt: "2026-09-13T00:00:00.000Z",
+            windows: [
+              {
+                id: "weekly",
+                kind: "weekly",
+                label: "Weekly",
+                usedPercent: 100,
+                resetsAt: "2999-01-01T00:00:00.000Z",
+              },
+            ],
+          },
+        };
+        const fallbackProvider: ServerProvider = {
+          ...providerSnapshot({
+            instanceId: fallbackInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+          }),
+          models: [
+            {
+              slug: "claude-haiku-4-5",
+              name: "claude-haiku-4-5",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [{ id: "fastMode", label: "Fast", type: "boolean" }],
+              },
+            },
+            {
+              slug: "claude-sonnet-4-6",
+              name: "claude-sonnet-4-6",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    label: "Effort",
+                    type: "select",
+                    options: [{ id: "high", label: "High" }],
+                  },
+                ],
+              },
+            },
+          ],
+        };
+        const committedFallback = { ...fallbackModelSelection, options: [effortHigh] };
+        for (const testCase of [
+          {
+            name: "explicit",
+            target: { providerInstanceId: codexInstanceId },
+            expected: { instanceId: codexInstanceId, model: "gpt-5.4" },
+          },
+          { name: "implicit", target: undefined, expected: fallbackModelSelection },
+          {
+            name: "stale fallback health is re-probed",
+            target: undefined,
+            staleFallback: true,
+            expected: fallbackModelSelection,
+          },
+          {
+            name: "accepted retry replays the provider committed before exhaustion",
+            target: undefined,
+            committed: { instanceId: codexInstanceId, model: "gpt-5.4" },
+            expected: { instanceId: codexInstanceId, model: "gpt-5.4" },
+          },
+          {
+            name: "accepted retry replays the committed fallback model and options",
+            target: { options: [effortHigh] },
+            committed: committedFallback,
+            expected: committedFallback,
+          },
+        ]) {
+          const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const refreshed = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
+          const healthyProviders = [exhaustedCodex, fallbackProvider];
+          const task = {
+            id: taskId,
+            threadId: parentThreadId,
+            runId: parentRunId,
+            parentNodeId,
+            origin: "app_owned",
+            createdBy: "agent",
+            driver: ProviderDriverKind.make("codex"),
+            providerInstanceId: testCase.expected.instanceId,
+            providerThreadId: null,
+            childThreadId,
+            nativeTaskRef: null,
+            prompt: "Summarize the diff.",
+            title: null,
+            model: testCase.expected.model,
+            status: "running",
+            result: null,
+            startedAt: null,
+            completedAt: null,
+          };
+          let delegated = false;
+          const layerDependencies = Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              hasReceipt: () => Effect.succeed(testCase.committed !== undefined),
+              getThreadShell: () => Effect.succeed({ modelSelection: testCase.committed } as never),
+              getThreadRecords: (threadId) =>
+                Effect.succeed(
+                  threadId === parentThreadId
+                    ? parentProjection(delegated ? [task] : [])
+                    : childProjection,
+                ),
+              dispatch: (command) =>
+                Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      delegated = true;
+                    }),
+                  ),
+                  Effect.as({
+                    sequence: 1,
+                    storedEvents: [
+                      {
+                        sequence: 1,
+                        commandId: null,
+                        event: { type: "subagent.updated", payload: task },
+                      },
+                    ],
+                  } as never),
+                ),
+            }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.succeed(
+                testCase.staleFallback
+                  ? [exhaustedCodex, { ...fallbackProvider, status: "error" as const }]
+                  : healthyProviders,
+              ),
+              refreshInstance: (instanceId) =>
+                Ref.update(refreshed, (ids) => [...ids, instanceId]).pipe(
+                  Effect.as(healthyProviders),
+                ),
+            }),
+            adapterRegistryLayer([codexInstanceId, fallbackInstanceId]),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+            ServerSettings.layerTest({ fallbackModelSelection }),
+          );
+
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            yield* service.delegateTask(scope, {
+              task: "Summarize the diff.",
+              target: testCase.target,
+              mode: "async",
+              clientRequestId: "delegate-usage-fallback-1",
+            });
+            const commands = yield* Ref.get(dispatched);
+            assert.deepEqual(
+              (commands[0] as { modelSelection: unknown }).modelSelection,
+              testCase.expected,
+              testCase.name,
+            );
+            if (testCase.staleFallback) {
+              assert.deepEqual(yield* Ref.get(refreshed), [fallbackInstanceId], testCase.name);
+            }
+          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+        }
+      }),
+  );
+
+  it.effect(
     "retrying an accepted driver-only delegation replays even after the project disables every candidate",
     () =>
       Effect.gen(function* () {
