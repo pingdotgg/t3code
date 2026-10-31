@@ -6,6 +6,7 @@ import { useState } from "react";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  type ProjectId,
   type ScheduledTask,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -32,6 +33,16 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { StatusDot, type StatusDotTone } from "../ui/status-dot";
+
+function reportFailure(title: string, error: unknown) {
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title,
+      description: error instanceof Error ? error.message : String(error),
+    }),
+  );
+}
 
 const STATUS_DOT_TONE: Record<ScheduledTask["lastRunStatus"], StatusDotTone> = {
   never: "neutral",
@@ -67,16 +78,6 @@ export function ThreadAutomationsPanel(props: {
     .filter((task) => task.enabled && task.nextRunAt !== null)
     .map((task) => task.nextRunAt!)
     .sort()[0];
-
-  const reportFailure = (title: string, error: unknown) => {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title,
-        description: error instanceof Error ? error.message : String(error),
-      }),
-    );
-  };
 
   const toggleEnabled = async (task: ScheduledTask, enabled: boolean) => {
     if (
@@ -235,4 +236,12 @@ export function ThreadAutomationsPanel(props: {
       ) : null}
     </ThreadDetailsSection>
   );
+}
+
+export function ProjectAutomationsHeaderControl(_props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly projectName: string;
+}) {
+  return null;
 }

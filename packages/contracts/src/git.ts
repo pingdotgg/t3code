@@ -88,6 +88,8 @@ export const VcsRef = Schema.Struct({
   upstreamRef: Schema.optional(TrimmedNonEmptyStringSchema),
   current: Schema.Boolean,
   isDefault: Schema.Boolean,
+  /** Unix seconds of the ref's last commit, for the picker's age column. */
+  lastCommitAt: Schema.optional(NonNegativeInt),
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type VcsRef = typeof VcsRef.Type;
