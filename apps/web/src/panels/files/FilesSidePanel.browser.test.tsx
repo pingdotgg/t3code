@@ -139,37 +139,41 @@ vi.mock("~/browser/browserDefaults", () => ({
   resolveBrowserDefaults: () =>
     late.browserDefaults ?? Promise.resolve({ viewport: { _tag: "fill" }, profileId: "default" }),
 }));
-vi.mock("~/components/files/projectFilesQueryState", () => ({
-  confirmProjectFileQueryData: vi.fn(),
-  getUnsavedProjectFileQueryData: () => null,
-  getOptimisticProjectFileQueryData: () => null,
-  getProjectFileContents: () => undefined,
-  getProjectFileQueryAtom: vi.fn(),
-  setProjectFileQueryData: vi.fn(),
-  useProjectFileQuery: () => ({
-    data: null,
-    error: null,
-    isPending: true,
-    isNotFile: false,
-    refresh: vi.fn(),
-  }),
-  useProjectEntriesQuery: (environmentId: string, _cwd: string, directoryPath?: string) => ({
-    data:
-      directoryPath === "src"
-        ? {
-            entries: (siblingsByEnvironment.get(environmentId) ?? []).map((path) => ({
-              path,
-              kind: "file",
-              parentPath: "src",
-            })),
-            truncated: false,
-          }
-        : null,
-    error: null,
-    isPending: false,
-    refresh: vi.fn(),
-  }),
-}));
+vi.mock("~/components/files/projectFilesQueryState", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    confirmProjectFileQueryData: vi.fn(),
+    getUnsavedProjectFileQueryData: () => null,
+    getOptimisticProjectFileQueryData: () => null,
+    getProjectFileContents: () => undefined,
+    getProjectFileQueryAtom: () => Atom.make(null),
+    setProjectFileQueryData: vi.fn(),
+    useProjectFileQuery: () => ({
+      data: null,
+      error: null,
+      isPending: true,
+      isNotFile: false,
+      refresh: vi.fn(),
+    }),
+    useProjectEntriesQuery: (environmentId: string, _cwd: string, directoryPath?: string) => ({
+      data:
+        directoryPath === "src"
+          ? {
+              entries: (siblingsByEnvironment.get(environmentId) ?? []).map((path) => ({
+                path,
+                kind: "file",
+                parentPath: "src",
+              })),
+              truncated: false,
+            }
+          : null,
+      error: null,
+      isPending: false,
+      refresh: vi.fn(),
+    }),
+  };
+});
+
 vi.mock("~/components/DiffWorkerPoolProvider", () => ({ DiffWorkerPoolProvider: Wrapper }));
 // The Pierre tree is a web component; this stand-in keeps the real panel's right-click handler.
 vi.mock("@pierre/trees/react", () => ({
