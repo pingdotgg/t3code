@@ -8,7 +8,6 @@ import {
 import {
   type ComposerContextReference,
   collectInlineContextIds,
-  stripInlineContextReferences,
 } from "~/lib/composerContextReferences";
 import {
   type ComposerFileAttachment,
@@ -53,8 +52,8 @@ import {
 } from "./preparingComposerImages";
 
 /**
- * Takes files into the draft: validates and reserves slots, compresses images, inserts
- * their inline chips, folds large pastes into text attachments, and confirms removing a referenced image.
+ * Takes files into the draft: validates and reserves slots, compresses images, folds large
+ * pastes into inline references, and confirms removing a referenced image.
  */
 export function useComposerAttachmentIntake(input: {
   readonly activeThreadId: ChatComposerProps["activeThreadId"];
@@ -63,7 +62,6 @@ export function useComposerAttachmentIntake(input: {
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly supportsQuestionAttachments: boolean;
   readonly isLiteralPendingAnswer: boolean;
-  readonly projectSelectionRequired: boolean;
   readonly questionAttachmentTarget: DraftId | null;
   readonly attachmentTargetKey: string;
   readonly fileStagingLimit: number | null;
@@ -90,7 +88,6 @@ export function useComposerAttachmentIntake(input: {
     pendingUserInputs,
     supportsQuestionAttachments,
     isLiteralPendingAnswer,
-    projectSelectionRequired,
     questionAttachmentTarget,
     attachmentTargetKey,
     fileStagingLimit,
@@ -138,11 +135,7 @@ export function useComposerAttachmentIntake(input: {
     // to the thread the paste happened in.
     const threadId = activeThreadId;
     const imageAttachmentsGetChips =
-      !options?.skipImageInlineChip &&
-      (options?.selection !== undefined ||
-        pendingUserInputs.length > 0 ||
-        projectSelectionRequired ||
-        stripInlineContextReferences(promptRef.current).trim().length > 0);
+      !options?.skipImageInlineChip && options?.selection !== undefined;
 
     // Validation happens synchronously so concurrent pastes see each other:
     // accepted files reserve their attachment slots (as preparing images)
@@ -221,7 +214,9 @@ export function useComposerAttachmentIntake(input: {
     if (acceptedFiles.length > 0) {
       const storedIds = new Set(addComposerFilesToDraft(acceptedFiles));
       const storedFiles = acceptedFiles.filter((file) => storedIds.has(file.id));
-      if (storedFiles.length > 0) {
+      // Explicit text replacements keep their inline reference. Picked and dropped files
+      // live in the attachment rows above the prompt without inserting extra prompt text.
+      if (storedFiles.length > 0 && options?.selection !== undefined) {
         insertedAny = insertAttachmentReferences(
           storedFiles.map(fileContextReference),
           options?.selection,
