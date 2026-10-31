@@ -60,8 +60,12 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
   const view = entry as ClosedViewEntry | null;
   if (!view || typeof view.id !== "string" || !isThreadRef(view.threadRef)) return false;
   if (view.kind === "chat") {
-    return typeof view.paneId === "string" && Number.isSafeInteger(view.index) && view.index >= 0 &&
-      (view.draftId === undefined || typeof view.draftId === "string");
+    return (
+      typeof view.paneId === "string" &&
+      Number.isSafeInteger(view.index) &&
+      view.index >= 0 &&
+      (view.draftId === undefined || typeof view.draftId === "string")
+    );
   }
   if (view.kind === "browser") return isSnapshot(view.snapshot);
   if (view.kind !== "panel-tab") return false;
