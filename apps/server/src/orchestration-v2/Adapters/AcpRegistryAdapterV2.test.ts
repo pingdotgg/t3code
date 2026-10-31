@@ -204,6 +204,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   entries: ReadonlyArray<unknown>,
   replayGate?: ProviderReplayGate,
   continuationEnabled = true,
+  agentId = "claude-acp",
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -244,7 +245,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   const adapterOptions = {
     selfInvocation: yield* resolveSelfInvocation(),
     instanceId,
-    settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "claude-acp" }),
+    settings: yield* decodeAcpRegistryAdapterSettings({ agentId }),
     environment: {},
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
@@ -270,7 +271,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     runtimePolicy,
   });
   yield* Effect.addFinalizer(() => Effect.sync(() => replayGate?.releaseAll()));
-  if (continuationEnabled) {
+  if (continuationEnabled && agentId === "claude-acp") {
     assert.isDefined(
       runtime.hasPendingBackgroundWork,
       "Claude ACP v2 must report background work after foreground idle",
@@ -1980,6 +1981,99 @@ describe("AcpRegistryAdapterV2", () => {
           "a new execution does not append the previous execution's text",
         );
         assert.isFalse(yield* session.runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect(
+    "offers a continuation for MiniMax Code work that streams after its prompt resolves",
+    () =>
+      Effect.gen(function* () {
+        const session = "minimax-session";
+        const { update } = claudeFrames;
+        const gate = makeProviderReplayGate(["late"]);
+        const minimax = yield* openClaudeReplaySession(
+          [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: {
+                  protocolVersion: 1,
+                  agentCapabilities: { loadSession: false },
+                  authMethods: [],
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: { kind: "response", method: "session/new", result: { sessionId: session } },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            // MiniMax keeps working in a native turn of its own after resolving the prompt.
+            {
+              ...update(session, {
+                sessionUpdate: "agent_thought_chunk",
+                content: { type: "text", text: "Applying the chosen option." },
+              }),
+              label: "late",
+            },
+            update(session, {
+              sessionUpdate: "tool_call",
+              toolCallId: "late-edit",
+              title: "Edit src/app.ts",
+              kind: "edit",
+              status: "completed",
+            }),
+            update(session, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Applied the change." },
+            }),
+            update(session, { sessionUpdate: "session_info_update", title: "late output sent" }),
+          ],
+          gate,
+          true,
+          "minimax-code",
+        );
+        yield* minimax.runtime.startTurn(minimax.turnInput(1));
+        assert.equal((yield* minimax.terminal).status, "completed");
+        gate.release("late");
+        yield* minimax.throughMarker("late output sent");
+        assert.lengthOf(
+          minimax.offers,
+          1,
+          "MiniMax output after the prompt resolved must offer a continuation run",
+        );
+        yield* minimax.offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* minimax.runtime.startTurn(minimax.turnInput(2, { continuation: true }));
+        const continuation = yield* minimax.until(
+          (event) =>
+            event.type === "message.updated" &&
+            event.message.role === "assistant" &&
+            event.message.text.includes("Applied the change."),
+        );
+        const reply = continuation.at(-1)!;
+        if (reply.type !== "message.updated") throw new Error("Missing late reply");
+        assert.equal(reply.message.runId, minimax.turnInput(2).runId);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
