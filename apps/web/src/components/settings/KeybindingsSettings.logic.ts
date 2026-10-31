@@ -354,6 +354,7 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "appearance.cycle": "Cycle appearance",
   "themeEditor.toggle": "Toggle theme editor",
   "composer.stash": "Stash prompt",
+  "composer.dictation": "Dictate",
   "composer.sendAlternate": "Send with the opposite queue or steer action",
   "composer.sendBackground": "Start in background",
   "composer.sendAndNewThread": "Send and start a new thread",
