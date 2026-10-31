@@ -632,6 +632,7 @@ describe("MessagesTimeline citations", () => {
 
 describe("MessagesTimeline chapters", () => {
   it("scrolls the list to a chapter's row when the chapter is chosen", async () => {
+    setup();
     const props = baseProps();
     const threadRef = parseScopedThreadKey(props.routeThreadKey);
     if (!threadRef) throw new Error("routeThreadKey must be a scoped thread key");
@@ -647,13 +648,16 @@ describe("MessagesTimeline chapters", () => {
     if (!list) throw new Error("the timeline list did not mount");
     using scrollToIndex = vi.spyOn(list, "scrollToIndex");
 
-    act(() => useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter")));
+    await act(() =>
+      useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter")),
+    );
     await vi.waitFor(() =>
       expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 30 })),
     );
   });
 
   it("expands a collapsed superseded attempt to reveal a chapter folded inside it", async () => {
+    setup();
     const props = baseProps();
     const threadRef = parseScopedThreadKey(props.routeThreadKey);
     if (!threadRef) throw new Error("routeThreadKey must be a scoped thread key");
@@ -689,13 +693,16 @@ describe("MessagesTimeline chapters", () => {
     if (!list) throw new Error("the timeline list did not mount");
     using scrollToIndex = vi.spyOn(list, "scrollToIndex");
 
-    act(() => useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter")));
+    await act(() =>
+      useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter")),
+    );
     await vi.waitFor(() =>
       expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 2 })),
     );
   });
 
   it("requests earlier history to reveal a chapter outside the current page", async () => {
+    setup();
     const props = baseProps();
     const threadRef = parseScopedThreadKey(props.routeThreadKey);
     if (!threadRef) throw new Error("routeThreadKey must be a scoped thread key");
@@ -711,7 +718,7 @@ describe("MessagesTimeline chapters", () => {
       <MessagesTimeline {...props} timelineEntries={entries} historyControls={historyControls} />,
     );
 
-    act(() =>
+    await act(() =>
       useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter-earlier")),
     );
     await vi.waitFor(() => expect(onLoadEarlier).toHaveBeenCalledWith("chapter-earlier"));
