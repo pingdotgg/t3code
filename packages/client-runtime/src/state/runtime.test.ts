@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
   type PreviewEvent,
@@ -89,6 +90,8 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
   execute: Effect.Effect<A, E>,
   {
     refreshTrigger,
+    refreshIntervalMs,
+    staleTimeMs,
     idleTtlMs,
     persistence,
     initialState,
@@ -97,6 +100,8 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     onAnswer,
   }: {
     readonly refreshTrigger?: Atom.Atom<unknown>;
+    readonly refreshIntervalMs?: number;
+    readonly staleTimeMs?: number;
     readonly onAnswer?: QueryAnswerHandler<undefined, A>;
     readonly isFinal?: (value: A) => boolean;
     readonly idleTtlMs?: number;
@@ -140,10 +145,11 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
   );
   const family = createEnvironmentQueryAtomFamily(runtime, {
     label: "test.environment-query",
-    staleTimeMs: 60_000,
+    staleTimeMs: staleTimeMs ?? 60_000,
     ...(persistence === undefined ? {} : { persistence }),
     execute: () => execute,
     ...(refreshTrigger === undefined ? {} : { refreshTrigger: () => refreshTrigger }),
+    ...(refreshIntervalMs === undefined ? {} : { refreshIntervalMs }),
     ...(idleTtlMs === undefined ? {} : { idleTtlMs }),
     ...(isFinal === undefined ? {} : { isFinal }),
     ...(onAnswer === undefined ? {} : { onAnswer }),
@@ -183,6 +189,21 @@ const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* 
   );
   return registry;
 });
+
+// Drain registry cleanup in microtasks so fake query intervals cannot overtake
+// native setImmediate disposal when the clock advances by several intervals.
+const makeTimerQueryRegistry = () =>
+  AtomRegistry.make({
+    scheduleTask: (run) => {
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) run();
+      });
+      return () => {
+        cancelled = true;
+      };
+    },
+  });
 
 describe("preview event subscriptions", () => {
   it.effect("delivers every open and close when RPC events arrive in batches", () =>
@@ -926,6 +947,362 @@ describe("environment query lifecycle", () => {
             suspendOnWaiting: true,
           }),
         ).toBe("updated");
+      }),
+    ),
+  );
+
+  it.effect.each(["interval", "interval and signal"] as const)(
+    "polls only for real readers and retains cached reopen with %s",
+    (mode) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+          const registry = makeTimerQueryRegistry();
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              registry.dispose();
+              vi.useRealTimers();
+            }),
+          );
+          let executions = 0;
+          const answers = yield* Queue.make<number>();
+          const trigger = Atom.make(0).pipe(Atom.keepAlive);
+          const harness = yield* makeEnvironmentQueryHarness(
+            Effect.promise(() => Promise.resolve(++executions)).pipe(
+              Effect.tap((value) => Queue.offer(answers, value)),
+            ),
+            {
+              staleTimeMs: 0,
+              refreshIntervalMs: 10_000,
+              ...(mode === "interval" ? {} : { refreshTrigger: trigger }),
+            },
+          );
+          const read = readEnvironmentQuery(registry, harness.atom);
+          const first = registry.mount(harness.atom);
+          const second = registry.mount(harness.atom);
+          expect(yield* Queue.take(answers)).toBe(1);
+          expect(yield* read).toBe(1);
+          first();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+          expect(yield* Queue.take(answers)).toBe(2);
+          expect(yield* read).toBe(2);
+
+          second();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
+          expect(executions).toBe(2);
+
+          const remount = registry.mount(harness.atom);
+          expect(selectEnvironmentQueryData(registry.get(harness.atom))).toBe(2);
+          expect(yield* Queue.take(answers)).toBe(3);
+          expect(yield* read).toBe(3);
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+          expect(yield* Queue.take(answers)).toBe(4);
+          expect(yield* read).toBe(4);
+          if (mode === "interval and signal") {
+            registry.set(trigger, 1);
+            expect(yield* Queue.take(answers)).toBe(5);
+            expect(yield* read).toBe(5);
+          }
+          const beforeIdle = executions;
+          remount();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          if (mode === "interval and signal") {
+            registry.set(trigger, 2);
+            registry.set(trigger, 3);
+          }
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
+          expect(executions).toBe(beforeIdle);
+          const finalMount = registry.mount(harness.atom);
+          expect(selectEnvironmentQueryData(registry.get(harness.atom))).toBe(beforeIdle);
+          expect(yield* Queue.take(answers)).toBe(beforeIdle + 1);
+          expect(yield* read).toBe(beforeIdle + 1);
+          expect(executions).toBe(beforeIdle + 1);
+          finalMount();
+        }),
+      ),
+  );
+
+  it.effect.each(
+    (["sync", "async", "failure", "previous success"] as const).flatMap((completion) =>
+      ["stale", "signal", "signal and session"].map((invalidation) => ({
+        completion,
+        invalidation,
+      })),
+    ),
+  )(
+    "revalidates once after idle $invalidation with $completion completion",
+    ({ completion, invalidation }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+          const registry = makeTimerQueryRegistry();
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              registry.dispose();
+              vi.useRealTimers();
+            }),
+          );
+          let executions = 0;
+          const trigger = Atom.make(0).pipe(Atom.keepAlive);
+          const harness = yield* makeEnvironmentQueryHarness(
+            Effect.suspend(() => {
+              executions++;
+              if (
+                completion === "failure" ||
+                (completion === "previous success" && executions > 1)
+              ) {
+                return Effect.fail(new TestQueryError({ message: "query failed" }));
+              }
+              return completion === "async"
+                ? Effect.promise(() => Promise.resolve(executions))
+                : Effect.succeed(executions);
+            }),
+            { refreshTrigger: trigger, refreshIntervalMs: 10_000, staleTimeMs: 0 },
+          );
+          const read = readEnvironmentQuery(registry, harness.atom).pipe(Effect.exit);
+          const unmount = registry.mount(harness.atom);
+          yield* read;
+          expect(executions).toBe(1);
+          unmount();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          if (invalidation !== "stale") registry.set(trigger, 1);
+          if (invalidation === "signal and session") {
+            yield* SubscriptionRef.set(
+              harness.supervisorSession,
+              Option.some({ ...QUERY_RPC_SESSION }),
+            );
+          }
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          expect(executions).toBe(1);
+          const remount = registry.mount(harness.atom);
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          const result = yield* read;
+          if (completion === "failure" || completion === "previous success") {
+            expect(Exit.isFailure(result)).toBe(true);
+            if (Exit.isFailure(result)) {
+              expect(Cause.squash(result.cause)).toBeInstanceOf(TestQueryError);
+            }
+            expect(selectEnvironmentQueryData(registry.get(harness.atom))).toBe(
+              completion === "previous success" ? 1 : null,
+            );
+          } else {
+            expect(result).toEqual(Exit.succeed(2));
+          }
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          expect(executions).toBe(2);
+          remount();
+        }),
+      ),
+  );
+
+  it.effect.each([undefined, 10_000])(
+    "retains a disposable idle signal alongside cached data (interval %s)",
+    (refreshIntervalMs) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+          const registry = makeTimerQueryRegistry();
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              registry.dispose();
+              vi.useRealTimers();
+            }),
+          );
+          let executions = 0;
+          const trigger = Atom.make(0);
+          const harness = yield* makeEnvironmentQueryHarness(
+            Effect.sync(() => ++executions),
+            {
+              refreshTrigger: trigger,
+              ...(refreshIntervalMs === undefined ? {} : { refreshIntervalMs }),
+              staleTimeMs: 60_000,
+            },
+          );
+          const read = readEnvironmentQuery(registry, harness.atom);
+          const unmount = registry.mount(harness.atom);
+          expect(yield* read).toBe(1);
+          unmount();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          registry.set(trigger, 1);
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          registry.set(trigger, 2);
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
+          expect(executions).toBe(1);
+          const remount = registry.mount(harness.atom);
+          expect(yield* read).toBe(2);
+          expect(executions).toBe(2);
+          remount();
+        }),
+      ),
+  );
+
+  it.effect.each(["interval", "interval and signal"] as const)(
+    "discards data and invalidation state together after cache expiry with %s",
+    (mode) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+          const registry = makeTimerQueryRegistry();
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              registry.dispose();
+              vi.useRealTimers();
+            }),
+          );
+          let executions = 0;
+          const trigger = Atom.make(0);
+          const harness = yield* makeEnvironmentQueryHarness(
+            Effect.sync(() => ++executions),
+            {
+              refreshIntervalMs: 1_000,
+              idleTtlMs: 5_000,
+              staleTimeMs: 60_000,
+              ...(mode === "interval" ? {} : { refreshTrigger: trigger }),
+            },
+          );
+          const read = readEnvironmentQuery(registry, harness.atom);
+          const unmount = registry.mount(harness.atom);
+          expect(yield* read).toBe(1);
+          unmount();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+          expect(executions).toBe(1);
+          registry.set(trigger, 1);
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          const remount = registry.mount(harness.atom);
+          expect(yield* read).toBe(2);
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          expect(executions).toBe(2);
+          remount();
+        }),
+      ),
+  );
+
+  it.effect.each([
+    { refreshIntervalMs: 60_000, idleTtlMs: 5_000 },
+    { refreshIntervalMs: 30 * 60_000, idleTtlMs: 60 * 60_000 },
+  ])("stops polling independently of cache TTL ($idleTtlMs)", (options) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        const registry = makeTimerQueryRegistry();
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            registry.dispose();
+            vi.useRealTimers();
+          }),
+        );
+        let executions = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => ++executions),
+          { ...options, refreshTrigger: Atom.make(0).pipe(Atom.keepAlive) },
+        );
+        const unmount = registry.mount(harness.atom);
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe(1);
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(options.refreshIntervalMs));
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe(2);
+        unmount();
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(3 * options.refreshIntervalMs));
+        expect(executions).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("stops interval and signal refreshes for a final query result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        const registry = makeTimerQueryRegistry();
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            registry.dispose();
+            vi.useRealTimers();
+          }),
+        );
+        let executions = 0;
+        const trigger = Atom.make(0).pipe(Atom.keepAlive);
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => ++executions),
+          {
+            refreshIntervalMs: 10_000,
+            refreshTrigger: trigger,
+            isFinal: (value) => value >= 2,
+            staleTimeMs: 0,
+          },
+        );
+        const unmount = registry.mount(harness.atom);
+        const read = readEnvironmentQuery(registry, harness.atom);
+        expect(yield* read).toBe(1);
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+        expect(yield* read).toBe(2);
+        registry.set(trigger, 1);
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
+        expect(executions).toBe(2);
+        expect(selectEnvironmentQueryData(registry.get(harness.atom))).toBe(2);
+        unmount();
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        const remount = registry.mount(harness.atom);
+        expect(selectEnvironmentQueryData(registry.get(harness.atom))).toBe(2);
+        expect(yield* read).toBe(2);
+        expect(executions).toBe(2);
+        registry.refresh(harness.atom);
+        expect(yield* read).toBe(3);
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
+        expect(executions).toBe(3);
+        remount();
+      }),
+    ),
+  );
+
+  it.effect("cancels an obsolete periodic query when its session is replaced", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        const registry = makeTimerQueryRegistry();
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            registry.dispose();
+            vi.useRealTimers();
+          }),
+        );
+        let executions = 0;
+        const pendingStarted = Latch.makeUnsafe();
+        const pendingStopped = Latch.makeUnsafe();
+        const finishObsolete = Latch.makeUnsafe();
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.suspend(() => {
+            executions += 1;
+            if (executions !== 2) return Effect.succeed(executions);
+            pendingStarted.openUnsafe();
+            return finishObsolete.await.pipe(
+              Effect.as(-1),
+              Effect.ensuring(Effect.sync(() => pendingStopped.openUnsafe())),
+            );
+          }),
+          { refreshIntervalMs: 10_000, refreshTrigger: Atom.make(0).pipe(Atom.keepAlive) },
+        );
+        const observed: Array<AsyncResult.AsyncResult<number, unknown>> = [];
+        const unmount = registry.subscribe(harness.atom, (result) => observed.push(result));
+        const read = readEnvironmentQuery(registry, harness.atom);
+        expect(yield* read).toBe(1);
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+        yield* pendingStarted.await;
+        yield* SubscriptionRef.set(
+          harness.supervisorSession,
+          Option.some({ ...QUERY_RPC_SESSION }),
+        );
+        expect(yield* read).toBe(3);
+        yield* pendingStopped.await;
+        finishObsolete.openUnsafe();
+        expect(selectEnvironmentQueryData(registry.get(harness.atom))).toBe(3);
+        expect(observed.some(AsyncResult.isFailure)).toBe(false);
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+        expect(yield* read).toBe(4);
+        unmount();
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
+        expect(executions).toBe(4);
       }),
     ),
   );

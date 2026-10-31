@@ -516,20 +516,18 @@ function runInEnvironment<A, E, R>(
 const refreshOnSignalWhileRead =
   <V>(signal: Atom.Atom<unknown>, isFinal: (value: V) => boolean) =>
   <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> => {
-    // The signal value each registry's data was read under. Held outside the node because the
-    // registry can sweep this node while `self` keeps the data, and the rebuilt node must still
-    // see a change it missed.
+    // Retain the revision used by the cached answer across idle invalidations.
+    // A newly created cache node has no answer to invalidate.
     const readUnder = new WeakMap<AtomRegistry.AtomRegistry, unknown>();
     return Atom.transform(
       self,
       (get) => {
         const current = get(signal);
-        get.subscribe(self, (value) => get.setSelf(value));
-        const changed =
-          readUnder.has(get.registry) && !Object.is(readUnder.get(get.registry), current);
+        const previous = get.self<A>();
+        const changed = Option.isSome(previous) && !Object.is(readUnder.get(get.registry), current);
         readUnder.set(get.registry, current);
-        if (changed && !isFinal(get.once(self))) get.refresh(self);
-        return get.once(self);
+        if (changed && !Option.exists(previous, isFinal)) get.refresh(self);
+        return get(self);
       },
       { initialValueTarget: self },
     );
@@ -666,6 +664,8 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
+    const builds = new WeakMap<AtomRegistry.AtomRegistry, number>();
+    const refreshTrigger = options.refreshTrigger?.(target);
     const queryAtom = runtime
       .atom<
         A,
@@ -674,6 +674,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         | EnvironmentRegistry.EnvironmentNotRegisteredError
         | EnvironmentRpcUnavailableError
       >((get) => {
+        builds.set(get.registry, (builds.get(get.registry) ?? 0) + 1);
         const connection = AsyncResult.getOrElse(
           get(connectionAtom(target.environmentId)),
           () => null,
@@ -778,25 +779,61 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           );
         });
       })
-      .pipe(
-        Atom.swr({
-          staleTime: options.staleTimeMs ?? 30_000,
-          revalidateOnMount: true,
-        }),
-        Atom.setIdleTTL(idleTtlMs),
-      );
+      .pipe(Atom.setIdleTTL(0));
     const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
       options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
-    const intervalQuery =
-      options.refreshIntervalMs === undefined
-        ? queryAtom
-        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
-    const refreshTrigger = options.refreshTrigger?.(target);
-    return (
+    // Keep the signal dependency for exactly as long as the cached answer. Tracked
+    // dependencies retain disposable revisions without observing them while idle.
+    const cachedQuery = (
       refreshTrigger === undefined
-        ? intervalQuery
-        : intervalQuery.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
-    ).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(`${options.label}:${key}`));
+        ? queryAtom
+        : queryAtom.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
+    ).pipe(Atom.setIdleTTL(idleTtlMs));
+    const shouldRevalidate = (result: AsyncResult.AsyncResult<A, unknown>) => {
+      if (result.waiting || isFinal(result) || AsyncResult.isInitial(result)) return false;
+      const success = AsyncResult.isSuccess(result) ? Option.some(result) : result.previousSuccess;
+      return (
+        Option.isNone(success) ||
+        // @effect-diagnostics-next-line globalDate:off - AsyncResult timestamps use wall time outside an Effect runtime.
+        Date.now() - success.value.timestamp >= (options.staleTimeMs ?? 30_000)
+      );
+    };
+    const revalidatingQuery = Atom.transform(
+      cachedQuery,
+      (get) => {
+        const before = builds.get(get.registry);
+        const current = get(cachedQuery);
+        // A stale signal or connection can rebuild the source during this read,
+        // even synchronously. It already owns this mount's revalidation.
+        if (
+          Option.isNone(get.self()) &&
+          before === builds.get(get.registry) &&
+          shouldRevalidate(current)
+        ) {
+          let active = true;
+          get.addFinalizer(() => {
+            active = false;
+          });
+          get.registry.schedulerAsync.makeDispatcher().scheduleTask(() => {
+            if (
+              active &&
+              before === builds.get(get.registry) &&
+              shouldRevalidate(get.once(cachedQuery))
+            ) {
+              get.refresh(cachedQuery);
+            }
+          }, 0);
+        }
+        return current;
+      },
+      { initialValueTarget: cachedQuery },
+    );
+    // Only the live wrapper owns the timer; the cache never subscribes to it.
+    return (
+      options.refreshIntervalMs === undefined
+        ? revalidatingQuery
+        : revalidatingQuery.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal))
+    ).pipe(Atom.withLabel(`${options.label}:${key}`));
   });
   return (target) => family(environmentRpcKey(target));
 }
