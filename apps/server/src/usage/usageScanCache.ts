@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 10 as const;
+const USAGE_SCAN_CACHE_VERSION = 11 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -18,8 +18,9 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
  * When its own file is missing, a server reads the newest legacy file once.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v10.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v11.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v10.json",
   "usage-scan-cache-v9.json",
   "usage-scan-cache-v8.json",
   "usage-scan-cache-v7.json",
@@ -300,11 +301,10 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // v10 combines folder metadata with v9's Codex recovery. Retain saved history
-    // for deleted transcripts while re-reading live folder-aware formats from either
-    // earlier writer. Formats without folders keep compatible reducer positions.
+    // Re-read live folder-aware formats from pre-attribution caches, retaining
+    // saved history for deleted transcripts and compatible folderless positions.
     const legacy =
-      (format.workingDirectory !== undefined && version < 10) ||
+      (format.workingDirectory !== undefined && version < 11) ||
       (entry.p === "claude" && version < 10) ||
       (format.state !== undefined &&
         (version < 6 ||

@@ -527,33 +527,33 @@ export function UsagePage() {
           />
         ) : null}
         {showingLimits ? null : (
-        <Select
-          value={periodDays === null ? "" : String(periodDays)}
-          onValueChange={(value) => selectWindow(Number(value))}
-        >
-          <SelectTrigger
-            aria-label="Usage period"
-            size="compact"
-            variant="ghost"
-            className="w-auto min-w-0"
+          <Select
+            value={periodDays === null ? "" : String(periodDays)}
+            onValueChange={(value) => selectWindow(Number(value))}
           >
-            <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === periodDays)?.label ??
-                formatWindow(window)}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {WINDOW_OPTIONS.map((option) => (
-              <SelectItem
-                key={option.days}
-                value={String(option.days)}
-                title={shortcutTitle(option)}
-              >
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
+            <SelectTrigger
+              aria-label="Usage period"
+              size="compact"
+              variant="ghost"
+              className="w-auto min-w-0"
+            >
+              <SelectValue>
+                {WINDOW_OPTIONS.find((option) => option.days === periodDays)?.label ??
+                  formatWindow(window)}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {WINDOW_OPTIONS.map((option) => (
+                <SelectItem
+                  key={option.days}
+                  value={String(option.days)}
+                  title={shortcutTitle(option)}
+                >
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
         )}
         <Select
           value={metric}
