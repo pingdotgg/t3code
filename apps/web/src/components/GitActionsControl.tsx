@@ -28,6 +28,8 @@ import { useDeadlinePassed } from "../hooks/useDeadline";
 import { useNowSecond } from "../hooks/useNowSecond";
 import { flushSync } from "react-dom";
 import {
+  ArrowUpFromLineIcon,
+  EllipsisIcon,
   CheckIcon,
   ChevronDownIcon,
   CloudDownloadIcon,
@@ -127,6 +129,7 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
 
 interface GitActionsControlProps {
+  displayMode?: "panel";
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
@@ -940,6 +943,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 }
 
 export default function GitActionsControl({
+  displayMode,
   gitCwd,
   activeThreadRef,
   draftId,
@@ -1492,6 +1496,7 @@ export default function GitActionsControl({
       );
     })();
   };
+  const pushItem = gitActionMenuItems.find((item) => item.id === "push");
   const gitItems = (
     <>
       {gitActionMenuItems.map((item) => {
@@ -1597,7 +1602,50 @@ export default function GitActionsControl({
 
   return (
     <>
-      {!isRepo ? (
+      {displayMode === "panel" && isRepo ? (
+        <div className="flex shrink-0 items-center pe-1" role="group" aria-label="Git actions">
+          {showActions ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <ThreadDetailsControl
+                    part="icon"
+                    aria-label="Push branch"
+                    disabled={
+                      !canWriteSourceControl || isGitActionRunning || !pushItem || pushItem.disabled
+                    }
+                    onClick={() => void runGitActionWithToast({ action: "push" })}
+                  />
+                }
+              >
+                {gitActionProgress ? <Spinner size="xs" /> : <ArrowUpFromLineIcon />}
+              </TooltipTrigger>
+              <TooltipPopup>{"Push branch"}</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          <Menu
+            onOpenChange={(open) => {
+              if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+            }}
+          >
+            <MenuTrigger
+              render={<ThreadDetailsControl part="icon" aria-label="Git action options" />}
+            >
+              <EllipsisIcon />
+            </MenuTrigger>
+            <MenuPopup side="bottom" align="end">
+              {showChanges ? (
+                <MenuItem disabled={!onOpenChanges} onClick={onOpenChanges}>
+                  <FileDiffIcon />
+                  <MenuItemLabel>View changes</MenuItemLabel>
+                  {changesSummary}
+                </MenuItem>
+              ) : null}
+              {showActions ? gitItems : null}
+            </MenuPopup>
+          </Menu>
+        </div>
+      ) : !isRepo ? (
         showActions ? (
           <ThreadDetailsControl
             disabled={!canWriteSourceControl || initAction.isPending}

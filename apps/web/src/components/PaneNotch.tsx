@@ -12,7 +12,7 @@ import { cn } from "../lib/utils";
  * sits on the pane edge, where the pane clip would cut an outer ring.
  */
 export const PANE_TAB_CLASS =
-  "inline-flex h-7 min-w-0 max-w-80 items-center gap-1.75 rounded-control px-2.5 text-label text-strong-foreground outline-none [-webkit-app-region:no-drag] focus-visible:inset-ring-2 focus-visible:inset-ring-ring";
+  "inline-flex h-7 min-w-0 max-w-80 items-center gap-1.75 rounded-control px-2.5 text-control text-strong-foreground outline-none [-webkit-app-region:no-drag] focus-visible:inset-ring-2 focus-visible:inset-ring-ring";
 
 /** The thread tab opens its action menu while keeping the notch's tab geometry. */
 export function PaneTabButton({ className, render, ...props }: useRender.ComponentProps<"button">) {
