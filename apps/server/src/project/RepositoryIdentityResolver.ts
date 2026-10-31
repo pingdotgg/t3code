@@ -20,8 +20,6 @@ const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
-  readonly positiveCacheTtl?: Duration.Input;
-  readonly negativeCacheTtl?: Duration.Input;
   readonly refine?: (
     identity: RepositoryIdentity,
   ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
@@ -231,9 +229,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const timeToLive = (exit: Exit.Exit<unknown>) =>
     Exit.match(exit, {
       onSuccess: (value) =>
-        value === null
-          ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
-          : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
+        value === null ? DEFAULT_NEGATIVE_CACHE_TTL : DEFAULT_POSITIVE_CACHE_TTL,
       onFailure: () => Duration.zero,
     });
 

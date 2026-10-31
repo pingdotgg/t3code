@@ -49,21 +49,18 @@ function ConfiguredT3ConnectSidebarAvatar() {
 
 function ConfiguredT3ConnectSidebarSignIn() {
   const { isLoaded, isSignedIn } = useAuth();
-  const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
+  const { openAuthPrompt } = useT3ConnectAuthPrompt();
 
   if (!isLoaded || isSignedIn) return null;
 
   return (
-    <>
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton onClick={openAuthPrompt}>
-            <LogInIcon />
-            <span>Sign in to T3 Connect</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
-      {authPrompt}
-    </>
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton onClick={openAuthPrompt}>
+          <LogInIcon />
+          <span>Sign in to T3 Connect</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
   );
 }

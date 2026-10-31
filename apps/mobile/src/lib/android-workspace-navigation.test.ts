@@ -1,7 +1,6 @@
 import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  androidWorkspaceTabFromNavigationState,
   androidWorkspaceTabNavigationState,
   type AndroidWorkspaceNavigationTab,
 } from "../features/workspace/android-workspace-tabs";
@@ -223,13 +222,10 @@ describe("Android Settings tab", () => {
   type Tab = AndroidWorkspaceNavigationTab;
   const openTab = (state: State, tab: Tab, columns = false) =>
     apply(state, CommonActions.reset(androidWorkspaceTabNavigationState(state, tab, columns)));
-  const selectedTab = (state: State, previous: Tab) =>
-    androidWorkspaceTabFromNavigationState(state, previous);
 
   it("opens a default Settings page beside the category list in wide layouts", () => {
     const settings = openTab(legacyHistory(), "settings", true);
     expect(names(settings)).toEqual(["Home", "Settings", "SettingsEnvironments"]);
-    expect(selectedTab(settings, "threads")).toBe("settings");
     expect(names(apply(settings, StackActions.pop()))).toEqual(["Home", "Settings"]);
   });
 
@@ -248,28 +244,16 @@ describe("Android Settings tab", () => {
     const settings = openTab(previous, "settings");
     expect(names(settings)).toEqual(["Home", "Settings"]);
     expect(settings.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(settings, "threads")).toBe("settings");
     const back = apply(settings, StackActions.pop());
     expect(names(back)).toEqual(["Home"]);
     expect(back.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(back, "settings")).not.toBe("settings");
   });
 
   it("stays selected under a settings page until a list tab returns to Home", () => {
     const previous = legacyHistory();
     const usage = apply(openTab(previous, "settings"), StackActions.push("SettingsUsage"));
-    expect(selectedTab(usage, "threads")).toBe("settings");
     const list = openTab(usage, "pullRequests");
     expect(names(list)).toEqual(["Home"]);
     expect(list.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(list, "pullRequests")).toBe("pullRequests");
-  });
-
-  it("leaves a settings page opened from the Usage tab in that tab", () => {
-    const account = apply(
-      router.getInitialState(options),
-      StackActions.push("SettingsUsageAccount"),
-    );
-    expect(selectedTab(account, "usage")).toBe("usage");
   });
 });

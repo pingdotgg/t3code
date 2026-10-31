@@ -1,6 +1,9 @@
 import type { Paragraph, PhrasingContent, Root, RootContent } from "mdast";
 import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
-import type { PluggableList } from "unified";
+import { type PluggableList, type Processor, unified } from "unified";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { find, html } from "property-information";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
@@ -11,7 +14,7 @@ import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
-import { isWindowsDrivePathHref } from "./markdownLinks.ts";
+import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
@@ -183,9 +186,79 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkNormalizeLinksAndTagInlineCode,
 ];
 
+// Start tags an HTML parser closes an open `<p>` for.
+const CLOSES_PARAGRAPH = new Set(
+  "address article aside blockquote center details dialog dir div dl fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 header hgroup hr li listing main menu nav ol p plaintext pre search section summary table ul xmp dd dt".split(
+    " ",
+  ),
+);
+const HEADING = /^h[1-6]$/;
+
+interface HtmlScope {
+  readonly anchor: boolean;
+  readonly paragraph: boolean;
+  readonly heading: boolean;
+}
+
+/**
+ * Whether the tree needs the HTML parser: raw HTML, or nesting it repairs (a footnote call in a
+ * link label nests `<a>`). Otherwise it only rewrites properties as hast-util-to-parse5 does and
+ * drops `data`, both repeated here, and moves blank text that renders the same.
+ */
+function needsHtmlParser(node: MarkdownImageHastNode, scope: HtmlScope): boolean {
+  if (node.type === "raw") return true;
+  let inner = scope;
+  if (node.type === "element" && node.tagName) {
+    const { tagName } = node;
+    const heading = HEADING.test(tagName);
+    if (
+      (tagName === "a" && scope.anchor) ||
+      (scope.paragraph && CLOSES_PARAGRAPH.has(tagName)) ||
+      (heading && scope.heading)
+    ) {
+      return true;
+    }
+    inner = {
+      anchor: scope.anchor || tagName === "a",
+      paragraph: scope.paragraph || tagName === "p",
+      heading: scope.heading || heading,
+    };
+    const properties = node.properties ?? {};
+    for (const key of Object.keys(properties)) {
+      const value = properties[key];
+      const info = find(html, key);
+      if (
+        value === false ||
+        value === null ||
+        value === undefined ||
+        Number.isNaN(value) ||
+        (!value && info.boolean)
+      ) {
+        delete properties[key];
+      } else if (value === true && !info.boolean && !info.overloadedBoolean) {
+        properties[key] = "";
+      }
+    }
+    delete (node as { data?: unknown }).data;
+  }
+  return (node.children ?? []).some((child) => needsHtmlParser(child, inner));
+}
+
+const TOP_SCOPE: HtmlScope = { anchor: false, paragraph: false, heading: false };
+
+/** rehype-raw reparses the whole tree through an HTML parser, which most trees can skip. */
+function rehypeRawWhenPresent(this: Processor) {
+  const transform = rehypeRaw.call(this) as unknown as (
+    tree: MarkdownImageHastNode,
+    file: unknown,
+  ) => unknown;
+  return (tree: MarkdownImageHastNode, file: unknown) =>
+    needsHtmlParser(tree, TOP_SCOPE) ? transform(tree, file) : undefined;
+}
+
 export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
   rehypePreserveBareAnchorPlaceholders,
-  rehypeRaw,
+  rehypeRawWhenPresent,
   rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ];
@@ -207,6 +280,7 @@ const startsLine = (node: PhrasingContent | undefined) =>
 
 function breakLinesAroundImages(paragraph: Paragraph) {
   const children = paragraph.children;
+  if (!children.some(isImageNode)) return;
   const ownsLine = (index: number) =>
     isImageNode(children[index]) &&
     endsLine(children[index - 1]) &&
@@ -303,4 +377,39 @@ function remarkNormalizeLinksAndTagInlineCode() {
 
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
+}
+
+const imageSourceProcessor = unified()
+  .use(remarkParse)
+  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+
+interface ImageSourceNode {
+  readonly type: string;
+  readonly tagName?: string;
+  readonly properties?: { readonly src?: unknown; readonly dataLocalSrc?: unknown };
+  readonly children?: ReadonlyArray<ImageSourceNode>;
+}
+
+/**
+ * The sources of the images chat markdown shows, read as ChatMarkdown's `img` renderer reads
+ * them. Code, comments, and plain links show no image, so they add none.
+ */
+export function chatMarkdownImageSources(markdown: string): Array<string> {
+  const sources: Array<string> = [];
+  const visit = (node: ImageSourceNode) => {
+    if (node.type === "element" && node.tagName === "img") {
+      const { src, dataLocalSrc } = node.properties ?? {};
+      // The sanitizer drops a Windows drive path from `src`; the renderer reads it from here.
+      if (typeof dataLocalSrc === "string") {
+        sources.push(normalizeMarkdownLinkDestination(dataLocalSrc).replaceAll("\\", "/"));
+      } else if (typeof src === "string") {
+        sources.push(normalizeMarkdownLinkDestination(src));
+      }
+    }
+    node.children?.forEach(visit);
+  };
+  visit(imageSourceProcessor.runSync(imageSourceProcessor.parse(markdown)) as ImageSourceNode);
+  return sources;
 }
