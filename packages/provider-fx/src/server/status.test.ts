@@ -1,11 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 
 import { FxSettings } from "../settings.ts";
 import { checkFxProviderStatus } from "./status.ts";
@@ -30,7 +33,7 @@ function processHandle(stdout: string, code: number) {
 }
 
 /** Answers `fx` invocations by their arguments and records which ran. */
-const check = (statusJson: string) =>
+const check = (statusJson: string, versionDelay: Duration.Input = 0) =>
   Effect.gen(function* () {
     const outputs: Record<string, string> = {
       "--version": "fx 0.0.13\n",
@@ -50,7 +53,8 @@ const check = (statusJson: string) =>
       const args = ChildProcess.isStandardCommand(command) ? command.args.join(" ") : "";
       invoked.push(args);
       const stdout = outputs[args];
-      return Effect.succeed(processHandle(stdout ?? "", stdout === undefined ? 2 : 0));
+      const handle = Effect.succeed(processHandle(stdout ?? "", stdout === undefined ? 2 : 0));
+      return args === "--version" ? Effect.delay(handle, versionDelay) : handle;
     });
     const draft = yield* checkFxProviderStatus(settings, {}).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -59,6 +63,38 @@ const check = (statusJson: string) =>
   }).pipe(Effect.provide(NodeServices.layer));
 
 describe("checkFxProviderStatus", () => {
+  it.effect.each([
+    {
+      label: "answers after 6 s",
+      versionDelay: "6 seconds",
+      status: "ready",
+      version: "0.0.13",
+      message: undefined,
+      invoked: ["--version", "status --json", "models --json"],
+    },
+    {
+      label: "never answers",
+      versionDelay: "Infinity",
+      status: "error",
+      version: null,
+      message: "Failed to run `fx --version`.",
+      invoked: ["--version"],
+    },
+  ] as const)("gives `fx --version` 10 s when it $label", (row) =>
+    Effect.gen(function* () {
+      const fiber = yield* check(
+        JSON.stringify({ kind: "status", model: "anthropic/claude-opus-5.5", auth: "fx login" }),
+        row.versionDelay,
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 seconds");
+      const { draft, invoked } = yield* Fiber.join(fiber);
+      assert.equal(draft.status, row.status);
+      assert.equal(draft.version, row.version);
+      assert.equal(draft.message, row.message);
+      assert.deepEqual(invoked, [...row.invoked]);
+    }),
+  );
+
   // `fx status --json` from fx 0.0.13, trimmed to the fields T3 reads plus a few it ignores.
   it.effect("reports sign-in from `fx status` without opening an ACP session", () =>
     Effect.gen(function* () {
