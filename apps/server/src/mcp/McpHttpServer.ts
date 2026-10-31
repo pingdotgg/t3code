@@ -766,10 +766,14 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
         Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
       ),
     "screenshot",
-    (error) =>
-      isDeviceToolError(error) || isOrchestratorMcpFailure(error)
-        ? error.message
-        : "Device screenshot failed.",
+    (error) => {
+      if (!isDeviceToolError(error)) {
+        return isOrchestratorMcpFailure(error) ? error.message : "Device screenshot failed.";
+      }
+      return error._tag === "DeviceOperationError" && error.reason === "hub_rejected"
+        ? `${error.message} Call device_list to check the device state, and device_open if it needs to be reopened.`
+        : error.message;
+    },
   );
 });
 

@@ -1,4 +1,5 @@
 import {
+  isListedThreadLineage,
   type EnvironmentId,
   isProviderNativeSubagentThread,
   type OrchestrationV2ThreadShell,
@@ -108,7 +109,7 @@ export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
-  if (thread.lineage.relationshipToParent === "subagent") return null;
+  if (!isListedThreadLineage(thread.lineage)) return null;
   const subagentRequest = input.pendingSubagentRequest ?? null;
   const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest?.kind ?? null);
   if (phase === null) {
