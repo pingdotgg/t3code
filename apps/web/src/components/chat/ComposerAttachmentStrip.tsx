@@ -177,6 +177,7 @@ export function ComposerAttachmentMediaRow({
           return (
             <SnapShotAttachmentFrame
               key={image.id}
+              data-failed-attachment-id={upload?.status === "failed" ? image.id : undefined}
               data-chat-composer-expanded-image="true"
               aria-hidden={snapShotAnimationPending || undefined}
               inert={snapShotAnimationPending || undefined}

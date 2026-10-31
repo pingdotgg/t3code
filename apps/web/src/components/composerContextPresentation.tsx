@@ -211,6 +211,9 @@ function ImageContextChip(props: {
             size={formatAttachmentSize(props.record.sizeBytes)}
             suffix={uploadStatusSuffix(props.upload)}
             {...(props.upload?.status === "failed" ? { state: "invalid" as const } : {})}
+            data-failed-attachment-id={
+              props.upload?.status === "failed" ? props.record.id : undefined
+            }
             aria-label={`Image attachment, ${props.record.name}, ${formatAttachmentSize(props.record.sizeBytes)}${props.upload?.status === "failed" ? ", upload failed" : ""}`}
             onClick={() => actions.expandImage(props.record.id)}
           />

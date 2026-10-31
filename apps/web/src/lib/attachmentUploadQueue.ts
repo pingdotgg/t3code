@@ -108,7 +108,9 @@ export function markAttachmentClaimFailure(input: {
     setUploadState(attachment.id, {
       status: "failed",
       environmentId: input.environmentId,
-      attachmentId: upload.attachmentId,
+      ...(attachment.type !== "file" || attachment.uploadedAttachmentId !== upload.attachmentId
+        ? { attachmentId: upload.attachmentId }
+        : {}),
       reason: input.error instanceof Error ? input.error.message : "Attachment could not be sent.",
     });
   }
