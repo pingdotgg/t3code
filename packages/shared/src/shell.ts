@@ -991,8 +991,15 @@ export function pathSetup(
   const directory = underHome ? `$HOME${rest}` : rest;
   const shell = input.shell?.split("/").pop();
   if (shell === "fish") {
-    const configHome = input.configHome?.startsWith("/") ? input.configHome : "~/.config";
-    return { file: `${configHome}/fish/config.fish`, line: `fish_add_path --append ${directory}` };
+    const configHome =
+      input.configHome?.startsWith("/") && /^[\w./-]+$/.test(input.configHome)
+        ? input.configHome
+        : "~/.config";
+    // --path changes $PATH itself; fish_user_paths would go ahead of the system folders.
+    return {
+      file: `${configHome}/fish/config.fish`,
+      line: `fish_add_path --append --path ${directory}`,
+    };
   }
   // macOS bash reads only the first of .bash_profile, .bash_login, and .profile; no file is safe.
   const file =
@@ -1008,8 +1015,10 @@ export function pathSetup(
 export function pathSetupCommand(input: PathSetupInput): string | undefined {
   const setup = pathSetup(input);
   if (!setup) return undefined;
-  // fish_add_path already saves the folder for every new fish terminal.
-  if (setup.file.endsWith(".fish")) return setup.line;
   // The leading newline keeps the line out of a final comment with no newline after it.
-  return `printf '\\n%s\\n' '${setup.line}' >> ${setup.file}`;
+  const append = `printf '\\n%s\\n' '${setup.line}' >> ${setup.file}`;
+  // fish's config folder may not exist yet; `&&` works in fish 3 too.
+  return setup.file.endsWith(".fish")
+    ? `mkdir -p ${setup.file.slice(0, setup.file.lastIndexOf("/"))} && ${append}`
+    : append;
 }

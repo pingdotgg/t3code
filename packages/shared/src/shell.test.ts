@@ -1058,7 +1058,12 @@ describe("pathSetupCommand", () => {
       "linux",
       `printf '\\n%s\\n' 'export PATH="$PATH:/home/theo/.local/bin"' >> ~/.bashrc`,
     ],
-    ["/Users/theo/.local/bin", "/usr/bin/fish", "linux", "fish_add_path --append $HOME/.local/bin"],
+    [
+      "/Users/theo/.local/bin",
+      "/usr/bin/fish",
+      "linux",
+      `mkdir -p ~/.config/fish && printf '\\n%s\\n' 'fish_add_path --append --path $HOME/.local/bin' >> ~/.config/fish/config.fish`,
+    ],
     [
       "/opt/t3/bin",
       "/bin/zsh",

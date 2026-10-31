@@ -277,7 +277,11 @@ if [ -n "$path_rest" ]; then
   case "${shell_name##*/}" in
     zsh) path_command="printf '\\n%s\\n' '${path_line}' >> ~/.zshrc" ;;
     bash) [ "$platform" = darwin ] || path_command="printf '\\n%s\\n' '${path_line}' >> ~/.bashrc" ;;
-    fish) path_command="fish_add_path --append ${path_prefix}${path_rest}" ;;
+    fish)
+      # --path changes $PATH itself; fish_user_paths would go ahead of the system folders.
+      fish_dir='~/.config/fish'
+      case "${XDG_CONFIG_HOME:-}" in /*) case "$XDG_CONFIG_HOME" in *[!A-Za-z0-9_./-]*) ;; *) fish_dir="${XDG_CONFIG_HOME}/fish" ;; esac ;; esac
+      path_command="mkdir -p ${fish_dir} && printf '\\n%s\\n' 'fish_add_path --append --path ${path_prefix}${path_rest}' >> ${fish_dir}/config.fish" ;;
   esac
 fi
 case ":${PATH}:" in
