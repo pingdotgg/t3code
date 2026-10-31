@@ -166,8 +166,7 @@ function makeHarness(options: Harness = {}) {
       RelayHttpApi.layerCors,
     ),
   ).pipe(Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG));
-  // Goes through Effect's request handler, which applies pre-response handlers
-  // (such as CORS) to the response it sends, as the Workers runtime does.
+  // Use the Workers request path so pre-response handlers apply.
   const send = (request: Request) =>
     Effect.gen(function* () {
       const handler = yield* httpEffect;
