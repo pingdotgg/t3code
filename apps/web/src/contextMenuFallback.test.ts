@@ -237,4 +237,26 @@ describe("showContextMenuFallback", () => {
 
     await expect(selectionPromise).resolves.toBe("rename");
   });
+
+  it("opens a submenu that would overflow the viewport to the left of its parent menu", () => {
+    vi.stubGlobal("window", { innerWidth: 400, innerHeight: 800 });
+
+    void showContextMenuFallback(
+      [
+        {
+          id: "group",
+          label: "Group with",
+          children: [{ id: "terminal-1", label: "Terminal 1" }],
+        },
+      ],
+      { x: 200, y: 0 },
+    );
+    const trigger = findButton("Group with");
+    trigger!.style.left = "200px";
+    trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    const parent = trigger?.parent?.parent?.getBoundingClientRect();
+    const submenu = findButton("Terminal 1")?.parent?.parent?.getBoundingClientRect();
+    expect(submenu!.right).toBeLessThanOrEqual(parent!.left);
+  });
 });
