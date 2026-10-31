@@ -98,7 +98,7 @@ it("reports the routing proxy's accounts unless a hub already points at it or ow
   const hub = {
     kind: "cliproxy" as const,
     url: "http://proxy:8317/",
-    managementKey: "hub-key",
+    managementKey: "mgmt",
     enabled: true,
   };
   const settings = {
@@ -117,6 +117,7 @@ it("reports the routing proxy's accounts unless a hub already points at it or ow
   });
   for (const unusable of [
     { ...hub, managementKey: "" },
+    { ...hub, managementKey: "rotated-old-key" },
     { ...hub, enabled: false },
   ]) {
     expect(

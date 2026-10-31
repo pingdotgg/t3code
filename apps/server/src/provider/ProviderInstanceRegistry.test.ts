@@ -462,6 +462,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const claudeId = ProviderInstanceId.make("claude_probe_recovery");
       let probeCount = 0;
       let successfulProbeCount = 0;
+      let usageProbeCount = 0;
       let failProbe = false;
       const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
@@ -486,12 +487,15 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
                 },
               });
             },
-            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
-              rate_limits_available: true,
-              rate_limits: {
-                five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" },
-              },
-            }),
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
+              usageProbeCount++;
+              return {
+                rate_limits_available: true,
+                rate_limits: {
+                  five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" },
+                },
+              };
+            },
           }) as ReturnType<typeof ClaudeSdk.query>,
       );
       yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
@@ -579,6 +583,30 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
       );
       expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
+      expect(usageProbeCount).toBeGreaterThan(0);
+      failProbe = false;
+      const beforeProxy = usageProbeCount;
+      const { registry: proxiedRegistry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            useProxy: true,
+            proxy: { url: "http://proxy.test:8317", apiKey: "proxy-test-key" },
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const proxied = yield* proxiedRegistry.getInstance(claudeId);
+      expect(proxied).toBeDefined();
+      const proxySnapshot = yield* proxied!.snapshot.refresh;
+      expect(proxySnapshot.auth.type).toBe("proxy");
+      expect(usageProbeCount).toBe(beforeProxy);
     }).pipe(Effect.provide(layerTest)),
   );
 

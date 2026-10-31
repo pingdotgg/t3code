@@ -154,6 +154,7 @@ import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   applyClaudeProxyEnvironment,
+  claudeProxySettingsEnvironment,
   claudeSignedOutMessage,
   makeClaudeEnvironment,
   resolveClaudeHomePath,
@@ -4476,6 +4477,7 @@ function claudeProposedPlan(input: unknown): string | null {
 
 export interface ClaudeAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
+  readonly proxy?: ProviderAdapterDriverCreateInput<ClaudeSettings>["proxy"];
   readonly settings: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly attachmentsDir: string;
@@ -10185,12 +10187,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             fileSystem,
             path,
           });
-          const launchArgSettings = yield* readClaudeLaunchArgSettings({
+          const userLaunchArgSettings = yield* readClaudeLaunchArgSettings({
             settings: adapterOptions.settings,
             cwd: turnInput.runtimePolicy.cwd,
             fileSystem,
             path,
           });
+          const launchArgSettings =
+            adapterOptions.proxy === undefined
+              ? userLaunchArgSettings
+              : {
+                  ...userLaunchArgSettings,
+                  env: {
+                    ...userLaunchArgSettings?.env,
+                    ...claudeProxySettingsEnvironment(adapterOptions.proxy),
+                  },
+                };
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
             yield* existing.query.close.pipe(Effect.ignore);
@@ -11528,6 +11540,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     return yield* makeClaudeAdapterV2({
       instanceId,
       settings: { ...config, enabled, binaryPath },
+      ...(proxy === undefined ? {} : { proxy }),
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,

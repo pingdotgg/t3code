@@ -65,7 +65,7 @@ export function effectiveUsageLimitSources(
   const alreadyListed = Object.values(settings.usageLimitSources).some(
     (source) =>
       source.enabled &&
-      source.managementKey !== "" &&
+      source.managementKey === managementKey &&
       normalizeProviderProxyUrl(source.url) === url,
   );
   // A hand-written source may already use the synthetic id; it keeps the slot.

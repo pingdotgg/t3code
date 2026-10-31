@@ -54,6 +54,13 @@ const CLAUDE_ROUTE_OVERRIDE_VARIABLES = [
   "CLAUDE_CODE_USE_FOUNDRY",
 ] as const;
 
+export const claudeProxySettingsEnvironment = (proxy: ProviderProxyRoute) => ({
+  ANTHROPIC_BASE_URL: proxy.url,
+  ANTHROPIC_AUTH_TOKEN: providerProxyToken(proxy),
+  ANTHROPIC_API_KEY: "",
+  ...Object.fromEntries(CLAUDE_ROUTE_OVERRIDE_VARIABLES.map((name) => [name, ""])),
+});
+
 export const applyClaudeProxyEnvironment = (
   environment: NodeJS.ProcessEnv,
   proxy: ProviderProxyRoute | undefined,

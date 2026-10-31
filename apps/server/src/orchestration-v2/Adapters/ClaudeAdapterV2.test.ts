@@ -980,12 +980,17 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
 });
 
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
-  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
+  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (
+    launchArgs: string,
+    cwd: string,
+    proxy?: { readonly url: string; readonly apiKey: string },
+  ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
       settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+      ...(proxy === undefined ? {} : { proxy }),
       environment: {},
       attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-" }),
       fileSystem,
@@ -1098,6 +1103,21 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
           showThinkingSummaries: true,
         });
         assert.isUndefined(opened[0]!.extraArgs?.["settings"]);
+        const proxy = { url: "http://proxy.test:8317", apiKey: "proxy-test-key" };
+        const routed = yield* startTurnWithLaunchArgs(launchArgs, cwd, proxy);
+        assert.isTrue(Exit.isSuccess(routed.exit));
+        assert.deepInclude(routed.opened[0]!.settings, {
+          skillOverrides: { lint: "off" },
+          env: {
+            ANTHROPIC_BASE_URL: proxy.url,
+            ANTHROPIC_AUTH_TOKEN: proxy.apiKey,
+            ANTHROPIC_API_KEY: "",
+            CLAUDE_CODE_OAUTH_TOKEN: "",
+            CLAUDE_CODE_USE_BEDROCK: "",
+            CLAUDE_CODE_USE_VERTEX: "",
+            CLAUDE_CODE_USE_FOUNDRY: "",
+          },
+        });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
