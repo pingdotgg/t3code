@@ -227,6 +227,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     .filter(Boolean)
     .join(" · ");
 
+  const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
+  const triggerTextProps = {
+    className: "min-w-0 flex-1 overflow-hidden truncate",
+    "data-chat-provider-model-picker-label": "true",
+  } as const;
+
   const picker = (
     <ModelPickerContent
       searchInputRef={searchInputRef}
@@ -359,19 +365,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               />
             </span>
           ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span
-                  className="min-w-0 flex-1 overflow-hidden truncate"
-                  data-chat-provider-model-picker-label="true"
-                />
-              }
-            >
-              {props.triggerLabel ?? multipleLabel ?? triggerTitle}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
-          </Tooltip>
+          {props.isComposerOwned ? (
+            <span {...triggerTextProps}>{triggerText}</span>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger render={<span {...triggerTextProps} />}>{triggerText}</TooltipTrigger>
+              <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
+            </Tooltip>
+          )}
           {props.triggerSuffix}
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
