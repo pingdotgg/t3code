@@ -34,7 +34,8 @@ const CursorUsageResponse = Schema.Struct({
 
 /**
  * Limits use a dashboard access token, not an agent API key.
- * Browser sign-in reuses the session as CURSOR_AUTH_TOKEN; an explicit API key stays unsupported.
+ * Keep a configured CURSOR_AUTH_TOKEN; otherwise browser sign-in supplies the session.
+ * An explicit API key stays unsupported.
  */
 export function cursorUsageLimitsEnvironment(
   processEnv: NodeJS.ProcessEnv,
@@ -49,7 +50,11 @@ export function cursorUsageLimitsEnvironment(
   return {
     ...processEnv,
     CURSOR_API_KEY: undefined,
-    ...(options.apiKey ? { CURSOR_AUTH_TOKEN: options.apiKey } : {}),
+    ...(processEnv.CURSOR_AUTH_TOKEN?.trim()
+      ? {}
+      : options.apiKey
+        ? { CURSOR_AUTH_TOKEN: options.apiKey }
+        : {}),
   };
 }
 

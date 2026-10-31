@@ -30,7 +30,16 @@ describe("Cursor usage limits", () => {
   it("maps browser sessions to CURSOR_AUTH_TOKEN and keeps explicit API keys as CURSOR_API_KEY", () => {
     expect(
       cursorUsageLimitsEnvironment(
-        { CURSOR_API_KEY: "stale-env-key", CURSOR_AUTH_TOKEN: "stale-auth" },
+        { CURSOR_API_KEY: "stale-env-key", CURSOR_AUTH_TOKEN: "configured-auth" },
+        { apiKey: "session-token", usesApiKey: false },
+      ),
+    ).toEqual({
+      CURSOR_API_KEY: undefined,
+      CURSOR_AUTH_TOKEN: "configured-auth",
+    });
+    expect(
+      cursorUsageLimitsEnvironment(
+        { CURSOR_API_KEY: "stale-env-key" },
         { apiKey: "session-token", usesApiKey: false },
       ),
     ).toEqual({
@@ -38,10 +47,7 @@ describe("Cursor usage limits", () => {
       CURSOR_AUTH_TOKEN: "session-token",
     });
     expect(
-      cursorUsageLimitsEnvironment(
-        { HOME: "/tmp" },
-        { apiKey: "user-api-key", usesApiKey: true },
-      ),
+      cursorUsageLimitsEnvironment({ HOME: "/tmp" }, { apiKey: "user-api-key", usesApiKey: true }),
     ).toEqual({
       HOME: "/tmp",
       CURSOR_API_KEY: "user-api-key",
