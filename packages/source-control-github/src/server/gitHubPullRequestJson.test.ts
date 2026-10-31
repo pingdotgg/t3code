@@ -510,6 +510,34 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
+  it.each([
+    ["branch protection", { refUpdateRule: { requiredStatusCheckContexts: ["Done"] } }],
+    [
+      "a ruleset",
+      {
+        refUpdateRule: null,
+        rules: {
+          nodes: [
+            {
+              type: "REQUIRED_STATUS_CHECKS",
+              parameters: { requiredStatusChecks: [{ context: "Done" }] },
+            },
+          ],
+        },
+      },
+    ],
+  ])("waits for a check %s requires that has not started yet", (_source, rules) => {
+    const detail = detailOf(
+      [check({ name: "lint", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true })],
+      { baseRef: { compare: null, ...rules } },
+    );
+
+    expect(detail.checks).toEqual([
+      { name: "lint", status: "success", description: null, url: null, required: true },
+      { name: "Done", status: "pending", description: null, url: null, required: true },
+    ]);
+  });
+
   it("reads an auto-merge request and strategy, and its null as off", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
