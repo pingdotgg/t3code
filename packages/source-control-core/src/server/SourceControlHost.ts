@@ -122,6 +122,7 @@ export class SourceControlHost extends Context.Service<
         readonly remoteName: string;
         readonly remoteRef: string;
         readonly localBranch: string;
+        readonly force?: boolean;
       }) => Effect.Effect<void, GitCommandError>;
       readonly setBranchUpstream: (
         input: SourceControlGitRemoteBranch & { readonly branch: string },

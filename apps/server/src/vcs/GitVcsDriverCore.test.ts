@@ -1343,6 +1343,8 @@ it.effect("allows slow remote-ref fetches but interrupts them after five minutes
         Effect.gen(function* () {
           if (!ChildProcess.isStandardCommand(command))
             return yield* Effect.die("expected Git command");
+          if (command.args[0] === "branch" || command.args[0] === "update-ref")
+            return makeSuccessfulHandle("");
           if (command.args[0] !== "fetch") return makeNonRepositoryHandle();
           yield* Deferred.succeed(started, undefined);
           return ChildProcessSpawner.makeHandle({
@@ -3389,8 +3391,45 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           remoteName: "origin",
           remoteRef: "refs/pull-requests/1/from",
           localBranch: "feature/pr",
+          force: true,
         });
         assert.equal((yield* git(cwd, ["rev-parse", "feature/pr"])).trim(), headSha);
+
+        yield* git(cwd, ["branch", "-D", "feature/pr"]);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const racingDriver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) =>
+              Effect.gen(function* () {
+                if (ChildProcess.isStandardCommand(command) && command.args[0] === "fetch") {
+                  yield* git(cwd, ["branch", "feature/pr", initialBranch]).pipe(
+                    Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+                    Effect.orDie,
+                  );
+                }
+                return yield* delegate.spawn(command);
+              }),
+            ),
+          ),
+        );
+        const raced = yield* racingDriver
+          .fetchRemoteRef({
+            cwd,
+            remoteName: "origin",
+            remoteRef: "refs/pull-requests/1/from",
+            localBranch: "feature/pr",
+          })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(raced));
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "feature/pr"]),
+          yield* git(cwd, ["rev-parse", initialBranch]),
+        );
+        assert.equal(
+          yield* git(cwd, ["for-each-ref", "--format=%(refname)", "refs/t3code/pr-fetch"]),
+          "",
+        );
       }),
     );
 

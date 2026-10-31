@@ -1226,6 +1226,7 @@ const make = Effect.gen(function* () {
             remoteName,
             remoteRef: `refs/pull-requests/${pullRequest.number}/from`,
             localBranch,
+            ...(input.force === true ? { force: true } : {}),
           });
         }
         if (!isCrossRepository) {

@@ -247,6 +247,7 @@ export interface GitFetchRemoteRefInput {
   remoteName: string;
   remoteRef: string;
   localBranch: string;
+  force?: boolean;
 }
 
 export interface GitFetchRemoteInput {

@@ -4556,19 +4556,46 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRemoteRef: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteRef"] = Effect.fn(
     "fetchRemoteRef",
   )(function* (input) {
-    yield* runGit(
-      "GitVcsDriver.fetchRemoteRef.fetch",
-      input.cwd,
-      [
-        "fetch",
-        "--quiet",
-        "--no-tags",
-        "--",
-        input.remoteName,
-        `+${input.remoteRef}:refs/heads/${input.localBranch}`,
-      ],
-      // Long network transfers bypass the short-command pool used by local Git reads.
-      { timeoutMs: Duration.toMillis(Duration.minutes(5)) },
+    yield* Effect.acquireUseRelease(
+      crypto.randomUUIDv4().pipe(
+        Effect.orDie,
+        Effect.map((id) => `refs/t3code/pr-fetch/${id}`),
+      ),
+      (temporaryRef) =>
+        Effect.gen(function* () {
+          yield* runGit(
+            "GitVcsDriver.fetchRemoteRef.fetch",
+            input.cwd,
+            [
+              "fetch",
+              "--quiet",
+              "--no-tags",
+              "--",
+              input.remoteName,
+              `+${input.remoteRef}:${temporaryRef}`,
+            ],
+            // Long network transfers bypass the short-command pool used by local Git reads.
+            { timeoutMs: Duration.toMillis(Duration.minutes(5)) },
+          );
+          yield* runGit("GitVcsDriver.fetchRemoteRef.materialize", input.cwd, [
+            "branch",
+            "--no-track",
+            ...(input.force === true ? ["--force"] : []),
+            "--",
+            input.localBranch,
+            temporaryRef,
+          ]);
+        }),
+      (temporaryRef) =>
+        runGit("GitVcsDriver.fetchRemoteRef.cleanup", input.cwd, [
+          "update-ref",
+          "-d",
+          temporaryRef,
+        ]).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to remove temporary Git fetch ref", { cause }),
+          ),
+        ),
     );
   });
 

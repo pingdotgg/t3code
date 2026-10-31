@@ -644,6 +644,7 @@ it.effect("leaves an existing local branch alone unless force is set", () => {
     assert.strictEqual(gentle.git.switchRef.mock.calls.length, 1);
     assert.strictEqual(forced.git.fetchRemoteRef.mock.calls.length, 1);
     assert.strictEqual(forced.git.fetchRemoteRef.mock.calls[0]?.[0].remoteName, "origin");
+    assert.strictEqual(forced.git.fetchRemoteRef.mock.calls[0]?.[0].force, true);
   });
 });
 
