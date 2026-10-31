@@ -53,7 +53,9 @@ function isIsoWithOffset(value: string): boolean {
   const match = ISO_WITH_OFFSET.exec(value);
   if (!match || !Number.isFinite(Date.parse(value))) return false;
   const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  return new Date(Date.UTC(year, month - 1, day)).getUTCDate() === day && month <= 12;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return days !== undefined && day >= 1 && day <= days;
 }
 
 // Checked by filter, not pattern, to keep the MCP tool schema small.
