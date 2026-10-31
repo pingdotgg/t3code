@@ -28,6 +28,7 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
 const FILTER_THRESHOLD = 8;
 
 const REASONING_SELECT_IDS = new Set(["reasoningEffort", "effort", "reasoning", "variant"]);
+const PROVIDER_ALIAS_SLUGS = new Set(["default", "auto"]);
 
 function hasReasoningControl(model: ServerProviderModel): boolean {
   return (model.capabilities?.optionDescriptors ?? []).some(
@@ -39,7 +40,7 @@ function hasReasoningControl(model: ServerProviderModel): boolean {
 
 // Reasoning is the norm, so only its absence is labeled, and only when other models have it.
 // Null capabilities mean unknown (e.g. a custom model the server has not resolved yet), not absent.
-// The "default" slug defers to the provider's own model setting, so its reasoning is unknown too.
+// Alias slugs ("default", Cursor's "auto") defer to the provider's own model choice, so reasoning is unknown.
 function describeModelCapabilities(
   model: ServerProviderModel,
   flagMissingReasoning: boolean,
@@ -57,7 +58,7 @@ function describeModelCapabilities(
   if (
     flagMissingReasoning &&
     model.capabilities &&
-    model.slug !== "default" &&
+    !PROVIDER_ALIAS_SLUGS.has(model.slug) &&
     !hasReasoningControl(model)
   ) {
     labels.push("No reasoning");
