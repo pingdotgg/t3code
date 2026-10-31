@@ -478,22 +478,36 @@ describe("LinearService", () => {
       }).pipe(Effect.provide(makeLayer(harness)));
     });
 
-    it.effect("links the launch and warns when Linear is down", () => {
-      const harness = makeHarness();
-      return Effect.gen(function* () {
-        const linear = yield* LinearService.LinearService;
-        yield* linear.connect({ apiKey: KEY });
-        harness.handler = () => "network";
-        const result = yield* linear.recordLaunch(
-          launchInput({ issueId: "issue-2", issue: { identifier: "ATT-613", teamId: "team-1" } }),
-        );
-        assert.strictEqual(result.link.issueIdentifier, "ATT-613");
-        assert.deepStrictEqual(result.warnings.map((warning) => warning.step).toSorted(), [
-          "comment",
-          "move_state",
-        ]);
-      }).pipe(Effect.provide(makeLayer(harness)));
-    });
+    it.effect(
+      "links the launch when Linear rejects the read, and warns when Linear is down",
+      () => {
+        const harness = makeHarness();
+        return Effect.gen(function* () {
+          const linear = yield* LinearService.LinearService;
+          yield* linear.connect({ apiKey: KEY });
+          harness.handler = () =>
+            json(
+              { errors: [{ message: "no", extensions: { code: "FORBIDDEN", type: "forbidden" } }] },
+              { status: 400 },
+            );
+          const rejected = yield* linear.recordLaunch(
+            launchInput({ issueId: "issue-3", issue: { identifier: "ATT-614", teamId: "team-1" } }),
+          );
+          assert.strictEqual(rejected.link.issueIdentifier, "ATT-614");
+          assert.strictEqual(rejected.link.commentMode, "none");
+
+          harness.handler = () => "network";
+          const result = yield* linear.recordLaunch(
+            launchInput({ issueId: "issue-2", issue: { identifier: "ATT-613", teamId: "team-1" } }),
+          );
+          assert.strictEqual(result.link.issueIdentifier, "ATT-613");
+          assert.deepStrictEqual(result.warnings.map((warning) => warning.step).toSorted(), [
+            "comment",
+            "move_state",
+          ]);
+        }).pipe(Effect.provide(makeLayer(harness)));
+      },
+    );
 
     it.effect("fails with not_connected rather than recording an unverifiable link", () => {
       const harness = makeHarness();

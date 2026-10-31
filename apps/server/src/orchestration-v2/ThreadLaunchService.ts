@@ -205,7 +205,7 @@ function failureDetail(error: unknown): string {
 }
 
 // Repeat launches from one Linear issue request the same branch; Linear still links `<name>-2`.
-// Refs collide by case on case-insensitive filesystems, and branch `a` blocks `a/b`.
+// Refs collide by case on case-insensitive filesystems, and an existing `a/b` blocks `a`.
 function freeBranchName(requested: string, existingBranchNames: readonly string[]): string {
   const taken = existingBranchNames.map((name) => name.toLowerCase());
   const isTaken = (candidate: string) => {

@@ -405,10 +405,7 @@ export const layer = Layer.effect(
       ).pipe(
         Effect.map((entry) => Option.some(entry.value)),
         Effect.catchIf(
-          (error) =>
-            input.issue !== undefined &&
-            error.reason !== "not_found" &&
-            error.reason !== "invalid_input",
+          (error) => input.issue !== undefined && error.reason !== "not_found",
           (error) =>
             Effect.sync(() => {
               unreadable.error = error;

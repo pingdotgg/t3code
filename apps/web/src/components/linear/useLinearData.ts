@@ -175,12 +175,9 @@ export function useLinearCommands() {
     environmentId === null ? Promise.resolve(null) : run(environmentId);
   return {
     environmentId,
-    refresh: () =>
-      withEnvironment((id) =>
-        refresh({ environmentId: id, input: {} }).finally(bumpLinearPollTick),
-      ),
-    resync: () =>
-      withEnvironment((id) => resync({ environmentId: id, input: {} }).finally(bumpLinearPollTick)),
+    // The server pushes a refresh after both, which re-reads every mounted query.
+    refresh: () => withEnvironment((id) => refresh({ environmentId: id, input: {} })),
+    resync: () => withEnvironment((id) => resync({ environmentId: id, input: {} })),
     connect: (apiKey: string) =>
       withEnvironment((id) => connect({ environmentId: id, input: { apiKey } })),
     disconnect: () => withEnvironment((id) => disconnect({ environmentId: id, input: {} })),
