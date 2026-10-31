@@ -52,7 +52,6 @@ import {
   type CodexRateLimitSnapshot,
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
-import { CODEX_AUTOMATIC_CYBER_ACCESS_PROGRAM_ID } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
@@ -94,6 +93,8 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
   readonly serviceTier?: string | undefined;
+  readonly daybreakEnabled?: boolean | undefined;
+  readonly apiKeyCyberAccessProgramsDisabled?: boolean | undefined;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
@@ -249,24 +250,21 @@ export function mapCodexModelCapabilities(
     });
   }
   const cyberAccessPrograms = model.availableAccessPrograms?.cyber ?? [];
-  // Only Daybreak programmes need a choice; standard-only models keep their usual controls.
-  if (cyberAccessPrograms.some((program) => program !== "standard")) {
+  if (cyberAccessPrograms.length > 0) {
+    // Codex's own clients request Standard unless Daybreak is on; omitting the field does not.
+    const defaultProgram = cyberAccessPrograms.includes("standard")
+      ? "standard"
+      : cyberAccessPrograms[0];
     optionDescriptors.push({
       id: "cyberAccessProgram",
       label: "Cyber Access",
       type: "select",
-      options: [
-        {
-          id: CODEX_AUTOMATIC_CYBER_ACCESS_PROGRAM_ID,
-          label: "Automatic",
-          isDefault: true,
-        },
-        ...cyberAccessPrograms.map((program) => ({
-          id: program,
-          label: CYBER_ACCESS_PROGRAM_LABELS[program] ?? program,
-        })),
-      ],
-      currentValue: CODEX_AUTOMATIC_CYBER_ACCESS_PROGRAM_ID,
+      options: cyberAccessPrograms.map((program) => ({
+        id: program,
+        label: CYBER_ACCESS_PROGRAM_LABELS[program] ?? program,
+        ...(program === defaultProgram ? { isDefault: true } : {}),
+      })),
+      ...(defaultProgram === undefined ? {} : { currentValue: defaultProgram }),
     });
   }
 
@@ -306,6 +304,58 @@ export function applyPreferredCodexDefaultModel(
     const { isDefault: _isDefault, ...rest } = model;
     return rest;
   });
+}
+
+/** Mirrors Codex: `daybreak = true` prefers a Daybreak program, Blue before Red. */
+export function applyConfiguredCodexCyberAccess(
+  models: ReadonlyArray<ServerProviderModel>,
+  input: {
+    readonly daybreakEnabled: boolean;
+    readonly apiKeyProgramsDisabled: boolean;
+  },
+): ReadonlyArray<ServerProviderModel> {
+  if (!input.daybreakEnabled && !input.apiKeyProgramsDisabled) return models;
+  return models.map((model) => {
+    const descriptors = model.capabilities?.optionDescriptors;
+    if (!model.capabilities || !descriptors) return model;
+    return {
+      ...model,
+      capabilities: {
+        ...model.capabilities,
+        // Codex rejects explicit programs in this session, so none can be offered or sent.
+        optionDescriptors: (input.apiKeyProgramsDisabled
+          ? descriptors.filter((descriptor) => descriptor.id !== "cyberAccessProgram")
+          : descriptors
+        ).map((descriptor) => {
+          if (descriptor.id !== "cyberAccessProgram" || descriptor.type !== "select") {
+            return descriptor;
+          }
+          const value = ["daybreakBlue", "daybreakRed"].find((program) =>
+            descriptor.options.some((option) => option.id === program),
+          );
+          if (!value) return descriptor;
+          return {
+            ...descriptor,
+            currentValue: value,
+            options: descriptor.options.map(({ isDefault: _isDefault, ...option }) =>
+              option.id === value ? { ...option, isDefault: true } : option,
+            ),
+          };
+        }),
+      },
+    };
+  });
+}
+
+/** Applies when a selection names no program, such as older threads and agent-started turns. */
+export function codexDefaultCyberAccessProgram(
+  models: ReadonlyArray<ServerProviderModel>,
+  slug: string,
+): string | undefined {
+  const descriptor = models
+    .find((model) => model.slug === slug)
+    ?.capabilities?.optionDescriptors?.find(({ id }) => id === "cyberAccessProgram");
+  return descriptor?.type === "select" ? descriptor.currentValue : undefined;
 }
 
 function applyConfiguredCodexServiceTier(
@@ -585,7 +635,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
+  const [skillsResponse, models, config, rateLimits] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
       accountResponse.account?.type === "chatgpt"
@@ -602,7 +652,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
         deadlineMs,
         CODEX_CONFIG_PROBE_TIMEOUT_MS,
       ).pipe(
-        Effect.map((response) => response?.config.service_tier ?? undefined),
+        Effect.map((response) => response?.config),
         Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
       ),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
@@ -640,7 +690,12 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models,
-    serviceTier,
+    serviceTier: config?.service_tier ?? undefined,
+    daybreakEnabled: config?.["daybreak"] === true,
+    apiKeyCyberAccessProgramsDisabled:
+      accountResponse.account?.type === "apiKey" &&
+      (config?.["features"] as { readonly api_key_cyber_access_programs?: unknown } | undefined)
+        ?.api_key_cyber_access_programs === false,
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });
@@ -901,6 +956,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
       applyPreferredCodexDefaultModel,
       (models) => applyConfiguredCodexServiceTier(models, snapshot.serviceTier),
+      (models) =>
+        applyConfiguredCodexCyberAccess(models, {
+          daybreakEnabled: snapshot.daybreakEnabled === true,
+          apiKeyProgramsDisabled: snapshot.apiKeyCyberAccessProgramsDisabled === true,
+        }),
     ),
     skills: snapshot.skills,
     slashCommands: [

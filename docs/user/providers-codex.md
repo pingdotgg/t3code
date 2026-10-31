@@ -94,11 +94,12 @@ for command and file approvals.
 
 ## Use Daybreak
 
-If your ChatGPT account has Daybreak access, models that offer it show a Cyber
-Access choice in the model options next to the composer. Automatic, the
-default, leaves the choice to Codex. Pick Daybreak Blue or another programme to
-send it with every turn in that thread. Models without Daybreak, including
-custom models, do not show the choice.
+Models that list cyber access programs show a Cyber Access choice in the model
+options next to the composer. T3 Code sends it with every turn. As in the Codex
+CLI, the default is Standard unless you set `daybreak = true` in Codex's
+`config.toml`. Your last choice stays selected for new threads until you change
+it, so check it before starting unrelated work. Models that only offer Daybreak
+stay on Daybreak. Custom models do not show the choice.
 
 If Codex reports that you are not logged in with a Daybreak key, sign in to
 Codex again using the appropriate Daybreak credentials for your account, then

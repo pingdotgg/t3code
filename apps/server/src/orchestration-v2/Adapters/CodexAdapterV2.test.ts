@@ -222,9 +222,9 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
-  it.effect("leaves Codex's automatic cyber access in place unless a program is chosen", () =>
+  it.effect("sends the chosen cyber access program, else the model's default", () =>
     Effect.gen(function* () {
-      const build = (value?: string) =>
+      const build = (value?: string, defaultCyberAccessProgram?: string) =>
         CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId: "native-cyber",
           codexInput: [{ type: "text", text: "test" }],
@@ -234,12 +234,15 @@ describe("CodexAdapterV2 runtime policy", () => {
             model: "gpt-5.4",
             ...(value === undefined ? {} : { options: [{ id: "cyberAccessProgram", value }] }),
           },
+          defaultCyberAccessProgram,
         });
 
+      // Custom models have no catalog entry, so Codex keeps its own treatment.
       assert.notProperty(yield* build(), "cyberAccessProgram");
-      assert.notProperty(yield* build("automatic"), "cyberAccessProgram");
-      assert.equal((yield* build("standard")).cyberAccessProgram, "standard");
-      assert.equal((yield* build("daybreakBlue")).cyberAccessProgram, "daybreakBlue");
+      assert.equal((yield* build(undefined, "standard")).cyberAccessProgram, "standard");
+      assert.equal((yield* build("automatic", "standard")).cyberAccessProgram, "standard");
+      assert.equal((yield* build("daybreakBlue", "standard")).cyberAccessProgram, "daybreakBlue");
+      assert.equal((yield* build("standard", "daybreakBlue")).cyberAccessProgram, "standard");
     }),
   );
 
