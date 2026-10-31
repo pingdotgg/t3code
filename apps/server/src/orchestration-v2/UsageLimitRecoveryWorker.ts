@@ -1,9 +1,16 @@
-import { CommandId, MessageId, type OrchestrationV2Command } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  type OrchestrationV2Command,
+  type OrchestrationV2DomainEvent,
+  ProjectId,
+  type ServerSettings as ServerSettingsValue,
+} from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -13,6 +20,33 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 const MAX_OVERDUE_ARM_MS = 24 * 60 * 60 * 1000;
+
+/** The one place a limited thread's recovery policy is resolved. */
+export function resolveLimitRecoveryPolicy(
+  settings: ServerSettingsValue,
+  thread: Pick<ProjectionStore.ProjectionLimitRecoveryCandidate, "projectId">,
+): { readonly autoResume: boolean; readonly snooze: boolean } {
+  return {
+    autoResume: resolveProjectSettings(settings, thread.projectId).settings
+      .autoResumeLimitedThreads,
+    snooze: settings.snoozeLimitedThreads,
+  };
+}
+
+/** Narrows the sweep's query to candidates whose project could auto-arm. */
+function limitAutoResumeScope(settings: ServerSettingsValue) {
+  const enabled: Array<ProjectId> = [];
+  const disabled: Array<ProjectId> = [];
+  for (const [projectId, overrides] of Object.entries(settings.projectSettingsOverrides)) {
+    if (overrides.autoResumeLimitedThreads === true) enabled.push(ProjectId.make(projectId));
+    if (overrides.autoResumeLimitedThreads === false) disabled.push(ProjectId.make(projectId));
+  }
+  return {
+    autoResume: settings.autoResumeLimitedThreads,
+    autoResumeEnabledProjectIds: enabled,
+    autoResumeDisabledProjectIds: disabled,
+  };
+}
 
 export function limitRecoveryCommand(
   thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
@@ -87,7 +121,7 @@ const affectsLimitRecovery = (event: OrchestrationV2DomainEvent) =>
   event.type.startsWith("provider-session.") ||
   (event.type === "turn-item.updated" && event.payload.type === "error");
 
-const makeSweep = Effect.gen(function* () {
+export const makeSweep = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -107,17 +141,13 @@ const makeSweep = Effect.gen(function* () {
     const preferences = yield* settings.getSettings;
     const candidates = yield* projections.getLimitRecoveryCandidates({
       now,
-      autoResume: preferences.autoResumeLimitedThreads,
+      ...limitAutoResumeScope(preferences),
       snooze: preferences.snoozeLimitedThreads,
     });
     let acted = false;
     for (const thread of candidates) {
-      const command = limitRecoveryCommand(
-        thread,
-        preferences.autoResumeLimitedThreads,
-        nowMs,
-        preferences.snoozeLimitedThreads,
-      );
+      const policy = resolveLimitRecoveryPolicy(preferences, thread);
+      const command = limitRecoveryCommand(thread, policy.autoResume, nowMs, policy.snooze);
       if (command === null) continue;
       acted = true;
       yield* Effect.gen(function* () {

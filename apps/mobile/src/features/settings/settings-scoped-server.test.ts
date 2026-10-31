@@ -53,6 +53,29 @@ describe("mobile usage-limit settings across environments", () => {
       expect(uniformMobileSetting([], key)).toBeNull();
     },
   );
+
+  it("overrides resume per project while snooze stays environment-wide", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      autoResumeLimitedThreads: false,
+    };
+    const targets = resolveMobileSettingsTargets(
+      [environment(firstId, settings)],
+      [{ environmentId: firstId, id: firstProject }],
+    );
+
+    expect(
+      planMobileScopedSettingsPatch(targets, true, { autoResumeLimitedThreads: true }),
+    ).toEqual([
+      {
+        environmentId: firstId,
+        patch: { projectSettingsOverrides: { [firstProject]: { autoResumeLimitedThreads: true } } },
+      },
+    ]);
+    expect(planMobileScopedSettingsPatch(targets, true, { snoozeLimitedThreads: true })).toEqual(
+      [],
+    );
+  });
 });
 
 function environment(environmentId: EnvironmentId, settings: ServerSettings): SettingsTarget {
