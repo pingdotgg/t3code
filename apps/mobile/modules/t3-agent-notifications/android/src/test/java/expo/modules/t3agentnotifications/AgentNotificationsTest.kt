@@ -75,13 +75,13 @@ class AgentNotificationsTest {
     for (id in 1..64) AgentNotifications.receive(context, update("alert-$id", false))
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.receive(context, update("alert-0", false))
-    assertEquals("alert-0".hashCode(), manager.activeNotifications.single().id)
+    assertEquals("environment/thread".hashCode(), manager.activeNotifications.single().id)
   }
 
   @Test
-  fun alertsStackByThreadGroup() {
+  fun alertsShareOneGroupAcrossThreads() {
     AgentNotifications.receive(context, update("grouped", false))
-    assertEquals("environment/thread", manager.activeNotifications.single().notification.group)
+    assertEquals("t3-agent-alerts", manager.activeNotifications.single().notification.group)
   }
 
   @Test
@@ -145,7 +145,7 @@ class AgentNotificationsTest {
 
     AgentNotifications.receive(context, update("later-background-completion", false))
 
-    assertEquals("later-background-completion".hashCode(), manager.activeNotifications.single().id)
+    assertEquals("environment/thread".hashCode(), manager.activeNotifications.single().id)
   }
 
   @Test
@@ -153,26 +153,59 @@ class AgentNotificationsTest {
     AgentNotifications.receive(context, update("background-completion", false))
     lifecycle.currentState = Lifecycle.State.RESUMED
 
-    AgentNotifications.receive(context, update("foreground-completion", false))
+    AgentNotifications.receive(context, update("foreground-completion", false) + ("alert_body" to "Suppressed"))
 
-    assertEquals("background-completion".hashCode(), manager.activeNotifications.single().id)
+    assertEquals(
+      "Done: Test project",
+      manager.activeNotifications.single().notification.extras.getString(Notification.EXTRA_TEXT)
+    )
   }
 
   @Test
-  fun repeatedThreadAlertsHaveOneSilentSummaryAndClearTogether() {
-    AgentNotifications.receive(context, update("first", false) + ("alert_group" to "thread-group"))
-    AgentNotifications.receive(context, update("second", false) + ("alert_group" to "thread-group"))
+  fun repeatedThreadAlertsReplaceTheThreadsCard() {
+    AgentNotifications.receive(context, update("first", false) + ("alert_body" to "Input: Test project"))
+    AgentNotifications.receive(context, update("second", false))
+
+    val alert = manager.activeNotifications.single()
+    assertEquals("Done: Test project", alert.notification.extras.getString(Notification.EXTRA_TEXT))
+  }
+
+  @Test
+  fun alertsFromSeveralThreadsShareOneSilentSummaryAndClearTogether() {
+    AgentNotifications.receive(context, update("first", false))
+    AgentNotifications.receive(context, thread("other", "second", "Other thread"))
 
     val summary = manager.activeNotifications.single {
       it.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
     }
-    assertEquals("thread-group", summary.notification.group)
+    assertEquals("t3-agent-alerts", summary.notification.group)
     assertEquals(3, manager.activeNotifications.size)
     assertEquals(null, summary.notification.sound)
+    assertEquals(
+      "2 threads updated",
+      summary.notification.extras.getString(Notification.EXTRA_TITLE)
+    )
 
     AgentNotifications.clear(context)
     assertTrue(manager.activeNotifications.isEmpty())
   }
+
+  @Test
+  fun openingAThreadClearsItsAlertAndTheSummary() {
+    AgentNotifications.receive(context, update("first", false))
+    AgentNotifications.receive(context, thread("other", "second", "Other thread"))
+
+    AgentNotifications.setThreadOnScreen("/threads/environment/other", context)
+
+    val alert = manager.activeNotifications.single()
+    assertEquals("Test thread", alert.notification.extras.getString(Notification.EXTRA_TITLE))
+  }
+
+  private fun thread(id: String, alertId: String, title: String) = update(alertId, false) + mapOf(
+    "alert_group" to "environment/$id",
+    "alert_title" to title,
+    "alert_path" to "/threads/environment/$id",
+  )
 
   @Test
   fun groupedAlertDisplaysEveryThreadAndRetriesStaySilent() {
@@ -321,11 +354,13 @@ class AgentNotificationsTest {
       context,
       update("older-alert", false) + ("updated_at" to (now - 1000).toString())
     )
-    assertEquals(4, manager.activeNotifications.size)
+    // The older alert still lands, replacing the thread's card rather than stacking.
+    assertEquals(2, manager.activeNotifications.size)
     assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
     shadowOf(manager).setNotificationsEnabled(false)
     AgentNotifications.receive(context, update("revoked-permission", true))
-    assertEquals(4, manager.activeNotifications.size)
+    assertEquals(2, manager.activeNotifications.size)
   }
 
   @Test
