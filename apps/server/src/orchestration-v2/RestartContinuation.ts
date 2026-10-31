@@ -313,7 +313,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       sourceMessage !== undefined &&
       projection.providerThreads.find((thread) => thread.id === source.providerThreadId)?.driver ===
         "codex" &&
-      restartSourceInputUnrecorded(source, projection.providerTurns)
+      restartSourceInputUnrecorded(source, projection.providerTurns, projection.runs)
         ? sourceMessage
         : undefined;
     const prompt = resent?.text ?? CONTINUE_PROMPT;

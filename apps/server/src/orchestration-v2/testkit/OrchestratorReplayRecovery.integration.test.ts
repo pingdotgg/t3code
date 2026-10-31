@@ -97,6 +97,7 @@ const readCodexCutTurnTranscripts = Effect.fn("readCodexCutTurnTranscripts")(fun
       readonly input?: unknown;
       readonly turn?: { readonly id?: string };
       readonly turnId?: string;
+      readonly item?: { readonly type: string; readonly content?: unknown };
     };
   };
   const frameOf = (entry: (typeof entries)[number] | undefined): Frame | undefined =>
@@ -121,6 +122,25 @@ const readCodexCutTurnTranscripts = Effect.fn("readCodexCutTurnTranscripts")(fun
     const frame = frameOf(entry);
     if (entry.label === "thread/tokenUsage/updated" && frame?.params?.turnId === cutTurnId) {
       return [];
+    }
+    if (entry.type === "emit_inbound" && frame?.params?.item?.type === "userMessage") {
+      return [
+        {
+          ...entry,
+          frame: {
+            ...frame,
+            params: {
+              ...frame.params,
+              item: {
+                ...frame.params.item,
+                content: [
+                  { type: "text", text: PROVIDER_THREAD_RESUME_FIRST_PROMPT, text_elements: [] },
+                ],
+              },
+            },
+          },
+        },
+      ];
     }
     if (entry.type !== "expect_outbound" || entry.label !== "turn/start") return [entry];
     return [{ ...entry, frame: { ...frame, params: { ...frame?.params, input: request } } }];

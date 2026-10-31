@@ -282,20 +282,34 @@ export function isRestartNoteContinuation(
 
 /**
  * Without the provider's confirmation, the native history may lack the request: Codex runs prompt
- * hooks and pre-turn compaction first. Any native turn of the attempt counts, so a goal's later turns resume natively.
+ * hooks and pre-turn compaction first. Native continuations inherit the source request's confirmation.
  */
 export function restartSourceInputUnrecorded(
-  source: Pick<OrchestrationV2Run, "activeAttemptId">,
+  source: OrchestrationV2Run,
   providerTurns: ReadonlyArray<
     Pick<OrchestrationV2ProviderTurn, "runAttemptId" | "inputRecordedAt">
   >,
+  runs: ReadonlyArray<OrchestrationV2Run>,
 ): boolean {
-  return (
-    source.activeAttemptId == null ||
-    !providerTurns.some(
-      (turn) => turn.runAttemptId === source.activeAttemptId && turn.inputRecordedAt !== undefined,
+  const visited = new Set<string>();
+  let current: OrchestrationV2Run | undefined = source;
+  while (current !== undefined && !visited.has(current.id)) {
+    visited.add(current.id);
+    const attemptId = current.activeAttemptId;
+    if (
+      attemptId !== null &&
+      providerTurns.some(
+        (turn) => turn.runAttemptId === attemptId && turn.inputRecordedAt !== undefined,
+      )
     )
-  );
+      return false;
+    const previousId: OrchestrationV2Run["restartContinuationOfRunId"] =
+      current.restartContinuationOfRunId;
+    current = runs.find(
+      (run) => run.id === previousId && run.providerThreadId === source.providerThreadId,
+    );
+  }
+  return true;
 }
 
 export function isRestartResendContinuation(
@@ -307,7 +321,7 @@ export function isRestartResendContinuation(
     run.restartContinuationOfRunId === undefined
       ? undefined
       : runs.find((candidate) => candidate.id === run.restartContinuationOfRunId);
-  return source !== undefined && restartSourceInputUnrecorded(source, providerTurns);
+  return source !== undefined && restartSourceInputUnrecorded(source, providerTurns, runs);
 }
 
 /** Derive delivery from later completed turns on the same provider thread, excluding compactions, resumes, and rolled-back runs. */

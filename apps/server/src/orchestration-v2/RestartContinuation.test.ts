@@ -1137,7 +1137,9 @@ it.effect("resumes natively once Codex recorded the request, and for other provi
     // A goal's first native turn recorded the request; its cut follow-up turn records none.
     const goalFollowUp = {
       ...cut,
-      messages: [{ ...cutRequest, text: "/goal find the cheapest return flights" }],
+      messages: [
+        { ...cutRequest, text: "/goal find the cheapest return flights", attachments: [] },
+      ],
       providerTurns: [
         { ...cut.providerTurns[0]!, ordinal: 1, status: "completed", inputRecordedAt },
         { ...cut.providerTurns[0]!, id: "turn:goal-follow-up", ordinal: 2 },
