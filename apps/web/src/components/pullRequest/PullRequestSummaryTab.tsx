@@ -42,6 +42,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
+import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   PullRequestActorLabel,
@@ -70,6 +71,7 @@ import {
   canEditPullRequestComment,
   canResolvePullRequestThread,
 } from "@t3tools/client-runtime/pull-request-editing";
+import { pullRequestAttachments } from "./pullRequestMarkdown.logic";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
@@ -721,6 +723,8 @@ export function PullRequestSummaryTab({
     );
   };
 
+  const attachments = pullRequestAttachments(detail.body);
+
   return (
     <div ref={scrollerRef} className="h-full overflow-y-auto" data-pull-request-summary-scroll>
       {readiness ? <section className="px-4 pt-3 pb-4">{readiness}</section> : null}
@@ -781,6 +785,38 @@ export function PullRequestSummaryTab({
           </div>
         ) : null}
       </Section>
+
+      {attachments.length > 0 ? (
+        <Section key={`attachments:${detail.url}`} title="Attachments" count={attachments.length}>
+          <ScrollArea
+            chainVerticalScroll
+            className="-mx-4 h-auto w-auto"
+            radius="none"
+            viewportTabIndex={0}
+          >
+            <div className="flex w-max min-w-full gap-3 px-4 pb-2" data-image-gallery>
+              {attachments.map((attachment) => (
+                <figure key={attachment.url} className="w-44 shrink-0">
+                  <div className="h-28 overflow-hidden rounded-xl border border-border/60 [&_img]:h-28 [&_img]:w-44 [&_img]:object-cover [&_video]:h-28 [&_video]:object-cover">
+                    <PullRequestMarkdown
+                      gallery={false}
+                      text={
+                        attachment.media === "image" ? `![](<${attachment.url}>)` : attachment.url
+                      }
+                      cwd={detail.workspaceRoot}
+                      environmentId={environmentId}
+                      threadRef={threadRef}
+                    />
+                  </div>
+                  <figcaption className="mt-2 truncate text-meta text-muted-foreground">
+                    {attachment.caption}
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+          </ScrollArea>
+        </Section>
+      ) : null}
 
       <Section
         key={`conversation:${detail.url}`}
