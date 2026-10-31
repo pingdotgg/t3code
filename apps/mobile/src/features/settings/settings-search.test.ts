@@ -23,6 +23,7 @@ const SECTIONS = [
     rows: [
       { id: "SettingsProviderAccounts", label: "Provider accounts" },
       { id: "SettingsEnvironmentSourceControl", label: "Source control" },
+      { id: "SettingsEnvironmentMaintenance", label: "Maintenance" },
     ],
   },
 ];
@@ -48,9 +49,10 @@ describe("filterSettingsSections", () => {
     { query: "KEYBOARD", expected: [["Interface", ["Keyboard"]]] },
     { query: "dark mode", expected: [["Interface", ["Appearance"]]] },
     { query: "agent credits", expected: [["Server settings", ["Source control"]]] },
+    { query: "product analytics", expected: [["Server settings", ["Maintenance"]]] },
     {
       query: "server settings",
-      expected: [["Server settings", ["Provider accounts", "Source control"]]],
+      expected: [["Server settings", ["Provider accounts", "Source control", "Maintenance"]]],
     },
     {
       query: "accounts",

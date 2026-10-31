@@ -1,6 +1,6 @@
 // T3 ingest retains events and forwards to PostHog; UUIDs deduplicate retries there.
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import type { ClientOs } from "@t3tools/contracts";
+import type { ClientOs, ServerSettings as ServerSettingsSnapshot } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -8,6 +8,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
@@ -20,6 +21,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { getTelemetryIdentity, type TelemetryOwner } from "./Identify.ts";
 
 interface BufferedAnalyticsEvent {
@@ -118,7 +120,13 @@ export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const { distinctId, installId } = yield* getTelemetryIdentity;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const observedOptOutGeneration = yield* Ref.make(-1);
+  const identityServices = yield* Effect.context<Effect.Services<typeof getTelemetryIdentity>>();
+  const identity = yield* getTelemetryIdentity.pipe(
+    Effect.provideContext(identityServices),
+    Effect.cached,
+  );
   const crypto = yield* Crypto.Crypto;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
   const deliveryRef = yield* Ref.make<DeliveryState>({
@@ -136,6 +144,42 @@ export const make = Effect.gen(function* () {
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
+  const discardBufferedEvents = Effect.gen(function* () {
+    yield* Ref.set(bufferRef, []);
+    yield* Ref.set(deliveryRef, {
+      failedBatch: [],
+      batchAttempts: 0,
+      firstFailedAt: 0,
+      failures: 0,
+      retryAt: 0,
+    });
+    yield* Ref.set(recordedOwnersRef, { server: new Set<string>(), client: new Set<string>() });
+  });
+
+  const refreshConsent = Effect.fn("AnalyticsService.refreshConsent")(function* (
+    snapshot: ServerSettingsSnapshot,
+  ) {
+    const generation = yield* settings.telemetryOptOutGeneration;
+    const enabled = telemetryConfig.enabled && snapshot.telemetryEnabled;
+    if (!enabled || generation !== (yield* Ref.get(observedOptOutGeneration))) {
+      yield* discardBufferedEvents;
+      yield* Ref.set(observedOptOutGeneration, generation);
+    }
+    return enabled;
+  });
+
+  const isEnabled = settings
+    .withSettingsSnapshot(refreshConsent)
+    .pipe(Effect.orElseSucceed(() => false));
+
+  const withConsent = (operation: Effect.Effect<void>) =>
+    settings
+      .withSettingsSnapshot((snapshot) =>
+        refreshConsent(snapshot).pipe(
+          Effect.flatMap((enabled) => (enabled ? operation : Effect.void)),
+        ),
+      )
+      .pipe(Effect.ignore);
 
   const enqueueBufferedEvent = (
     uuid: string,
@@ -171,7 +215,9 @@ export const make = Effect.gen(function* () {
 
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
+    delivery: DeliveryState,
   ) {
+    const { distinctId, installId } = yield* identity;
     if (!telemetryConfig.enabled || !distinctId) return;
 
     const payload = {
@@ -200,11 +246,26 @@ export const make = Effect.gen(function* () {
       })),
     };
 
-    yield* HttpClientRequest.post(`${telemetryConfig.posthogHost}/batch/`).pipe(
+    const request = yield* HttpClientRequest.post(`${telemetryConfig.posthogHost}/batch/`).pipe(
       HttpClientRequest.bodyJson(payload),
-      Effect.flatMap(httpClient.execute),
+    );
+    const response = yield* settings
+      .withSettingsSnapshot((snapshot) =>
+        Effect.gen(function* () {
+          if (!(yield* refreshConsent(snapshot))) return;
+          if ((yield* Ref.get(deliveryRef)) !== delivery) return;
+          // Start fetch before releasing consent; wait for its response outside the settings lock.
+          return yield* httpClient
+            .execute(request)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+        }),
+      )
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (!response) return;
+    yield* Fiber.join(response).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.timeout(SEND_TIMEOUT),
+      Effect.ensuring(Fiber.interrupt(response)),
     );
   });
 
@@ -215,6 +276,7 @@ export const make = Effect.gen(function* () {
 
   // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
+    if (!(yield* isEnabled)) return;
     while (true) {
       const delivery = yield* Ref.get(deliveryRef);
       const batch = delivery.failedBatch.length > 0 ? delivery.failedBatch : yield* takeBatch;
@@ -222,7 +284,10 @@ export const make = Effect.gen(function* () {
         return;
       }
 
-      const sent = yield* Effect.result(sendBatch(batch));
+      const sent = yield* Effect.result(sendBatch(batch, delivery));
+      if (!(yield* isEnabled)) return;
+      // Opt-out replaces delivery state; an in-flight request must not restore its batch.
+      if ((yield* Ref.get(deliveryRef)) !== delivery) return;
       if (Result.isSuccess(sent)) {
         yield* Ref.set(deliveryRef, {
           failedBatch: [],
@@ -245,13 +310,17 @@ export const make = Effect.gen(function* () {
         error.reason._tag === "StatusCodeError" &&
         REJECTED_BATCH_STATUSES.has(error.reason.response.status);
       if (!rejected && now - firstFailedAt < MAX_BATCH_RETRY_MS) {
-        yield* Ref.set(deliveryRef, {
-          failedBatch: batch,
-          batchAttempts,
-          firstFailedAt,
-          failures,
-          retryAt,
-        });
+        yield* Ref.update(deliveryRef, (current) =>
+          current !== delivery
+            ? current
+            : {
+                failedBatch: batch,
+                batchAttempts,
+                firstFailedAt,
+                failures,
+                retryAt,
+              },
+        );
         yield* Effect.logDebug("Failed to send telemetry batch; will retry", {
           attempt: batchAttempts,
           cause: error,
@@ -283,7 +352,8 @@ export const make = Effect.gen(function* () {
   });
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
-    function* (event, properties) {
+    function* (event: string, properties?: Readonly<Record<string, unknown>>) {
+      const { distinctId } = yield* identity;
       if (!telemetryConfig.enabled || !distinctId) return;
 
       // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
@@ -298,12 +368,14 @@ export const make = Effect.gen(function* () {
         });
       }
     },
+    withConsent,
   );
 
   const recordOwners: AnalyticsService["Service"]["recordOwners"] = Effect.fn(
     "AnalyticsService.recordOwners",
-  )((owners, observedBy) =>
-    Effect.forEach(
+  )(function* (owners, observedBy) {
+    if (!(yield* isEnabled)) return;
+    yield* Effect.forEach(
       owners,
       ({ source, ownerId }) =>
         Ref.modify(recordedOwnersRef, (recorded) => {
@@ -320,8 +392,8 @@ export const make = Effect.gen(function* () {
           ),
         ),
       { discard: true },
-    ),
-  );
+    );
+  });
 
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.andThen(flushWhenDue)), {
     disableYield: true,

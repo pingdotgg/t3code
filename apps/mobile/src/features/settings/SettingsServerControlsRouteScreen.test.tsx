@@ -90,25 +90,43 @@ vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
 vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
 vi.mock("../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
-vi.mock("./components/SettingsSwitchRow", () => ({
-  SettingsSwitchRow: ({
+vi.mock("../../components/ui/ListRowLayout", () => ({
+  ListRowLayout: ({
     label,
+    description,
+    accessory,
+  }: {
+    label: string;
+    description?: string;
+    accessory?: ReactNode;
+  }) => (
+    <div>
+      {label}
+      {description}
+      {accessory}
+    </div>
+  ),
+}));
+vi.mock("../../components/ui/ThemedSwitch", () => ({
+  ThemedSwitch: ({
+    accessibilityLabel,
     value,
     disabled,
     onValueChange,
   }: {
-    label: string;
-    value: boolean | null;
+    accessibilityLabel: string;
+    value: boolean;
     disabled?: boolean;
     onValueChange: (value: boolean) => void;
   }) => (
     <button
       role="switch"
-      aria-checked={value ?? "mixed"}
+      aria-label={accessibilityLabel}
+      aria-checked={value}
       disabled={disabled}
       onClick={() => onValueChange(!value)}
     >
-      {label}
+      {accessibilityLabel}
     </button>
   ),
 }));
@@ -138,6 +156,7 @@ vi.mock("./settings-environment-filter", () => ({
 import {
   SettingsThreadsRouteScreen,
   SettingsWorktreesRouteScreen,
+  SettingsEnvironmentMaintenanceRouteScreen,
 } from "./SettingsServerControlsRouteScreen";
 
 function environment(environmentId: string, label: string) {
@@ -152,7 +171,11 @@ function environment(environmentId: string, label: string) {
         sidebarAutoSettleOnMerge: false,
       },
       environment: {
-        capabilities: { projectSettingsOverrides: true, threadAutoSettlement: true },
+        capabilities: {
+          projectSettingsOverrides: true,
+          threadAutoSettlement: true,
+          productAnalyticsConsent: true,
+        },
       },
     },
   };
@@ -178,6 +201,24 @@ afterEach(() => {
 });
 
 describe("SettingsServerControlsRouteScreen", () => {
+  it("opts out every selected environment directly when analytics values are mixed", async () => {
+    const remote = environment("remote", "Remote");
+    remote.serverConfig.settings.telemetryEnabled = false;
+    mocks.targets = [environment("local", "Local"), remote];
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+
+    const optOut = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Set Share product analytics off for selected environments"]',
+    );
+    expect(optOut).not.toBeNull();
+    await act(async () => optOut!.click());
+
+    expect(mocks.updateSettings.mock.calls.map(([request]) => request)).toEqual([
+      { environmentId: "local", input: { patch: { telemetryEnabled: false } } },
+      { environmentId: "remote", input: { patch: { telemetryEnabled: false } } },
+    ]);
+  });
+
   it("sends a draft saved during a pending write once that write settles", async () => {
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();
     mocks.updateSettings.mockReturnValueOnce(pending.promise);

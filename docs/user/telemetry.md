@@ -1,6 +1,16 @@
 # Product usage data
 
-The T3 Code server sends product usage events to T3 Code's own endpoint at `ingest.t3.codes`,
+Product analytics is on by default. Turn it off in onboarding or **Settings > About > Privacy**.
+On mobile, use **Settings > Maintenance > Privacy**. The choice is saved on each environment
+and applies to everyone connected to it. Turning it off stops collection without restarting and
+discards queued events, including failed deliveries. Turning it back on collects new events only.
+
+Startup events can be recorded and sent before the onboarding choice appears. To prevent
+collection from the first start, set `T3CODE_TELEMETRY_ENABLED=false` before launching, as
+described below. Changing the saved preference requires permission to change environment
+settings; ask the environment administrator if the control is unavailable.
+
+When enabled, the T3 Code server sends product usage events to T3 Code's own endpoint at `ingest.t3.codes`,
 associated with a hashed account or installation identifier. To count how many installations one person
 uses, the server also sends hashed account identifiers: your T3 Connect account, your OpenAI and
 Claude accounts when you are signed in, and a random identifier for each device that connects. The endpoint keeps a copy of each
@@ -8,13 +18,21 @@ event and forwards events to PostHog. Events include the provider, model, reason
 permission mode, turn result, duration, release channel, and main-agent token totals when
 available.
 
+These identifiers are pseudonymous, not anonymous: events can be linked to the same account
+or installation. Account IDs use unsalted SHA-256, so someone who knows an account ID can
+calculate its hash and match it to events. The server reads identifiers from Codex and Claude
+Code login files (`~/.codex/auth.json` and `~/.claude.json`); login tokens are not sent as analytics.
+
 Events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
 raw provider events, or child-agent output. Child-agent token use is excluded from the totals.
 
-T3 Code also sends relay connection traces to Axiom to diagnose T3 Connect connectivity.
+The product analytics switch does not control relay diagnostics, mobile crash reports, or
+OpenTelemetry exports you configure yourself. T3 Code also sends relay connection traces to
+Axiom to diagnose T3 Connect connectivity, including connection setup before signing in.
 
 To disable product events and relay tracing, set `T3CODE_TELEMETRY_ENABLED=false` in the server's
-environment before starting it. Relay tracing also stops when `T3CODE_OTEL_SDK_DISABLED` or
+environment before starting it. This overrides the saved product analytics preference.
+Relay tracing also stops when `T3CODE_OTEL_SDK_DISABLED` or
 `OTEL_SDK_DISABLED` turns OpenTelemetry export off. The web app in a browser, including one the
 `t3` CLI opens, does not read these variables.
 
