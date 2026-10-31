@@ -2,19 +2,12 @@
 
 import type { QuitConfirmationMode, QuitShortcutHintEvent } from "@t3tools/contracts";
 
-// The quit accelerator is intercepted in before-input-event, which runs
-// before the native menu accelerator. Quitting from the application menu is
-// untouched and always quits immediately.
 export const QUIT_HOLD_DURATION_MS = 1200;
 export const QUIT_DOUBLE_PRESS_MS = 500;
-// "Still held" is proven by auto-repeat keydowns, not by the absence of a
-// release: macOS suppresses a letter keyUp while the command key is down, so a
-// tap release can go completely unseen and a release-based timer would quit
-// anyway. Once held, quitting waits for Q keyUp or a quiet grace period after
-// repeats stop so they cannot reach the next app. Keyboards with
-// auto-repeat disabled must use a double press or the application menu Quit action.
-// Supporting holds without repeats requires a native physical key-state check.
-export const QUIT_HOLD_RELEASE_GRACE_MS = 600;
+// Auto-repeat keydowns prove the hold: macOS drops a letter keyUp while Command is down,
+// so a release-based timer would quit anyway. Once held, quitting waits for Q keyUp or a
+// quiet grace period so trailing repeats cannot reach the next app.
+const QUIT_HOLD_RELEASE_GRACE_MS = 600;
 // A slow repeat rate can exceed the fixed grace. Waiting for two observed
 // cadences keeps the timer behind the next repeat without slowing normal rates.
 const QUIT_HOLD_REPEAT_CADENCE_MULTIPLIER = 2;
@@ -45,16 +38,13 @@ export function makeQuitShortcutHandler(
   let holding = false;
   let mode: QuitConfirmationMode | undefined;
   let notified = false;
-  // Set once getMode resolves to hold; auto-repeats may only complete the hold when armed.
   let armed = false;
   let quitOnRelease = false;
   let heldSince = 0;
   let lastPressAt = 0;
   let lastRepeatAt = 0;
   let repeatCadenceMs = 0;
-  // Incremented when a press is superseded or explicitly cancelled. A plain
-  // key release does not invalidate its pending mode read: a direct-mode
-  // press must still quit after that read settles.
+  // A key release must not invalidate a pending direct-mode read; only superseding/cancelled presses do.
   let generation = 0;
 
   const clearWatchdog = () => {
@@ -83,7 +73,6 @@ export function makeQuitShortcutHandler(
     }
   };
 
-  // Dismisses any overlay first so a cancelled quit cannot leave a stale hint.
   const quitNow = () => {
     release();
     lastPressAt = 0;
@@ -125,20 +114,14 @@ export function makeQuitShortcutHandler(
     }
     if (quitOnRelease) {
       event.preventDefault();
-      // A Q keydown proves the key is still down whether or not the modifier
-      // is still held, so it only pushes the quiet period back.
       if (key === "q") quitAfterQuietPeriod();
       return;
     }
 
     if (!modifierDown || input.alt || input.shift || key !== "q") {
-      // Re-pressing the platform modifier is the first half of a second full
-      // quit shortcut, so it must not cancel an active double-press window.
       if (key === modifierKey && !input.alt && !input.shift) return;
 
-      // Other keys cancel the hold and the first tap, even after release.
-      // Keep this separate from release(), which also runs when a fresh Q
-      // keydown follows a keyUp that macOS did not deliver.
+      // release() also runs on fresh keydown after a missing macOS keyUp.
       if (!input.isAutoRepeat) {
         lastPressAt = 0;
         release();
@@ -161,13 +144,9 @@ export function makeQuitShortcutHandler(
     const now = Date.now();
     const previousPressAt = lastPressAt;
     lastPressAt = now;
-    // A fresh keydown supersedes the current physical hold or the hint kept
-    // alive after a detected release.
     if (holding || notified) release();
 
     generation += 1;
-    // Every mode accepts two presses. Quit before reading settings so a slow
-    // read cannot delay the second press. Repeats never reach this branch.
     if (previousPressAt !== 0 && now - previousPressAt <= QUIT_DOUBLE_PRESS_MS) {
       quitNow();
       return;
@@ -196,7 +175,6 @@ export function makeQuitShortcutHandler(
           return;
         }
 
-        // A hold cannot be armed after its physical press has ended.
         if (!holding) return;
 
         mode = resolvedMode;
@@ -204,14 +182,11 @@ export function makeQuitShortcutHandler(
         options.notify({ state: "down", mode: resolvedMode });
 
         armed = true;
-        // No auto-repeat by then means the key was released (possibly with a
-        // suppressed keyUp) or repeat is disabled; either way, don't quit.
         watchdog = setTimeout(() => {
           watchdog = undefined;
           release();
         }, QUIT_HOLD_DURATION_MS + QUIT_HOLD_RELEASE_GRACE_MS);
       },
-      // A failed settings read must never strand the quit request.
       () => {
         if (generation !== pressGeneration) return;
         quitNow();

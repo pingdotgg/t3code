@@ -28,13 +28,13 @@ function reviewLine(position: PullRequestReviewPosition) {
     return position.oldLine;
   return position.newLine;
 }
-/** Attach remarks by path and side, keeping outdated or missing anchors off the code. */
 export function annotatePullRequestDiff(
   data: NativeReviewDiffData,
   threads: readonly PullRequestReviewThread[],
   drafts: readonly PendingReviewComment[],
   headSha: string | undefined,
 ): NativeReviewDiffData {
+  if (threads.length === 0 && drafts.length === 0) return data;
   const anchors = new Map<string, NativeReviewDiffRow[]>();
   const firstByPath = new Map<string, NativeReviewDiffRow>();
   const lines = new Map<string, NativeReviewDiffRow>();

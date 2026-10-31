@@ -20,19 +20,39 @@ export type OtlpProtocol = typeof OtlpProtocol.Type;
 export const layerOtlpSerialization = (protocol: OtlpProtocol) =>
   protocol === "http/protobuf" ? OtlpSerialization.layerProtobuf : OtlpSerialization.layerJson;
 
-/**
- * How one signal is exported, once whichever source named that signal's
- * endpoint has been resolved. Held per signal rather than per process, so a
- * wire format or a credential cannot be paired by hand with an endpoint that
- * came from somewhere else.
- */
 export interface SignalExport {
   readonly protocol: OtlpProtocol;
   readonly headers: Readonly<Record<string, string>> | undefined;
   readonly exportIntervalMs: number;
 }
 
-/** What T3 Code exports with when nothing configured a signal. */
+/**
+ * `process.runtime.*` resource attributes for a Node process, matching the
+ * OpenTelemetry Node process detector. Electron embeds Node, so an Electron
+ * process reports Node and names Electron in the description.
+ */
+export const nodeProcessRuntimeAttributes = (): Record<string, string> => ({
+  "process.runtime.name": "nodejs",
+  "process.runtime.version": process.versions.node,
+  "process.runtime.description": process.versions.electron
+    ? `Electron ${process.versions.electron}`
+    : "Node.js",
+});
+let generatedServiceInstanceId: string | undefined;
+
+/**
+ * `service.instance.id` shared by every resource this process exports. Effect lets code
+ * attributes beat `OTEL_RESOURCE_ATTRIBUTES`, so callers pass the operator's in to keep it winning.
+ */
+export const processServiceInstanceId = (
+  operatorAttributes: Readonly<Record<string, string>> = {},
+): string => {
+  if (operatorAttributes["service.instance.id"]) return operatorAttributes["service.instance.id"];
+  // @effect-diagnostics-next-line cryptoRandomUUID:off -- Resources are built synchronously, outside any Effect.
+  generatedServiceInstanceId ??= crypto.randomUUID();
+  return generatedServiceInstanceId;
+};
+
 export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
   protocol: "http/json",
   headers: undefined,
@@ -185,15 +205,28 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function markSeen(value: object, seen: WeakSet<object>): boolean {
-  if (seen.has(value)) {
-    return true;
-  }
-  seen.add(value);
-  return false;
+// Repeated references expand once per path, so a small shared graph can grow exponentially.
+const TRACE_ATTRIBUTE_MAX_NODES = 10_000;
+
+interface NormalizeState {
+  // Only the current ancestors, so a value repeated under two keys is not a cycle.
+  readonly seen: WeakSet<object>;
+  remainingNodes: number;
 }
 
-function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+function enterNode(value: object, state: NormalizeState): string | undefined {
+  if (state.seen.has(value)) {
+    return "[Circular]";
+  }
+  if (state.remainingNodes <= 0) {
+    return "[Truncated]";
+  }
+  state.remainingNodes--;
+  state.seen.add(value);
+  return undefined;
+}
+
+function normalizeJsonValue(value: unknown, state: NormalizeState): unknown {
   if (
     value === null ||
     value === undefined ||
@@ -217,46 +250,59 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
     };
   }
   if (Array.isArray(value)) {
-    if (markSeen(value, seen)) {
-      return "[Circular]";
+    const marker = enterNode(value, state);
+    if (marker) {
+      return marker;
     }
-    return value.map((entry) => normalizeJsonValue(entry, seen));
+    const normalized = value.map((entry) => normalizeJsonValue(entry, state));
+    state.seen.delete(value);
+    return normalized;
   }
   if (value instanceof Map) {
-    if (markSeen(value, seen)) {
-      return "[Circular]";
+    const marker = enterNode(value, state);
+    if (marker) {
+      return marker;
     }
-    return Object.fromEntries(
+    const normalized = Object.fromEntries(
       Array.from(value.entries(), ([key, entryValue]) => [
         String(key),
-        normalizeJsonValue(entryValue, seen),
+        normalizeJsonValue(entryValue, state),
       ]),
     );
+    state.seen.delete(value);
+    return normalized;
   }
   if (value instanceof Set) {
-    if (markSeen(value, seen)) {
-      return "[Circular]";
+    const marker = enterNode(value, state);
+    if (marker) {
+      return marker;
     }
-    return Array.from(value.values(), (entry) => normalizeJsonValue(entry, seen));
+    const normalized = Array.from(value.values(), (entry) => normalizeJsonValue(entry, state));
+    state.seen.delete(value);
+    return normalized;
   }
   if (!isPlainObject(value)) {
     return String(value);
   }
-  if (markSeen(value, seen)) {
-    return "[Circular]";
+  const marker = enterNode(value, state);
+  if (marker) {
+    return marker;
   }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entryValue]) => [key, normalizeJsonValue(entryValue, seen)]),
+  const normalized = Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => [key, normalizeJsonValue(entryValue, state)]),
   );
+  state.seen.delete(value);
+  return normalized;
 }
 
 export function compactTraceAttributes(
   attributes: Readonly<Record<string, unknown>>,
 ): TraceAttributes {
+  const state: NormalizeState = { seen: new WeakSet(), remainingNodes: TRACE_ATTRIBUTE_MAX_NODES };
   const entries: Array<[string, unknown]> = [];
   for (const [key, value] of Object.entries(attributes)) {
     if (value !== undefined) {
-      entries.push([key, normalizeJsonValue(value)]);
+      entries.push([key, normalizeJsonValue(value, state)]);
     }
   }
   return Object.fromEntries(entries);
@@ -283,9 +329,6 @@ const TRACE_ATTRIBUTE_TRUNCATED_LENGTH = 200;
 const TRACE_ATTRIBUTE_TRUNCATION_SUFFIX = "…[truncated]";
 const ALWAYS_TRUNCATED_TRACE_ATTRIBUTES: ReadonlySet<string> = new Set(["db.query.text"]);
 
-// Clamps strings nested inside already-normalized attribute values (arrays and
-// plain objects from normalizeJsonValue, e.g. an Error's `stack`). Returns the
-// input reference when nothing was clamped.
 function truncateNestedValue(value: unknown): unknown {
   if (typeof value === "string") {
     return value.length <= TRACE_ATTRIBUTE_MAX_LENGTH
@@ -309,12 +352,7 @@ function truncateNestedValue(value: unknown): unknown {
   return value;
 }
 
-/**
- * Clamps oversized attribute values on the serialized trace record so the file
- * sink stays small, including strings nested inside arrays and objects (e.g.
- * error stacks). Returns a new record when anything was clamped; never
- * mutates the input (the live span's attributes are shared with other tracers).
- */
+/** Clones only when clamping; never mutates attributes shared with other tracers. */
 export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
   let truncated: Record<string, unknown> | undefined;
   for (const [key, value] of Object.entries(attributes)) {
@@ -365,6 +403,12 @@ function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
   };
 }
 
+// WebSocket tickets and their DPoP proofs ride in URL queries and stay valid after the request.
+const URL_CREDENTIAL_PARAMS = /(^|[?&"\s])(wsTicket|dpop)=[^&#"\\\s]*/g;
+
+const redactUrlCredentials = (text: string) =>
+  text.replace(URL_CREDENTIAL_PARAMS, "$1$2=<redacted>");
+
 export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: TraceSinkOptions) {
   const sink = yield* makeAsyncRotatingFileSink({
     filePath: options.filePath,
@@ -374,15 +418,9 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
 
   let buffer: Array<{ readonly text: string; readonly bytes: number }> = [];
   let bufferBytes = 0;
-  // While a write is slow, push keeps up to one trace file of records (at least
-  // 4 MiB), so the spans that time a stall still reach the file. Only a disk
-  // that stays stuck drops records, instead of growing memory or blocking push.
   const maxBufferBytes = Math.max(options.maxBytes, 4 * 1024 * 1024);
   const flushRequests = yield* Queue.sliding<void>(1);
   const flushSemaphore = yield* Semaphore.make(1);
-  // A failure episode starts at the first dropped record and ends when a flush
-  // sees that the latest write succeeded. Flush checks once per window, so a
-  // disk that flaps inside one window stays one episode.
   let writeFailing = false;
   let droppedCount = 0;
   let failureReported = false;
@@ -403,7 +441,6 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     let persistedCount = 0;
 
     while (persistedCount < records.length) {
-      // push drops any record larger than a file, so the first one always fits.
       const firstRecordBytes = records[persistedCount]!.bytes;
       let nextIndex = persistedCount + 1;
       let chunkBytes = firstRecordBytes;
@@ -421,9 +458,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       const startedAt = performance.now();
       const written = yield* sink.write(chunk).pipe(Effect.result);
       if (Result.isFailure(written)) {
-        // A failing disk (ENOSPC, EACCES, EIO) drops the rest of the batch.
-        // Retrying it would grow the backlog, and every later push would
-        // retry all of it.
+        // Drop the batch after disk failure to avoid an ever-growing retry backlog.
         writeFailing = true;
         droppedCount += records.length - persistedCount;
         return;
@@ -438,8 +473,6 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
   });
 
-  // Logs once when writes start failing and once when they recover, so a disk
-  // that stays broken costs one line, not one per flush.
   const flush = flushSemaphore
     .withPermits(1)(
       Effect.gen(function* () {
@@ -473,18 +506,15 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       }),
     )
     .pipe(
-      // A cancelled write still completes in the OS. Finish it before another
-      // flush rotates the file or the scope's finalizer drains the remaining records.
+      // Cancelled OS writes still finish; await completion before rotation or finalizer drain.
       Effect.uninterruptible,
       Effect.withTracerEnabled(false),
-      // The timed fiber inherits the makeTraceSink span. That span has ended but
-      // lives as long as the sink, so the tracer logger must not add logs to it.
+      // Drop the ended makeTraceSink parent span so timed-fiber logs cannot accumulate on it.
       Effect.updateContext(Context.omit(Tracer.ParentSpan)<never>),
     );
 
   yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
   yield* Effect.forkScoped(
-    // Flush when push fills a batch or the batch window passes.
     Queue.take(flushRequests).pipe(
       Effect.timeoutOption(`${options.batchWindowMs} millis`),
       Effect.andThen(flush),
@@ -496,7 +526,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     filePath: options.filePath,
     push(record) {
       try {
-        const text = `${JSON.stringify(record)}\n`;
+        const text = `${redactUrlCredentials(JSON.stringify(record))}\n`;
         const bytes = Buffer.byteLength(text);
         if (bytes > options.maxBytes) return;
         if (bufferBytes + bytes > maxBufferBytes) {
@@ -516,6 +546,24 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     close: () => flush,
   } satisfies TraceSink;
 });
+
+// Effect's HTTP errors, including failed upgrades, put the request URL in their message.
+export function redactCauseCredentials(cause: Cause.Cause<unknown>): Cause.Cause<unknown> {
+  if (cause.reasons.length === 0 || Cause.hasInterruptsOnly(cause)) {
+    return cause;
+  }
+  const pretty = Cause.pretty(cause);
+  const redacted = redactUrlCredentials(pretty);
+  return redacted === pretty ? cause : Cause.die(new Error(redacted));
+}
+
+function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, unknown> {
+  if (ExitRuntime.isSuccess(exit)) {
+    return exit;
+  }
+  const cause = redactCauseCredentials(exit.cause);
+  return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
+}
 
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
@@ -566,7 +614,7 @@ class LocalFileSpan implements Tracer.Span {
       endTime,
       exit: traceExit,
     };
-    this.delegate.end(endTime, traceExit);
+    this.delegate.end(endTime, redactExitCredentials(traceExit));
 
     if (this.sampled) {
       this.push(spanToTraceRecord(this));
@@ -574,12 +622,20 @@ class LocalFileSpan implements Tracer.Span {
   }
 
   attribute(key: string, value: unknown): void {
-    this.attributes.set(key, value);
-    this.delegate.attribute(key, value);
+    const recorded =
+      (key === "url.full" || key === "url.query") && typeof value === "string"
+        ? redactUrlCredentials(value)
+        : value;
+    this.attributes.set(key, recorded);
+    this.delegate.attribute(key, recorded);
   }
 
   event(name: string, startTime: bigint, attributes?: Record<string, unknown>): void {
-    const nextAttributes = attributes ?? {};
+    const cause = attributes?.["effect.cause"];
+    const nextAttributes =
+      typeof cause === "string"
+        ? { ...attributes, "effect.cause": redactUrlCredentials(cause) }
+        : (attributes ?? {});
     this.events.push([name, startTime, nextAttributes]);
     this.delegate.event(name, startTime, nextAttributes);
   }
@@ -773,13 +829,6 @@ function parseBigInt(input: string): bigint {
   }
 }
 
-/**
- * Parses the `OTEL_EXPORTER_OTLP_HEADERS` wire format used by
- * `T3CODE_OTLP_HEADERS`: W3C Baggage `key=value` pairs joined by commas, with
- * percent-encoded values. Each pair splits at its first `=` so an encoded or
- * literal `=` inside a value survives, and whitespace around the separators is
- * ignored.
- */
 export const OtlpHeadersFromString = Schema.String.pipe(
   Schema.decodeTo(
     Schema.Record(Schema.String, Schema.String),

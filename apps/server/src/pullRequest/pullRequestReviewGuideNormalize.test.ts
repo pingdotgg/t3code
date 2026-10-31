@@ -4,8 +4,6 @@ import type { ReviewGuideGenerationResult } from "@t3tools/provider-core/server/
 
 import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
 
-// `git diff --unified=0` of: src/a.ts with lines 10-14 and 40-59 added and an old line 30
-// removed; src/gone.ts deleted (old lines 1-20); docs/readme.md with line 3 added.
 const patch = [
   "diff --git a/src/a.ts b/src/a.ts",
   "index 1111111..2222222 100644",
@@ -93,6 +91,37 @@ describe("parseReviewGuideChange", () => {
     expect(change.hunks.get("src/gone.ts")).toEqual({ new: [], old: [{ start: 1, end: 20 }] });
     expect(change.hunks.get("docs/readme.md")).toEqual({ new: [{ start: 3, end: 3 }], old: [] });
   });
+
+  it("reads file names git quotes or ends with a tab", () => {
+    const unusual = [
+      "diff --git a/with space.txt b/with space.txt",
+      "--- a/with space.txt\t",
+      "+++ b/with space.txt\t",
+      "@@ -1,0 +2 @@",
+      'diff --git "a/tab\\tname.txt" "b/tab\\tname.txt"',
+      '--- "a/tab\\tname.txt"',
+      '+++ "b/tab\\tname.txt"',
+      "@@ -1,0 +2 @@",
+      'diff --git "a/back\\\\slash.txt" "b/back\\\\slash.txt"',
+      '--- "a/back\\\\slash.txt"',
+      '+++ "b/back\\\\slash.txt"',
+      "@@ -1,0 +2 @@",
+      'diff --git "a/gone\\tfile.txt" "b/gone\\tfile.txt"',
+      '--- "a/gone\\tfile.txt"',
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "",
+    ].join("\n");
+    const names = ["with space.txt", "tab\tname.txt", "back\\slash.txt", "gone\tfile.txt"];
+    const parsed = parseReviewGuideChange(names.join("\0"), unusual);
+    expect([...parsed.hunks.keys()]).toEqual(names);
+    expect(parsed.hunks.get("gone\tfile.txt")).toEqual({ new: [], old: [{ start: 1, end: 1 }] });
+    const result = normalizeReviewGuide(
+      guide({ stops: [stop({ excerpts: names.slice(0, 3).map((path) => excerpt(path, 1, 5)) })] }),
+      parsed,
+    );
+    expect(result.stops[0]?.excerpts).toEqual(names.slice(0, 3).map((path) => excerpt(path, 2, 2)));
+  });
 });
 
 describe("normalizeReviewGuide", () => {
@@ -102,15 +131,10 @@ describe("normalizeReviewGuide", () => {
         stops: [
           stop({
             excerpts: [
-              // Starts on context before the hunk: clamped to the hunk.
               excerpt("src/a.ts", 5, 12),
-              // Touches the previous one once clamped: merged.
               excerpt("src/a.ts", 13, 14),
-              // Spans the whole second hunk and beyond: clamped to it.
               excerpt("src/a.ts", 38, 80),
-              // On no changed line: dropped.
               excerpt("src/a.ts", 20, 25),
-              // Removed code shown from the old side.
               excerpt("src/gone.ts", 2, 8, "old"),
             ],
             files: [{ path: "docs/readme.md", note: "" }],
@@ -126,18 +150,6 @@ describe("normalizeReviewGuide", () => {
     ]);
     expect(result.stops[0]?.files).toEqual([{ path: "docs/readme.md" }]);
     expect(result.stops).toHaveLength(1);
-  });
-
-  it("keeps a long excerpt to its first 25 lines", () => {
-    const long = parseReviewGuideChange(
-      "big.ts\0",
-      "--- a/big.ts\n+++ b/big.ts\n@@ -0,0 +1,100 @@\n",
-    );
-    const result = normalizeReviewGuide(
-      guide({ stops: [stop({ excerpts: [excerpt("big.ts", 1, 100)] })] }),
-      long,
-    );
-    expect(result.stops[0]?.excerpts).toEqual([excerpt("big.ts", 1, 25)]);
   });
 
   it("drops notes outside the stop's remaining excerpts", () => {

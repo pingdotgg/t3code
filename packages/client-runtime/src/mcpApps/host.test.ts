@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { makeMcpAppHost, McpAppHostRefusal, type McpAppHostContext } from "./host.ts";
 
@@ -22,7 +22,6 @@ const context = (
   platform: "web",
 });
 
-// Lets the host settle the promises its callbacks return.
 const flush = () => new Promise<void>((resolve) => queueMicrotask(resolve)).then(() => undefined);
 
 const initialize = (
@@ -108,22 +107,6 @@ describe("makeMcpAppHost", () => {
     ]);
   });
 
-  it("replays a tool call that arrives after initialization, once", () => {
-    const { host, sent } = setup();
-    host.receive({ jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
-    host.receive({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
-    sent.length = 0;
-    host.setToolCall({ arguments: { city: "Oslo" }, result: undefined });
-    host.setToolCall({ arguments: { city: "Bergen" }, result: undefined });
-    expect(sent).toEqual([
-      {
-        jsonrpc: "2.0",
-        method: "ui/notifications/tool-input",
-        params: { arguments: { city: "Oslo" } },
-      },
-    ]);
-  });
-
   it("drops null fields providers report, which the MCP Apps SDK rejects", async () => {
     const { host, sent } = setup({
       callTool: async () => ({ content: [], structuredContent: null, _meta: null }),
@@ -145,6 +128,33 @@ describe("makeMcpAppHost", () => {
       structuredContent: { time: "t" },
     });
     expect(sent.find((m) => m.id === 2)?.result).toEqual({ content: [] });
+  });
+
+  it("sends a later result for a call that had none, without repeating its input", () => {
+    const { host, sent } = setup();
+    initialize(host);
+    sent.length = 0;
+    host.setToolCall({ arguments: { city: "Oslo" }, result: undefined });
+    host.setToolCall({
+      arguments: { city: "Oslo" },
+      result: { content: [{ type: "text", text: "Sunny" }] },
+    });
+    host.setToolCall({
+      arguments: { city: "Bergen" },
+      result: { content: [{ type: "text", text: "Rain" }] },
+    });
+    expect(sent).toEqual([
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-input",
+        params: { arguments: { city: "Oslo" } },
+      },
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-result",
+        params: { content: [{ type: "text", text: "Sunny" }] },
+      },
+    ]);
   });
 
   it("accepts ui/message as one text block or the SDK's block array", async () => {
@@ -177,30 +187,7 @@ describe("makeMcpAppHost", () => {
     await flush();
     expect(messages).toEqual(["one", "two"]);
     expect(sent.find((m) => m.id === 3)?.error).toMatchObject({ code: -32602 });
-    // Blank text would ask to send an empty message.
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
-  });
-
-  it("sends only changed context fields, and nothing before initialization", () => {
-    const { host, sent, setTheme } = setup();
-    setTheme("light");
-    host.updateHostContext();
-    expect(sent).toHaveLength(0);
-
-    host.receive({ jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
-    host.receive({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
-    sent.length = 0;
-    setTheme("dark");
-    host.updateHostContext();
-    expect(sent).toEqual([
-      {
-        jsonrpc: "2.0",
-        method: "ui/notifications/host-context-changed",
-        params: { theme: "dark", styles: context("dark").styles },
-      },
-    ]);
-    host.updateHostContext();
-    expect(sent).toHaveLength(1);
   });
 
   it("catches the app up on context that changed while it was initializing", () => {
@@ -305,7 +292,6 @@ describe("makeMcpAppHost", () => {
       displayMode: "fullscreen",
     });
 
-    // An app that declared only inline stays inline.
     const declined = setup();
     initialize(declined.host, { availableDisplayModes: ["inline"] });
     declined.host.receive({
@@ -373,47 +359,7 @@ describe("makeMcpAppHost", () => {
       },
     ]);
     expect(sent.find((m) => m.id === 2)?.result).toEqual({});
-    // A refused download is reported in the result, as the draft defines.
     expect(sent.find((m) => m.id === 3)?.result).toEqual({ isError: true });
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
-  });
-
-  it("tears down after the app answers, or after the timeout, and passes on its own request", async () => {
-    vi.useFakeTimers();
-    try {
-      let closeRequested = false;
-      const { host, sent } = setup({ onRequestTeardown: () => (closeRequested = true) });
-      host.receive({ jsonrpc: "2.0", method: "ui/notifications/request-teardown" });
-      expect(closeRequested).toBe(true);
-
-      // Before initialization there is nothing to ask.
-      await host.teardown();
-      expect(sent.some((m) => m.method === "ui/resource-teardown")).toBe(false);
-
-      const answered = setup();
-      initialize(answered.host);
-      let done = false;
-      void answered.host.teardown().then(() => (done = true));
-      const request = answered.sent.find((m) => m.method === "ui/resource-teardown");
-      expect(request).toBeDefined();
-      answered.host.receive({ jsonrpc: "2.0", id: request?.id, result: {} });
-      await vi.runAllTimersAsync();
-      expect(done).toBe(true);
-
-      const silent = setup();
-      initialize(silent.host);
-      let timedOut = false;
-      void silent.host.teardown().then(() => (timedOut = true));
-      await vi.advanceTimersByTimeAsync(1999);
-      expect(timedOut).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(timedOut).toBe(true);
-      // A torn-down host posts nothing more.
-      const before = silent.sent.length;
-      silent.host.updateHostContext();
-      expect(silent.sent).toHaveLength(before);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

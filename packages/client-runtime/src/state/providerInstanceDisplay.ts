@@ -1,10 +1,3 @@
-/**
- * How a configured provider instance presents itself in a client: its label,
- * its accent color, and whether its icon carries the account badge. Shared by
- * web and mobile so both clients name and badge the same instance identically.
- *
- * @module providerInstanceDisplay
- */
 import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
@@ -12,11 +5,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
-/**
- * Title-case a slug: splits on `_` / `-` and camelCase boundaries, so
- * `codex_personal` becomes "Codex Personal" and `myCustomInstance` becomes
- * "My Custom Instance".
- */
 function humanizeSlug(slug: string): string {
   return slug
     .replace(/([a-z])([A-Z])/g, "$1 $2")
@@ -25,16 +13,6 @@ function humanizeSlug(slug: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-/**
- * Resolve an instance's label with a tiered priority:
- *
- *   1. A snapshot `displayName` that differs from the driver's brand label —
- *      the server has explicitly named this instance, trust it.
- *   2. For non-default instances, a humanized `instanceId` — the server fell
- *      back to the driver-level label (the same for every instance of that
- *      kind), so the slug is what keeps "Codex" and "Codex Personal" apart.
- *   3. The snapshot's `displayName`, or the brand label from contracts.
- */
 export function resolveProviderInstanceDisplayName(
   snapshot: Pick<ServerProvider, "instanceId" | "driver" | "displayName">,
 ): string {
@@ -48,13 +26,15 @@ export function resolveProviderInstanceDisplayName(
   return trimmedSnapshotName || kindLabel;
 }
 
-/**
- * Turn a display name into up to two initials for the badge: the first two
- * characters of a single word, or the first character of each of the first
- * two words. Iterates by code point so an emoji never splits into surrogates.
- */
 export function providerInstanceInitials(label: string): string {
-  const words = label.replace(/[_-]+/g, " ").split(/\s+/u).filter(Boolean);
+  // Punctuation separates words so "Codex (hub)" reads CH, not C(. An apostrophe
+  // inside a word stays ("Theo's Codex" is TC); a quoting one does not
+  // ("Codex 'hub'" is CH).
+  const words = label
+    .replace(/[^\P{P}'’]+/gu, " ")
+    .split(/\s+/u)
+    .map((word) => word.replace(/^['’]+|['’]+$/gu, ""))
+    .filter(Boolean);
   if (words.length === 0) return "";
   if (words.length === 1) return Array.from(words[0]!).slice(0, 2).join("").toUpperCase();
   return words
@@ -63,34 +43,43 @@ export function providerInstanceInitials(label: string): string {
     .join("");
 }
 
-/** Only `#rrggbb` accent colors render; anything else is treated as unset. */
 export function normalizeProviderAccentColor(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
   return /^#[0-9a-fA-F]{6}$/u.test(trimmed) ? trimmed : undefined;
 }
 
-/**
- * Whether an instance's icon carries the account badge: accent color set, or
- * several instances sharing a provider so the brand glyph alone is ambiguous.
- * ACP agents have distinct glyphs even though they share the registry driver.
- * Shared by the composer trigger, the picker rail, and sidebar/thread rows.
- */
+export function providerAccentForegroundColor(accentColor: string) {
+  const linearChannel = (offset: number) => {
+    const value = Number.parseInt(accentColor.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance =
+    0.2126 * linearChannel(1) + 0.7152 * linearChannel(3) + 0.0722 * linearChannel(5);
+  const blackContrast = (luminance + 0.05) / 0.05;
+  const whiteContrast = 1.05 / (luminance + 0.05);
+  return blackContrast >= whiteContrast ? "#000000" : "#ffffff";
+}
+
 export function shouldShowInstanceBadge(
   entry: {
     readonly driverKind: ProviderDriverKind;
     readonly accentColor?: string | undefined;
     readonly acpRegistryAgentId?: string | undefined;
+    readonly enabled: boolean;
   },
   entries: Iterable<{
     readonly driverKind: ProviderDriverKind;
     readonly acpRegistryAgentId?: string | undefined;
+    readonly enabled: boolean;
   }>,
 ): boolean {
   if (entry.accentColor) return true;
   let sharedProviderCount = 0;
   for (const candidate of entries) {
     if (candidate.driverKind !== entry.driverKind) continue;
+    // Historical threads still need to distinguish accounts that are all disabled.
+    if (entry.enabled && !candidate.enabled) continue;
     if (
       entry.driverKind === "acpRegistry" &&
       candidate.acpRegistryAgentId !== entry.acpRegistryAgentId

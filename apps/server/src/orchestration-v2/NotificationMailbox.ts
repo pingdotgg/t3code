@@ -5,7 +5,6 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 
-/** A wake attaches to output held in provider memory, which Stop or process loss discards. */
 export function isBufferedProviderNotification(
   message: OrchestrationV2ConversationMessage,
 ): boolean {
@@ -17,11 +16,7 @@ export function isBufferedProviderNotification(
   );
 }
 
-/**
- * A persisted steer without an acceptance receipt can be retried as a continuation.
- * Delivery is at least once: provider acceptance and our receipt cannot commit
- * atomically. Reusing the message ID keeps recovery from duplicating timeline items.
- */
+/** Acceptance and receipts cannot commit atomically; reuse message ids for at-least-once delivery. */
 export function isUndeliveredMailboxSteer(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "runs" | "providerTurns">,
   messageId: MessageId,

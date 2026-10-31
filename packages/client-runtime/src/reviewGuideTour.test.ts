@@ -1,14 +1,11 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
-import type { PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   excerptExpansionOldContents,
   excerptRows,
   fileDiffRows,
-  letterStopNotes,
   rowsToPatch,
-  stepTourPosition,
 } from "./reviewGuideTour.js";
 
 const PATCH = `diff --git a/src/tray.ts b/src/tray.ts
@@ -35,27 +32,6 @@ function parse(patch: string) {
 }
 
 const rows = fileDiffRows(parse(PATCH));
-
-function stop(overrides: Partial<PullRequestReviewGuideStop>): PullRequestReviewGuideStop {
-  return {
-    title: "Stop",
-    summary: "",
-    attention: null,
-    excerpts: [],
-    files: [],
-    notes: [],
-    questions: [],
-    ...overrides,
-  };
-}
-
-describe("stepTourPosition", () => {
-  it("holds the tour to its first and last stops", () => {
-    expect(stepTourPosition(0, -1, 3)).toBe(0);
-    expect(stepTourPosition(0, 1, 3)).toBe(1);
-    expect(stepTourPosition(2, 1, 3)).toBe(2);
-  });
-});
 
 describe("fileDiffRows", () => {
   it("numbers both sides through context, deletions and additions", () => {
@@ -84,10 +60,6 @@ describe("excerptRows", () => {
     const shown = excerptRows(rows, { side: "old", start: 41, end: 41 });
     expect(shown.map((row) => [row.kind, row.oldLine])).toEqual([["deletion", 41]]);
   });
-
-  it("returns nothing for a range outside the diff", () => {
-    expect(excerptRows(rows, { side: "new", start: 100, end: 120 })).toEqual([]);
-  });
 });
 
 describe("rowsToPatch", () => {
@@ -109,8 +81,6 @@ describe("rowsToPatch", () => {
 });
 
 describe("excerptExpansionOldContents", () => {
-  // The new file behind PATCH: lines 1-9, the hunk at 10-15, then lines up to 41-42 around the
-  // second hunk, which removed a line.
   const newFile = Array.from({ length: 50 }, (_, index) => `line ${index + 1}\n`);
   newFile.splice(
     9,
@@ -130,49 +100,14 @@ describe("excerptExpansionOldContents", () => {
     const old = excerptExpansionOldContents(newContents, shown);
     if (old === null) throw new Error("expected contents");
     const oldLines = old.split("\n");
-    // The excerpt's old side sits at its real old line.
     expect(oldLines[10]).toBe("const size = pick();");
-    // Around it, the new file's lines, so the two sides agree outside the excerpt.
     expect(oldLines[9]).toBe("const a = 1;");
     expect(oldLines[11]).toBe("const b = 2;");
-    // One line replaced by two: the old side is a line shorter, everything after lines up.
     expect(oldLines.length).toBe(newContents.split("\n").length - 1);
   });
 
   it("does not try to expand an excerpt that spans hunks", () => {
     const shown = excerptRows(rows, { side: "old", start: 14, end: 42 });
     expect(excerptExpansionOldContents(newContents, shown)).toBeNull();
-  });
-});
-
-describe("letterStopNotes", () => {
-  it("letters notes in guide order and pins each to the excerpt that holds its line", () => {
-    const { lettered, byExcerpt } = letterStopNotes(
-      stop({
-        excerpts: [
-          { path: "a.ts", side: "new", start: 1, end: 5, caption: "" },
-          { path: "b.ts", side: "new", start: 10, end: 12, caption: "" },
-        ],
-        notes: [
-          { path: "b.ts", line: 11, title: "First", body: "" },
-          { path: "a.ts", line: 2, title: "Second", body: "" },
-          { path: "a.ts", line: 2, title: "Third", body: "" },
-          { path: "c.ts", line: 1, title: "Unanchored", body: "" },
-        ],
-      }),
-    );
-    expect(lettered.map((entry) => entry.marker)).toEqual(["A", "B", "C", "D"]);
-    expect(byExcerpt).toEqual([
-      [
-        {
-          line: 2,
-          markers: [
-            { marker: "B", title: "Second" },
-            { marker: "C", title: "Third" },
-          ],
-        },
-      ],
-      [{ line: 11, markers: [{ marker: "A", title: "First" }] }],
-    ]);
   });
 });

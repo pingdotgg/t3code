@@ -23,53 +23,27 @@ const isErrnoExceptionWithCode = (
 const closeServer = (server: NodeNet.Server) => {
   try {
     server.close();
-  } catch {
-    // Ignore close failures during cleanup.
-  }
+  } catch {}
 };
 
 export interface NetServiceShape {
-  /**
-   * Returns true when a TCP server can bind to {host, port}.
-   */
   readonly canListenOnHost: (port: number, host: string) => Effect.Effect<boolean>;
 
-  /**
-   * Checks loopback availability on both IPv4 and IPv6 localhost addresses.
-   */
   readonly isPortAvailableOnLoopback: (port: number) => Effect.Effect<boolean>;
 
-  /**
-   * Returns true when something accepts TCP connections on {host, port}.
-   * Unlike the bind-side checks this works for privileged ports (<1024).
-   */
   readonly hasListenerOnHost: (port: number, host: string) => Effect.Effect<boolean>;
 
-  /**
-   * Reserve an ephemeral loopback port and release it immediately.
-   */
   readonly reserveLoopbackPort: (host?: string) => Effect.Effect<number, NetError>;
 
-  /**
-   * Resolve an available listening port, preferring the provided port first.
-   */
   readonly findAvailablePort: (preferred: number) => Effect.Effect<number, NetError>;
 }
 
-/**
- * NetService - Service tag for startup networking helpers.
- */
 export class NetService extends Context.Service<NetService, NetServiceShape>()(
   "@t3tools/shared/Net/NetService",
 ) {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = () => {
-  /**
-   * Returns true when a TCP server can bind to {host, port}.
-   * `EADDRNOTAVAIL` is treated as available so IPv6-absent hosts don't fail
-   * loopback availability checks.
-   */
   const canListenOnHost = (port: number, host: string): Effect.Effect<boolean> =>
     Effect.callback<boolean>((resume) => {
       const server = NodeNet.createServer();
@@ -84,7 +58,11 @@ export const make = () => {
       server.unref();
 
       server.once("error", (cause) => {
-        if (isErrnoExceptionWithCode(cause) && cause.code === "EADDRNOTAVAIL") {
+        // Missing IPv6 addresses or kernel support do not mean the port is occupied.
+        if (
+          isErrnoExceptionWithCode(cause) &&
+          (cause.code === "EADDRNOTAVAIL" || cause.code === "EAFNOSUPPORT")
+        ) {
           settle(true);
           return;
         }
@@ -133,28 +111,25 @@ export const make = () => {
       });
     });
 
-  const isPortAvailableOnLoopback = (port: number): Effect.Effect<boolean> =>
-    Effect.gen(function* () {
-      const hasListener = yield* Effect.zipWith(
-        hasListenerOnHost(port, "127.0.0.1"),
-        hasListenerOnHost(port, "::1"),
-        (ipv4, ipv6) => ipv4 || ipv6,
-      );
-      if (hasListener) {
-        return false;
-      }
+  const isPortAvailableOnLoopback = Effect.fn("Net.isPortAvailableOnLoopback")(function* (
+    port: number,
+  ): Effect.fn.Return<boolean> {
+    const hasListener = yield* Effect.zipWith(
+      hasListenerOnHost(port, "127.0.0.1"),
+      hasListenerOnHost(port, "::1"),
+      (ipv4, ipv6) => ipv4 || ipv6,
+    );
+    if (hasListener) {
+      return false;
+    }
 
-      return yield* Effect.zipWith(
-        canListenOnHost(port, "127.0.0.1"),
-        canListenOnHost(port, "::1"),
-        (ipv4, ipv6) => ipv4 && ipv6,
-      );
-    });
+    return yield* Effect.zipWith(
+      canListenOnHost(port, "127.0.0.1"),
+      canListenOnHost(port, "::1"),
+      (ipv4, ipv6) => ipv4 && ipv6,
+    );
+  });
 
-  /**
-   * Reserve an ephemeral loopback port and release it immediately.
-   * Returns the reserved port number.
-   */
   const reserveLoopbackPort = (host = "127.0.0.1"): Effect.Effect<number, NetError> =>
     Effect.callback<number, NetError>((resume) => {
       const probe = NodeNet.createServer();
@@ -192,13 +167,12 @@ export const make = () => {
     isPortAvailableOnLoopback,
     hasListenerOnHost,
     reserveLoopbackPort,
-    findAvailablePort: (preferred) =>
-      Effect.gen(function* () {
-        if (preferred > 0 && (yield* isPortAvailableOnLoopback(preferred))) {
-          return preferred;
-        }
-        return yield* reserveLoopbackPort();
-      }),
+    findAvailablePort: Effect.fn("Net.findAvailablePort")(function* (preferred) {
+      if (preferred > 0 && (yield* isPortAvailableOnLoopback(preferred))) {
+        return preferred;
+      }
+      return yield* reserveLoopbackPort();
+    }),
   } satisfies NetServiceShape;
 };
 

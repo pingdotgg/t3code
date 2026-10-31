@@ -1,17 +1,4 @@
-/**
- * Shares a running dev server on the local tailnet via `tailscale serve`, so it
- * can be opened from a phone, another laptop, or by whoever is reviewing the
- * work.
- *
- * Thin wrapper over `@t3tools/tailscale` (the same client the server's own
- * `--tailscale-serve` uses). What it adds is dev-share semantics: replacing a
- * stale mapping left by a killed run, and refusing to serve over routes it
- * could not remove.
- *
- * Because browser dev is single-origin (Vite proxies the backend — see
- * `resolveDevProxyTarget` in apps/web/vite.config.ts), one proxy rule covering
- * the web port is enough; the backend needs no mapping of its own.
- */
+/** Vite proxies the backend, so only the web port needs a share mapping. */
 
 import {
   buildTailscaleHttpsBaseUrl,
@@ -25,11 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { ChildProcessSpawner } from "effect/process";
 
-/**
- * Human-readable gloss for each diagnostic. Deliberately our own words rather
- * than the CLI's: tailscale prints auth keys and node names into stderr, and
- * this string is logged.
- */
+/** Log fixed diagnostics; tailscale stderr can contain auth keys and node names. */
 const DIAGNOSTIC_EXPLANATIONS: Record<TailscaleStderrDiagnostic, string | undefined> = {
   "no-existing-handler": "no mapping existed for that port",
   "not-logged-in": "this machine is not logged into a tailnet — run `tailscale up`",
@@ -37,24 +20,11 @@ const DIAGNOSTIC_EXPLANATIONS: Record<TailscaleStderrDiagnostic, string | undefi
   unknown: undefined,
 };
 
-/**
- * Our own wording for why a tailscale command failed, derived from the
- * classified diagnostic. Never the CLI's text — see `stderrDiagnosticOf`.
- */
 const explainCommandFailure = (error: TailscaleCommandError): string | undefined =>
   error._tag === "TailscaleCommandExitError" && error.stderrDiagnostic !== undefined
     ? (DIAGNOSTIC_EXPLANATIONS[error.stderrDiagnostic] ?? "run the command by hand to see why")
     : undefined;
 
-/**
- * Three distinct failures, three classes: each has its own caller-visible
- * message and its own remedy, and `shareDevServer` chooses between them
- * structurally. A single error with a `reason` discriminator would encode that
- * distinction twice and put a lookup table in the `message` getter.
- *
- * Each wraps a real underlying failure and so keeps it as `cause`; the message
- * is derived only from the structural fields, never from `cause.message`.
- */
 export class TailscaleUnavailableError extends Schema.TaggedError<TailscaleUnavailableError>()(
   "TailscaleUnavailableError",
   { cause: Schema.Defect() },
@@ -68,7 +38,6 @@ export class TailscaleUnavailableError extends Schema.TaggedError<TailscaleUnava
   }
 }
 
-/** No underlying failure: the status read succeeded and simply had no name. */
 export class TailnetNameMissingError extends Schema.TaggedError<TailnetNameMissingError>()(
   "TailnetNameMissingError",
   {},
@@ -82,11 +51,6 @@ export class TailnetNameMissingError extends Schema.TaggedError<TailnetNameMissi
   }
 }
 
-/**
- * `stage` is a genuine multi-value discriminator: both stages share the same
- * semantics (a `tailscale serve` invocation failed for this port) and differ
- * only in which one, which the message states plainly.
- */
 export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>()(
   "DevServeFailedError",
   {
@@ -115,21 +79,13 @@ export type DevShareError =
   | TailnetNameMissingError
   | DevServeFailedError;
 
-/**
- * Removes any mapping for `webPort`, reporting whether the port is now clear.
- *
- * Runs uninterruptibly: this is called from a finalizer on the way out of an
- * interrupted program, and cancelling the cleanup subprocess would leave
- * exactly the stale mapping it exists to remove.
- */
+/** Finalizer cleanup must be uninterruptible or cancellation can leave stale mappings. */
 export const unshareDevServer = (
   webPort: number,
 ): Effect.Effect<
   {
     readonly cleared: boolean;
     readonly explanation?: string | undefined;
-    // Kept structured so a caller wrapping this can preserve the real error
-    // chain rather than a flattened string.
     readonly cause?: TailscaleCommandError | undefined;
   },
   never,
@@ -139,7 +95,6 @@ export const unshareDevServer = (
     Effect.as({ cleared: true } as const),
     Effect.catch((error: TailscaleCommandError) =>
       Effect.succeed(
-        // "Nothing was mapped" leaves the port clear either way.
         error._tag === "TailscaleCommandExitError" &&
           error.stderrDiagnostic === "no-existing-handler"
           ? ({ cleared: true } as const)
@@ -161,11 +116,13 @@ export interface DevShareResult {
 }
 
 /**
- * Publishes `webPort` on the tailnet at the same port number and returns the
- * resulting HTTPS URL. Idempotent: re-running replaces any existing mapping.
+ * Publishes `webPort` on the tailnet. The tailnet port always matches the web
+ * port so the URL is stable; `localTarget` points it at the backend instead
+ * when the backend serves a built client (`--built`).
  */
 export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (input: {
   readonly webPort: number;
+  readonly localTarget?: { readonly port: number; readonly host: string };
 }) {
   const status = yield* readTailscaleStatus.pipe(
     Effect.mapError((error) => new TailscaleUnavailableError({ cause: error })),
@@ -174,16 +131,9 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
     return yield* new TailnetNameMissingError();
   }
 
-  // Clear any mapping left behind by a run that was killed before its finalizer
-  // could fire. Serve config survives both the process and a reboot, and a
-  // stale entry may carry path routes we no longer want — older versions mapped
-  // /ws, /api and friends to a separate backend port, and serving "/" alone
-  // would leave those pointing at a port nothing is listening on.
   const cleared = yield* unshareDevServer(input.webPort);
   if (!cleared.cleared) {
-    // Serving over routes we failed to remove would hand out a URL that is
-    // broken in a way the user cannot see: the page loads while /ws and /api
-    // silently resolve to a dead backend. Better to refuse and say why.
+    // Refuse stale routes: the page could load while /ws and /api still point at a dead backend.
     return yield* new DevServeFailedError({
       stage: "clear-existing",
       webPort: input.webPort,
@@ -192,16 +142,11 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
     });
   }
 
-  // Proxy to the hostname Vite binds rather than the package default of
-  // 127.0.0.1. Vite listens on `localhost`, which Node 17+ resolves to `::1`
-  // first, so it only binds the IPv6 loopback and a 127.0.0.1 target has
-  // nothing behind it (tailscale answers 502). Passing `localhost` lets the
-  // tailscale proxy resolve it the same way Node did. Not a literal `[::1]`:
-  // tailscale rejects that form.
+  // Vite's localhost can bind only ::1; a 127.0.0.1 proxy target would return 502.
   yield* ensureTailscaleServe({
-    localPort: input.webPort,
+    localPort: input.localTarget?.port ?? input.webPort,
     servePort: input.webPort,
-    localHost: "localhost",
+    localHost: input.localTarget?.host ?? "localhost",
   }).pipe(
     Effect.mapError((error) => {
       const explanation = explainCommandFailure(error);

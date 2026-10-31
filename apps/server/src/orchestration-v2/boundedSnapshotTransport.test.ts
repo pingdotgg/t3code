@@ -2,15 +2,20 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   AuthOrchestrationReadScope,
   AuthSessionId,
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION,
   OrchestrationV2ThreadBoundedSnapshot,
+  OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadStreamItem,
   ProjectId,
   ProviderDriverKind,
@@ -19,6 +24,8 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2StoredEvent,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -34,6 +41,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { Etag, HttpRouter } from "effect/http";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
@@ -46,6 +54,9 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 const decodeBounded = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
 );
+const decodeHistoryPage = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage)),
+);
 const decodeStreamItem = Schema.decodeUnknownSync(
   Schema.toCodecJson(OrchestrationV2ThreadStreamItem),
 );
@@ -57,8 +68,10 @@ const projectId = ProjectId.make("project:compact-transport");
 const PARENT = ThreadId.make("thread:compact-transport:parent");
 const FORK = ThreadId.make("thread:compact-transport:fork");
 const LONG = ThreadId.make("thread:compact-transport:long");
+const BODIES = ThreadId.make("thread:compact-transport:bodies");
 const parentRun = RunId.make("run:compact-transport:parent");
 const longRun = RunId.make("run:compact-transport:long");
+const bodiesRun = RunId.make("run:compact-transport:bodies");
 
 const store = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
@@ -72,7 +85,12 @@ const management = Layer.unwrap(
       getThreadSnapshot: (id) => projections.getThreadSnapshot(id).pipe(Effect.orDie),
       getThreadSnapshotWindow: (id, options) =>
         projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),
-      streamStoredEventsFrom: () => Stream.empty,
+      getThreadHistoryPage: (id, cursor, throughEntryId, conversationOnly) =>
+        projections
+          .getThreadHistoryPage(id, cursor, throughEntryId, conversationOnly)
+          .pipe(Effect.orDie),
+      streamStoredEventsFrom: (input) =>
+        input?.threadId === BODIES ? Stream.fromIterable(bodiesLiveTail()) : Stream.empty,
     });
   }),
 );
@@ -201,6 +219,157 @@ function itemUpdated(
   };
 }
 
+// A conversation turn whose records (message, checkpoint, subagent) repeat in its turn items.
+function bodiesEvents(at: DateTime.Utc): OrchestrationV2DomainEvent[] {
+  const event = (key: string, rest: Pick<OrchestrationV2DomainEvent, "type" | "payload">) =>
+    ({
+      id: EventId.make(`event:${BODIES}:${key}`),
+      threadId: BODIES,
+      runId: bodiesRun,
+      occurredAt: at,
+      ...rest,
+    }) as OrchestrationV2DomainEvent;
+  const item = (key: string, ordinal: number, fields: object) =>
+    event(`${key}-item`, {
+      type: "turn-item.updated",
+      payload: {
+        id: TurnItemId.make(`turn-item:${BODIES}:${key}`),
+        threadId: BODIES,
+        runId: bodiesRun,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed",
+        title: null,
+        startedAt: at,
+        completedAt: at,
+        updatedAt: at,
+        ...fields,
+      } as OrchestrationV2TurnItem,
+    });
+  const message = (key: string, role: "user" | "assistant", text: string) =>
+    event(`${key}-message`, {
+      type: "message.updated",
+      payload: {
+        id: MessageId.make(`message:${key === "prompt" ? bodiesRun : `${BODIES}:${key}`}`),
+        threadId: BODIES,
+        runId: bodiesRun,
+        nodeId: null,
+        role,
+        text,
+        attachments: [],
+        streaming: false,
+        createdBy: role === "user" ? "user" : "agent",
+        creationSource: role === "user" ? "web" : "provider",
+        createdAt: at,
+        updatedAt: at,
+      },
+    });
+  const files = [{ path: "src/index.ts", kind: "modified", additions: 4, deletions: 2 }];
+  return [
+    threadCreated(BODIES, at),
+    runCreated(BODIES, bodiesRun, at),
+    message("prompt", "user", "Please fix the build."),
+    item("prompt", 1, {
+      type: "user_message",
+      messageId: MessageId.make(`message:${bodiesRun}`),
+      inputIntent: "turn_start",
+      text: "Please fix the build.",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+    }),
+    event("task-record", { type: "subagent.updated", payload: bodiesSubagent(at) }),
+    item("task", 2, {
+      type: "subagent",
+      subagentId: bodiesSubagent(at).id,
+      origin: "app_owned",
+      driver: "codex",
+      providerInstanceId: provider,
+      childThreadId: null,
+      prompt: bodiesSubagent(at).prompt,
+      result: bodiesSubagent(at).result,
+    }),
+    message("reply", "assistant", "Fixed the import."),
+    item("reply", 3, {
+      type: "assistant_message",
+      messageId: MessageId.make(`message:${BODIES}:reply`),
+      text: "Fixed the import.",
+      streaming: false,
+    }),
+    event("checkpoint-record", {
+      type: "checkpoint.captured",
+      payload: {
+        id: CheckpointId.make(`checkpoint:${BODIES}`),
+        threadId: BODIES,
+        scopeId: CheckpointScopeId.make(`scope:${BODIES}`),
+        runId: bodiesRun,
+        nodeId: NodeId.make(`node:${bodiesRun}`),
+        parentCheckpointId: null,
+        ordinalWithinScope: 1,
+        appRunOrdinal: 1,
+        ref: CheckpointRef.make(`refs/t3/${BODIES}`),
+        status: "ready",
+        files,
+        capturedAt: at,
+      },
+    }),
+    item("checkpoint", 4, {
+      type: "checkpoint",
+      checkpointId: CheckpointId.make(`checkpoint:${BODIES}`),
+      scopeId: CheckpointScopeId.make(`scope:${BODIES}`),
+      files,
+    }),
+  ];
+}
+
+function bodiesSubagent(at: DateTime.Utc): OrchestrationV2Subagent {
+  return {
+    id: NodeId.make(`node:${BODIES}:task`),
+    threadId: BODIES,
+    runId: bodiesRun,
+    parentNodeId: NodeId.make(`node:${bodiesRun}`),
+    origin: "app_owned",
+    createdBy: "agent",
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: provider,
+    providerThreadId: null,
+    childThreadId: null,
+    nativeTaskRef: null,
+    prompt: "Find the failing import.",
+    title: null,
+    model: null,
+    status: "completed",
+    result: "It was src/index.ts.",
+    startedAt: at,
+    completedAt: at,
+    updatedAt: at,
+  };
+}
+
+// Live after the snapshot: a reply pair, then a subagent update that repeats its prompt.
+function bodiesLiveTail(): OrchestrationV2StoredEvent[] {
+  const at = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
+  const [reply, replyItem] = bodiesEvents(at).filter((event) =>
+    String(event.id).includes(":reply-"),
+  );
+  return [
+    reply!,
+    replyItem!,
+    {
+      id: EventId.make(`event:${BODIES}:task-progress`),
+      type: "subagent.updated",
+      threadId: BODIES,
+      runId: bodiesRun,
+      occurredAt: at,
+      payload: { ...bodiesSubagent(at), progress: "Checked the build." },
+    } as OrchestrationV2DomainEvent,
+  ].map((event, index) => ({ sequence: 1_000 + index, commandId: null, event }));
+}
+
 const seed = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const at = yield* DateTime.now;
@@ -212,20 +381,21 @@ const seed = Effect.gen(function* () {
     ...[1, 2, 3, 4].map((n) => itemUpdated(FORK, null, `fork-${n}`, n, at)),
     threadCreated(LONG, at),
     runCreated(LONG, longRun, at),
-    // The request sits far outside the recent window; its result is inside it.
     itemUpdated(LONG, longRun, "request", 1, at, "run_interrupt_request"),
     ...Array.from({ length: 90 }, (_, index) =>
       itemUpdated(LONG, longRun, `tool-${index}`, index + 2, at),
     ),
     itemUpdated(LONG, longRun, "result", 92, at, "run_interrupt_result"),
+    ...bodiesEvents(at),
   ];
   for (const event of events) yield* projections.apply(event);
 });
 
-// Bounded subscriptions without afterSequence never read the event store, and
-// thread routes never touch projects.
 const TestLayer = Layer.mergeAll(
   management,
+  Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+    getEnvironmentId: Effect.succeed(EnvironmentId.make("compact-transport")),
+  }),
   Layer.effectDiscard(seed),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
   Layer.mock(ProjectStore.ProjectStoreV2)({}),
@@ -266,7 +436,6 @@ const firstSnapshot = (input: Parameters<typeof subscribeOrchestrationV2Thread>[
     Effect.flatMap((stream) => Stream.runHead(stream)),
     Effect.map((head) => {
       if (head._tag !== "Some" || head.value.kind !== "snapshot") throw new Error("No snapshot");
-      // Through the wire codec, as a client receives it.
       const decoded = decodeStreamItem(JSON.parse(JSON.stringify(encodeStreamItem(head.value))));
       if (decoded.kind !== "snapshot") throw new Error("No snapshot");
       return { raw: head.value, decoded };
@@ -291,7 +460,6 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
         assert.strictEqual(compactResponse.status, 200);
         const compactBody = await compactResponse.text();
 
-        // Requests without the exact opt-in get the unchanged representation.
         assert.notInclude(legacyBody, "turnItemsOmitLocalVisible");
         assert.strictEqual(ignoredBody, legacyBody);
         assert.isBelow(compactBody.length, legacyBody.length);
@@ -322,7 +490,6 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
             } else {
               const ids = itemIds(legacy.projection);
               assert.isTrue(legacy.hasMoreHistory);
-              // Window rows first, then the retained request outside the window.
               assert.strictEqual(ids.at(-1), `turn-item:${LONG}:request`);
               assert.isFalse(
                 legacy.projection.visibleTurnItems.some((row) => row.sourceItemId === ids.at(-1)),
@@ -333,6 +500,46 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
       ),
     );
 
+    it.effect("HTTP: the ID table is opt-in and decodes to the same snapshot", () =>
+      withHttp(async (get) => {
+        const base = `/api/orchestration/threads/${encodeURIComponent(threadId)}/bounded?compactTurnItems=1`;
+        const plainBody = await (await get(base)).text();
+        const tableBody = await (await get(`${base}&compactIds=1`)).text();
+        const wire = JSON.parse(tableBody);
+
+        assert.notProperty(JSON.parse(plainBody), "ids");
+        assert.isArray(wire.ids);
+        assert.isNumber(wire.projection.visibleTurnItems[0].item.id);
+        assert.isNumber(wire.projection.thread.id);
+        assert.isBelow(tableBody.length, plainBody.length);
+        const decoded = decodeBounded(tableBody);
+        assert.deepStrictEqual(decoded, decodeBounded(plainBody));
+
+        // Only the long thread has older history to page.
+        if (threadId !== LONG) return;
+        assert.isNotNull(decoded.historyCursor);
+        const history = `/api/orchestration/threads/${encodeURIComponent(threadId)}/history?cursor=${encodeURIComponent(decoded.historyCursor ?? "")}`;
+        const plainPage = await (await get(history)).text();
+        const tablePage = await (await get(`${history}&compactIds=1`)).text();
+        assert.isArray(JSON.parse(tablePage).ids);
+        const page = decodeHistoryPage(tablePage);
+        assert.isAbove(page.items.length, 0);
+        assert.deepStrictEqual(page, decodeHistoryPage(plainPage));
+      }),
+    );
+
+    it.effect("WS: the ID table is opt-in and decodes to the same snapshot", () =>
+      Effect.gen(function* () {
+        const input = { threadId, acceptBoundedSnapshot: true, acceptCompactTurnItems: true };
+        const plain = yield* firstSnapshot(input);
+        const table = yield* firstSnapshot({ ...input, acceptCompactIds: true });
+
+        assert.notProperty(encodeStreamItem(plain.raw), "ids");
+        assert.property(encodeStreamItem(table.raw), "ids");
+        assert.deepStrictEqual(table.decoded, plain.decoded);
+      }),
+    );
+
     it.effect("WS: bounded snapshots stay unchanged unless the client opts in", () =>
       Effect.gen(function* () {
         const legacy = yield* firstSnapshot({ threadId, acceptBoundedSnapshot: true });
@@ -341,7 +548,6 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
           acceptBoundedSnapshot: true,
           acceptCompactTurnItems: true,
         });
-        // Full snapshots ignore the compact opt-in entirely.
         const full = yield* firstSnapshot({ threadId, acceptCompactTurnItems: true });
 
         assert.isUndefined(legacy.decoded.turnItemsOmitLocalVisible);
@@ -365,6 +571,81 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
           { ...legacy.decoded, turnItemsOmitLocalVisible: undefined },
         );
       }),
+    );
+  });
+
+  describe("deduped bodies", () => {
+    const markers = ["textOmitted", "filesOmitted", "promptOmitted", "resultOmitted"];
+
+    it.effect(
+      "HTTP: opted-in snapshots blank repeated bodies and restore to the same snapshot",
+      () =>
+        withHttp(async (get) => {
+          const base = `/api/orchestration/threads/${encodeURIComponent(BODIES)}/bounded`;
+          const compactBody = await (await get(`${base}?compactTurnItems=1`)).text();
+          const dedupedBody = await (await get(`${base}?compactTurnItems=1&dedupeBodies=1`)).text();
+
+          for (const marker of markers) {
+            assert.notInclude(compactBody, marker);
+            assert.include(dedupedBody, marker);
+          }
+          assert.isBelow(dedupedBody.length, compactBody.length);
+          assert.deepStrictEqual(
+            boundedSnapshotProjection(decodeBounded(dedupedBody)),
+            boundedSnapshotProjection(decodeBounded(compactBody)),
+          );
+          // The client sends both opt-ins: bodies restore after the ID table resolves.
+          const tabledBody = await (
+            await get(`${base}?compactTurnItems=1&dedupeBodies=1&compactIds=1`)
+          ).text();
+          assert.property(JSON.parse(tabledBody), "ids");
+          assert.deepStrictEqual(
+            boundedSnapshotProjection(decodeBounded(tabledBody)),
+            boundedSnapshotProjection(decodeBounded(compactBody)),
+          );
+        }),
+    );
+
+    it.effect(
+      "WS: bounded and full snapshots restore, and the live tail sends each body once",
+      () =>
+        Effect.gen(function* () {
+          const subscribe = (
+            input: Partial<Parameters<typeof subscribeOrchestrationV2Thread>[0]>,
+          ) =>
+            subscribeOrchestrationV2Thread({ threadId: BODIES, ...input }).pipe(
+              Effect.flatMap(Stream.runCollect),
+              Effect.map((items) =>
+                Array.from(items, (item) =>
+                  decodeStreamItem(JSON.parse(JSON.stringify(encodeStreamItem(item)))),
+                ),
+              ),
+            );
+          const bounded = { acceptBoundedSnapshot: true, acceptCompactTurnItems: true };
+          for (const mode of [bounded, {}]) {
+            const [plainSnapshot, ...plainTail] = yield* subscribe(mode);
+            const [dedupedSnapshot, ...dedupedTail] = yield* subscribe({
+              ...mode,
+              acceptDedupedBodies: true,
+            });
+            if (plainSnapshot?.kind !== "snapshot" || dedupedSnapshot?.kind !== "snapshot") {
+              throw new Error("No snapshot");
+            }
+            assert.deepStrictEqual(
+              boundedSnapshotProjection(dedupedSnapshot),
+              boundedSnapshotProjection(plainSnapshot),
+            );
+            const payloads = (tail: typeof plainTail) =>
+              tail.map((item) => (item.kind === "event" ? item.event.payload : null));
+            const [reply, replyItem, progress] = payloads(plainTail);
+            assert.deepStrictEqual(payloads(dedupedTail), [
+              reply,
+              { ...replyItem, text: "", textOmitted: true },
+              // The snapshot delivered this subagent's record, so its unchanged bodies repeat.
+              { ...progress, prompt: "", promptOmitted: true, result: null, resultOmitted: true },
+            ]);
+          }
+        }),
     );
   });
 });

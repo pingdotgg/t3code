@@ -1,17 +1,21 @@
+import { useAtomValue } from "@effect/atom-react";
 import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { Image } from "expo-image";
-import { createContext, useContext, useEffect, useEffectEvent, useId, useState } from "react";
+import { createContext, useContext, useId, useState } from "react";
 import { fetch } from "expo/fetch";
 import { parse, SvgAst, type JsxAST } from "react-native-svg";
-import { ActivityIndicator, Pressable, StyleSheet, View, type ViewStyle } from "react-native";
+import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useFilePreviewGallery } from "../../components/FilePreviewGallery";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
-import { PresentationSource } from "../../components/NativePresentation";
+import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useAssetUrlState } from "../../state/assets";
@@ -22,24 +26,67 @@ import {
   resolveSvgImageSize,
 } from "./markdownImageSize";
 
-/**
- * Width the feed lays markdown out in. The feed already knows this from its
- * viewport, so an image can size its frame on the first render instead of
- * waiting for its own onLayout, which would change the row's height once
- * more after the list has positioned the rows below it. It is an upper
- * bound: a list item or blockquote indents its column, and the measured
- * width takes over once it is known.
- */
+/** Use known feed width immediately; later image measurement would move already-positioned rows. */
 export const MarkdownImageAvailableWidthContext = createContext(0);
+
+type ImageSize = { readonly width: number; readonly height: number };
+
+class SvgLoadError extends Data.TaggedError("SvgLoadError")<{ readonly cause: unknown }> {}
+
+async function readSvgXml(uri: string, signal: AbortSignal): Promise<string> {
+  if (uri.startsWith("data:image/svg+xml")) {
+    const comma = uri.indexOf(",");
+    if (comma < 0) throw new Error("SVG data URI has no content");
+    const content = decodeURIComponent(uri.slice(comma + 1));
+    return uri.slice(0, comma).includes(";base64")
+      ? new TextDecoder().decode(
+          Uint8Array.from(atob(content), (character) => character.charCodeAt(0)),
+        )
+      : content;
+  }
+  // expo/fetch, not the runtime HttpClient: it is the one that reads file:// URIs.
+  const response = await fetch(uri, { signal });
+  if (!response.ok && !(response.status === 0 && uri.startsWith("file://")))
+    throw new Error(`SVG request failed: ${response.status}`);
+  return response.text();
+}
+
+type SvgDocument = { readonly ast: JsxAST; readonly size: ImageSize | null };
+
+// Feed rows unmount as they scroll away. Only parsed documents outlive their
+// readers (for the row that scrolls back); a failed load is dropped with its last
+// reader so the next mount fetches again.
+const parsedSvgDocumentAtom = Atom.family((_uri: string) =>
+  Atom.make<SvgDocument | null>(null).pipe(
+    Atom.setIdleTTL(60_000),
+    Atom.withLabel("mobile:thread-markdown-svg-parsed"),
+  ),
+);
+
+const svgDocumentAtom = Atom.family((uri: string) =>
+  Atom.make((get) => {
+    const parsed = parsedSvgDocumentAtom(uri);
+    const cached = get(parsed);
+    if (cached !== null) return Effect.succeed(cached);
+    return Effect.tryPromise({
+      try: async (signal): Promise<SvgDocument> => {
+        const ast = parse(await readSvgXml(uri, signal));
+        if (!ast) throw new Error("SVG has no root element");
+        return { ast, size: resolveSvgImageSize(ast.props) };
+      },
+      catch: (cause) => new SvgLoadError({ cause }),
+    }).pipe(Effect.tap((document) => Effect.sync(() => get.set(parsed, document))));
+  }).pipe(Atom.withLabel("mobile:thread-markdown-svg")),
+);
+
+const noSvgDocumentAtom = Atom.make(AsyncResult.initial<SvgDocument, SvgLoadError>());
 
 export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
   readonly unavailable: boolean;
-  /** Why the image is unavailable, when the cause is known. */
   readonly unavailableDetail?: string | undefined;
   readonly alt: string | null;
-  /** Pixel size from the server, when it could read the header; the frame is final from the first render. */
   readonly knownSize?: { readonly width: number; readonly height: number } | undefined;
   readonly format?: "svg";
   readonly actionsSource?: MediaActionsSource;
@@ -54,19 +101,18 @@ export function ThreadMarkdownImageView(props: {
     measuredWidth > 0 && contextWidth > 0
       ? Math.min(contextWidth, measuredWidth)
       : contextWidth || measuredWidth;
-  const [decodedSize, setDecodedSize] = useState<{ width: number; height: number } | null>(null);
-  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const svg = useAtomValue(
+    props.format === "svg" && props.uri !== null ? svgDocumentAtom(props.uri) : noSvgDocumentAtom,
+  );
+  const svgDocument = AsyncResult.isSuccess(svg) ? svg.value : null;
+  // Keyed by source so a new source drops the previous image's decoded dimensions.
+  const [decoded, setDecoded] = useState<{ sourceKey: string; size: ImageSize } | null>(null);
+  const decodedSize =
+    svgDocument?.size ?? (decoded?.sourceKey === props.sourceKey ? decoded.size : null);
+  // A failure belongs to one URI; any URI change, including through null, retries.
+  const [failure, setFailure] = useState({ uri: props.uri, failed: false });
+  if (failure.uri !== props.uri) setFailure({ uri: props.uri, failed: false });
 
-  useEffect(() => {
-    setDecodedSize(null);
-  }, [props.sourceKey]);
-
-  useEffect(() => {
-    setFailedUri(null);
-  }, [props.uri]);
-
-  // The decoded size is what the platform actually drew, so it wins over the
-  // server's header hint once it exists.
   const sourceSize = decodedSize ?? props.knownSize ?? null;
   const displaySize: MarkdownImageDisplaySize | null =
     sourceSize === null || availableWidth <= 0
@@ -76,7 +122,10 @@ export function ThreadMarkdownImageView(props: {
           sourceHeight: sourceSize.height,
           availableWidth,
         });
-  const failed = props.unavailable || (props.uri !== null && failedUri === props.uri);
+  const failed =
+    props.unavailable ||
+    (props.uri !== null && failure.uri === props.uri && failure.failed) ||
+    AsyncResult.isFailure(svg);
   const placeholderWidth: ViewStyle["width"] =
     availableWidth > 0 ? Math.min(availableWidth, MARKDOWN_IMAGE_MAX_WIDTH) : "100%";
   const frameStyle: ViewStyle = displaySize ?? { width: placeholderWidth, aspectRatio: 16 / 9 };
@@ -134,13 +183,16 @@ export function ThreadMarkdownImageView(props: {
                 className="items-center justify-center overflow-hidden rounded-[10px] bg-md-code-bg"
                 style={frameStyle}
               >
-                <ThreadMarkdownImageRequest
-                  key={props.uri}
-                  uri={props.uri}
-                  format={props.format}
-                  onLoad={setDecodedSize}
-                  onError={() => setFailedUri(props.uri)}
-                />
+                {props.format === "svg" ? (
+                  <ThreadMarkdownSvg ast={svgDocument?.ast ?? null} />
+                ) : (
+                  <ThreadMarkdownImageRequest
+                    key={props.sourceKey}
+                    uri={props.uri}
+                    onLoad={(size) => setDecoded({ sourceKey: props.sourceKey, size })}
+                    onError={() => setFailure({ uri: props.uri, failed: true })}
+                  />
+                )}
               </View>
             </Pressable>
           </MediaActionsMenu>
@@ -157,92 +209,49 @@ export function ThreadMarkdownImageView(props: {
 
 function ThreadMarkdownImageRequest(props: {
   readonly uri: string;
-  readonly onLoad: (sourceSize: { width: number; height: number }) => void;
+  readonly onLoad: (sourceSize: ImageSize) => void;
   readonly onError: () => void;
-  readonly format?: "svg";
 }) {
   const [loaded, setLoaded] = useState(false);
 
   return (
     <>
-      {props.format === "svg" ? (
-        <ThreadMarkdownSvg
-          uri={props.uri}
-          onLoad={(size) => {
-            setLoaded(true);
-            if (size) props.onLoad(size);
-          }}
-          onError={props.onError}
-        />
-      ) : (
-        <Image
-          source={{ uri: props.uri }}
-          contentFit="contain"
-          cachePolicy="memory-disk"
-          accessible={false}
-          onLoad={(event) => {
-            setLoaded(true);
-            props.onLoad(event.source);
-          }}
-          onError={props.onError}
-          style={{ width: "100%", height: "100%", opacity: loaded ? 1 : 0 }}
-        />
-      )}
-      {loaded ? null : (
-        <View
-          pointerEvents="none"
-          style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}
-        >
-          <Text className="text-xs text-foreground-muted">Loading image…</Text>
-        </View>
-      )}
+      <Image
+        source={{ uri: props.uri }}
+        contentFit="contain"
+        cachePolicy="memory-disk"
+        accessible={false}
+        onLoad={(event) => {
+          setLoaded(true);
+          props.onLoad(event.source);
+        }}
+        onError={props.onError}
+        style={{ width: "100%", height: "100%", opacity: loaded ? 1 : 0 }}
+      />
+      {loaded ? null : <ThreadMarkdownImageLoading />}
     </>
   );
 }
 
-function ThreadMarkdownSvg(props: {
-  readonly uri: string;
-  readonly onLoad: (size: { width: number; height: number } | null) => void;
-  readonly onError: () => void;
-}) {
-  const [ast, setAst] = useState<JsxAST | null>(null);
-  const onLoad = useEffectEvent(props.onLoad);
-  const onError = useEffectEvent(props.onError);
-  useEffect(() => {
-    const controller = new AbortController();
-    const load = async () => {
-      if (props.uri.startsWith("data:image/svg+xml")) {
-        const comma = props.uri.indexOf(",");
-        if (comma < 0) throw new Error("SVG data URI has no content");
-        const content = decodeURIComponent(props.uri.slice(comma + 1));
-        return props.uri.slice(0, comma).includes(";base64")
-          ? new TextDecoder().decode(
-              Uint8Array.from(atob(content), (character) => character.charCodeAt(0)),
-            )
-          : content;
-      }
-      const response = await fetch(props.uri, { signal: controller.signal });
-      if (!response.ok && !(response.status === 0 && props.uri.startsWith("file://")))
-        throw new Error(`SVG request failed: ${response.status}`);
-      return response.text();
-    };
-    void load()
-      .then((xml) => {
-        const parsed = parse(xml);
-        if (!parsed) throw new Error("SVG has no root element");
-        if (controller.signal.aborted) return;
-        setAst(parsed);
-        onLoad(resolveSvgImageSize(parsed.props));
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) onError();
-      });
-    return () => controller.abort();
-  }, [props.uri]);
-  return <SvgAst ast={ast} override={{ width: "100%", height: "100%", accessible: false }} />;
+function ThreadMarkdownImageLoading() {
+  return (
+    <View
+      pointerEvents="none"
+      style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}
+    >
+      <Text className="text-xs text-foreground-muted">Loading image…</Text>
+    </View>
+  );
 }
 
-/** Environment-hosted image that loads through a signed asset URL. */
+function ThreadMarkdownSvg(props: { readonly ast: JsxAST | null }) {
+  return props.ast === null ? (
+    <ThreadMarkdownImageLoading />
+  ) : (
+    <SvgAst ast={props.ast} override={{ width: "100%", height: "100%", accessible: false }} />
+  );
+}
+
 export function ThreadMarkdownImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<

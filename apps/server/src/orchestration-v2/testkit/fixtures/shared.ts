@@ -64,7 +64,6 @@ export const SUBAGENT_CONTINUE_PROMPT =
 export const SUBAGENT_CONTINUE_PARENT_PROMPT =
   "Have the same subagent you spawned earlier reply exactly: continued subagent response";
 export const SUBAGENT_CONTINUE_CHILD_PROMPT = "Reply exactly: continued subagent response";
-/** Prompts the OpenCode 2 spike recorded against 2.0.18 (`opencode2_*` fixtures). */
 export const OPENCODE2_SIMPLE_PROMPT =
   "Think carefully step by step about whether 391 is prime, showing your reasoning, then answer in one short sentence.";
 export const OPENCODE2_TOOL_CALL_PROMPT =
@@ -102,6 +101,9 @@ export const TURN_INTERRUPT_PROMPT =
   "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
 export const TURN_INTERRUPT_MID_TOOL_PROMPT =
   "Run this exact local command: `node -e \"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\"`. Do not answer until it completes, then respond exactly: interrupt fixture should not finish naturally.";
+const COMMAND_OUTPUT_STREAMING_COMMAND =
+  "for i in 1 2 3 4; do printf '\\033[32mstream line %s\\033[0m\\n' $i; sleep 1; done; printf 'progress 50%%\\rprogress 100%%\\n'";
+export const COMMAND_OUTPUT_STREAMING_PROMPT = `Run this exact shell command in the foreground and wait for it to finish: \`${COMMAND_OUTPUT_STREAMING_COMMAND}\`. Then respond exactly: command output fixture complete`;
 export const TURN_INTERRUPT_RECOVERY_PROMPT =
   "Respond with exactly: interrupt recovery fixture complete";
 export const MESSAGE_STEERING_STEER_PROMPT =
@@ -114,40 +116,9 @@ export const THREAD_ROLLBACK_AFTER_PROMPT = "Repeat the conversation verbatim.";
 export const THREAD_FORK_NATIVE_SOURCE_PROMPT =
   "Respond with the following text: source fork seed ok";
 export const THREAD_FORK_NATIVE_TARGET_PROMPT = "Respond with the following text: fork native ok";
-export const THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER = "source-marker-7Q9V";
-export const THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER = "fork-marker-2K4M";
-export const THREAD_FORK_NATIVE_CONTINUE_RECALL = `${THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER}|${THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER}`;
-export const THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER} for later in this conversation. Respond with exactly: source marker stored`;
-export const THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT = `Remember the second opaque marker ${THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER} for later in this conversation. Respond with exactly: fork marker stored`;
-export const THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT =
-  "Return the two opaque markers previously provided in chronological order, separated by a single | character. Respond with only the markers and separator.";
-const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER = "sibling-source-8R3D";
-const THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER = "sibling-first-5L2P";
-const THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER = "sibling-second-9N6C";
-export const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER} for later in this conversation. Respond with exactly: sibling source stored`;
-export const THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
-export const THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
-export const THREAD_MERGE_BACK_SOURCE_MARKER = "merge-source-4H8Q";
-export const THREAD_MERGE_BACK_FORK_MARKER = "merge-fork-7T2W";
-export const THREAD_MERGE_BACK_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_MERGE_BACK_SOURCE_MARKER} for later in this conversation. Respond with exactly: merge source stored`;
-export const THREAD_MERGE_BACK_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_FORK_MARKER}. Respond with exactly: merge fork stored`;
-export const THREAD_MERGE_BACK_HANDOFF_PROMPT = [
-  "Context handoff (merge_back / fork_delta_summary):",
-  "Merge-back context from forked conversation.",
-  "",
-  "Fork delta:",
-  `- User introduced opaque marker ${THREAD_MERGE_BACK_FORK_MARKER}.`,
-  "- Assistant confirmed: merge fork stored",
-  "",
-  "User message:",
-  "Retain the transferred fork marker for later. Respond with exactly: merge delta stored",
-].join("\n");
-export const THREAD_MERGE_BACK_RECALL = `${THREAD_MERGE_BACK_SOURCE_MARKER}|${THREAD_MERGE_BACK_FORK_MARKER}`;
-export const THREAD_MERGE_BACK_RECALL_PROMPT =
-  "Return the source marker followed by the transferred fork marker, separated by a single | character. Respond with only the markers and separator.";
-export const THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER = "merge-sibling-source-3C7K";
-export const THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER = "merge-sibling-first-6V2J";
-export const THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER = "merge-sibling-second-9X5B";
+const THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER = "merge-sibling-source-3C7K";
+const THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER = "merge-sibling-first-6V2J";
+const THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER = "merge-sibling-second-9X5B";
 export const THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER} for later in this conversation. Respond with exactly: merge sibling source stored`;
 export const THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER}. Respond with exactly: first merge sibling stored`;
 export const THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER}. Respond with exactly: second merge sibling stored`;
@@ -195,7 +166,6 @@ export const PROPOSED_PLAN_PROMPT =
 export const WEB_SEARCH_PROMPT =
   "Search the web for FIFA World Cup ticket pricing, then answer exactly: web search fixture complete";
 export const SKILL_INVOCATION_PROMPT = "$review README.md";
-/** What Cursor receives once the adapter rewrites a discovered `$skill` mention. */
 export const SKILL_INVOCATION_CURSOR_MESSAGE = "/review README.md";
 
 export type OrchestratorFixtureInputStep =
@@ -225,14 +195,10 @@ export type OrchestratorFixtureInputStep =
       readonly type: "await_run_status";
       readonly targetRunIndex: number;
       readonly status: OrchestrationV2RunStatus;
-      /** Then also wait until that run has projected an item of this type. */
       readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
     }
   | {
-      /**
-       * A run held open for background work finishes through the adapter's
-       * debounce, which replay passes on the adapter's receipt.
-       */
+      /** Replay finishes background-held runs through the adapter's debounce receipt. */
       readonly type: "finish_held_run";
       readonly targetRunIndex: number;
       readonly status: OrchestrationV2RunStatus;
@@ -263,7 +229,6 @@ export type OrchestratorFixtureInputStep =
       readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
     }
   | {
-      /** The Waiting strip's Stop: interrupts a settled run's leftover background work. */
       readonly type: "stop_background_work";
       readonly targetRunIndex: number;
     }
@@ -278,7 +243,6 @@ export type OrchestratorFixtureInputStep =
         OrchestrationV2Command,
         { readonly type: "runtime-request.respond" }
       >["decision"];
-      /** Captures the shell snapshot under this key while the request is pending. */
       readonly shellSnapshotKeyWhilePending?: string;
     }
   | {
@@ -291,24 +255,14 @@ export type OrchestratorFixtureInputStep =
       readonly checkpointSuffix: string;
     }
   | {
-      /**
-       * Advance the deterministic test clock, e.g. past the provider session
-       * manager's idle timeout so the next message must reopen the session.
-       */
       readonly type: "advance_clock";
       readonly duration: Duration.Input;
     };
 
 export interface OrchestratorFixtureInput {
   readonly interactionMode?: ProviderInteractionMode;
-  /** The thread's permission mode; fixtures default to full access. */
   readonly runtimeMode?: RuntimeMode;
-  /**
-   * Files committed into the replay workspace before the scenario runs, keyed
-   * by workspace-relative path. A recorder must seed the same files so adapter
-   * logic that reads the workspace (e.g. skill discovery) sees what the
-   * provider saw.
-   */
+  /** Files committed before replay, keyed by relative path; seed the same files when recording so workspace reads match. */
   readonly workspaceFiles?: Readonly<Record<string, string>>;
   readonly steps: ReadonlyArray<OrchestratorFixtureInputStep>;
 }
@@ -320,12 +274,7 @@ export interface ProviderOrchestratorReplayVariant {
   readonly transcriptEntriesThroughLabel?: string;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicyOverride?: RuntimePolicyV2Override;
-  /** Replays a provider wake turn as a continuation run, as the live runtime does. */
   readonly runContinuationWorker?: boolean;
-  /**
-   * Workspace-relative paths that must not exist once the scenario finishes,
-   * e.g. the target of a tool call the run was configured to deny.
-   */
   readonly expectedAbsentWorkspacePaths?: ReadonlyArray<string>;
   readonly assertOutput: (
     result: OrchestratorV2ScenarioResult,
@@ -365,7 +314,6 @@ export const CURSOR_MODEL_SELECTION = {
   model: "composer-2.5",
 } satisfies ModelSelection;
 
-/** Muse fixtures are recorded against this model; the account's listed models may differ. */
 export const MUSE_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("muse"),
   model: "muse-spark-1.3-contributor",
@@ -376,20 +324,24 @@ export const GROK_MODEL_SELECTION = {
   model: "grok-build",
 } satisfies ModelSelection;
 
+/** fx fixtures run on fx's Default; the replay adapter has no probed model, so it writes none. */
+export const FX_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("fx"),
+  model: "default",
+} satisfies ModelSelection;
+
 export const OPENCODE_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("opencode"),
   model: "openai/gpt-5.4-mini",
   options: [{ id: "agent", value: "build" }],
 } satisfies ModelSelection;
 
-/** The free OpenCode Zen model and variant the OpenCode 2 spike recorded its reasoning run with. */
 export const OPENCODE2_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("opencode"),
   model: "opencode/space-bunny-free",
   options: [{ id: "variant", value: "high" }],
 } satisfies ModelSelection;
 
-/** Pi fixtures are recorded against this pinned OpenRouter model; the slug is `provider/model`. */
 export const PI_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("pi"),
   model: "openrouter/deepseek/deepseek-v4-flash",
@@ -572,8 +524,7 @@ export function materializeFixtureInput(input: {
       }),
     );
 
-    // A run that asks several times stays busy between answers, so the next
-    // answer waits for its request instead of for the thread to go idle.
+    // Multiple requests keep runs busy between answers; wait for each request, not thread idle.
     const answersNext = (stepIndex: number) => {
       const next = input.fixtureInput.steps[stepIndex + 1]?.type;
       return next === "approve_next_runtime_request" || next === "answer_next_user_input_request";
@@ -592,8 +543,7 @@ export function materializeFixtureInput(input: {
                   (nextStep.type === "restart" && nextStep.targetRunIndex === runIndex) ||
                   (nextStep.type === "release_replay_gate_after_waiting" &&
                     nextStep.targetRunIndex === runIndex) ||
-                  // A provider continuation run starts while this thread is
-                  // busy, so waiting for idle first would never return.
+                  // Continuations start while busy; waiting for idle would deadlock.
                   (nextStep.type === "await_run_status" && nextStep.targetRunIndex > runIndex) ||
                   // Held open until the test clock moves, so it cannot go idle first.
                   nextStep.type === "finish_held_run")) ||
@@ -1164,13 +1114,6 @@ export function assertNoExtraAppRunsForProviderChildren(input: {
   );
 }
 
-/**
- * Provider-native subagent threads have no runs; clients show them working
- * from the child's runless root turn. Pin that contract for every recorded
- * native subagent: the child hangs off the subagent node, every root turn is
- * runless, the root turn is live before the child's first item, and its
- * activity mirrors the subagent's (including a resume re-opening it).
- */
 export function assertProviderNativeSubagentRootTurns(result: OrchestratorV2ScenarioResult) {
   const activity = (statuses: ReadonlyArray<OrchestrationV2ExecutionNode["status"]>) =>
     statuses
@@ -1189,7 +1132,6 @@ export function assertProviderNativeSubagentRootTurns(result: OrchestratorV2Scen
       assert.isNotEmpty(roots, `child ${childThreadId} must have a root turn`);
       for (const root of roots) assert.isNull(root.runId);
 
-      // One run ingests a child thread at a time, so no update is stored by two.
       const runByChildUpdate = new Map<string, string | undefined>();
       for (const event of result.domainEvents) {
         if (event.threadId !== childThreadId) continue;
@@ -1231,8 +1173,6 @@ export function assertProviderNativeSubagentRootTurns(result: OrchestratorV2Scen
       );
       const rootActivity = activity(rootEvents.map((event) => event.status));
       const subagentActivity = activity(subagentStatuses);
-      // A subagent can be woken after its call ended, to answer the report of
-      // a background subagent of its own; each of those turns ends too.
       const wokenAfterEnd =
         child.subagents.length > 0 && rootActivity.length > subagentActivity.length;
       assert.deepEqual(
@@ -1242,8 +1182,6 @@ export function assertProviderNativeSubagentRootTurns(result: OrchestratorV2Scen
       );
       if (wokenAfterEnd) {
         assert.notEqual(rootActivity.at(-1), "active", `child ${childThreadId} must end its turns`);
-        // Each extra turn answers a report: one of the child's own subagents
-        // ended before that turn started.
         const childSubagentIds = new Set(child.subagents.map((nested) => nested.id));
         const nestedEndIndexes = result.domainEvents.flatMap((event, index) =>
           event.type === "subagent.updated" &&
@@ -1387,10 +1325,6 @@ export function assertConversationMessageRoles(
   );
 }
 
-/**
- * ACP agents run their own file and shell work: T3 advertises neither
- * capability (the transcript pins its initialize) and the agent never asks.
- */
 export function assertNoAcpClientFileOrTerminalRequests(transcript: ProviderReplayTranscript) {
   const frames = transcript.entries.flatMap((entry) =>
     entry.type === "runtime_exit"
@@ -1423,20 +1357,6 @@ export function assertUserMessagesInclude(
         (item) => item.type === "user_message" && item.text.includes(expectedText),
       ),
       `expected user input to include ${JSON.stringify(expectedText)}`,
-    );
-  }
-}
-
-function assertUserMessagesExclude(
-  projection: OrchestrationV2ThreadProjection,
-  rejectedTexts: ReadonlyArray<string>,
-) {
-  for (const rejectedText of rejectedTexts) {
-    assert.isFalse(
-      projection.turnItems.some(
-        (item) => item.type === "user_message" && item.text.includes(rejectedText),
-      ),
-      `expected user input to exclude ${JSON.stringify(rejectedText)}`,
     );
   }
 }
@@ -1481,7 +1401,6 @@ export function assertUserMessageInputIntents(
   );
 }
 
-/** The background-work notifications a thread's timeline shows, in order. */
 export function backgroundNotifications(projection: OrchestrationV2ThreadProjection) {
   return projection.turnItems.flatMap((item) =>
     item.type === "notification"

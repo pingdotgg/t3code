@@ -6,14 +6,9 @@ export interface ProviderReplayGate {
   readonly hasReached: (label: string) => boolean;
   readonly release: (label: string) => boolean;
   readonly releaseAll: () => void;
-  /**
-   * Receipts from adapters that hold a settled turn open and finalize it after
-   * a debounce: each arming records the debounce it waits. Replay runs on a
-   * test clock, so a scenario advances it by exactly that on the receipt.
-   */
+  /** Replay scenarios must advance TestClock by the recorded debounce after finish is armed. */
   readonly recordFinishArmed: (debounce: Duration.Input) => void;
   readonly finishArmedCount: () => number;
-  /** Resolves with the latest armed debounce once more than `seen` were recorded. */
   readonly waitForFinishArmed: (seen: number) => Promise<Duration.Input>;
 }
 

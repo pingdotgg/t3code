@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as ErrorReporter from "effect/ErrorReporter";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
@@ -31,6 +32,16 @@ import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
 const decodeElicitationRequest = Schema.decodeUnknownEffect(
   Schema.Union([AcpSchemaV2.CreateElicitationRequest, AcpSchemaV1.CreateElicitationRequest]),
 );
+// ACP session notices postdate the pinned v1.21 and v2 alpha.3 schemas, so they arrive as unknown updates.
+const decodeNoticeUpdate = Schema.decodeUnknownOption(
+  Schema.Struct({
+    sessionUpdate: Schema.Literal("notice"),
+    severity: Schema.String,
+    title: Schema.NonEmptyString,
+    description: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    _meta: Schema.optionalKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Json))),
+  }),
+);
 
 export interface AcpClientOptions {
   readonly logIncoming?: boolean;
@@ -40,11 +51,9 @@ export interface AcpClientOptions {
   readonly onTermination?: AcpProtocol.AcpPatchedProtocolOptions["onTermination"];
   readonly onOutgoingResponseFailure?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponse"];
-  /** Transforms child output before protocol logging and parsing. */
   readonly transformStdout?: (
     stdout: ChildProcessSpawner.ChildProcessHandle["stdout"],
   ) => AcpProtocol.AcpStdio["stdin"];
-  /** Transforms decoded session updates before buffering or delivery. */
   readonly transformSessionUpdate?: (
     notification: AcpSchema.SessionNotification,
   ) => AcpSchema.SessionNotification;
@@ -63,68 +72,34 @@ export class AcpClient extends Context.Service<
   {
     readonly raw: AcpClientRaw;
     readonly agent: {
-      /**
-       * Initializes the ACP session and negotiates capabilities.
-       * @see https://agentclientprotocol.com/protocol/schema#initialize
-       */
       readonly initialize: (
         payload: AcpSchema.InitializeRequest,
       ) => Effect.Effect<AcpSchema.InitializeResponse, AcpError.AcpError>;
-      /**
-       * Performs authentication with the method negotiated for ACP v1 or v2.
-       * @see https://agentclientprotocol.com/protocol/v2/draft/authentication
-       */
       readonly authenticate: (
         payload: AcpSchema.AuthenticateRequest,
       ) => Effect.Effect<AcpSchema.AuthenticateResponse, AcpError.AcpError>;
-      /**
-       * Logs out the current ACP identity using the negotiated generation.
-       * @see https://agentclientprotocol.com/protocol/v2/draft/authentication
-       */
       readonly logout: (
         payload: AcpSchema.LogoutRequest,
       ) => Effect.Effect<AcpSchema.LogoutResponse, AcpError.AcpError>;
-      /**
-       * Starts a new ACP session.
-       * @see https://agentclientprotocol.com/protocol/schema#session/new
-       */
       readonly createSession: (
         payload: AcpSchema.NewSessionRequest,
       ) => Effect.Effect<AcpSchema.NewSessionResponse, AcpError.AcpError>;
       /**
-       * Resumes a saved ACP session with replay from the beginning.
-       *
        * This compatibility name maps to ACP v2's `session/resume`; v2 removed
        * `session/load` and expresses replay with `replayFrom`.
        */
       readonly loadSession: (
         payload: AcpSchema.LoadSessionRequest,
       ) => Effect.Effect<AcpSchema.LoadSessionResponse, AcpError.AcpError>;
-      /**
-       * Lists available ACP sessions.
-       * @see https://agentclientprotocol.com/protocol/schema#session/list
-       */
       readonly listSessions: (
         payload: AcpSchema.ListSessionsRequest,
       ) => Effect.Effect<AcpSchema.ListSessionsResponse, AcpError.AcpError>;
-      /**
-       * Forks an ACP session.
-       * @see https://agentclientprotocol.com/protocol/schema#session/fork
-       */
       readonly forkSession: (
         payload: AcpSchema.ForkSessionRequest,
       ) => Effect.Effect<AcpSchema.ForkSessionResponse, AcpError.AcpError>;
-      /**
-       * Resumes an ACP session.
-       * @see https://agentclientprotocol.com/protocol/schema#session/resume
-       */
       readonly resumeSession: (
         payload: AcpSchema.ResumeSessionRequest,
       ) => Effect.Effect<AcpSchema.ResumeSessionResponse, AcpError.AcpError>;
-      /**
-       * Closes an ACP session.
-       * @see https://agentclientprotocol.com/protocol/schema#session/close
-       */
       readonly closeSession: (
         payload: AcpSchema.CloseSessionRequest,
       ) => Effect.Effect<AcpSchema.CloseSessionResponse, AcpError.AcpError>;
@@ -140,17 +115,12 @@ export class AcpClient extends Context.Service<
       readonly disableProvider: (
         payload: AcpSchema.DisableProviderRequest,
       ) => Effect.Effect<AcpSchema.DisableProviderResponse, AcpError.AcpError>;
-      /**
-       * Updates a session configuration option.
-       * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
-       */
       readonly setSessionModel: (
         payload: AcpSchema.SetSessionModelRequest,
       ) => Effect.Effect<AcpSchema.SetSessionModelResponse, AcpError.AcpError>;
       /**
        * Selects a session mode on ACP v1 agents, which predate mode config
        * options. ACP v2 fails with method-not-found; use `setSessionConfigOption`.
-       * @see https://agentclientprotocol.com/protocol/schema#session/set_mode
        */
       readonly setSessionMode: (
         payload: AcpSchemaV1.SetSessionModeRequest,
@@ -158,35 +128,19 @@ export class AcpClient extends Context.Service<
       readonly setSessionConfigOption: (
         payload: AcpSchema.SetSessionConfigOptionRequest,
       ) => Effect.Effect<AcpSchema.SetSessionConfigOptionResponse, AcpError.AcpError>;
-      /**
-       * Sends a prompt turn to the agent.
-       * @see https://agentclientprotocol.com/protocol/schema#session/prompt
-       */
       readonly prompt: (
         payload: AcpSchema.PromptRequest,
       ) => Effect.Effect<AcpSchema.PromptResponse, AcpError.AcpError>;
-      /**
-       * Sends a real ACP `session/cancel` notification.
-       * @see https://agentclientprotocol.com/protocol/schema#session/cancel
-       */
       readonly cancel: (
         payload: AcpSchema.CancelNotification,
       ) => Effect.Effect<void, AcpError.AcpError>;
     };
-    /**
-     * Registers a handler for `session/request_permission`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/request_permission
-     */
     readonly handleRequestPermission: (
       handler: AcpRequestHandler<
         AcpSchema.RequestPermissionRequest,
         AcpSchema.RequestPermissionResponse
       >,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a handler for `elicitation/create` requests.
-     * @see https://agentclientprotocol.com/protocol/schema#elicitation/create
-     */
     readonly handleElicitation: (
       handler: AcpRequestHandler<
         AcpSchema.CreateElicitationRequest,
@@ -207,7 +161,6 @@ export class AcpClient extends Context.Service<
         notification: AcpSchema.MessageMcpNotification,
       ) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
-    /** Legacy ACP v1 hooks retained for policy compatibility; ACP v2 never advertises them. */
     readonly handleReadTextFile: (
       handler: AcpRequestHandler<AcpSchema.ReadTextFileRequest, AcpSchema.ReadTextFileResponse>,
     ) => Effect.Effect<void>;
@@ -241,28 +194,16 @@ export class AcpClient extends Context.Service<
         AcpSchema.ReleaseTerminalResponse | void
       >,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a handler for `session/update`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/update
-     */
     readonly handleSessionUpdate: (
       handler: (
         notification: AcpSchema.SessionNotification,
       ) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a handler for `elicitation/complete`.
-     * @see https://agentclientprotocol.com/protocol/schema#elicitation/complete
-     */
     readonly handleElicitationComplete: (
       handler: (
         notification: AcpSchema.CompleteElicitationNotification,
       ) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a fallback extension request handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleUnknownExtRequest: (
       handler: (
         method: string,
@@ -270,26 +211,14 @@ export class AcpClient extends Context.Service<
         context: AcpProtocol.AcpRequestContext,
       ) => Effect.Effect<unknown, AcpError.AcpError>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a fallback extension notification handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleUnknownExtNotification: (
       handler: (method: string, params: unknown) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a typed extension request handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleExtRequest: <A, I>(
       method: string,
       payload: Schema.Codec<A, I>,
       handler: AcpRequestHandler<A, unknown>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a typed extension notification handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleExtNotification: <A, I>(
       method: string,
       payload: Schema.Codec<A, I>,
@@ -562,7 +491,9 @@ function normalizeSessionUpdate(
         },
       };
     }
-    default:
+    default: {
+      const notice = decodeNoticeUpdate(update);
+      if (Option.isSome(notice)) return { ...base, update: notice.value };
       return {
         ...base,
         update: {
@@ -571,12 +502,27 @@ function normalizeSessionUpdate(
           raw: update,
         },
       };
+    }
   }
 }
 
 function normalizeV1SessionUpdate(
   notification: AcpSchemaV1.SessionNotification,
 ): AcpSchema.SessionNotification {
+  // v1 passes unknown updates through raw, so a malformed notice must not reach consumers as one.
+  if ((notification.update.sessionUpdate as string) === "notice") {
+    const notice = decodeNoticeUpdate(notification.update);
+    return {
+      ...notification,
+      update: Option.isSome(notice)
+        ? notice.value
+        : {
+            sessionUpdate: "_t3_unknown",
+            originalSessionUpdate: "notice",
+            raw: notification.update,
+          },
+    };
+  }
   if (notification.update.sessionUpdate !== "available_commands_update") {
     return notification as unknown as AcpSchema.SessionNotification;
   }
@@ -804,6 +750,7 @@ function normalizePermissionRequest(
     ...(request._meta === undefined ? {} : { _meta: request._meta }),
   };
 }
+const decodeMessageMcpNotification = Schema.decodeUnknownEffect(AcpSchemaV2.MessageMcpNotification);
 
 export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
   stdio: AcpProtocol.AcpStdio,
@@ -840,7 +787,6 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     registration: BufferedNotificationHandler<A>,
     notification: A,
   ) =>
-    // One handler failing or dying does not stop the others, or the reader.
     Effect.forEach(
       registration.handlers,
       (handler) => isolateNotificationHandler(handler(notification)),
@@ -880,6 +826,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
                 return Deferred.succeed(completion, {
                   stopReason: idle.stopReason ?? "end_turn",
                   ...(idle.usage === undefined ? {} : { usage: idle.usage }),
+                  ...(idle.error === undefined ? {} : { error: idle.error }),
                   ...(idle._meta === undefined ? {} : { _meta: idle._meta }),
                 }).pipe(Effect.asVoid);
               })
@@ -1113,7 +1060,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     Effect.forkScoped,
   );
 
-  let nextRpcRequestId = 2 ** 32;
+  let nextRpcRequestId = AcpProtocol.RPC_REQUEST_ID_START;
   const rpc = yield* RpcClient.make(AcpRpcs.CompatAgentRpcs, {
     generateRequestId: () => RpcMessage.RequestId(nextRpcRequestId++),
   }).pipe(Effect.provideService(RpcClient.Protocol, transport.clientProtocol));
@@ -1133,8 +1080,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
           Effect.map((response) => {
             // ACP v1 protocolVersion values were not generation identifiers in
             // every shipped agent. Antigravity, for example, reports version 2
-            // with the v1 agentInfo/agentCapabilities response shape. The
-            // response discriminator determines the wire generation reliably.
+            // with the v1 agentInfo/agentCapabilities response shape.
             if (isV2InitializeResponse(response)) {
               negotiatedProtocolGeneration = 2;
               return normalizeInitializeResponse(response);
@@ -1325,98 +1271,121 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
             }),
       cancel: (payload) => transport.notify(AGENT_METHODS.session_cancel, payload),
     },
-    handleRequestPermission: (handler) =>
-      Effect.suspend(() => {
+    handleRequestPermission: Effect.fn("AcpClient.handleRequestPermission")(function (handler) {
+      return Effect.suspend(() => {
         coreHandlers.requestPermission = handler;
         return Effect.void;
-      }),
-    handleElicitation: (handler) =>
-      Effect.suspend(() => {
+      });
+    }),
+    handleElicitation: Effect.fn("AcpClient.handleElicitation")(function (handler) {
+      return Effect.suspend(() => {
         coreHandlers.elicitation = handler;
         return Effect.void;
-      }),
-    handleMcpConnect: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleMcpConnect: Effect.fn("AcpClient.handleMcpConnect")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.mcpConnect = handler;
-      }),
-    handleMcpMessage: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleMcpMessage: Effect.fn("AcpClient.handleMcpMessage")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.mcpMessage = handler;
-      }),
-    handleMcpDisconnect: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleMcpDisconnect: Effect.fn("AcpClient.handleMcpDisconnect")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.mcpDisconnect = handler;
-      }),
-    handleMcpNotification: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleMcpNotification: Effect.fn("AcpClient.handleMcpNotification")(function (handler) {
+      return Effect.sync(() => {
         extNotificationHandlers.set(CLIENT_METHODS.mcp_message, (params) =>
-          Schema.decodeUnknownEffect(AcpSchemaV2.MessageMcpNotification)(params).pipe(
+          decodeMessageMcpNotification(params).pipe(
             Effect.mapError(() => AcpError.AcpRequestError.invalidParams()),
             Effect.flatMap(handler),
           ),
         );
-      }),
-    handleReadTextFile: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleReadTextFile: Effect.fn("AcpClient.handleReadTextFile")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.readTextFile = handler;
-      }),
-    handleWriteTextFile: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleWriteTextFile: Effect.fn("AcpClient.handleWriteTextFile")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.writeTextFile = handler;
-      }),
-    handleCreateTerminal: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleCreateTerminal: Effect.fn("AcpClient.handleCreateTerminal")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.createTerminal = handler;
-      }),
-    handleTerminalOutput: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleTerminalOutput: Effect.fn("AcpClient.handleTerminalOutput")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.terminalOutput = handler;
-      }),
-    handleTerminalWaitForExit: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleTerminalWaitForExit: Effect.fn("AcpClient.handleTerminalWaitForExit")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.terminalWaitForExit = handler;
-      }),
-    handleTerminalKill: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleTerminalKill: Effect.fn("AcpClient.handleTerminalKill")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.terminalKill = handler;
-      }),
-    handleTerminalRelease: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleTerminalRelease: Effect.fn("AcpClient.handleTerminalRelease")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.terminalRelease = handler;
-      }),
-    handleSessionUpdate: (handler) =>
-      Effect.suspend(() => {
+      });
+    }),
+    handleSessionUpdate: Effect.fn("AcpClient.handleSessionUpdate")(function (handler) {
+      return Effect.suspend(() => {
         notificationHandlers.sessionUpdate.handlers.push(handler);
         return flushBufferedNotifications(notificationHandlers.sessionUpdate);
-      }),
-    handleElicitationComplete: (handler) =>
-      Effect.suspend(() => {
+      });
+    }),
+    handleElicitationComplete: Effect.fn("AcpClient.handleElicitationComplete")(function (handler) {
+      return Effect.suspend(() => {
         notificationHandlers.elicitationComplete.handlers.push(handler);
         return flushBufferedNotifications(notificationHandlers.elicitationComplete);
-      }),
-    handleUnknownExtRequest: (handler) =>
-      Effect.suspend(() => {
+      });
+    }),
+    handleUnknownExtRequest: Effect.fn("AcpClient.handleUnknownExtRequest")(function (handler) {
+      return Effect.suspend(() => {
         unknownExtRequestHandler = handler;
         return Effect.void;
-      }),
-    handleUnknownExtNotification: (handler) =>
-      Effect.suspend(() => {
-        unknownExtNotificationHandler = handler;
-        return Effect.void;
-      }),
-    handleExtRequest: (method, payload, handler) =>
-      Effect.suspend(() => {
+      });
+    }),
+    handleUnknownExtNotification: Effect.fn("AcpClient.handleUnknownExtNotification")(
+      function (handler) {
+        return Effect.suspend(() => {
+          unknownExtNotificationHandler = handler;
+          return Effect.void;
+        });
+      },
+    ),
+    handleExtRequest: Effect.fn("AcpClient.handleExtRequest")(function (method, payload, handler) {
+      return Effect.suspend(() => {
         extRequestHandlers.set(method, decodeExtRequestRegistration(method, payload, handler));
         return Effect.void;
-      }),
-    handleExtNotification: (method, payload, handler) =>
-      Effect.suspend(() => {
-        extNotificationHandlers.set(
-          method,
-          decodeExtNotificationRegistration(method, payload, handler),
-        );
-        return Effect.void;
-      }),
+      });
+    }),
+    handleExtNotification: Effect.fn("AcpClient.handleExtNotification")(
+      function (method, payload, handler) {
+        return Effect.suspend(() => {
+          extNotificationHandlers.set(
+            method,
+            decodeExtNotificationRegistration(method, payload, handler),
+          );
+          return Effect.void;
+        });
+      },
+    ),
   });
 });
 
