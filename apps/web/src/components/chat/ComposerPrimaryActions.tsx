@@ -84,10 +84,9 @@ const formatPendingPrimaryActionLabel = (input: {
 const messageActionPillClassName =
   "relative isolate inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-control before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:rounded-[inherit] before:surface-lit font-medium text-base text-primary-foreground outline-none hover:before:surface-lit-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 disabled:shadow-none sm:text-sm";
 
-// The mic + send pill: light gray in light mode, black in dark mode. It
-// sits 8px inside the r14 composer, so it takes the control radius (14 - 8, never below 8).
+// The mic + send pill: light gray in light mode, black in dark mode.
 const COMPOSER_PILL_CLASS_NAME =
-  "relative isolate inline-flex h-8 shrink-0 items-center rounded-control surface-pill";
+  "relative isolate inline-flex h-8 shrink-0 items-center rounded-[10px] surface-pill";
 
 // One 32px button slot inside the pill (send, stop, and later the mic), concentric
 // with the pill inside its 1px rim.
@@ -155,7 +154,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               type="button"
               className={cn(
                 COMPOSER_PILL_SLOT_CLASS_NAME,
-                "w-7.5",
+                "w-8",
                 insidePendingAction && "sm:w-6.5",
               )}
               {...pointerFocusProps}
@@ -275,7 +274,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       type={showResume ? "button" : "submit"}
       className={cn(
         "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-md text-foreground transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none",
-        showQueueLabel ? "ps-1.5 pe-2.5 text-label" : "w-7.5",
+        showQueueLabel ? "ps-1.5 pe-2.5 text-label" : "w-8",
       )}
       {...pointerFocusProps}
       onClick={showResume ? onResume : onSubmitMessage}
