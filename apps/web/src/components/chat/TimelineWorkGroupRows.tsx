@@ -527,6 +527,9 @@ export function LiveWorkEntryTimelineRow({
         ? liveThoughtLine(row.thought.detail ?? "")
         : "";
   const thoughtIsStatus = thoughtLine !== "" && row.entry === row.thought;
+  // Expanded, the button is a short status header; the full thought renders below it.
+  const expandedIsThought =
+    liveThought !== undefined && thoughtExpanded && row.entry === row.thought;
 
   const button = (
     <button
@@ -575,7 +578,7 @@ export function LiveWorkEntryTimelineRow({
       ) : null}
       <LiveActivityRow
         label={
-          thoughtIsStatus ? (
+          thoughtIsStatus || expandedIsThought ? (
             row.active ? (
               "Thinking"
             ) : (
