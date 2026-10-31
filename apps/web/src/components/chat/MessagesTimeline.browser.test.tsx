@@ -1230,9 +1230,9 @@ describe("labs live-thinking row", () => {
     expect(liveRow(screen)).not.toBeNull();
     await click(liveRow(screen) as HTMLElement);
     // The thought expands directly below the live row; the work group stays folded.
-    expect(liveRowScroller(screen)?.textContent).toContain(
-      "Let me check the fixture before touching anything else",
-    );
+    await expect
+      .element(screen.getByText(/Let me check the fixture before touching anything else/))
+      .toBeVisible();
     expect(screen.container.querySelector("[data-timeline-row-kind='work']")).toBeNull();
     await click(liveRow(screen) as HTMLElement);
     expect(liveRowScroller(screen)).toBeNull();
