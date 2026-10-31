@@ -162,7 +162,7 @@ export function makeTargetedProviderUpdateAction(
   const packageName = capabilities.packageName;
   if (!update || !packageName) return null;
   if (
-    !/^(?:npm-global:|bun-global$|pnpm-global$|vite-plus-global$|yarn-global$|volta$)/.test(
+    !/^(?:npm-global:|bun-global:|pnpm-global$|vite-plus-global$|yarn-global$|volta$)/.test(
       update.lockKey,
     )
   )
@@ -489,12 +489,29 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
+    const path = yield* Path.Path;
+    const binDir = path.dirname(context.resolvedCommandPath);
+    if (!normalizeCommandPath(binDir).endsWith("/.bun/bin")) return manual;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const globalDir = yield* fileSystem
+      .realPath(path.join(binDir, "..", "install", "global"))
+      .pipe(Effect.orElseSucceed(() => null));
+    // A bin entry alone may be a wrapper or a link into a local project.
+    if (
+      !globalDir ||
+      !path
+        .relative(globalDir, context.realCommandPath)
+        .replaceAll("\\", "/")
+        .startsWith(`node_modules/${packageName}/`)
+    )
+      return manual;
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "bun",
       updateArgs: ["i", "-g", `${packageName}@latest`],
-      updateLockKey: "bun-global",
+      updateLockKey: `bun-global:${normalizeCommandPath(globalDir)}`,
+      env: { BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: binDir },
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
@@ -775,10 +792,12 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   resolver: ProviderMaintenanceCapabilitiesResolver,
   options?: {
     readonly binaryPath?: string | null;
+    readonly maintenanceBinaryPath?: string | null;
     readonly env?: NodeJS.ProcessEnv;
   },
 ) {
-  const binaryPath = nonEmptyString(options?.binaryPath);
+  const binaryPath =
+    nonEmptyString(options?.maintenanceBinaryPath) ?? nonEmptyString(options?.binaryPath);
   if (!binaryPath) {
     return yield* resolver.resolve(null);
   }

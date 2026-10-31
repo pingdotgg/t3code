@@ -869,29 +869,100 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
-  it.effect.skipIf(windowsHost)(
-    "switches to bun updates when the resolved binary lives in bun's global bin",
+  it.effect.skipIf(windowsHost || !symlinksSupported)(
+    "binds bun updates to the selected global installation and rejects unproven ownership",
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-bun-capabilities");
-        const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
-        writeExecutable(NodePath.join(bunBinDir, "package-tool"));
-
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
-            binaryPath: "package-tool",
-            env: { PATH: bunBinDir },
-          },
-        ).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        const bunBinDir = NodePath.join(tempDir, "selected", ".bun", "bin");
+        const globalDir = NodePath.join(tempDir, "selected", ".bun", "install", "global");
+        const packagePath = NodePath.join(
+          globalDir,
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+          "package-tool.js",
         );
+        writeExecutable(packagePath);
+        const maintenancePath = NodePath.join(bunBinDir, "package-tool");
+        NodeFS.mkdirSync(bunBinDir, { recursive: true });
+        NodeFS.symlinkSync(packagePath, maintenancePath);
+        const runtimePath = NodePath.join(tempDir, "default", ".bun", "bin", "package-tool");
+        writeExecutable(runtimePath);
+        const env = {
+          PATH: NodePath.dirname(runtimePath),
+          BUN_INSTALL_GLOBAL_DIR: NodePath.join(tempDir, "default", ".bun", "install", "global"),
+          BUN_INSTALL_BIN: NodePath.dirname(runtimePath),
+        };
 
+        const resolve = () =>
+          resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+            binaryPath: runtimePath,
+            maintenanceBinaryPath: maintenancePath,
+            env,
+          }).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(HostProcess.Environment, env),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+          );
+
+        const capabilities = yield* resolve();
         expect(capabilities.update).toMatchObject({
           command: "bun i -g @example/package-tool@latest",
-          lockKey: "bun-global",
+          lockKey: `bun-global:${normalizeCommandPath(globalDir)}`,
+          env: { BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: bunBinDir },
         });
+        expect(makeTargetedProviderUpdateAction(capabilities, "2.0.0")).toMatchObject({
+          args: ["i", "-g", "@example/package-tool@2.0.0"],
+          env: capabilities.update?.env,
+        });
+
+        for (const target of [
+          NodePath.join(globalDir, "node_modules", "@example", "other-package", "bin", "tool"),
+          NodePath.join(
+            tempDir,
+            "project",
+            "node_modules",
+            "@example",
+            "package-tool",
+            "bin",
+            "tool",
+          ),
+          maintenancePath,
+        ]) {
+          NodeFS.unlinkSync(maintenancePath);
+          writeExecutable(target);
+          if (target !== maintenancePath) NodeFS.symlinkSync(target, maintenancePath);
+          expect(yield* resolve()).toMatchObject({ update: null, installPath: target });
+        }
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "updates the explicit maintenance installation while keeping the runtime wrapper separate",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-wrapper-maintenance");
+        const wrapper = NodePath.join(tempDir, "agentfleet-launcher");
+        const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        writeExecutable(wrapper);
+        writeExecutable(nativePath);
+        const resolve = (maintenanceBinaryPath: string) =>
+          resolveProviderMaintenanceCapabilitiesEffect(nativePackageToolUpdate, {
+            binaryPath: wrapper,
+            maintenanceBinaryPath,
+            env: { PATH: "" },
+          }).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+          );
+        expect((yield* resolve(nativePath)).update).toMatchObject({
+          executable: nativePath,
+          args: ["update"],
+        });
+        expect((yield* resolve(NodePath.join(tempDir, "missing"))).update).toBeNull();
+        expect((yield* resolve(" ")).update?.executable).toBe(wrapper);
       }),
   );
 

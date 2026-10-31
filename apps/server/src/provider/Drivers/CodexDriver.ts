@@ -182,6 +182,9 @@ export const CodexDriver: ProviderDriver<
         makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
         {
           binaryPath: effectiveConfig.binaryPath,
+          maintenanceBinaryPath: config.maintenanceBinaryPath
+            ? expandHomePath(config.maintenanceBinaryPath, yield* HostProcess.HomeDirectory)
+            : null,
           env: processEnv,
         },
       ).pipe(
