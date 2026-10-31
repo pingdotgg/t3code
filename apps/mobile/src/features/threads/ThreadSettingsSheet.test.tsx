@@ -222,6 +222,7 @@ function mountSheet() {
 }
 
 it("shows a tapped model as hidden while its hide request is still saving", async () => {
+  mocks.updateSettings.mockReset();
   const save = Promise.withResolvers<unknown>();
   mocks.updateSettings.mockReturnValue(save.promise);
   using _resolve = { [Symbol.dispose]: () => save.resolve(AsyncResult.success(hiddenSettings)) };
@@ -240,6 +241,9 @@ it("shows a tapped model as hidden while its hide request is still saving", asyn
     sheet.button("Show model: Codex, GPT-6.1-Sol"),
     "the tapped row still shows the model as visible until the server responds",
   ).not.toBeNull();
+
+  act(() => sheet.button("Show model: Codex, GPT-6.1-Sol")!.click());
+  expect(mocks.updateSettings, "a second tap waits for the first save").toHaveBeenCalledTimes(1);
 });
 
 it("holds a saved hidden state until the settings push and reverts a failed save", async () => {
