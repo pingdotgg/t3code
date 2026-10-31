@@ -70,7 +70,8 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
           <a href="/" class="nav-brand" aria-label="T3 Code home">
             <svg
               class="nav-brand-mark"
-              viewBox="15.5309 37 94.3941 56.96"
+              viewBox="15.5309 37 94.3941 56"
+              overflow="visible"
               fill="currentColor"
               aria-hidden="true"
             >
@@ -362,6 +363,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
 
   .nav-brand-mark {
     height: 1cap;
+    height: round(1cap, 1px);
     width: auto;
     flex: none;
   }

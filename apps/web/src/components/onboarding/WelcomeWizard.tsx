@@ -234,11 +234,16 @@ export function WelcomeWizard({
         <WizardHeader
           title="Set up T3 Code"
           identity={
-            <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
-              <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                Code
-              </span>
+            <div
+              className="flex items-baseline gap-1.5 text-2xl font-medium tracking-tight"
+              role="img"
+              aria-label="T3 Code"
+            >
+              <T3Wordmark
+                className="h-[1cap] w-auto shrink-0 supports-[height:round(1cap,1px)]:h-[round(1cap,1px)]"
+                aria-hidden
+              />
+              <span className="text-muted-foreground">Code</span>
             </div>
           }
         >
