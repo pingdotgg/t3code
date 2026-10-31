@@ -37,6 +37,7 @@ import {
 } from "./nativeShowcaseScene";
 import {
   buildShowcaseAgentActivity,
+  showcaseAgentStatusRowsAtom,
   type ShowcaseAgentActivityFixture,
 } from "./showcaseAgentActivity";
 import {
@@ -104,6 +105,7 @@ function showcaseNavigationAction(
     case "threads":
       return StackActions.popToTop();
     case "agent-activity":
+    case "agent-status":
       return CommonActions.reset({ index: 0, routes: [{ name: "Home" }] });
     case "environments":
       return CommonActions.reset(settingsNavigationState(rootState, "SettingsEnvironments"));
@@ -193,6 +195,8 @@ export function installShowcaseCapture(
       // Draws belong to their scene request; revisiting review must wait for its new surface.
       clearShowcaseRenderSignal();
       agentActivity = cancelRun(agentActivity);
+      // Hands the widget back to live data.
+      if (scene !== "agent-status") appAtomRegistry.set(showcaseAgentStatusRowsAtom, null);
     }
     const fixture = getNativeShowcaseAgentActivityFixture();
     if (fixture !== requestedFixture) {
@@ -257,6 +261,19 @@ export function installShowcaseCapture(
       run.done = true;
       evaluate();
     });
+  };
+
+  // The widget coordinator publishes these rows through the live path, with the app's theme.
+  const stageAgentStatus = () => {
+    const activity = buildShowcaseAgentActivity(
+      appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+      appAtomRegistry.get(environmentProjects.projectsAtom),
+      Date.now(),
+      requestedFixture,
+    );
+    if (activity === null) return;
+    appAtomRegistry.set(showcaseAgentStatusRowsAtom, activity.activities);
+    agentActivity = { cancelled: false, done: true };
   };
 
   const updateReadiness = (key: string | null, scene: ShowcaseScene | null) => {
@@ -338,7 +355,9 @@ export function installShowcaseCapture(
       }
     }
 
-    if (scene === "agent-activity" && hasFixture) {
+    if (scene === "agent-status" && hasFixture) {
+      if (agentActivity === null) stageAgentStatus();
+    } else if (scene === "agent-activity" && hasFixture) {
       if (agentActivity === null) stageAgentActivity();
     } else if (agentActivity?.done === false) {
       agentActivity = cancelRun(agentActivity);

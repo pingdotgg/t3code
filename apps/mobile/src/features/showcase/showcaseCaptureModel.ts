@@ -17,17 +17,18 @@ function sceneFromPathname(pathname: string): ShowcaseScene | null {
 }
 
 /**
- * Agent activity is staged on the threads list, so that route counts as the scene. Tapping the
- * Live Activity opens a thread, which stays part of the scene instead of navigating back.
+ * Agent activity and agent status are staged on the threads list, so that route counts as the
+ * scene. Tapping the Live Activity or the widget opens a thread, which stays part of the scene
+ * instead of navigating back.
  */
 export function showcaseSceneOnScreen(
   requestedScene: ShowcaseScene | null,
   pathname: string,
 ): ShowcaseScene | null {
   const routeScene = sceneFromPathname(pathname);
-  return requestedScene === "agent-activity" &&
+  return (requestedScene === "agent-activity" || requestedScene === "agent-status") &&
     (routeScene === "threads" || routeScene === "thread")
-    ? "agent-activity"
+    ? requestedScene
     : routeScene;
 }
 
@@ -92,7 +93,7 @@ export function showcaseReadinessKey(input: ShowcaseReadinessInput): string | nu
     !input.hasFixture ||
     !input.orientationSettled ||
     !input.themeApplied ||
-    (scene === "agent-activity" && !input.agentActivityStaged) ||
+    ((scene === "agent-activity" || scene === "agent-status") && !input.agentActivityStaged) ||
     !isShowcaseNativeContentReady({
       scene,
       themeId: input.themeId,

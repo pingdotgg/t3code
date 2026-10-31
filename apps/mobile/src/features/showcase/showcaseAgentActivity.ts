@@ -2,12 +2,19 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { Atom } from "effect/reactivity";
 
 import type {
   AgentActivityPhase,
   AgentActivityProps,
   AgentActivityRowProps,
 } from "../../widgets/AgentActivity";
+import type { AgentStatusRow } from "../../widgets/agentStatusSnapshot";
+
+/** The agent-status scene's fixture rows; the widget coordinator publishes them in place of live rows. */
+export const showcaseAgentStatusRowsAtom = Atom.make<ReadonlyArray<AgentStatusRow> | null>(
+  null,
+).pipe(Atom.keepAlive);
 
 interface ShowcaseAgentActivityRow {
   readonly threadId: string;
@@ -44,6 +51,7 @@ const SHOWCASE_AGENT_ACTIVITY_FIXTURES = {
   "phase-completed": [fixLoginRedirect("completed")],
   "phase-failed": [fixLoginRedirect("failed")],
   "phase-stale": [fixLoginRedirect("stale"), updateSnapshots("stale")],
+  empty: [],
 } as const satisfies Record<string, ReadonlyArray<ShowcaseAgentActivityRow>>;
 
 export type ShowcaseAgentActivityFixture = keyof typeof SHOWCASE_AGENT_ACTIVITY_FIXTURES;

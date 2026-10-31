@@ -13,6 +13,7 @@ const SHOWCASE_SCENES = [
   "review",
   "environments",
   "agent-activity",
+  "agent-status",
 ] as const;
 export type ShowcaseScene = (typeof SHOWCASE_SCENES)[number];
 
@@ -59,7 +60,8 @@ export function getNativeShowcasePairingUrls(): ReadonlyArray<string> {
   }
 }
 
-// `agent-activity:handoff-approval` requests the agent-activity scene with a named Live Activity fixture.
+// `agent-activity:handoff-approval` requests the agent-activity scene with a named fixture;
+// `agent-status:<fixture>` stages the same fixture on the Agent status widget.
 function nativeShowcaseSceneRequest(): readonly [string | undefined, string | undefined] {
   try {
     const [scene, fixture] =

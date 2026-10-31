@@ -186,12 +186,22 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
           initialLayout: "./src/widgets/SubscriptionUsage.android.tsx",
         },
       },
+      // One name backs the Live Activity and the Agent status widget; expo-widgets stores their layouts apart.
       {
         name: "AgentActivity",
-        displayName: "Agent Activity",
-        description: "Shows the current state of active T3 Code agents.",
+        displayName: "Agent status",
+        description: "Which agent needs you, which are working, and which finished.",
         android: null,
-        ios: { supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"] },
+        ios: {
+          supportedFamilies: [
+            "systemSmall",
+            "systemMedium",
+            "systemLarge",
+            "accessoryCircular",
+            "accessoryRectangular",
+            "accessoryInline",
+          ],
+        },
       },
     ],
   },

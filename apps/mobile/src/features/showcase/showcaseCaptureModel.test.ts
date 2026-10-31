@@ -23,12 +23,14 @@ const ready: ShowcaseReadinessInput = {
 describe("showcaseSceneOnScreen", () => {
   it("treats the threads list as the agent activity scene only when that scene is requested", () => {
     expect(showcaseSceneOnScreen("agent-activity", "/")).toBe("agent-activity");
+    expect(showcaseSceneOnScreen("agent-status", "/")).toBe("agent-status");
     expect(showcaseSceneOnScreen("threads", "/")).toBe("threads");
     expect(showcaseSceneOnScreen("thread", "/threads/env/thread")).toBe("thread");
   });
 
   it("keeps the thread a Live Activity tap opened inside the agent activity scene", () => {
     expect(showcaseSceneOnScreen("agent-activity", "/threads/env/thread")).toBe("agent-activity");
+    expect(showcaseSceneOnScreen("agent-status", "/threads/env/thread")).toBe("agent-status");
     expect(showcaseSceneOnScreen("agent-activity", "/threads/env/thread/review")).toBe("review");
     expect(showcaseSceneOnScreen(null, "/threads/env/thread/review?x=1")).toBe("review");
   });
@@ -65,12 +67,8 @@ describe("showcaseReadinessKey", () => {
     expect(showcaseReadinessKey({ ...ready, themeApplied: false })).toBeNull();
   });
 
-  it("waits for agent activity to be staged", () => {
-    const agentActivity = {
-      ...ready,
-      scene: "agent-activity",
-      requestedScene: "agent-activity",
-    } as const;
+  it.each(["agent-activity", "agent-status"] as const)("waits for %s to be staged", (scene) => {
+    const agentActivity = { ...ready, scene, requestedScene: scene } as const;
     expect(showcaseReadinessKey(agentActivity)).toBeNull();
     expect(showcaseReadinessKey({ ...agentActivity, agentActivityStaged: true })).not.toBeNull();
   });
