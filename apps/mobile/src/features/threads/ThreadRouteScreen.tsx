@@ -108,7 +108,6 @@ import {
   clearedPromptLinkParams,
   promptLinkSearchFromParams,
 } from "../prompt-links/prompt-link-model";
-import { useThreadPromptLink } from "../prompt-links/useThreadPromptLink";
 import {
   threadDetailErrorIsCurrent,
   threadRouteIsHydrating,

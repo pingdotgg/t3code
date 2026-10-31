@@ -76,7 +76,6 @@ import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
-import { timelineEntryTurnFoldRunId } from "./MessagesTimeline.logic";
 import { useLinkedMessageTarget } from "./useLinkedMessageTarget";
 import type { LinkedMessageRequest } from "../promptLinks/ThreadLinkParams";
 import {
@@ -801,10 +800,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [findListReady, setFindListReady] = useState(false);
   // Imported turns fold under a synthetic key, so the message's own run id cannot open them.
   const revealLinkedEntry = (entryId: string) => {
-    const runId = timelineEntryTurnFoldRunId(
-      { timelineEntries, latestRun, runningRunId, isWorking, runlessWorkActive },
-      entryId,
-    );
+    const runId =
+      (
+        findFoldRunIds ??
+        timelineTurnFoldRunIdsByEntryId({
+          timelineEntries,
+          latestRun,
+          runningRunId,
+          isWorking,
+          runlessWorkActive,
+        })
+      ).get(entryId) ?? null;
     const attempt = timelineEntries.find((entry) => entry.id === entryId)?.attempt;
     const attemptId = attempt?.status === "superseded" ? attempt.id : null;
     if (runId !== null) {
