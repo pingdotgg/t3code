@@ -60,6 +60,8 @@ const MILESTONE_TTL_MS = 2 * MINUTE_MS;
 const ISSUE_TTL_MS = MINUTE_MS;
 const SEARCH_TTL_MS = 30_000;
 const CACHE_CAPACITY = 200;
+/** Issue lists hold up to 250 issues each, so far fewer of them are kept. */
+const LIST_CACHE_CAPACITY = 30;
 /** Pipeline comments are only kept current for recent runs. */
 const PIPELINE_COMMENT_WINDOW_MS = 14 * 24 * 60 * MINUTE_MS;
 
@@ -93,13 +95,10 @@ export class LinearService extends Context.Service<
     readonly recordLaunch: (input: LinearRecordLaunchInput) => Call<LinearRecordLaunchResult>;
     /** Emits an incrementing revision whenever clients should refetch. */
     readonly subscribeRefreshes: Stream.Stream<number>;
-    /**
-     * Brings a pipeline link's issue comment in line with its run (posting it if none exists yet).
-     * Resolves `true` once the run is over and its final state is on the issue.
-     */
+    /** Brings a pipeline link's issue comment in line with its run (posting it if none exists yet). */
     readonly syncPipelineComment: (
       stored: LinearLinkStore.StoredLink,
-    ) => Effect.Effect<boolean, LinearError>;
+    ) => Effect.Effect<void, LinearError>;
   }
 >()("t3/linear/LinearService") {}
 
@@ -146,11 +145,11 @@ export const layer = Layer.effect(
     const issueListCache = makeLinearCache<{
       readonly issues: ReadonlyArray<LinearIssue>;
       readonly truncated: boolean;
-    }>(CACHE_CAPACITY);
+    }>(LIST_CACHE_CAPACITY);
     const issueDetailCache = makeLinearCache<LinearIssueDetail>(CACHE_CAPACITY);
     const issueCache = makeLinearCache<LinearIssue>(CACHE_CAPACITY);
-    const subIssuesCache = makeLinearCache<ReadonlyArray<LinearIssue>>(CACHE_CAPACITY);
-    const searchCache = makeLinearCache<ReadonlyArray<LinearIssue>>(CACHE_CAPACITY);
+    const subIssuesCache = makeLinearCache<ReadonlyArray<LinearIssue>>(LIST_CACHE_CAPACITY);
+    const searchCache = makeLinearCache<ReadonlyArray<LinearIssue>>(LIST_CACHE_CAPACITY);
 
     const expireIssueCaches = Effect.all(
       [
@@ -276,7 +275,9 @@ export const layer = Layer.effect(
                 message: "Linear rejected this key.",
               });
             }
-            if (error._tag === "IssueTrackerRateLimited") return toLinearError(error);
+            if (error._tag === "IssueTrackerRateLimited" || error._tag === "IssueTrackerRejected") {
+              return toLinearError(error);
+            }
             return new LinearError({ reason: "unavailable", message: "Couldn't reach Linear." });
           }),
         );
@@ -371,12 +372,11 @@ export const layer = Layer.effect(
               status: step.status,
             })),
           });
-          const final = run.status === "completed" || run.status === "cancelled";
           // Re-read inside the lock: another caller may have posted since `stored` was loaded.
           const current = yield* store
             .get(stored.link.linkId)
             .pipe(Effect.mapError(unavailableStorage));
-          if (current === null) return final;
+          if (current === null) return;
           const hash = bodyHash(body);
           if (current.link.commentId === null) {
             const created = yield* trackerCall(tracker.createComment(stored.link.issueId, body));
@@ -389,14 +389,13 @@ export const layer = Layer.effect(
               .recordBodyHash(stored.link.linkId, hash)
               .pipe(Effect.mapError(unavailableStorage));
           }
-          return final;
         }),
       );
 
     const recordLaunch: LinearService["Service"]["recordLaunch"] = Effect.fn(
       "LinearService.recordLaunch",
     )(function* (input) {
-      // Linear unreachable: link from what the client knew and skip every write-back.
+      // Linear unreachable: link from what the client knew and skip the immediate write-backs.
       const unreadable: { error: LinearError | null } = { error: null };
       const loaded = yield* cached(
         issueCache,
@@ -419,11 +418,13 @@ export const layer = Layer.effect(
       );
       const issue = Option.getOrNull(loaded);
       const { target } = input;
-      const commentMode =
-        issue === null || !input.writeBack.comment
-          ? "none"
-          : target.kind === "pipeline_run"
-            ? "pipeline"
+      // A pipeline comment is the reactor's job, so it still lands once Linear is readable again.
+      const commentMode = !input.writeBack.comment
+        ? "none"
+        : target.kind === "pipeline_run"
+          ? "pipeline"
+          : issue === null
+            ? "none"
             : "thread";
       const identity =
         issue !== null
@@ -463,66 +464,66 @@ export const layer = Layer.effect(
         if (input.writeBack.moveToStateId !== undefined) {
           warnings.push({ step: "move_state", message });
         }
-        if (input.writeBack.comment) warnings.push({ step: "comment", message });
+        if (commentMode === "none" && input.writeBack.comment) {
+          warnings.push({ step: "comment", message });
+        }
       }
 
-      // Write-backs are best effort and run once per link, so repeating the call is harmless.
-      const moveToStateId = input.writeBack.moveToStateId;
-      if (
-        issue !== null &&
-        moveToStateId !== undefined &&
-        stored.link.stateMovedTo === null &&
-        isStateMoveEligible(issue.state.type)
-      ) {
-        yield* trackerCall(tracker.moveIssueToState(issue.id, moveToStateId)).pipe(
+      const recordWarning = (step: "move_state" | "comment") => (error: LinearError) =>
+        Effect.logWarning(`Linear ${step} write-back failed`, { reason: error.reason }).pipe(
           Effect.andThen(
-            store
-              .recordStateMove(stored.link.linkId, moveToStateId)
-              .pipe(Effect.mapError(unavailableStorage)),
-          ),
-          Effect.andThen(expireIssueCaches),
-          Effect.catch((error) =>
-            Effect.logWarning("Linear state move failed", { reason: error.reason }).pipe(
-              Effect.andThen(
-                Effect.sync(() =>
-                  warnings.push({ step: "move_state", message: writeBackFailure(error) }),
-                ),
-              ),
-            ),
+            Effect.sync(() => warnings.push({ step, message: writeBackFailure(error) })),
           ),
         );
-      }
 
-      if (issue !== null && input.writeBack.comment && stored.link.commentId === null) {
-        const post =
-          commentMode === "pipeline"
-            ? syncPipelineComment(stored).pipe(Effect.asVoid)
-            : linkLock.withLock(
-                stored.link.linkId,
-                Effect.gen(function* () {
-                  const { viewer } = yield* viewerInfo;
-                  const body = renderChatCommentBody({
-                    viewerName: viewer.name,
-                    threadTitle: target.title,
-                    threadUrl: input.threadUrl,
-                  });
-                  const created = yield* trackerCall(tracker.createComment(issue.id, body));
-                  yield* store
-                    .recordComment(stored.link.linkId, created.id, bodyHash(body))
-                    .pipe(Effect.mapError(unavailableStorage));
-                }),
-              );
-        yield* post.pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Linear comment failed", { reason: error.reason }).pipe(
-              Effect.andThen(
-                Effect.sync(() =>
-                  warnings.push({ step: "comment", message: writeBackFailure(error) }),
+      // Write-backs are best effort and run once per link, so repeating the call is harmless. The
+      // link is re-read under its lock so concurrent launches cannot both move or comment.
+      if (issue !== null) {
+        const moveToStateId = input.writeBack.moveToStateId;
+        yield* linkLock.withLock(
+          stored.link.linkId,
+          Effect.gen(function* () {
+            const current =
+              (yield* store.get(stored.link.linkId).pipe(Effect.mapError(unavailableStorage)))
+                ?.link ?? stored.link;
+            if (
+              moveToStateId !== undefined &&
+              current.stateMovedTo === null &&
+              isStateMoveEligible(issue.state.type)
+            ) {
+              yield* trackerCall(tracker.moveIssueToState(issue.id, moveToStateId)).pipe(
+                Effect.andThen(
+                  store
+                    .recordStateMove(stored.link.linkId, moveToStateId)
+                    .pipe(Effect.mapError(unavailableStorage)),
                 ),
-              ),
-            ),
-          ),
+                Effect.andThen(expireIssueCaches),
+                Effect.catch(recordWarning("move_state")),
+              );
+            }
+            if (
+              input.writeBack.comment &&
+              current.commentMode === "thread" &&
+              current.commentId === null
+            ) {
+              yield* Effect.gen(function* () {
+                const { viewer } = yield* viewerInfo;
+                const body = renderChatCommentBody({
+                  viewerName: viewer.name,
+                  threadTitle: target.title,
+                  threadUrl: input.threadUrl,
+                });
+                const created = yield* trackerCall(tracker.createComment(issue.id, body));
+                yield* store
+                  .recordComment(stored.link.linkId, created.id, bodyHash(body))
+                  .pipe(Effect.mapError(unavailableStorage));
+              }).pipe(Effect.catch(recordWarning("comment")));
+            }
+          }),
         );
+        if (input.writeBack.comment && stored.link.commentMode === "pipeline") {
+          yield* syncPipelineComment(stored).pipe(Effect.catch(recordWarning("comment")));
+        }
       }
 
       const link =

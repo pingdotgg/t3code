@@ -68,11 +68,17 @@ export const PROJECTS_QUERY = `query Projects($after: String) {
   projects(first: ${PAGE_SIZE}, after: $after) { nodes { ${PROJECT_FIELDS} } ${PAGE_INFO} }
 }`;
 
+/** Milestone rows show "50+ issues" past this; nested connections multiply query complexity. */
+const MILESTONE_ISSUE_COUNT_CAP = 50;
+
 export const MILESTONES_QUERY = `query Milestones($projectId: String!) {
   project(id: $projectId) {
     id
-    projectMilestones(first: 100) {
-      nodes { id name progress targetDate sortOrder status issues(first: ${LIST_ISSUE_CAP}) { nodes { id } } }
+    projectMilestones(first: ${PAGE_SIZE}) {
+      nodes {
+        id name progress targetDate sortOrder status
+        issues(first: ${MILESTONE_ISSUE_COUNT_CAP}) { nodes { id } pageInfo { hasNextPage } }
+      }
     }
   }
 }`;

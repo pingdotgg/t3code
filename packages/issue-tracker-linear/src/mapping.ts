@@ -155,6 +155,7 @@ export function mapMilestones(
         sortOrder: node.sortOrder,
         completed: progress >= 1 || node.status === "done",
         issueCount: node.issues.nodes.length,
+        issueCountCapped: node.issues.pageInfo.hasNextPage,
       };
     })
     .toSorted((a, b) => a.sortOrder - b.sortOrder);
@@ -200,7 +201,8 @@ export function mapTeamMetadata(
 
 export function mapIssueDetail(
   issue: NonNullable<typeof IssueDetailResponse.Type.issue>,
-  subIssues: ReadonlyArray<LinearIssue>,
+  /** Null when the sub-issue list failed to load. */
+  subIssues: ReadonlyArray<LinearIssue> | null,
 ): LinearIssueDetail {
   const { description, comments, ...node } = issue;
   return {
@@ -216,8 +218,9 @@ export function mapIssueDetail(
       node.projectMilestone?.progress == null
         ? null
         : clampProgress(node.projectMilestone.progress),
-    subIssues,
-    comments: comments.nodes
+    subIssues: subIssues ?? [],
+    subIssuesFailed: subIssues === null,
+    comments: (comments?.nodes ?? [])
       .map((comment) => ({
         id: comment.id,
         author: comment.user,

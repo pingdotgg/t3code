@@ -24,7 +24,7 @@ export interface LinearCache<V> {
     ttlMs: number,
     load: Effect.Effect<V, IssueTrackerError>,
   ) => Effect.Effect<CacheHit<V>, IssueTrackerError>;
-  /** Drops every entry, including outage fallbacks. */
+  /** Drops every entry, including outage fallbacks, and detaches loads still in flight. */
   readonly clear: Effect.Effect<void>;
   /** Forces the next read to reload while keeping entries as outage fallbacks. */
   readonly expire: Effect.Effect<void>;
@@ -46,6 +46,8 @@ export const makeLinearCache = <V>(capacity: number): LinearCache<V> => {
   // Map iteration order is insertion order; re-inserting on read keeps the oldest-used key first.
   const entries = new Map<string, Entry<V>>();
   const inflight = new Map<string, Deferred.Deferred<Entry<V>, IssueTrackerError>>();
+  // Bumped by `clear`: a load that started before it belongs to the old key or workspace.
+  let generation = 0;
 
   const remember = (key: string, entry: Entry<V>) => {
     entries.delete(key);
@@ -62,6 +64,7 @@ export const makeLinearCache = <V>(capacity: number): LinearCache<V> => {
     load: Effect.Effect<V, IssueTrackerError>,
   ) {
     const deferred = yield* Deferred.make<Entry<V>, IssueTrackerError>();
+    const startedIn = generation;
     inflight.set(key, deferred);
     yield* Effect.forkDetach(
       load.pipe(
@@ -70,12 +73,16 @@ export const makeLinearCache = <V>(capacity: number): LinearCache<V> => {
             Effect.map((fetchedAtMs): Entry<V> => ({ value, fetchedAtMs, expired: false })),
           ),
         ),
-        Effect.tap((entry) => Effect.sync(() => remember(key, entry))),
+        Effect.tap((entry) =>
+          Effect.sync(() => {
+            if (generation === startedIn) remember(key, entry);
+          }),
+        ),
         Effect.exit,
         Effect.flatMap((exit: Exit.Exit<Entry<V>, IssueTrackerError>) =>
-          Effect.sync(() => inflight.delete(key)).pipe(
-            Effect.andThen(Deferred.done(deferred, exit)),
-          ),
+          Effect.sync(() => {
+            if (inflight.get(key) === deferred) inflight.delete(key);
+          }).pipe(Effect.andThen(Deferred.done(deferred, exit))),
         ),
       ),
     );
@@ -112,7 +119,9 @@ export const makeLinearCache = <V>(capacity: number): LinearCache<V> => {
       );
     }),
     clear: Effect.sync(() => {
+      generation += 1;
       entries.clear();
+      inflight.clear();
     }),
     expire: Effect.sync(() => {
       for (const [key, entry] of entries) entries.set(key, { ...entry, expired: true });

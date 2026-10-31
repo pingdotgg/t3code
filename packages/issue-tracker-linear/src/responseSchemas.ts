@@ -153,7 +153,10 @@ export const MilestonesResponse = Schema.Struct({
           targetDate: NullableString,
           sortOrder: Schema.Number,
           status: NullableString,
-          issues: nodes(Schema.Struct({ id: Schema.String })),
+          issues: Schema.Struct({
+            nodes: Schema.Array(Schema.Struct({ id: Schema.String })),
+            pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
+          }),
         }),
       ),
     }),
@@ -180,13 +183,16 @@ export const IssueDetailResponse = Schema.Struct({
           progress: Schema.NullOr(Schema.Number),
         }),
       ),
-      comments: nodes(
-        Schema.Struct({
-          id: Schema.String,
-          body: Schema.String,
-          createdAt: Schema.String,
-          user: Schema.NullOr(UserNode),
-        }),
+      // Null when only the comments field failed; the rest of the issue is still usable.
+      comments: Schema.NullOr(
+        nodes(
+          Schema.Struct({
+            id: Schema.String,
+            body: Schema.String,
+            createdAt: Schema.String,
+            user: Schema.NullOr(UserNode),
+          }),
+        ),
       ),
     }),
   ),

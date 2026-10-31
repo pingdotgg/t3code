@@ -23,11 +23,22 @@ export class Unavailable extends Schema.TaggedError<Unavailable>()("IssueTracker
   message: Schema.String,
 }) {}
 
+/** The tracker refused this request (permissions, invalid input, query complexity); not an outage. */
+export class Rejected extends Schema.TaggedError<Rejected>()("IssueTrackerRejected", {
+  message: Schema.String,
+}) {}
+
 export class NotFound extends Schema.TaggedError<NotFound>()("IssueTrackerNotFound", {
   message: Schema.String,
 }) {}
 
-export type IssueTrackerError = NotConnected | Unauthorized | RateLimited | Unavailable | NotFound;
+export type IssueTrackerError =
+  | NotConnected
+  | Unauthorized
+  | RateLimited
+  | Unavailable
+  | Rejected
+  | NotFound;
 
 /** The wire error clients receive. Messages are fixed text; nothing from a request reaches them. */
 export function toLinearError(error: IssueTrackerError): LinearError {
@@ -47,6 +58,8 @@ export function toLinearError(error: IssueTrackerError): LinearError {
       });
     case "IssueTrackerUnavailable":
       return new LinearError({ reason: "unavailable", message: error.message });
+    case "IssueTrackerRejected":
+      return new LinearError({ reason: "invalid_input", message: error.message });
     case "IssueTrackerNotFound":
       return new LinearError({ reason: "not_found", message: error.message });
   }

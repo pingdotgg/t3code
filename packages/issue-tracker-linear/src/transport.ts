@@ -3,6 +3,7 @@ import {
   type IssueTrackerError,
   NotFound,
   RateLimited,
+  Rejected,
   Unauthorized,
   Unavailable,
 } from "@t3tools/issue-tracker-core/errors";
@@ -53,17 +54,35 @@ type GraphqlError = NonNullable<typeof GraphqlEnvelope.Type.errors>[number];
 const errorCode = (error: GraphqlError): string =>
   String(error.extensions?.code ?? error.extensions?.type ?? "").toLowerCase();
 
+/** Error types Linear uses for its own trouble; everything else is about the request itself. */
+const OUTAGE_CODE = /internal|timeout|network|unavailable/u;
+
+const forbidden = () => new Rejected({ message: "Your Linear key can't access that." });
+const rejected = () => new Rejected({ message: "Linear rejected the request." });
+
+/**
+ * Rate limits and rejected keys fail the call even beside partial data. The rest only matters when
+ * no data came back; a permission or input error is the request's fault, never an outage.
+ */
 function classifyGraphqlErrors(
   errors: ReadonlyArray<GraphqlError>,
   retryAfterSeconds: number,
+  hasData: boolean,
+  status: number,
 ): IssueTrackerError | null {
   if (errors.some((error) => errorCode(error).includes("ratelimit"))) {
     return new RateLimited({ retryAfterSeconds });
   }
   if (errors.some((error) => /authenticat/u.test(errorCode(error)))) return new Unauthorized();
-  const notFound = errors.find((error) => /not found/iu.test(error.message ?? ""));
-  if (notFound !== undefined) return new NotFound({ message: "Linear could not find that item." });
-  return null;
+  if (hasData) return null;
+  if (errors.some((error) => /not found/iu.test(error.message ?? ""))) {
+    return new NotFound({ message: "Linear could not find that item." });
+  }
+  if (status >= 500 || errors.some((error) => OUTAGE_CODE.test(errorCode(error)))) {
+    return new Unavailable({ message: "Linear is unavailable right now." });
+  }
+  if (errors.some((error) => errorCode(error).includes("forbidden"))) return forbidden();
+  return rejected();
 }
 
 /**
@@ -123,22 +142,17 @@ export const makeLinearRequest = Effect.fn("LinearTransport.make")(function* (
       });
     }
     const { data, errors } = body.value;
+    const hasData = data !== undefined && data !== null;
     if (errors !== undefined && errors.length > 0) {
-      const classified = classifyGraphqlErrors(errors, retryAfterSeconds);
+      const classified = classifyGraphqlErrors(errors, retryAfterSeconds, hasData, response.status);
       if (classified !== null) return yield* classified;
-      // Partial data alongside field errors is usable; no data at all is a failed request.
-      if (data === undefined || data === null) {
-        return yield* new Unavailable({ message: "Linear rejected the request." });
-      }
     }
-    if (response.status === 403) return yield* new Unauthorized();
-    if (response.status >= 400 && (data === undefined || data === null)) {
-      return yield* new Unavailable({
-        message:
-          response.status >= 500
-            ? "Linear is unavailable right now."
-            : "Linear rejected the request.",
-      });
+    // Linear reports permission problems on a valid key as 400 FORBIDDEN; a bare 403 is the same.
+    if (response.status === 403) return yield* forbidden();
+    if (response.status >= 400 && !hasData) {
+      return yield* response.status >= 500
+        ? new Unavailable({ message: "Linear is unavailable right now." })
+        : rejected();
     }
     return yield* Schema.decodeUnknownEffect(schema)(data).pipe(
       Effect.mapError(

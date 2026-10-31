@@ -83,6 +83,7 @@ export function LinearMilestoneView({
             <LinearProgressSummary
               progress={milestone.progress}
               issueCount={milestone.issueCount}
+              issueCountCapped={milestone.issueCountCapped}
               targetDate={milestone.targetDate}
             />
           ) : null}

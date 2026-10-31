@@ -27,6 +27,21 @@ export interface PipelineCommentInput {
   readonly steps: ReadonlyArray<{ readonly name: string; readonly status: PipelineRunStepStatus }>;
 }
 
+/**
+ * The thread URL comes from the launching client: only http(s) URLs become links, and parentheses
+ * are escaped so the URL cannot close the Markdown link and inject its own.
+ */
+function linkTarget(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  return parsed.href.replace(/[()]/gu, (char) => (char === "(" ? "%28" : "%29"));
+}
+
 function headline(input: PipelineCommentInput): string {
   const failed = input.steps.find((step) => step.status === "failed");
   const stopped = input.steps.find((step) => step.status === "stopped");
@@ -51,12 +66,12 @@ function headline(input: PipelineCommentInput): string {
  */
 export function renderPipelineCommentBody(input: PipelineCommentInput): string {
   const lines = input.steps.map((step) => `- ${STEP_MARKS[step.status]} ${step.name}`);
+  const target = linkTarget(input.threadUrl);
   return [
     `**T3 Code pipeline "${input.pipelineName}"** (${headline(input)})`,
     "",
     ...lines,
-    "",
-    `[Open in T3 Code](${input.threadUrl})`,
+    ...(target === null ? [] : ["", `[Open in T3 Code](${target})`]),
   ].join("\n");
 }
 
@@ -68,5 +83,8 @@ export function renderChatCommentBody(input: {
 }): string {
   // Brackets in a title would end the Markdown link text early.
   const title = input.threadTitle.replace(/[[\]]/gu, "");
-  return `${input.viewerName} started a T3 Code chat: [${title}](${input.threadUrl})`;
+  const target = linkTarget(input.threadUrl);
+  return target === null
+    ? `${input.viewerName} started a T3 Code chat: ${title}`
+    : `${input.viewerName} started a T3 Code chat: [${title}](${target})`;
 }

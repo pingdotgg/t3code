@@ -7,6 +7,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { PipelineRunStepStatus } from "./pipeline.ts";
 
 /**
  * Linear integration contracts (schema-only). Tracker-neutral naming is avoided on purpose:
@@ -172,6 +173,8 @@ export const LinearMilestone = Schema.Struct({
   /** progress = 1 or done. */
   completed: Schema.Boolean,
   issueCount: NonNegativeInt,
+  /** True when the milestone has more issues than `issueCount` (shown as "50+"). */
+  issueCountCapped: Schema.Boolean,
 });
 export type LinearMilestone = typeof LinearMilestone.Type;
 
@@ -239,6 +242,8 @@ export const LinearIssueDetail = Schema.Struct({
   description: Schema.String,
   milestoneProgress: Schema.NullOr(Schema.Number),
   subIssues: Schema.Array(LinearIssue),
+  /** Sub-issues could not be loaded; `subIssues` is empty but the rest of the detail is valid. */
+  subIssuesFailed: Schema.Boolean,
   /** Last 20, oldest → newest. */
   comments: Schema.Array(LinearComment),
   attachments: Schema.Array(LinearAttachment),
@@ -348,15 +353,7 @@ export const LinearActivityItem = Schema.Struct({
       steps: Schema.Array(
         Schema.Struct({
           name: Schema.String,
-          status: Schema.Literals([
-            "pending",
-            "running",
-            "completed",
-            "failed",
-            "stopped",
-            "skipped",
-            "cancelled",
-          ]),
+          status: PipelineRunStepStatus,
         }),
       ),
       currentStepName: Schema.NullOr(Schema.String),

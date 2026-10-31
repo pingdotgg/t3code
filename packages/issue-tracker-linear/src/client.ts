@@ -217,7 +217,11 @@ export const makeLinearTracker = Effect.fn("LinearClient.make")(function* (
     issue,
     issueDetail: Effect.fn("LinearClient.issueDetail")(function* (issueId) {
       const [detail, children] = yield* Effect.all(
-        [request(ISSUE_DETAIL_QUERY, { issueId }, IssueDetailResponse), subIssues(issueId)],
+        [
+          request(ISSUE_DETAIL_QUERY, { issueId }, IssueDetailResponse),
+          // A failed sub-issue list must not blank the rest of the panel.
+          subIssues(issueId).pipe(Effect.orElseSucceed(() => null)),
+        ],
         { concurrency: 2 },
       );
       if (detail.issue === null) {

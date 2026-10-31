@@ -345,6 +345,29 @@ describe("LinearService", () => {
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 
+  it.effect("surfaces a rejected request without backing off or serving stale data", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const linear = yield* LinearService.LinearService;
+      yield* linear.connect({ apiKey: KEY });
+      yield* linear.issues({});
+      yield* TestClock.adjust("2 minutes");
+
+      harness.handler = () =>
+        json(
+          { errors: [{ message: "no", extensions: { code: "FORBIDDEN", type: "forbidden" } }] },
+          { status: 400 },
+        );
+      assert.strictEqual((yield* Effect.flip(linear.issues({}))).reason, "invalid_input");
+      const afterFirst = count(harness, "Issues");
+      assert.strictEqual((yield* Effect.flip(linear.issues({}))).reason, "invalid_input");
+      assert.strictEqual(count(harness, "Issues"), afterFirst + 1);
+
+      harness.handler = okHandler();
+      assert.strictEqual((yield* linear.status).state, "connected");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
   it.effect("deduplicates concurrent identical reads", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -377,6 +400,21 @@ describe("LinearService", () => {
 
         const second = yield* linear.recordLaunch(launchInput());
         assert.strictEqual(second.link.linkId, first.link.linkId);
+        assert.strictEqual(count(harness, "MoveIssue"), 1);
+        assert.strictEqual(count(harness, "CreateComment"), 1);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    });
+
+    it.effect("moves and comments once when the same launch is recorded concurrently", () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const linear = yield* LinearService.LinearService;
+        yield* linear.connect({ apiKey: KEY });
+        const [first, second] = yield* Effect.all(
+          [linear.recordLaunch(launchInput()), linear.recordLaunch(launchInput())],
+          { concurrency: "unbounded" },
+        );
+        assert.strictEqual(first.link.linkId, second.link.linkId);
         assert.strictEqual(count(harness, "MoveIssue"), 1);
         assert.strictEqual(count(harness, "CreateComment"), 1);
       }).pipe(Effect.provide(makeLayer(harness)));
@@ -501,21 +539,21 @@ describe("LinearService", () => {
         assert.include(bodies[0], "https://t3.example/env/thread-1");
 
         const stored = (yield* store.get(launched.link.linkId))!;
-        assert.isFalse(yield* linear.syncPipelineComment(stored));
+        yield* linear.syncPipelineComment(stored);
         assert.strictEqual(count(harness, "UpdateComment"), 0);
 
         harness.run = pipelineRun("completed", "completed");
-        assert.isTrue(yield* linear.syncPipelineComment(stored));
+        yield* linear.syncPipelineComment(stored);
         assert.strictEqual(count(harness, "UpdateComment"), 1);
         assert.include(bodies[1], "Completed");
 
-        assert.isTrue(yield* linear.syncPipelineComment(stored));
+        yield* linear.syncPipelineComment(stored);
         assert.strictEqual(count(harness, "UpdateComment"), 1);
         assert.strictEqual(count(harness, "CreateComment"), 1);
       }).pipe(Effect.provide(makeLayer(harness)));
     });
 
-    it.effect("does not duplicate the pipeline comment when syncs race", () => {
+    it.effect("never comments on a pipeline launched without the comment toggle", () => {
       const harness = makeHarness();
       return Effect.gen(function* () {
         const linear = yield* LinearService.LinearService;
@@ -534,6 +572,43 @@ describe("LinearService", () => {
         assert.strictEqual(stored.link.commentMode, "none");
       }).pipe(Effect.provide(makeLayer(harness)));
     });
+
+    it.effect(
+      "posts a pipeline comment once Linear is readable again, once under racing syncs",
+      () => {
+        const harness = makeHarness();
+        return Effect.gen(function* () {
+          const linear = yield* LinearService.LinearService;
+          const store = yield* LinearLinkStore.LinearLinkStore;
+          yield* linear.connect({ apiKey: KEY });
+          harness.handler = () => "network";
+          const launched = yield* linear.recordLaunch(
+            launchInput({
+              issueId: "issue-2",
+              issue: { identifier: "ATT-613", teamId: "team-1" },
+              target: { kind: "pipeline_run", targetId: "run-1", threadId, title: "x" },
+              writeBack: { comment: true },
+            }),
+          );
+          assert.strictEqual(launched.link.commentMode, "pipeline");
+          assert.isNull(launched.link.commentId);
+          assert.deepStrictEqual(launched.warnings, []);
+
+          harness.handler = okHandler();
+          yield* TestClock.adjust("1 minute");
+          const stored = (yield* store.get(launched.link.linkId))!;
+          yield* Effect.all(
+            [linear.syncPipelineComment(stored), linear.syncPipelineComment(stored)],
+            {
+              concurrency: "unbounded",
+              discard: true,
+            },
+          );
+          assert.strictEqual(count(harness, "CreateComment"), 1);
+          assert.strictEqual((yield* store.get(launched.link.linkId))?.link.commentId, "comment-1");
+        }).pipe(Effect.provide(makeLayer(harness)));
+      },
+    );
   });
 });
 

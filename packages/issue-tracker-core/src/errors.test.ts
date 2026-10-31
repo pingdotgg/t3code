@@ -5,6 +5,7 @@ import {
   NotConnected,
   NotFound,
   RateLimited,
+  Rejected,
   toLinearError,
   Unauthorized,
   Unavailable,
@@ -20,6 +21,7 @@ describe("toLinearError", () => {
       "unavailable",
     );
     assert.strictEqual(toLinearError(new NotFound({ message: "gone" })).reason, "not_found");
+    assert.strictEqual(toLinearError(new Rejected({ message: "no" })).reason, "invalid_input");
     const limited = toLinearError(new RateLimited({ retryAfterSeconds: 12.2 }));
     assert.strictEqual(limited.reason, "rate_limited");
     assert.strictEqual(limited.retryAfterSeconds, 13);

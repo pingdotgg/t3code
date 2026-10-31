@@ -57,9 +57,15 @@ describe("renderPipelineCommentBody", () => {
     );
   });
 
-  it("is deterministic", () => {
-    const input = { ...base, runStatus: "running" as const, steps: [] };
-    expect(renderPipelineCommentBody(input)).toBe(renderPipelineCommentBody(input));
+  it("leaves out a thread link that is not http(s)", () => {
+    expect(
+      renderPipelineCommentBody({
+        ...base,
+        threadUrl: "javascript:alert(1)",
+        runStatus: "completed",
+        steps: [],
+      }),
+    ).toBe('**T3 Code pipeline "Feature delivery"** (Completed)\n');
   });
 });
 
@@ -72,5 +78,15 @@ describe("renderChatCommentBody", () => {
         threadUrl: "https://t3.example/e/t",
       }),
     ).toBe("Ada started a T3 Code chat: [Fix bug](https://t3.example/e/t)");
+  });
+
+  it("only links http(s) thread URLs and keeps them from closing the link", () => {
+    const render = (threadUrl: string) =>
+      renderChatCommentBody({ viewerName: "Ada", threadTitle: "Fix", threadUrl });
+    expect(render("javascript:alert(1)")).toBe("Ada started a T3 Code chat: Fix");
+    expect(render("not a url")).toBe("Ada started a T3 Code chat: Fix");
+    expect(render("https://t3.example/e/t) [x](https://evil.example")).toBe(
+      "Ada started a T3 Code chat: [Fix](https://t3.example/e/t%29%20[x]%28https://evil.example)",
+    );
   });
 });

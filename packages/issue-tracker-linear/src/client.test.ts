@@ -110,6 +110,50 @@ describe("Linear tracker transport", () => {
     }),
   );
 
+  it.effect("maps permission and input errors to Rejected, never an outage or a bad key", () =>
+    Effect.gen(function* () {
+      const cases: ReadonlyArray<[Response, string]> = [
+        [
+          json(
+            { errors: [{ message: "x", extensions: { code: "FORBIDDEN", type: "forbidden" } }] },
+            { status: 400 },
+          ),
+          "Your Linear key can't access that.",
+        ],
+        [new Response("{}", { status: 403 }), "Your Linear key can't access that."],
+        [
+          json({ errors: [{ message: "bad", extensions: { type: "invalid input" } }] }),
+          "Linear rejected the request.",
+        ],
+        [
+          json({ errors: [{ message: "Query too complex" }] }, { status: 400 }),
+          "Linear rejected the request.",
+        ],
+      ];
+      for (const [response, message] of cases) {
+        const { http } = makeHttp(() => response.clone());
+        const error = yield* Effect.flip((yield* tracker(http)).verify);
+        assert.deepStrictEqual(
+          [error._tag, "message" in error ? error.message : null],
+          ["IssueTrackerRejected", message],
+        );
+      }
+    }),
+  );
+
+  it.effect("keeps partial data beside a field error, and a 5xx GraphQL error is an outage", () =>
+    Effect.gen(function* () {
+      const partial = makeHttp(() =>
+        json({ ...viewerBody, errors: [{ message: "x", extensions: { type: "forbidden" } }] }),
+      );
+      assert.strictEqual((yield* (yield* tracker(partial.http)).verify).viewer.name, "Ada");
+
+      const outage = makeHttp(() => json({ errors: [{ message: "boom" }] }, { status: 502 }));
+      const error = yield* Effect.flip((yield* tracker(outage.http)).verify);
+      assert.strictEqual(error._tag, "IssueTrackerUnavailable");
+    }),
+  );
+
   it.effect("maps network failures to Unavailable", () =>
     Effect.gen(function* () {
       const { http } = makeHttp(() => "network-error");
@@ -316,7 +360,7 @@ describe("Linear tracker data mapping", () => {
     }),
   );
 
-  it.effect("marks milestones completed at progress 1 or status done", () =>
+  it.effect("marks milestones completed at progress 1 or status done and caps issue counts", () =>
     Effect.gen(function* () {
       const { http } = makeHttp(() =>
         json({
@@ -332,7 +376,7 @@ describe("Linear tracker data mapping", () => {
                     targetDate: null,
                     sortOrder: 2,
                     status: "done",
-                    issues: { nodes: [] },
+                    issues: { nodes: [], pageInfo: { hasNextPage: false } },
                   },
                   {
                     id: "m1",
@@ -341,7 +385,7 @@ describe("Linear tracker data mapping", () => {
                     targetDate: "2026-11-01",
                     sortOrder: 1,
                     status: "next",
-                    issues: { nodes: [{ id: "i" }] },
+                    issues: { nodes: [{ id: "i" }], pageInfo: { hasNextPage: false } },
                   },
                   {
                     id: "m3",
@@ -350,7 +394,7 @@ describe("Linear tracker data mapping", () => {
                     targetDate: null,
                     sortOrder: 3,
                     status: "unstarted",
-                    issues: { nodes: [] },
+                    issues: { nodes: [{ id: "j" }], pageInfo: { hasNextPage: true } },
                   },
                 ],
               },
@@ -360,11 +404,11 @@ describe("Linear tracker data mapping", () => {
       );
       const milestones = yield* (yield* tracker(http)).milestones("p1");
       assert.deepStrictEqual(
-        milestones.map((m) => [m.id, m.completed, m.issueCount]),
+        milestones.map((m) => [m.id, m.completed, m.issueCount, m.issueCountCapped]),
         [
-          ["m1", true, 1],
-          ["m2", true, 0],
-          ["m3", false, 0],
+          ["m1", true, 1, false],
+          ["m2", true, 0, false],
+          ["m3", false, 1, true],
         ],
       );
     }),
@@ -407,6 +451,25 @@ describe("Linear tracker data mapping", () => {
       assert.strictEqual(detail.description, "");
       assert.strictEqual(detail.milestoneProgress, 0.5);
       assert.strictEqual(detail.subIssues.length, 1);
+      assert.isFalse(detail.subIssuesFailed);
+    }),
+  );
+
+  it.effect("keeps the issue detail when its comments or sub-issues fail", () =>
+    Effect.gen(function* () {
+      const { http } = makeHttp((call) =>
+        call.body.query.includes("IssueDetail")
+          ? json({
+              data: { issue: { ...issueNode(3), description: "Body", comments: null } },
+              errors: [{ message: "comments failed", path: ["issue", "comments"] }],
+            })
+          : new Response("down", { status: 503 }),
+      );
+      const detail = yield* (yield* tracker(http)).issueDetail("ATT-3");
+      assert.strictEqual(detail.description, "Body");
+      assert.deepStrictEqual(detail.comments, []);
+      assert.deepStrictEqual(detail.subIssues, []);
+      assert.isTrue(detail.subIssuesFailed);
     }),
   );
 
