@@ -1718,6 +1718,10 @@ body {
   padding: 0;
 }
 
+[data-preview-url-input] {
+  font-variant-ligatures: none;
+}
+
 /* Lighter default icon stroke. In the base layer so stroke-* utilities still win; any
    CSS beats lucide's stroke-width="2" attribute. */
 @layer base {
