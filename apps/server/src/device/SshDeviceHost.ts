@@ -317,8 +317,13 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         origin: hubOrigin,
         http,
         run,
-        androidAvailable: platformAvailability("android").pipe(
-          Effect.map((availability) => availability.available),
+        // Keep probing negative reports so an SDK installed after connecting is still found.
+        androidAvailable: Effect.suspend(() =>
+          summary.platforms.some((p) => p.platform === "android" && p.available)
+            ? Effect.succeed(true)
+            : platformAvailability("android").pipe(
+                Effect.map((availability) => availability.available),
+              ),
         ),
       }),
       ...(remote.daemonPort !== undefined &&
