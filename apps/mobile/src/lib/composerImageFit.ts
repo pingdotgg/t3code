@@ -87,3 +87,51 @@ export async function fitComposerImage(image: {
     return null;
   }
 }
+
+async function readFileImageDimensions(uri: string) {
+  const { File, FileMode } = await import("expo-file-system");
+  const reader = new File(uri).open(FileMode.ReadOnly);
+  try {
+    const header = new Uint8Array(IMAGE_DIMENSIONS_HEADER_BYTES);
+    let length = 0;
+    while (length < header.length) {
+      const chunk = await reader.readBytes(header.length - length);
+      if (chunk.byteLength === 0) break;
+      header.set(chunk, length);
+      length += chunk.byteLength;
+    }
+    return readImageDimensions(header.subarray(0, length));
+  } finally {
+    reader.close();
+  }
+}
+
+/** File imports only need original base64 when it will be kept or a header read is unsupported. */
+export async function fitComposerImageFile(image: {
+  readonly uri: string;
+  readonly mimeType: string;
+}): Promise<{ base64: string; uri: string; fitted: boolean }> {
+  const { File } = await import("expo-file-system");
+  const mimeType = downscalableImageMimeType(image.mimeType);
+  // Some content providers allow a full read but do not expose file handles.
+  const dimensions =
+    mimeType === null ? null : await readFileImageDimensions(image.uri).catch(() => null);
+  if (dimensions === null) {
+    const base64 = await new File(image.uri).base64();
+    const fitted = await fitComposerImage({ ...image, base64 });
+    return fitted === null
+      ? { base64, uri: image.uri, fitted: false }
+      : { ...fitted, fitted: true };
+  }
+  if (fitImageAttachmentSize(dimensions) !== null) {
+    try {
+      return {
+        ...(await renderPhoto(image.uri, mimeType === "image/png" ? "png" : "jpeg")),
+        fitted: true,
+      };
+    } catch (error) {
+      console.warn("[composer-images] could not scale an oversized image", error);
+    }
+  }
+  return { base64: await new File(image.uri).base64(), uri: image.uri, fitted: false };
+}

@@ -20,7 +20,7 @@ import {
 } from "./composerAttachmentFiles";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
-import { fitComposerImage, renderPhoto } from "./composerImageFit";
+import { fitComposerImageFile, renderPhoto } from "./composerImageFit";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 import { writeFileAtomically } from "./atomic-file";
@@ -315,19 +315,22 @@ export async function pickComposerFiles(input: {
         continue;
       }
       try {
-        const { File } = await import("expo-file-system");
-        const original = await new File(attachment.fileUri).base64();
-        const candidate = await fitComposerImage({
+        let image = await fitComposerImageFile({
           uri: attachment.fileUri,
           mimeType,
-          base64: original,
         });
-        const fitted =
-          candidate !== null &&
-          estimateBase64ByteSize(candidate.base64) <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
-            ? candidate
-            : null;
-        const base64 = fitted?.base64 ?? original;
+        if (
+          image.fitted &&
+          estimateBase64ByteSize(image.base64) > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+        ) {
+          const { File } = await import("expo-file-system");
+          image = {
+            base64: await new File(attachment.fileUri).base64(),
+            uri: attachment.fileUri,
+            fitted: false,
+          };
+        }
+        const base64 = image.base64;
         const sizeBytes = estimateBase64ByteSize(base64);
         if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
           throw new Error(`'${name}' exceeds the 10 MB attachment limit.`);
@@ -340,7 +343,7 @@ export async function pickComposerFiles(input: {
           mimeType,
           sizeBytes,
           dataUrl,
-          previewUri: fitted?.uri ?? dataUrl,
+          previewUri: image.fitted ? image.uri : dataUrl,
         });
       } finally {
         await removePersistedComposerAttachmentFile(attachment.fileUri);
@@ -487,18 +490,15 @@ export async function pickComposerMedia(input: {
     let image: { base64: string; mimeType: string; name: string; previewUri: string };
     try {
       if (originalMimeType !== null) {
-        const { File } = await import("expo-file-system");
-        const base64 = await new File(asset.uri).base64();
-        const fitted = await fitComposerImage({
+        const fitted = await fitComposerImageFile({
           uri: asset.uri,
           mimeType: originalMimeType,
-          base64,
         });
         image = {
-          base64: fitted?.base64 ?? base64,
+          base64: fitted.base64,
           mimeType: originalMimeType,
           name,
-          previewUri: fitted?.uri ?? asset.uri,
+          previewUri: fitted.uri,
         };
       } else {
         const rendered = await renderPhoto(asset.uri);
@@ -585,11 +585,9 @@ export async function convertPastedImagesToAttachments(input: {
       if (index >= Math.max(0, remainingSlots)) {
         continue;
       }
-      const file = new File(uri);
       const mimeType = mimeTypeFromUri(uri);
-      const pastedBase64 = await file.base64();
-      const fitted = await fitComposerImage({ uri, mimeType, base64: pastedBase64 });
-      const base64 = fitted?.base64 ?? pastedBase64;
+      const fitted = await fitComposerImageFile({ uri, mimeType });
+      const base64 = fitted.base64;
       const sizeBytes = estimateBase64ByteSize(base64);
       if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
         continue;
@@ -601,7 +599,7 @@ export async function convertPastedImagesToAttachments(input: {
         mimeType,
         sizeBytes,
         dataUrl: `data:${mimeType};base64,${base64}`,
-        previewUri: ownedTemporaryFile ? `data:${mimeType};base64,${base64}` : (fitted?.uri ?? uri),
+        previewUri: ownedTemporaryFile ? `data:${mimeType};base64,${base64}` : fitted.uri,
       });
     } catch (error) {
       console.warn("Failed to read pasted image", uri, error);
