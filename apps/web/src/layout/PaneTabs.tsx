@@ -87,7 +87,10 @@ export function LayoutPaneTabStrip({ children }: { children: ReactNode }) {
       if (!tab) return;
       const bounds = strip.getBoundingClientRect();
       const rect = tab.getBoundingClientRect();
-      if (rect.left < bounds.left) strip.scrollLeft -= bounds.left - rect.left;
+      // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
+      if (rect.width > bounds.width && tab.dataset.layoutTabReveal === "end")
+        strip.scrollLeft += rect.right - bounds.right;
+      else if (rect.left < bounds.left) strip.scrollLeft -= bounds.left - rect.left;
       else if (rect.right > bounds.right) strip.scrollLeft += rect.right - bounds.right;
     };
     const wheel = (event: WheelEvent) => {
