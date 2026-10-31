@@ -44,7 +44,7 @@ vi.mock("react", () => ({
   useRef: (current: unknown) => ({ current }),
 }));
 vi.mock("@tanstack/react-router", () => ({
-  useRouter: () => ({ state: { matches: [] }, navigate: async () => {} }),
+  useRouter: () => ({ state: { location: { href: "/" }, matches: [] }, navigate: async () => {} }),
 }));
 vi.mock("../state/session", () => ({
   environmentSession: { sessionStateAtom: "session" },
