@@ -265,6 +265,10 @@ export const describeSandboxRetry = (retryAfterSeconds: number | undefined): str
     ? ""
     : ` Try again in ${formatWait(retryAfterSeconds)}.`;
 
+/** Ten percent of the window, but never fewer than two starts. */
+export const isSandboxStartWindowLow = (window: SandboxStartWindow): boolean =>
+  window.remaining <= Math.max(2, Math.ceil(window.limit / 10));
+
 export interface SandboxStartAssessment {
   readonly blocked: {
     readonly code: SandboxProviderErrorCode;
@@ -348,8 +352,7 @@ export const assessSandboxStart = (
     );
   }
   const lowWindow = limits.starts?.find(
-    (window) =>
-      window.remaining > 0 && window.remaining <= Math.max(2, Math.ceil(window.limit / 10)),
+    (window) => window.remaining > 0 && isSandboxStartWindowLow(window),
   );
   if (lowWindow !== undefined) {
     warnings.push(

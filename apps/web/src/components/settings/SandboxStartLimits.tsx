@@ -4,6 +4,7 @@ import {
   assessSandboxStart,
   type EnvironmentId,
   isSandboxProviderError,
+  isSandboxStartWindowLow,
   type SandboxProviderErrorCode,
   type SandboxProviderInfo,
   type SandboxProviderLimits,
@@ -113,7 +114,7 @@ export function SandboxQuotaLine({
         <>
           Starts left{" "}
           {limits.starts.map((window, index) => {
-            const low = window.remaining <= Math.max(2, Math.ceil(window.limit / 10));
+            const low = isSandboxStartWindowLow(window);
             return (
               <span key={window.window}>
                 {index === 0 ? "" : " · "}
