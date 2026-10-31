@@ -692,6 +692,15 @@ export function BranchToolbarBranchSelector({
             ? "create-branch"
             : "branch"
       }
+      getItemGroup={(item) =>
+        item === checkoutPullRequestItemValue
+          ? "Pull requests"
+          : item === createBranchItemValue
+            ? "Create"
+            : branchByName.get(item)?.isRemote
+              ? "Remote"
+              : "Local"
+      }
       originControl={
         isSelectingWorktreeBase
           ? { checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }
@@ -700,7 +709,7 @@ export function BranchToolbarBranchSelector({
       popupProps={{
         align: "start",
         side: displayMode === "panel" ? "right" : "top",
-        className: cn("flex flex-col", displayMode === "panel" ? "w-(--anchor-width)" : "w-80"),
+        className: cn("flex flex-col", displayMode === "panel" ? "w-(--anchor-width)" : "w-90"),
         ...(displayMode === "toolbar" ? composerFloatingLayerProps : {}),
       }}
     >
