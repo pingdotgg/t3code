@@ -206,7 +206,7 @@ export function isThreadListV2EnvironmentDisconnected(
   shellStatus: EnvironmentShellStatus,
 ): boolean {
   return (
-    (connectionState !== "connected" && connectionState !== "connecting") || shellStatus !== "live"
+    connectionState !== "connecting" && (connectionState !== "connected" || shellStatus !== "live")
   );
 }
 
