@@ -24,6 +24,8 @@ import {
   type RepositoryIdentity,
 } from "@t3tools/contracts";
 
+import type { ReviewGuideGenerationInput } from "@t3tools/provider-core/server/textGeneration";
+
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
@@ -45,7 +47,7 @@ const ACME_APP = {
     remoteName: "origin",
     remoteUrl: "https://github.com/acme/app.git",
   },
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   displayName: "acme/app",
   owner: "acme",
   name: "app",
@@ -109,7 +111,6 @@ const detail = (workspaceRoot: string, headSha: string): PullRequestDetail =>
     headBranch: "feature",
     headSha,
     workspaceRoot,
-    provider: SourceControlProviderKind.make("github"),
     repository: "acme/app",
   }) as PullRequestDetail;
 
@@ -995,7 +996,9 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
             canonicalKey: `${host}/acme/other`,
             displayName: "acme/other",
             name: "other",
-            provider: scenario === "unrelated SSH host" ? "gitlab" : "github",
+            provider: SourceControlProviderKind.make(
+              scenario === "unrelated SSH host" ? "gitlab" : "github",
+            ),
             locator: {
               ...ACME_APP.locator,
               remoteUrl:
