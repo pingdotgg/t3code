@@ -304,7 +304,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
   );
 
   // An expired access token prints the logged-out banner, then the CLI refreshes it in the
-  // same run, so the next `grok models` reports the login (#14285).
+  // same run, so the next `grok models` reports the login.
   it.effect("reports authenticated when `grok models` logs in after refreshing a token", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
@@ -349,6 +349,27 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       ]);
       expect(snapshot.message).toContain("ACP initialize failed");
       expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["compact"]);
+    }),
+  );
+
+  it.effect("warns instead of reporting ready when no models are discovered", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const grokPath = yield* writeFakeGrokCli({
+            modelsOutput: "You are logged in with grok.com.\n",
+            acp: true,
+          });
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, XAI_API_KEY: "", T3_ACP_OMIT_INITIALIZE_MODEL_STATE: "1" },
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("warning");
+      expect(snapshot.message).toContain("did not list any models");
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
     }),
   );
 
