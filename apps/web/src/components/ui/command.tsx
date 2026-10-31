@@ -153,13 +153,15 @@ function CommandList({
   className,
   inset = "default",
   ...props
-}: React.ComponentProps<typeof AutocompleteList> & { inset?: "default" | "compact" }) {
+}: React.ComponentProps<typeof AutocompleteList> & { inset?: "default" | "compact" | "composer" }) {
   return (
     <AutocompleteList
       className={cn(
-        inset === "compact"
-          ? "not-empty:scroll-py-1 not-empty:p-1"
-          : "not-empty:scroll-py-1.5 not-empty:p-1.5",
+        inset === "composer"
+          ? "not-empty:scroll-py-1.5 not-empty:p-1.5"
+          : inset === "compact"
+            ? "not-empty:scroll-py-1 not-empty:p-1"
+            : "not-empty:scroll-py-1.5 not-empty:p-1.5",
         className,
       )}
       data-slot="command-list"
@@ -214,19 +216,20 @@ function CommandGroup({
 }: React.ComponentProps<typeof AutocompleteGroup> & { spacing?: "default" | "composer" }) {
   return (
     <AutocompleteGroup
-      className={cn(spacing === "composer" && "[[role=group]+&]:mt-0", className)}
+      className={cn(
+        spacing === "composer" && "flex flex-col gap-px [[role=group]+&]:mt-px",
+        className,
+      )}
       data-slot="command-group"
       {...props}
     />
   );
 }
 
-// The composer's floating menus pair their 32px rows with a tighter, smaller header.
 function CommandGroupLabel({
   className,
-  spacing = "default",
   ...props
-}: React.ComponentProps<typeof AutocompleteGroupLabel> & { spacing?: "default" | "composer" }) {
+}: React.ComponentProps<typeof AutocompleteGroupLabel>) {
   return (
     <AutocompleteGroupLabel
       className={cn("px-2.5 pt-2 pb-1 text-caption", className)}
@@ -255,7 +258,7 @@ function CommandItem({
       automaticHighlight={false}
       className={cn(
         "min-h-8.5 px-2.5 py-1.5 text-control sm:min-h-8.5",
-        spacing === "composer" && "min-h-8 gap-2.5 px-2.5 py-0 sm:min-h-8",
+        spacing === "composer" && "min-h-8 gap-2.5 rounded-lg px-2.5 py-0 sm:min-h-8",
         active === undefined
           ? "hover:surface-selected data-highlighted:surface-selected data-highlighted:text-strong-foreground data-selected:surface-selected data-selected:text-strong-foreground"
           : "cursor-pointer",
