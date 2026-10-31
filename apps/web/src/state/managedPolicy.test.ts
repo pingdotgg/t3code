@@ -12,7 +12,7 @@ const policy: ManagedPolicySummary = {
   limits: {
     providers: {
       lockedInstanceFields: {
-        [codex]: ["config.binaryPath", "environment.OPENAI_BASE_URL", "environment.Https_Proxy"],
+        [codex]: ["config.binaryPath", "environment.OPENAI_BASE_URL", "environment.HTTPS_PROXY"],
       },
     },
   },

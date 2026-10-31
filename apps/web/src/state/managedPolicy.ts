@@ -42,7 +42,7 @@ export function managedTelemetryOffMessage(
 export interface ManagedInstanceLocks {
   /** Keys inside the instance's `config` users cannot change. */
   readonly configKeys: ReadonlySet<string>;
-  /** Environment variables users cannot edit, rename, or remove, in upper case. */
+  /** Environment variables users cannot edit, rename, or remove. */
   readonly environmentNames: ReadonlySet<string>;
   /** Under a runtime-mode ceiling every variable is the administrator's, not only named ones. */
   readonly wholeEnvironment: boolean;
@@ -60,8 +60,7 @@ export function managedInstanceLocks(
     new Set(paths.flatMap((path) => (path.startsWith(prefix) ? [path.slice(prefix.length)] : [])));
   return {
     configKeys: fieldsUnder("config."),
-    // The server applies a lock to every spelling of a name, as Windows reads names.
-    environmentNames: new Set([...fieldsUnder("environment.")].map((name) => name.toUpperCase())),
+    environmentNames: fieldsUnder("environment."),
     wholeEnvironment: paths.includes("environment"),
     reason: `Managed by ${policy.organization}.`,
   };
