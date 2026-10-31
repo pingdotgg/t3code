@@ -94,11 +94,14 @@ const makeReconnectHarness = (beforeStop: () => Effect.Effect<void> = () => Effe
   const remoteOwners = new Set<string>();
   const launchedOwners: string[] = [];
   const pairedOwners: string[] = [];
+  const backendOwners = new Map<string, string>();
   let nextTunnelId = 0;
   let failLaunch = false;
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       const args = commandArgs(command);
+      const host = args[args.indexOf("--") + 1] ?? "";
+      const alias = host.slice(host.lastIndexOf("@") + 1);
       if (args.includes("-G")) {
         return makeSuccessfulProcess(
           `hostname 127.0.0.1\nuser ${config.username}\nport ${config.port}\n`,
@@ -113,8 +116,9 @@ const makeReconnectHarness = (beforeStop: () => Effect.Effect<void> = () => Effe
         });
       }
       if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
-        const stateKey = args.at(-1)!;
-        launchedOwners.push(stateKey);
+        const stateKey = args.at(-1);
+        assert.isDefined(stateKey);
+        launchedOwners.push(stateKey!);
         if (failLaunch) {
           failLaunch = false;
           return {
@@ -122,8 +126,16 @@ const makeReconnectHarness = (beforeStop: () => Effect.Effect<void> = () => Effe
             exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
           };
         }
-        remoteOwners.add(stateKey);
-        return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"managed"}\n');
+        const existing = backendOwners.get(alias);
+        const kind =
+          remoteOwners.has(stateKey!) || existing === undefined || !remoteOwners.has(existing)
+            ? "managed"
+            : "external";
+        if (kind === "managed") {
+          remoteOwners.add(stateKey!);
+          backendOwners.set(alias, stateKey!);
+        }
+        return makeSuccessfulProcess(JSON.stringify({ remotePort: 3773, serverKind: kind }) + "\n");
       }
       const input = ChildProcess.isStandardCommand(command) ? command.options.stdin : undefined;
       const stdin = typeof input === "object" && "stream" in input ? input.stream : input;
@@ -162,6 +174,7 @@ const makeReconnectHarness = (beforeStop: () => Effect.Effect<void> = () => Effe
     },
     layer: Layer.mergeAll(
       NodeServices.layer,
+      NodeCrypto.layer,
       Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Layer.succeed(HttpClient.HttpClient, testHttpClient),
       Layer.succeed(NetService.NetService, testNetService),
@@ -457,7 +470,7 @@ describe("ssh tunnel scripts", () => {
         let configOutput = "";
         const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
         const spawner = ChildProcessSpawner.make((command) =>
-          Effect.gen(function* () {
+          Effect.sync(() => {
             const args = commandArgs(command);
             const isTarget = args.includes(target.alias);
             if (args.includes("-G")) {
@@ -557,35 +570,30 @@ describe("ssh tunnel scripts", () => {
     const harness = makeReconnectHarness();
     return Effect.gen(function* () {
       const manager = yield* SshTunnel.SshEnvironmentManager;
-      yield* manager.ensureEnvironment({
-        alias: "devbox",
-        hostname: "devbox",
-        username: overrides.username ?? harness.config.username,
-        port: overrides.port ?? harness.config.port,
-      });
       const first = yield* manager.ensureEnvironment({
         alias: "devbox",
         hostname: "devbox",
         username: overrides.username,
         port: overrides.port,
       });
+      yield* manager.ensureEnvironment(first.target);
       assert.lengthOf(harness.tunnelCommands, 1);
       harness.config.port = 40_002;
       harness.config.username = "updated";
       const saved = yield* decodeBootstrap(JSON.parse(JSON.stringify(first)));
+      const username = overrides.username ?? harness.config.username;
+      const port = overrides.port ?? harness.config.port;
       if (overrides.mode === "manual") {
         yield* manager.disconnectEnvironment(saved.target);
         assert.equal(harness.activeTunnels.size, 0);
         assert.equal(harness.remoteOwners.size, 0);
         const originalStop = harness.stopCommands.at(-1)!;
-        assert.equal(originalStop[originalStop.indexOf("-p") + 1], String(first.target.port));
-        assert.include(originalStop, `${first.target.username}@devbox`);
+        assert.equal(originalStop[originalStop.indexOf("-p") + 1], String(port));
+        assert.include(originalStop, `${username}@devbox`);
       }
       const reconnected = yield* manager.ensureEnvironment(saved.target, {
         issuePairingToken: true,
       });
-      const username = overrides.username ?? harness.config.username;
-      const port = overrides.port ?? harness.config.port;
       assert.equal(reconnected.target.username, username);
       assert.equal(reconnected.target.port, port);
       assert.deepEqual(reconnected.target.overrides, {
@@ -634,6 +642,36 @@ describe("ssh tunnel scripts", () => {
       yield* manager.disconnectEnvironment(first.target);
       assert.equal(harness.activeTunnels.size, 0);
       assert.equal(harness.remoteOwners.size, 0);
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect("keeps ownership when distinct requests converge on one endpoint", () => {
+    const harness = makeReconnectHarness();
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const inherited = yield* manager.ensureEnvironment({
+        alias: "devbox",
+        hostname: "devbox",
+        username: null,
+        port: null,
+      });
+      const pinned = yield* manager.ensureEnvironment({
+        alias: "devbox",
+        hostname: "devbox",
+        username: null,
+        port: 40002,
+      });
+      assert.equal(inherited.remoteServerKind, "managed");
+      assert.equal(pinned.remoteServerKind, "external");
+      harness.config.port = 40002;
+      const converged = yield* manager.ensureEnvironment(inherited.target);
+      assert.equal(converged.remoteServerKind, "managed");
+      assert.equal(harness.activeTunnels.size, 2);
+      yield* manager.disconnectEnvironment(inherited.target);
+      assert.equal(harness.activeTunnels.size, 1);
+      assert.equal(harness.remoteOwners.size, 0);
+      yield* manager.disconnectEnvironment(pinned.target);
+      assert.equal(harness.activeTunnels.size, 0);
     }).pipe(Effect.provide(harness.layer), Effect.scoped);
   });
 
