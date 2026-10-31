@@ -769,11 +769,7 @@ function TaskForm({
     setSaving(true);
     let result: AtomCommandResult<unknown, unknown> | null;
     if (draft.task !== null) {
-      // Existing tasks save as a dirty-field patch through the atomic update
-      // path: a stale editor can never overwrite fields another client
-      // changed, and a delete racing the save is a typed not-found, not a
-      // resurrection. `taskMissing` already guarantees the task is in the
-      // live list.
+      // Patch dirty fields atomically so stale saves cannot overwrite edits or resurrect deletes.
       const liveTask = tasks.data?.tasks.find((task) => task.id === draft.task?.id);
       if (liveTask === undefined) {
         // The live list has not returned (or the task vanished between render

@@ -335,13 +335,8 @@ function workspaceStrategyFromDraft(
   };
 }
 
-/**
- * Dirty-field patch for an existing task, scoped to its live project. The
- * baseline is the task snapshot the editor opened with (`draft.task`), so a
- * concurrent commit landing mid-session is never read as a change the user
- * made — and `projectId` tracks the live row, so a save still targets the
- * task wherever it currently lives. Returns null when nothing changed.
- */
+// Compare against the opening snapshot so concurrent edits are not mistaken for user changes.
+// Scope the patch to the live project.
 export function buildScheduledTaskUpdateInput(
   draft: ScheduledTaskDraft,
   liveTask: ScheduledTask,
@@ -365,11 +360,7 @@ export function buildScheduledTaskUpdateInput(
     schedule !== null &&
     baselineSchedule !== null &&
     (!sameSchedule(schedule, baselineSchedule) ||
-      // scheduleDraftForTask clamps a legacy sub-minute interval to one
-      // minute, so the baseline diff cannot see the normalization the
-      // editor promises. Emit the normalized schedule while the live task
-      // still carries it — a concurrent write to a valid interval clears
-      // this condition instead of being overwritten.
+      // Normalize legacy sub-minute intervals only while the live task still has one.
       (liveTask.schedule.type === "interval" &&
         liveTask.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS))
   ) {

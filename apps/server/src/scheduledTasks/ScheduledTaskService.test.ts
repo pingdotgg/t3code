@@ -376,17 +376,13 @@ const updateTestDeps = Layer.mergeAll(
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
     namedProjectsRoot: "/projects",
-    isScratchProject: () => Effect.succeed(false),
+    isScratchProject: (projectId) => Effect.succeed(projectId === "project:scratch"),
   }),
 );
 
 const updateTestLayer = ScheduledTaskService.layer.pipe(Layer.provide(updateTestDeps));
 
-// Only `boundThreadId` (v2) exists as a live binding target, inside
-// `updateProjectId`. `v1ThreadId` exists only in the legacy projection —
-// shell reconciliation runs before writes are served, so a thread without a
-// v2 row can never dispatch and must be rejected. `deletedThreadId` has a
-// deleted v2 row shadowing a live v1 row — v2 is the sole authority.
+// Only the live v2 binding is dispatchable; legacy-only and deleted v2 rows are rejected.
 const boundThreadId = ThreadId.make("thread:in-project");
 const v1ThreadId = ThreadId.make("thread:v1-only");
 const deletedThreadId = ThreadId.make("thread:deleted");
@@ -668,6 +664,18 @@ it.effect("concurrent workspaceStrategyPatch edits merge into the live strategy"
       startFromOrigin: false,
       branch: "release/1.2",
     });
+    const moved = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      nextProjectId: ProjectId.make("project:scratch"),
+    });
+    assert.deepEqual(Option.getOrThrow(moved).task.workspaceStrategy, { type: "root" });
+    const changed = yield* tasks.update({
+      id: updateTaskId,
+      projectId: ProjectId.make("project:scratch"),
+      workspaceStrategy: { type: "worktree", baseRef: "main" },
+    });
+    assert.deepEqual(Option.getOrThrow(changed).task.workspaceStrategy, { type: "root" });
   }).pipe(Effect.provide(updateTestLayer)),
 );
 
@@ -860,11 +868,7 @@ it.effect("update retains the pending due time unless the schedule changes", () 
     const seeded = yield* seedTask;
     assert.isNotNull(seeded.nextRunAt);
 
-    // Move the clock forward inside the pending window: an update that
-    // recomputed next_run_at unconditionally would now emit a different
-    // timestamp, so the exact-equality checks below discriminate between
-    // "retained" and "recomputed". (+30s stays inside the 60s interval, so
-    // the task is still not due and the poller cannot fire it.)
+    // Advance within the pending interval so a recomputed due time differs without firing.
     yield* TestClock.adjust("30 seconds");
 
     // Non-schedule edits keep the pending due time exactly.
@@ -894,11 +898,7 @@ it.effect("update retains the pending due time unless the schedule changes", () 
     });
     assert.equal(Option.getOrThrow(sameSchedule).task.nextRunAt, seeded.nextRunAt);
 
-    // A semantically equivalent fixed-time schedule (an explicit all-weekdays
-    // mask means the same as an omitted one) retains it too. The due time is
-    // planted as a sentinel no recompute from the current clock could
-    // produce — exact equality discriminates here, unlike a timestamp
-    // reachable from `now`, which recomputes to the same value.
+    // Use an unreachable due-time sentinel to distinguish retention from recomputation.
     const sql = yield* SqlClient.SqlClient;
     const fixedTimeId = ScheduledTaskId.make("scheduled-task:fixed-time");
     yield* tasks.upsert({
@@ -1198,11 +1198,8 @@ it.effect(
     }).pipe(Effect.provide(updateTestLayer)),
 );
 
-// Post-statement hooks on the service's SqlClient pin the contested windows:
-// the due-read hook runs after the SELECT's connection permit is released, so
-// a competing edit commits in exactly the read/dispatch gap; the mark-read
-// hook proves the dispatch transaction revalidated the row; a follow-up
-// due-read gives a sleep-free endpoint after which the iteration is done.
+// Post-statement gates release the connection before competing writes.
+// The follow-up cache query marks the iteration endpoint without sleeps.
 type SqlProbe = (
   statement: string,
   rows: ReadonlyArray<unknown>,
@@ -1621,22 +1618,15 @@ const setBoundThreadState = (
   });
 
 let sendToThreadCalls = 0;
-// Optional dispatch gate: parks sendToThread between its entry and return so a
-// test can land an archive inside a deterministic mid-dispatch window.
-// acceptedAtEntry models a send the thread already accepted when the call
-// arrived — the archive may land while the dispatch is in flight without the
-// send itself being rejected.
+// Park dispatch so archive can commit in flight; acceptedAtEntry models an accepted send.
 let sendBarrier: {
   readonly started: Deferred.Deferred<void>;
   readonly release: Deferred.Deferred<void>;
   readonly acceptedAtEntry?: boolean;
 } | null = null;
 
-// The stored-event source is a parameter so each service instance gets its
-// own tail: a shared queue would let a still-running reactor from another
-// test steal this test's events. Events at or before the requested cursor are
-// dropped, as the real store does, so a reactor resuming from the wrong
-// cursor misses events here too.
+// Each service gets its own event tail so reactors cannot steal other tests' events.
+// Filter by the requested cursor to expose incorrect recovery cursors.
 const boundThreadManagementMockFrom = (
   storedEvents: Stream.Stream<OrchestrationV2StoredEvent>,
   onSubscribe?: (afterSequence: number | undefined) => void,
@@ -1838,11 +1828,7 @@ it.effect("a stale archive event still pauses a task that was never re-enabled",
     const seeded = yield* seedBoundTask(true);
     assert.isNotNull(seeded.nextRunAt);
 
-    // The archive event committed after the task was enabled (higher
-    // sequence), then the thread was unarchived before the pause landed: the
-    // event is stale, but unarchive alone must not resume the schedule. The
-    // occurred_at is deliberately earlier than the enable's write time — the
-    // ordering comes from commit sequence, not the wall-clock timestamp.
+    // Use an earlier wall-clock timestamp to prove commit sequence orders the archive pause.
     yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "1969-12-31T23:59:59.000Z");
     yield* tasks.pauseForThread(archiveBoundThreadId);
 
@@ -1861,12 +1847,7 @@ it.effect("a compacted archive event still pauses via its command receipt", () =
     const seeded = yield* seedBoundTask(true);
     assert.isNotNull(seeded.nextRunAt);
 
-    // The archive committed through the command path, then the thread was
-    // unarchived and event compaction deleted every superseded state event —
-    // only a later non-archive event and the never-compacted command receipt
-    // remain. The receipt's result_sequence is the archived event's
-    // sequence, so the enablement watermark still sees the archive and the
-    // task pauses instead of dispatching without an explicit re-enable.
+    // Compaction removes the archive event; the accepted command receipt must still pause the task.
     yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
     const archivedSeq = yield* sql<{ readonly sequence: number }>`
       SELECT sequence FROM orchestration_events
@@ -1943,11 +1924,7 @@ it.effect("an explicit enable after unarchive is spared even if the pause never 
     yield* setBoundThreadState(archiveBoundThreadId, "active");
     const seeded = yield* seedBoundTask(true);
 
-    // Archive and unarchive both commit while the archive event is still
-    // queued, so the pause never landed and the task is still enabled. The
-    // explicit enable that follows — a no-op flag-wise — must still
-    // re-watermark past the archive, or the delayed event pauses a task the
-    // user affirmatively enabled.
+    // An explicit enable must advance the watermark even before the queued pause lands.
     yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
     yield* insertThreadEvent(archiveBoundThreadId, "thread.unarchived", "2026-01-01T00:00:02.000Z");
     const affirmed = yield* tasks.setEnabled({ id: seeded.id, enabled: true });
@@ -2537,11 +2514,7 @@ it.effect("update cannot enable or bind an archived-thread task, but unbinding s
   }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
-// Parks the next sql.withTransaction call between two Deferreds so a second
-// mutation can commit deterministically in the gap. With the bound-thread
-// guard outside the transaction, setEnabled validates the stale pre-image
-// and then enables the racing update's binding; inside the transaction it
-// re-reads the committed row and rejects.
+// Gate the transaction so a competing rebind commits before enable validates the live row.
 it.effect("an enable racing a committed rebind still validates the new binding", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -3407,7 +3380,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            isScratchProject: () => Effect.succeed(false),
+            isScratchProject: (projectId) => Effect.succeed(projectId === scratch),
           }),
           NodeCrypto.layer,
           Scheduler.layer,
@@ -3417,14 +3390,14 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const threadId = ThreadId.make("thread:promoted-during-run");
-      yield* setBoundThreadState(threadId, "active", promoted);
+      yield* setBoundThreadState(threadId, "active", scratch);
       const { task } = yield* service.upsert({
         id: ScheduledTaskId.make("task:promoted-during-run"),
         title: "Check in",
         prompt: "Check progress",
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
-        projectId: promoted,
+        projectId: scratch,
         threadId,
         workspaceStrategy: { type: "root" },
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
@@ -3432,7 +3405,9 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
         interactionMode: "default",
       });
 
+      yield* service.moveThreadTasks({ threadIds: [threadId], projectId: promoted });
       const result = yield* service.runNow({ id: task.id });
+      assert.isTrue(result.task.enabled);
 
       assert.equal(result.threadId, threadId);
       const attempts = yield* Ref.get(sends);

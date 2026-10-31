@@ -2,7 +2,7 @@ import {
   CommandId,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  type ProjectId,
+  ProjectId,
   ScheduledTask,
   ScheduledTaskError,
   ScheduledTaskId,
@@ -248,17 +248,7 @@ export class ScheduledTaskService extends Context.Service<
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
-    /**
-     * Atomic partial update: writes only the provided fields, and only while
-     * the task still exists in `input.projectId`. Returns `Option.none()` when
-     * no such task exists — the update can never insert a row, so an edit
-     * racing a delete loses instead of resurrecting the task.
-     *
-     * A `threadId`/`nextProjectId` patch is a typed conflict when the merged
-     * pair would bind the task to a thread outside its project (the dispatch
-     * check in `getProjectThread` would reject it).
-     * Unbind explicitly with `threadId: null` to move a bound task.
-     */
+    // Atomic scoped update never inserts; unbind explicitly before moving a bound task.
     readonly update: (
       input: ScheduledTaskUpdateInput,
     ) => Effect.Effect<Option.Option<ScheduledTaskMutationResult>, ScheduledTaskError>;
@@ -296,13 +286,7 @@ export class ScheduledTaskService extends Context.Service<
     readonly triggerWebhook: (
       request: WebhookTriggerRequest,
     ) => Effect.Effect<WebhookTriggerResult, ScheduledTaskError>;
-    /**
-     * Pause every enabled task bound to `threadId` (sets `enabled = 0` and
-     * clears `next_run_at`). Called when the thread is archived or deleted —
-     * a bound dispatch can only fail from then on, so leaving the task
-     * enabled would loop a guaranteed failure on every fire. Re-enabling is
-     * an explicit caller action once the thread accepts runs again.
-     */
+    // Archive pauses persist until the caller explicitly re-enables the task.
     readonly pauseForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
   }
 >()("t3/scheduledTasks/ScheduledTaskService") {}
@@ -341,14 +325,8 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-// Write transactions take the lock up front and wait up to busy_timeout, so
-// contention only surfaces when another process holds the lock longer than
-// that. Bun reports `code`/`errno`, and the node:sqlite client copies
-// `errcode` into `errno`, so both normally arrive as a retryable
-// LockTimeoutError. Accept that classification, and as a fallback a raw
-// native code in the SQLITE_BUSY (5) / SQLITE_LOCKED (6) families on any of
-// the field names a driver might use without that normalization. The ScheduledTaskError unwrap covers statements
-// that wrap SqlError inside the transaction before the retry policy sees it.
+// Drivers expose contention through different native error fields.
+// Retry wrapped SQL contention too, without retrying other failures.
 const isContendedWriteError = (cause: unknown): boolean => {
   if (isScheduledTaskError(cause)) return isContendedWriteError(cause.cause);
   if (!SqlError.isSqlError(cause)) return false;
@@ -664,17 +642,8 @@ export const layer = Layer.effect(
       return task;
     });
 
-    // A task only ever dispatches through getProjectThread, which reads the
-    // v2 projection and requires the bound thread to live in the task's
-    // project and not be deleted — so any stored (project, thread) pair that
-    // check would reject is a task that can never fire. This is the
-    // side-effect-free mirror of that rule: a plain read of the same v2
-    // projection table, safe to run inside the update transaction because it
-    // never takes the importer's thread lock or hydrates a transcript a
-    // rollback would orphan. (No v1 fallback: startup shell reconciliation
-    // has already imported every v1 thread before writes are served, and
-    // ensureTranscript never creates shells, so a thread without a v2 row is
-    // one dispatch can never reach.)
+    // Mirror getProjectThread against the authoritative v2 projection without
+    // thread locks or transcript hydration inside a rollbackable transaction.
     const requireThreadInProject = Effect.fn("ScheduledTaskService.requireThreadInProject")(
       function* (taskId: ScheduledTaskId, projectId: ProjectId, threadId: ThreadId) {
         const counts = yield* sql<{ matched: number }>`
@@ -732,9 +701,18 @@ export const layer = Layer.effect(
         readonly projectId: ScheduledTask["projectId"];
         readonly threadId: ThreadId;
         readonly taskId?: ScheduledTaskId;
+        readonly allowScratchPromotion?: boolean;
       }) {
         const row = yield* boundThreadRow(input.threadId);
-        if (row === undefined || row.deleted_at !== null || row.project_id !== input.projectId) {
+        if (
+          row === undefined ||
+          row.deleted_at !== null ||
+          (row.project_id !== input.projectId &&
+            !(
+              input.allowScratchPromotion &&
+              (yield* managedFolders.isScratchProject(ProjectId.make(row.project_id)))
+            ))
+        ) {
           return "missing" as const;
         }
         return row.archived_at !== null ? ("archived" as const) : null;
@@ -764,21 +742,9 @@ export const layer = Layer.effect(
       },
     );
 
-    // The archive/delete counterpart: a bound thread that stops accepting
-    // runs must pause its tasks. Called by the domain-event reactor and the
-    // startup sweep below, and re-asserted at fire time inside runTask. The
-    // shell re-check shares the write transaction: a queued archive event can
-    // arrive after the thread was already unarchived. Unarchive alone must
-    // never resume a schedule, so even then a task whose current enabled
-    // binding committed before the latest archive event is paused — only an
-    // enable that committed after it (the explicit post-unarchive re-enable)
-    // is spared. Ordering uses the event log's commit sequence, not wall
-    // clocks: an event's occurred_at is assigned at decide time and can
-    // precede a racing enable's commit, and run-state writes must never move
-    // the marker. enabled_seq is the sequence high-water captured inside the
-    // enabling transaction; an enable that could see the archive commit also
-    // saw the archived shell and was rejected, so enabled_seq > the archive
-    // sequence means the enable committed post-unarchive.
+    // Commit sequence orders archive and enable transactions; wall clocks cannot.
+    // Only an explicit enable after unarchive survives a queued archive pause.
+    // Run-state writes must never advance enabled_seq.
     const pauseTasksBoundTo = Effect.fn("ScheduledTaskService.pauseTasksBoundTo")(function* (
       threadId: ThreadId,
       options?: { readonly skipIfMissing?: boolean },
@@ -832,18 +798,8 @@ export const layer = Layer.effect(
       yield* notifyChanged;
     });
 
-    // "A committed archive postdates this task's enablement." Used by the
-    // pause and by the fire-time claim so an archive+unarchive pair still
-    // queued for the reactor pauses the task rather than dispatching a run
-    // the explicit re-enable was never given. The subquery is NULL for a
-    // never-archived thread, which never satisfies the predicate.
-    // The event row alone is not durable evidence: compaction retains only
-    // the newest state event per thread, so an archive followed by any later
-    // state event (unarchive, pin, visit) is deleted. Command receipts are
-    // never compacted for non-legacy commands — an accepted thread.archive
-    // receipt's result_sequence is the archived event's sequence — so the
-    // watermark unions both sources. Pin the partial archive index so the
-    // event lookup never walks the thread's unrelated event history.
+    // Compaction can remove archive events; accepted command receipts retain their sequence.
+    // Union both sources and use the partial archive index to avoid scanning unrelated events.
     const staleArchiveCommitted = (threadId: ThreadId) => sql`
       (
         SELECT MAX(sequence) FROM (
@@ -873,12 +829,8 @@ export const layer = Layer.effect(
       (rows) => rows[0]?.max ?? 0,
     );
 
-    // "A committed archive on the task's bound thread postdates its stored
-    // enablement." When this holds, an explicit enable affirmation is a
-    // resume — the row stayed enabled only because the archive's pause is
-    // still queued — so the caller paths below restart next_run_at from
-    // now instead of keeping the overdue due time the voided enablement
-    // left behind.
+    // A queued archive pause invalidates enablement even after unarchive;
+    // explicit resume must restart the interval instead of using an overdue due time.
     const enablementInvalidatedByArchive = (input: {
       readonly id: ScheduledTaskId;
       readonly threadId: ThreadId | null;
@@ -894,11 +846,8 @@ export const layer = Layer.effect(
             (rows) => rows.length > 0,
           );
 
-    // Run-state columns (last_run_*, run_count) are intentionally absent from
-    // the conflict clause: they are owned by the run transitions below, and a
-    // concurrent settings save must not overwrite an in-flight increment.
-    // Check existence in the write itself so an edit cannot undo a deletion
-    // that landed after upsert loaded the previous task.
+    // Run transitions own last_run_* and run_count, so settings saves cannot overwrite them.
+    // Check existence in the write so a racing delete cannot be undone.
     const saveTask = Effect.fn("ScheduledTaskService.saveTask")(function* (
       task: ScheduledTask,
       requireExisting: boolean,
@@ -1080,13 +1029,8 @@ export const layer = Layer.effect(
     const releaseStuckRun = Effect.fn("ScheduledTaskService.releaseStuckRun")(
       function* (task: ScheduledTask, message: string, pendingDeliveryId?: string) {
         const now = yield* localNow;
-        // Compute the next occurrence from the current row so a schedule
-        // edited while the run was in flight is honoured; fall back to the
-        // run's snapshot only if the re-read itself fails.
-        // Re-read and write under one lock so an edit committed between them
-        // keeps its own next_run_at rather than being overwritten by the
-        // schedule snapshot taken before the edit. Contention retry keeps a
-        // lock held by another process from stranding the task as 'running'.
+        // Re-read and complete under one lock so concurrent schedule edits retain their due time.
+        // Retry contention to avoid stranding a running task.
         yield* retryContended(
           sql
             .withTransaction(
@@ -1201,15 +1145,13 @@ export const layer = Layer.effect(
                   return { task: active, running: false, paused: false } as const;
                 }
                 if (active.threadId !== null) {
-                  // The archive/delete pause may not have landed yet: a bound
-                  // thread that no longer accepts runs must pause the task
-                  // instead of recording a guaranteed sendToThread failure on
-                  // every fire. Done inside the transaction so the pause and
-                  // the decision to not run stay atomic with the row read.
+                  // Pause and claim share a transaction so an undispatchable binding cannot run.
                   const blocked = yield* boundThreadBlocksDispatch({
                     projectId: active.projectId,
                     threadId: active.threadId,
                     taskId: active.id,
+                    // Promotion moves tasks before threads; sendBound follows the live project.
+                    allowScratchPromotion: true,
                   });
                   if (blocked !== null) {
                     yield* sql`
@@ -1236,11 +1178,7 @@ export const layer = Layer.effect(
                       paused: true,
                     } as const;
                   }
-                  // The shell is active, but archive then unarchive can both
-                  // have committed while the archive event is still queued for
-                  // the reactor — unarchive alone never resumes a schedule, so
-                  // a task whose enablement predates a committed archive pauses
-                  // here instead of dispatching.
+                  // Unarchive alone cannot resume enablement invalidated by a queued archive.
                   const stalePaused = yield* sql<{ task_id: string }>`
                     UPDATE scheduled_tasks
                     SET enabled = 0, enabled_seq = NULL,
@@ -1419,13 +1357,8 @@ export const layer = Layer.effect(
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
-        // Re-read the task so the next run is computed from the schedule as it
-        // is *now* (the user may have edited or deleted it while we ran). The
-        // re-read and the write share one transaction so a concurrent edit
-        // cannot land between them and have its next_run_at overwritten by a
-        // stale schedule. Contention retry keeps a lock held by another
-        // process from abandoning the completion write with the task left
-        // 'running'.
+        // Re-read and complete under one lock so concurrent schedule edits retain their due time.
+        // Retry contention to avoid stranding a running task.
         const current = yield* retryContended(
           sql
             .withTransaction(
@@ -1623,14 +1556,8 @@ export const layer = Layer.effect(
       ),
     );
 
-    // A bound thread that is archived or deleted can no longer accept a
-    // dispatch — sendToThread rejects it — so an enabled task would otherwise
-    // re-fire a guaranteed failure on every interval. Pausing on the live
-    // domain event is the prompt path; the sweep below covers archives and
-    // deletes committed while the server was down; the fire-time check in
-    // runTask is the final backstop for anything both miss.
-    // Each thread is paused in isolation, so one failed pause neither stops
-    // the reactor nor ends the sweep for the remaining threads.
+    // The reactor handles live archives; the startup sweep covers downtime.
+    // Fire-time validation is the backstop, and one failed pause must not stop other threads.
     const pauseLogged = (threadId: ThreadId, options?: { readonly skipIfMissing?: boolean }) =>
       pauseTasksBoundTo(threadId, options).pipe(
         Effect.catchCause((cause) =>
@@ -1850,15 +1777,8 @@ export const layer = Layer.effect(
               lastRunError: existingTask?.lastRunError ?? null,
               runCount: existingTask?.runCount ?? 0,
             };
-            // An enabled task must never point at a thread that cannot
-            // accept a dispatch, so its binding is checked on every write:
-            // inside this transaction, an archive (and the pause it
-            // triggers) committed before saveTask cannot be overwritten back
-            // to enabled. A disabled task may keep a stored binding (a paused
-            // task stays editable); like update, only a binding this write
-            // changes must still be a live thread in the project, so a
-            // legacy full-row save or commandId replay of an unchanged pair
-            // does not block an unrelated edit.
+            // Validate enabled bindings on every write, under the same lock as the save.
+            // Disabled tasks retain unchanged legacy bindings so unrelated edits remain possible.
             const bindingChanged =
               existingTask === null ||
               existingTask.threadId !== task.threadId ||
@@ -1874,12 +1794,8 @@ export const layer = Layer.effect(
                 yield* requireThreadInProject(task.id, task.projectId, task.threadId);
               }
             }
-            // An enabled upsert that re-affirms an enablement a committed
-            // archive already voided (pause still queued) is a resume:
-            // restart the interval rather than preserving the stale due
-            // time scheduleUnchanged carried over. Invalidation is judged
-            // on the *stored* binding — that is the enablement the archive
-            // may have voided, not the replacement target's history.
+            // An archive-invalidated enablement is a resume, so restart its interval.
+            // Check the stored binding, whose enablement the archive may have voided.
             const toSave =
               task.enabled &&
               existingTask !== null &&
@@ -1911,11 +1827,7 @@ export const layer = Layer.effect(
       return { task: (yield* findTask(task.id)) ?? task };
     });
 
-    // Partial edits run inside one transaction: the scoped row is read and
-    // rewritten without another fiber's statements interleaving (the client's
-    // connection serializes transactions), so a delete racing the edit
-    // surfaces as `none` (the UPDATE never inserts) and concurrent disjoint
-    // edits each keep their own columns.
+    // Read and patch under one lock: disjoint edits survive, and racing deletes stay deleted.
     const update: ScheduledTaskService["Service"]["update"] = Effect.fn(
       "ScheduledTaskService.update",
     )(function* (input) {
@@ -1962,15 +1874,8 @@ export const layer = Layer.effect(
             const nextSchedule = schedule ?? existing.schedule;
             const nextThreadId = input.threadId !== undefined ? input.threadId : existing.threadId;
             const nextProjectId = input.nextProjectId ?? existing.projectId;
-            // Patches merge with whatever concurrent edits already
-            // committed, so the resulting pair must still be dispatchable:
-            // a move keeps an existing threadId only when that thread
-            // belongs to the destination project, and a binding update
-            // keeps the current project. Passing `threadId: null` in the
-            // same patch is the explicit unbind that lets a bound task move.
-            // Like upsert, only a pair this write changes is validated, so
-            // a patch that repeats the stored binding of a since-deleted
-            // thread does not lose the unrelated edits it carries.
+            // Validate the merged project/thread pair only when it changes.
+            // Moving a bound task requires an explicit unbind.
             const bindingChanged =
               nextThreadId !== existing.threadId || nextProjectId !== existing.projectId;
             if (nextThreadId !== null && bindingChanged) {
@@ -2014,27 +1919,30 @@ export const layer = Layer.effect(
               }
             }
             if (input.threadId !== undefined) patch.thread_id = input.threadId;
-            if (input.workspaceStrategy !== undefined) {
-              patch.workspace_strategy_json = yield* encodeWorkspaceStrategyJson(
-                input.workspaceStrategy,
-              );
-            } else if (input.workspaceStrategyPatch !== undefined) {
-              // A sparse patch merges into the strategy read above inside
-              // this transaction: two clients editing disjoint controls
-              // (baseRef vs startFromOrigin) both land instead of the
-              // second whole-object write reverting the first. Keys that
-              // do not belong to the live strategy kind encode away, so a
-              // patch racing a kind change drops the stale control edit.
+            if (
+              input.workspaceStrategy !== undefined ||
+              input.workspaceStrategyPatch !== undefined ||
+              input.nextProjectId !== undefined
+            ) {
+              // Merge before normalizing against the destination project.
               const sparse = input.workspaceStrategyPatch;
-              patch.workspace_strategy_json = yield* encodeWorkspaceStrategyJson({
+              const strategy = input.workspaceStrategy ?? {
                 ...existing.workspaceStrategy,
-                ...(sparse.branch !== undefined ? { branch: sparse.branch } : {}),
-                ...(sparse.worktreePath !== undefined ? { worktreePath: sparse.worktreePath } : {}),
-                ...(sparse.baseRef !== undefined ? { baseRef: sparse.baseRef } : {}),
-                ...(sparse.startFromOrigin !== undefined
+                ...(sparse?.branch !== undefined ? { branch: sparse.branch } : {}),
+                ...(sparse?.worktreePath !== undefined
+                  ? { worktreePath: sparse.worktreePath }
+                  : {}),
+                ...(sparse?.baseRef !== undefined ? { baseRef: sparse.baseRef } : {}),
+                ...(sparse?.startFromOrigin !== undefined
                   ? { startFromOrigin: sparse.startFromOrigin }
                   : {}),
-              });
+              };
+              patch.workspace_strategy_json = yield* encodeWorkspaceStrategyJson(
+                strategy.type === "worktree" &&
+                  (yield* managedFolders.isScratchProject(nextProjectId))
+                  ? { type: "root" }
+                  : strategy,
+              );
             }
             if (input.modelSelection !== undefined) {
               patch.model_selection_json = yield* encodeModelSelectionJson(input.modelSelection);
@@ -2043,16 +1951,8 @@ export const layer = Layer.effect(
             if (input.nextProjectId !== undefined) patch.project_id = input.nextProjectId;
             if (Object.keys(patch).length === 0) return existing;
             const now = yield* localNow;
-            // An enabled row whose stored enablement a committed archive
-            // already voided (pause still queued) holds an overdue due
-            // time. Any update that escapes that pause — an explicit
-            // enabled:true re-affirmation, or a rebind/unbind that
-            // refreshes the watermark — is a resume: restart the interval
-            // rather than firing the stale due time. Invalidation is
-            // judged on the *stored* binding: an archive on the
-            // replacement thread says nothing about whether this task's
-            // enablement survived, and a move off a voided binding must
-            // not smuggle the overdue due time onto the new thread.
+            // Resume from now when an explicit enable or rebind escapes a queued archive pause.
+            // Check the stored binding so an overdue due time cannot move to a new thread.
             const resumeAfterArchive =
               existing.enabled &&
               nextEnabled &&
@@ -2079,15 +1979,8 @@ export const layer = Layer.effect(
               patch.next_run_at = nextRunAt({ enabled: nextEnabled, schedule: nextSchedule }, now);
             }
             patch.updated_at = iso(now);
-            // The read above and this write share one write-locked
-            // transaction, so no other write can land between them.
-            // enabled_seq marks when the current enabled binding was last
-            // affirmed — the archive pause uses it to spare an explicit
-            // post-unarchive re-enable. A rebind of an enabled task starts
-            // a new binding earlier archives never saw, and an explicit
-            // enabled: true re-affirms even when the flag is already set
-            // (the pause may not have landed between archive and
-            // unarchive). Edits that omit enabled preserve the marker.
+            // Explicit enable and enabled rebinds refresh the archive watermark under this lock.
+            // Other edits preserve it, including run-state writes.
             if (
               nextEnabled !== existing.enabled ||
               nextThreadId !== existing.threadId ||
@@ -2140,11 +2033,7 @@ export const layer = Layer.effect(
             const row = rows[0];
             if (row === undefined) return null;
             const existing = yield* decodeRow(row, yield* readWebhookOrigin);
-            // Re-enabling is the explicit reverse of the archive pause —
-            // the bound thread must accept runs again, which rules out
-            // archived, deleted, and cross-project targets. The check uses
-            // the row inside this transaction: a binding a concurrent
-            // update committed while the task was disabled is still caught.
+            // Validate the live binding under this lock so a racing rebind cannot bypass the check.
             if (input.enabled && existing.threadId !== null) {
               yield* ensureBindableTarget({
                 projectId: existing.projectId,

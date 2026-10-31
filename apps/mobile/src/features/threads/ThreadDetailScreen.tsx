@@ -384,26 +384,23 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const isArchived = props.selectedThread.archivedAt !== null;
   const unarchiveThread = useAtomCommand(threadEnvironment.unarchive, { reportFailure: false });
   const [unarchiving, setUnarchiving] = useState(false);
-  const handleUnarchive = useCallback(async () => {
+  const handleUnarchive = async () => {
     setUnarchiving(true);
-    try {
-      const result = await unarchiveThread({
-        environmentId: props.environmentId,
-        input: { threadId: props.selectedThread.id },
-      });
-      if (result._tag === "Success") {
-        refreshArchivedThreadsForEnvironment(props.environmentId);
-      } else if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        Dialog.alert(
-          "Could not unarchive thread",
-          error instanceof Error ? error.message : "Please try again.",
-        );
-      }
-    } finally {
-      setUnarchiving(false);
+    const result = await unarchiveThread({
+      environmentId: props.environmentId,
+      input: { threadId: props.selectedThread.id },
+    });
+    setUnarchiving(false);
+    if (result._tag === "Success") {
+      refreshArchivedThreadsForEnvironment(props.environmentId);
+    } else if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      Dialog.alert(
+        "Could not unarchive thread",
+        error instanceof Error ? error.message : "Please try again.",
+      );
     }
-  }, [props.environmentId, props.selectedThread.id, unarchiveThread]);
+  };
   const deviceState = useEnvironmentQuery(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
   );

@@ -33,11 +33,8 @@ export function workspaceStrategyFromDraft(
   };
 }
 
-// The dialog has no thread picker, so a bound task's only expressible
-// project move is unbind-and-move — the thread cannot follow across
-// projects. The Project field surfaces this as a hint before saving. It
-// mirrors buildScheduledTaskUpdateInput against the live task, so a binding
-// another client added while the editor was open is still announced.
+// A project move must detach the binding; the dialog has no thread picker.
+// Use the live task so concurrent bindings are included in the hint.
 export function moveDetachesThreadBinding(
   draft: DraftState,
   baseline: DraftState,
@@ -101,16 +98,8 @@ function sameWorkspaceStrategy(
   return true;
 }
 
-/**
- * Partial update carrying only the fields the user changed since the editor
- * opened, scoped to the task's current project. `baseline` is the draft as it
- * was when the editor opened — not the live task — so a concurrent edit
- * landing mid-session is never read as a change the user made, and draft
- * round-trip conversions (interval granularity) can't manufacture dirty
- * fields. Returns null when nothing changed so callers can skip the round
- * trip entirely. Only `nextProjectId` may re-home the task; `projectId` stays
- * the server's lookup and authorization scope.
- */
+// Compare against the opening draft so concurrent edits and round-trip conversions
+// cannot manufacture dirty fields. Keep projectId as the live authorization scope.
 export function buildScheduledTaskUpdateInput(
   draft: DraftState,
   baseline: DraftState,
@@ -138,11 +127,7 @@ export function buildScheduledTaskUpdateInput(
     schedule !== null &&
     (baselineSchedule === null ||
       !sameSchedule(schedule, baselineSchedule) ||
-      // taskToDraft clamps a legacy sub-minute interval to one minute, so the
-      // baseline diff cannot see the normalization the editor promises. Emit
-      // the normalized schedule while the live task still carries it — a
-      // concurrent write to a valid interval clears this condition instead
-      // of being overwritten.
+      // Normalize legacy sub-minute intervals only while the live task still has one.
       (task.schedule.type === "interval" && task.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS))
   ) {
     patch.schedule = schedule;
@@ -184,11 +169,7 @@ export function buildScheduledTaskUpdateInput(
   if (draft.projectId !== baseline.projectId) {
     patch.nextProjectId = draft.projectId as ProjectId;
   }
-  // A binding cannot survive a real project move — the thread stays in the
-  // old project and the server rejects the mismatched pair. The dialog has
-  // no thread picker, so it can only ever detach, and it does so only when
-  // the patch itself re-homes the task: a binding another client committed
-  // mid-session (move + rebind) survives a stale save.
+  // Detach only when this patch moves the task, preserving a concurrent move and rebind.
   if (
     patch.nextProjectId !== undefined &&
     patch.nextProjectId !== task.projectId &&

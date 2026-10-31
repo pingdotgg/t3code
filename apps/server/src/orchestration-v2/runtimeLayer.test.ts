@@ -509,7 +509,8 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
             prompt: "Check orchestration progress",
             enabled: !webhook,
             schedule: webhook ? { type: "webhook" } : { type: "interval", everyMs: 60_000 },
-            projectId,
+            projectId:
+              target === otherThreadId ? ProjectId.make("automation-other-project") : projectId,
             threadId: target,
             workspaceStrategy: { type: "root" },
             modelSelection,
@@ -6803,7 +6804,7 @@ it.layer(layerScratchPromotionTest)("turning a No project thread into a project"
         id: ScheduledTaskId.make("promotion-moves-bound"),
         title: "Bound",
         prompt: "Check in",
-        enabled: true,
+        enabled: false,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: SCRATCH_PROJECT_ID,
         threadId: siblingId,

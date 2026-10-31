@@ -94,6 +94,7 @@ describe("buildScheduledTaskUpdateInput", () => {
           secret: "new-secret",
         },
         maxDeliveryAgeMinutes: null,
+        dedupe: {},
       },
     });
   });
@@ -236,11 +237,7 @@ describe("buildScheduledTaskUpdateInput", () => {
   });
 
   it("sends only the workspace controls the user changed as a sparse patch", () => {
-    // The editor opened with startFromOrigin: true; another client committed
-    // startFromOrigin: false while it was open. A save that changes only the
-    // base ref sends just that key — the server merges it into the live
-    // strategy inside the update transaction, so the concurrent toggle
-    // survives on both sides.
+    // A stale editor changing only baseRef must preserve the concurrent startFromOrigin toggle.
     const opened = taskToDraft(task);
     const live: ScheduledTask = {
       ...task,

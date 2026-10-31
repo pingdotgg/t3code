@@ -5,11 +5,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 
-describe("066_ArchivedThreadEventsIndex", () => {
-  it.effect("upgrades databases that already recorded migration 64 without losing task state", () =>
+describe("078_ArchivedThreadEventsIndex", () => {
+  it.effect("upgrades databases that already recorded migration 76 without losing task state", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 65 });
+      yield* runMigrations({ toMigrationInclusive: 77 });
       const before = yield* sql<{ readonly name: string }>`PRAGMA index_list(orchestration_events)`;
       assert.ok(
         !before.some((entry) => entry.name === "orchestration_events_v2_archived_threads_idx"),
@@ -38,7 +38,7 @@ describe("066_ArchivedThreadEventsIndex", () => {
           AND event_type = 'thread.archived' AND application_event_version = 2
       `;
       assert.deepStrictEqual(archives, [{ event_id: "archive" }]);
-      assert.deepStrictEqual(applied, [[66, "ArchivedThreadEventsIndex"]]);
+      assert.deepStrictEqual(applied, [[78, "ArchivedThreadEventsIndex"]]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       const rows = yield* sql<{
         readonly enabled_seq: number;
@@ -52,7 +52,7 @@ describe("066_ArchivedThreadEventsIndex", () => {
   it.effect("preserves an archive index created by an earlier preview", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 65 });
+      yield* runMigrations({ toMigrationInclusive: 77 });
       yield* sql`
         CREATE INDEX orchestration_events_v2_archived_threads_idx
         ON orchestration_events(stream_id, sequence)
@@ -60,7 +60,7 @@ describe("066_ArchivedThreadEventsIndex", () => {
           AND aggregate_kind = 'thread'
           AND event_type = 'thread.archived'
       `;
-      assert.deepStrictEqual(yield* runMigrations(), [[66, "ArchivedThreadEventsIndex"]]);
+      assert.deepStrictEqual(yield* runMigrations(), [[78, "ArchivedThreadEventsIndex"]]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       const archives = yield* sql<{ readonly sequence: number | null }>`
         SELECT MAX(sequence) AS sequence FROM orchestration_events
@@ -77,8 +77,8 @@ describe("066_ArchivedThreadEventsIndex", () => {
       const sql = yield* SqlClient.SqlClient;
       const applied = yield* runMigrations();
       assert.deepStrictEqual(applied.slice(-2), [
-        [65, "ScheduledTasksEnabledSeq"],
-        [66, "ArchivedThreadEventsIndex"],
+        [77, "ScheduledTasksEnabledSeq"],
+        [78, "ArchivedThreadEventsIndex"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       const indexes = yield* sql<{ readonly name: string; readonly partial: number }>`

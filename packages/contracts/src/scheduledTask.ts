@@ -248,13 +248,7 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
-/**
- * Sparse workspace-strategy merge: only the provided keys are applied to the
- * live strategy inside the update transaction, so two clients editing
- * disjoint controls (for example `baseRef` and `startFromOrigin`) keep both
- * changes instead of the second whole-object write reverting the first. A
- * strategy `type` change must send the complete `workspaceStrategy` instead.
- */
+// Merge only provided controls into the live strategy; kind changes require a full strategy.
 export const ScheduledTaskWorkspaceStrategyPatch = Schema.Struct({
   branch: Schema.optional(TrimmedNonEmptyString),
   worktreePath: Schema.optional(TrimmedNonEmptyString),
@@ -263,12 +257,7 @@ export const ScheduledTaskWorkspaceStrategyPatch = Schema.Struct({
 });
 export type ScheduledTaskWorkspaceStrategyPatch = typeof ScheduledTaskWorkspaceStrategyPatch.Type;
 
-/**
- * Atomic partial update: only the provided fields are written, and only while
- * the task still exists in `projectId`. Implemented as a targeted UPDATE —
- * never an insert — so an edit racing a delete cannot resurrect the task and
- * disjoint concurrent edits keep their own columns.
- */
+// Atomic scoped update never inserts; unbind explicitly before moving a bound task.
 export const ScheduledTaskUpdateInput = Schema.Struct({
   id: ScheduledTaskId,
   projectId: ProjectId,
