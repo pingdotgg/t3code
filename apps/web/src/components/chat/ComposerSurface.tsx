@@ -13,7 +13,7 @@ function Shell({
       data-slot="composer-shell"
       data-context-row={contextRow || undefined}
       className={cn(
-        "@container/composer-surface group/composer-surface relative isolate mx-auto flex w-full max-w-(--chat-content-max-width) flex-col rounded-2xl surface-tray",
+        "@container/composer-surface group/composer-surface relative isolate mx-auto flex w-full max-w-(--chat-content-max-width) flex-col rounded-2xl surface-tray border-0",
         "[--chat-composer-surface:var(--popover)] [--chat-composer-outline:var(--tray-stroke)]",
         className,
       )}
