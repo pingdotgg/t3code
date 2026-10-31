@@ -30,13 +30,14 @@ const fetchText = Effect.fn("ModelBenchmarksRefresh.fetchText")((url: string) =>
 const readField = (body: string, key: string) =>
   new RegExp(`(?:^|,)${key}:(\`[^\`]*\`|-?[\\d.]+(?:e[+-]?\\d+)?)`).exec(body)?.[1];
 
-function parseBenchmarkVariants(bundle: string) {
+export function parseBenchmarkVariants(bundle: string) {
   const variants = new Map<string, { intelligence: number; costPerTask: number }>();
   for (const [, model, body = ""] of bundle.matchAll(/\{id:`[^`]+`,family:`([^`]+)`,(.*?)\}/g)) {
     const effort = readField(body, "effort")?.replaceAll("`", "");
     const intelligence = Number(readField(body, "intelligence"));
     const costPerTask = Number(readField(body, "cost"));
     if (!model || !ID_PATTERN.test(model) || !effort || !ID_PATTERN.test(effort)) continue;
+    if (!Number.isFinite(intelligence) || !Number.isFinite(costPerTask)) continue;
     if (!(intelligence > 0) || !(costPerTask > 0)) continue;
     variants.set(`${model}\u0000${effort}`, {
       intelligence: Number(intelligence.toFixed(2)),
