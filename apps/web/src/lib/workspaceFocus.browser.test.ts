@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+import appCss from "~/index.css?inline";
 import { createWorkspaceFocusController } from "./workspaceFocus";
 
 function setup() {
@@ -256,5 +258,54 @@ describe("workspace area focus", () => {
     composer.button.focus();
     expect(fixture.controller.move(1)).toBe(true);
     expect(document.activeElement).toBe(terminal.button);
+  });
+
+  it("rings an area reached with F6, but not a clicked one after a bare key press", async () => {
+    using fixture = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    const sidebar = fixture.area("sidebar", 0);
+    const home = fixture.append(
+      '<main data-workspace-area="home" data-workspace-order="1" tabindex="-1" style="height: 200px"></main>',
+    );
+    const outline = () => getComputedStyle(home).outlineStyle;
+
+    await userEvent.click(home);
+    expect(document.activeElement).toBe(home);
+    expect(outline()).toBe("none");
+    // A window switch can deliver a lone modifier key without moving focus.
+    await userEvent.keyboard("{Shift}");
+    expect(outline(), "a clicked area shows the focus ring after a bare key press").toBe("none");
+    // Window activation refocuses the element that had focus, with nothing focused in between.
+    home.blur();
+    home.focus();
+    expect(outline(), "a clicked area rings when the window regains focus").toBe("none");
+
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(sidebar.button);
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(home);
+    expect(outline()).toBe("solid");
+
+    // A dialog opened from the keyboard returns focus to the area when it closes.
+    await userEvent.keyboard("{Enter}");
+    sidebar.button.focus();
+    await userEvent.keyboard("{Escape}");
+    home.focus();
+    expect(outline(), "an area loses its ring when keyboard focus returns to it").toBe("solid");
+
+    await userEvent.click(home);
+    expect(outline(), "clicking the ringed area removes its ring").toBe("none");
+
+    // With no other area visible, F6 lands on the area that already has focus.
+    sidebar.element.hidden = true;
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(home);
+    expect(outline(), "F6 onto the only, already focused area shows no ring").toBe("solid");
   });
 });

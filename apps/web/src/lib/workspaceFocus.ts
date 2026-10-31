@@ -90,10 +90,28 @@ function revealInScrollers(target: HTMLElement) {
 export function createWorkspaceFocusController(doc: Document) {
   const lastFocused = new Map<string, HTMLElement>();
   let lastArea: string | undefined;
+  // An area that took focus itself from the keyboard. Chromium's :focus-visible also matches
+  // a clicked area after any later key press, so the ring and window return read this mark.
+  let keyboardArea: HTMLElement | undefined;
+  let previousTarget: EventTarget | null = null;
+  const unmarkKeyboardArea = () => {
+    keyboardArea?.removeAttribute("data-workspace-keyboard-focus");
+    keyboardArea = undefined;
+  };
+  const markKeyboardArea = (area: HTMLElement) => {
+    if (!area.matches(":focus-visible")) return;
+    keyboardArea = area;
+    area.setAttribute("data-workspace-keyboard-focus", "");
+  };
   const remember = (event: FocusEvent) => {
+    if (event.target !== keyboardArea) unmarkKeyboardArea();
+    // Window activation refocuses the same element; only focus arriving from elsewhere counts.
+    const arrived = event.target !== previousTarget;
+    previousTarget = event.target;
     if (!(event.target instanceof HTMLElement)) return;
     const area = workspaceArea(event.target);
     if (!area?.dataset.workspaceArea) return;
+    if (arrived && event.target === area) markKeyboardArea(area);
     lastArea = area.dataset.workspaceArea;
     const key = area.dataset.workspaceFocusKey ?? lastArea;
     lastFocused.delete(key);
@@ -162,6 +180,8 @@ export function createWorkspaceFocusController(doc: Document) {
       const active = root instanceof ShadowRoot ? root.activeElement : doc.activeElement;
       if (active === target || (active && target.contains(active))) {
         if (target !== area && !isConversation) revealInScrollers(target);
+        // Focusing the already focused area fires no focusin, as when F6 has nowhere else to go.
+        if (target === area) markKeyboardArea(area);
         return true;
       }
     }
@@ -301,7 +321,11 @@ export function createWorkspaceFocusController(doc: Document) {
   const onUserInput = () => {
     if (cancelOnInput) cancelRequest();
   };
-  doc.addEventListener("pointerdown", onUserInput, true);
+  const onPointerDown = () => {
+    unmarkKeyboardArea();
+    onUserInput();
+  };
+  doc.addEventListener("pointerdown", onPointerDown, true);
   doc.addEventListener("keydown", onUserInput, true);
 
   return {
@@ -313,9 +337,10 @@ export function createWorkspaceFocusController(doc: Document) {
     request,
     dispose: () => {
       cancelRequest();
+      unmarkKeyboardArea();
       doc.removeEventListener("focusin", remember);
       doc.removeEventListener("focusout", recover);
-      doc.removeEventListener("pointerdown", onUserInput, true);
+      doc.removeEventListener("pointerdown", onPointerDown, true);
       doc.removeEventListener("keydown", onUserInput, true);
     },
   };

@@ -2563,8 +2563,12 @@ code {
   }
 }
 
-/* A workspace area with no control of its own takes F6 focus itself; keep that visible. */
+/* A workspace area with no control of its own takes F6 focus itself; keep that visible.
+   workspaceFocus.ts marks those, since :focus-visible also matches a clicked area after a key press. */
 [data-workspace-area]:focus-visible {
+  outline: none;
+}
+[data-workspace-keyboard-focus]:focus {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
