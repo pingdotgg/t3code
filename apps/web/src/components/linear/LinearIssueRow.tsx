@@ -9,6 +9,7 @@ import { RelativeTime } from "../RelativeTime";
 import { LinearActivityPill } from "./LinearActivityPill";
 import { LinearAvatar, LinearPriorityIcon, LinearStateIcon } from "./linearIcons";
 import { pickActivityPill } from "@t3tools/client-runtime/linear/activity";
+import { linearIssueMatchesRoute } from "@t3tools/client-runtime/linear/issue-link";
 import { useLinearSubIssues } from "./useLinearData";
 
 export interface LinearIssueRowContext {
@@ -37,7 +38,9 @@ export function LinearIssueRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const subIssues = useLinearSubIssues(expanded ? issue.id : undefined);
-  const selected = context.selectedIssueId === issue.id;
+  const selected =
+    context.selectedIssueId !== undefined &&
+    linearIssueMatchesRoute(issue, context.selectedIssueId);
   const pill = pickActivityPill(issue, context.activityByIssueId.get(issue.id));
   const pullRequest = issue.linkedPullRequests[0];
   const finished = issue.state.type === "completed" || issue.state.type === "canceled";

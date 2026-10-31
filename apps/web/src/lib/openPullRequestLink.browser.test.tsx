@@ -181,6 +181,12 @@ it.each([
   ["https://linear.app/attraccess/issue/ATT-1189", { metaKey: true }, null],
 ] as const)("routes Linear issue link %s with %j to %s", async (url, modifiers, issue) => {
   setup();
+  // Linear links open in the app even when PR links do not.
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    pullRequestLinksOpenInApp: false,
+    browserLinkTarget: "system",
+  });
   await using screen = await render(
     <AppAtomRegistryProvider>
       <LinearLink url={url} />
@@ -188,10 +194,17 @@ it.each([
   );
   using navigate = vi.spyOn(screen.router!, "navigate");
   const event = new MouseEvent("click", { bubbles: true, cancelable: true, ...modifiers });
-  screen.container.addEventListener("click", (nativeEvent) => nativeEvent.preventDefault(), {
-    once: true,
-  });
+  const defaults: boolean[] = [];
+  screen.container.addEventListener(
+    "click",
+    (nativeEvent) => {
+      defaults.push(nativeEvent.defaultPrevented);
+      nativeEvent.preventDefault();
+    },
+    { once: true },
+  );
   await act(() => screen.getByRole("link", { name: "Issue" }).element().dispatchEvent(event));
+  expect(defaults).toEqual([issue !== null]);
   if (issue === null) {
     expect(navigate).not.toHaveBeenCalled();
   } else {
@@ -199,4 +212,30 @@ it.each([
       expect.objectContaining({ to: "/linear", search: { issue } }),
     );
   }
+});
+
+it("keeps the Linear page's scope when a link on it opens another issue", async () => {
+  setup();
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <LinearLink url="https://linear.app/attraccess/issue/ATT-2" />
+    </AppAtomRegistryProvider>,
+    { router: "/linear?team=team-1" },
+  );
+  using navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
+  screen.container.addEventListener("click", (nativeEvent) => nativeEvent.preventDefault(), {
+    once: true,
+  });
+  await act(() =>
+    screen
+      .getByRole("link", { name: "Issue" })
+      .element()
+      .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })),
+  );
+  const search = navigate.mock.calls[0]?.[0].search as (previous: object) => object;
+  expect(search({ team: "team-1", q: "bug" })).toEqual({
+    team: "team-1",
+    q: "bug",
+    issue: "ATT-2",
+  });
 });

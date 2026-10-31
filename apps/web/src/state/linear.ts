@@ -13,15 +13,24 @@ export const linearEnvironment = createLinearEnvironmentAtoms(connectionAtomRunt
 
 const NO_THREAD_IDENTIFIERS: ReadonlyMap<string, string> = new Map();
 
-/** Connection status of the primary environment's Linear workspace; null until loaded. */
-export const linearStatusAtom = Atom.make((get) => {
+const linearStatusResultAtom = Atom.make((get) => {
   const environmentId = get(primaryEnvironmentIdAtom);
-  if (environmentId === null) return null;
-  return AsyncResult.getOrElse(
-    get(linearEnvironment.status({ environmentId, input: {} })),
-    () => null,
-  );
+  return environmentId === null
+    ? null
+    : get(linearEnvironment.status({ environmentId, input: {} }));
+}).pipe(Atom.withLabel("web-linear-status-result"));
+
+/** Null until loaded, when it failed, or without a primary environment. */
+export const linearStatusAtom = Atom.make((get) => {
+  const result = get(linearStatusResultAtom);
+  return result === null ? null : AsyncResult.getOrElse(result, () => null);
 }).pipe(Atom.withLabel("web-linear-status"));
+
+/** True once the status has answered (connected or not), or when there is nothing to ask. */
+export const linearStatusSettledAtom = Atom.make((get) => {
+  const result = get(linearStatusResultAtom);
+  return result === null || result._tag !== "Initial";
+}).pipe(Atom.withLabel("web-linear-status-settled"));
 
 /**
  * Thread id -> Linear issue identifier ("ATT-615") for sidebar rows. One shared derivation so

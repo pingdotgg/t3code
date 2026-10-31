@@ -25,7 +25,7 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
   useNavigate: (() => state.navigate) as never,
   useRouter: (() => ({
     navigate: state.navigate,
-    state: { matches: [{ params: state.routeParams }] },
+    state: { matches: [{ params: state.routeParams }], location: { pathname: "/" } },
   })) as never,
 }));
 vi.mock(import("../../state/environments"), async (original) => ({
@@ -58,6 +58,14 @@ vi.mock(import("../../state/shell"), async (original) => {
   return {
     ...(await original()),
     allReachableShellsLiveAtom: Atom.make(false).pipe(Atom.keepAlive),
+  };
+});
+vi.mock(import("../../state/linear"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...(await original()),
+    linearStatusAtom: Atom.make<unknown>(null).pipe(Atom.keepAlive) as never,
+    linearStatusSettledAtom: Atom.make(false).pipe(Atom.keepAlive),
   };
 });
 vi.mock(import("../../state/entities"), async (original) => ({
@@ -100,6 +108,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => {
 
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { allReachableShellsLiveAtom } from "../../state/shell";
+import { linearStatusAtom, linearStatusSettledAtom } from "../../state/linear";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../../diffPanelStore";
 import {
   selectActiveRightPanel,
@@ -109,6 +118,8 @@ import {
 import { DesktopWebLinkCoordinator } from "./DesktopWebLinkCoordinator";
 
 const discoverySettled = allReachableShellsLiveAtom as Atom.Writable<boolean>;
+const linearStatus = linearStatusAtom as unknown as Atom.Writable<unknown>;
+const linearSettled = linearStatusSettledAtom as Atom.Writable<boolean>;
 const environmentId = EnvironmentId.make("local");
 const projectId = ProjectId.make("effect");
 const project = {
@@ -155,6 +166,8 @@ function setup() {
   useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} });
   useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
   appAtomRegistry.set(discoverySettled, false);
+  appAtomRegistry.set(linearStatus, null);
+  appAtomRegistry.set(linearSettled, false);
 }
 
 /** Mounts the coordinator behind a desktop bridge that hands over `urls` once the renderer is ready. */
@@ -200,6 +213,27 @@ it("holds a launch PR link until project discovery settles, then opens the PR vi
     await navigated;
   });
   expect(state.navigate).toHaveBeenCalledExactlyOnceWith(pullRequestView);
+  expect(state.openScratchProject).not.toHaveBeenCalled();
+});
+
+it("holds a launch Linear issue link until Linear status answers, then opens the Linear page", async () => {
+  setup();
+  await using _coordinator = await mount("https://linear.app/acme/issue/att-12/title");
+  expect(state.navigate).not.toHaveBeenCalled();
+  expect(state.openScratchProject).not.toHaveBeenCalled();
+
+  const navigated = new Promise<void>((resolve) => {
+    state.navigate.mockImplementationOnce(async () => resolve());
+  });
+  await act(async () => {
+    appAtomRegistry.set(linearStatus, { state: "connected", organization: { urlKey: "acme" } });
+    appAtomRegistry.set(linearSettled, true);
+    await navigated;
+  });
+  expect(state.navigate).toHaveBeenCalledExactlyOnceWith({
+    to: "/linear",
+    search: { issue: "ATT-12" },
+  });
   expect(state.openScratchProject).not.toHaveBeenCalled();
 });
 

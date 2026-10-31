@@ -4,12 +4,13 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { parseLinearIssueUrl } from "@t3tools/client-runtime/linear/issue-link";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { readPairingAppLink, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import { useRouter } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
-import { AtomRegistry } from "effect/reactivity";
+import { type Atom, AtomRegistry } from "effect/reactivity";
 import * as Stream from "effect/Stream";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
@@ -27,6 +28,7 @@ import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPa
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { assetEnvironment } from "../../state/assets";
+import { linearStatusSettledAtom } from "../../state/linear";
 import { readProject, readThreadShell } from "../../state/entities";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironment } from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
@@ -43,10 +45,9 @@ const externalClick = {
   ctrlKey: false,
 };
 
-/** Resolves once every reachable environment has reported its projects or settled offline. */
-const projectsSettled = (): Promise<void> =>
+const untilTrue = (atom: Atom.Atom<boolean>): Promise<void> =>
   Effect.runPromise(
-    AtomRegistry.toStream(appAtomRegistry, allReachableShellsLiveAtom).pipe(
+    AtomRegistry.toStream(appAtomRegistry, atom).pipe(
       Stream.filter((settled) => settled),
       Stream.runHead,
       Effect.asVoid,
@@ -234,15 +235,17 @@ export function DesktopWebLinkCoordinator() {
   });
 
   const receiveLink = useEffectEvent((url: string) => {
-    // A connected server publishes its config before its project snapshot, so a source control
-    // link delivered at launch would miss its project and fall through to the browser. Hold
-    // those links until discovery settles; an ordinary link never waits for it.
+    // A link delivered at launch can beat the data that routes it: a source control link waits
+    // for project discovery, a Linear issue link for the Linear status. An ordinary link never
+    // waits.
     const hold =
       openPullRequestsInApp &&
       (sourceControlClients.parseChangeRequestUrl(url) !== null ||
         sourceControlClients.parseCommitUrl(url) !== null)
-        ? projectsSettled()
-        : Promise.resolve();
+        ? untilTrue(allReachableShellsLiveAtom)
+        : parseLinearIssueUrl(url) !== null
+          ? untilTrue(linearStatusSettledAtom)
+          : Promise.resolve();
     void hold.then(() => {
       queueRef.current = queueRef.current.then(() => openLink(url)).catch(() => undefined);
     });

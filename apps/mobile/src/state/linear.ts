@@ -30,6 +30,16 @@ export const linearFiltersAtom = Atom.make<LinearSearch>({}).pipe(
   Atom.withLabel("mobile:linear-filters"),
 );
 
+/** The Linear environment's connection status; null until loaded or without one. */
+export const linearStatusAtom = Atom.make((get) => {
+  const environmentId = get(linearEnvironmentIdAtom);
+  if (environmentId === null) return null;
+  return AsyncResult.getOrElse(
+    get(linearEnvironment.status({ environmentId, input: {} })),
+    () => null,
+  );
+}).pipe(Atom.withLabel("mobile:linear-status"));
+
 const NO_THREAD_IDENTIFIERS: ReadonlyMap<string, string> = new Map();
 
 /**
@@ -40,10 +50,7 @@ const NO_THREAD_IDENTIFIERS: ReadonlyMap<string, string> = new Map();
 const linearThreadIdentifiersAtom = Atom.make((get) => {
   const environmentId = get(linearEnvironmentIdAtom);
   if (environmentId === null) return NO_THREAD_IDENTIFIERS;
-  const status = AsyncResult.getOrElse(
-    get(linearEnvironment.status({ environmentId, input: {} })),
-    () => null,
-  );
+  const status = get(linearStatusAtom);
   if (status?.state !== "connected") return NO_THREAD_IDENTIFIERS;
   const activity = AsyncResult.getOrElse(
     get(linearEnvironment.activity({ environmentId, input: {} })),

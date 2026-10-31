@@ -1,7 +1,7 @@
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { type MouseEvent } from "react";
 
 import {
@@ -49,6 +49,7 @@ function shouldOpenPullRequestExternally(
   return event.metaKey || event.ctrlKey || event.button === 1;
 }
 
+/** Opens PR, commit and Linear issue links in the app; false leaves the click to the caller. */
 export function useOpenChangeRequestLink(
   threadRef?: ScopedThreadRef,
   panelRef?: ScopedThreadRef,
@@ -64,6 +65,7 @@ export function useOpenChangeRequestLink(
   onCommitUnavailable?: () => void,
 ) => boolean {
   const navigate = useNavigate();
+  const router = useRouter();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const openInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const ignoreWhitespace = useClientSettings((settings) => settings.diffIgnoreWhitespace);
@@ -74,19 +76,29 @@ export function useOpenChangeRequestLink(
   });
   const openLink = useOpenLink(threadRef);
   return (event, targetUrl, targetThreadRef, targetEnvironmentId, onCommitUnavailable) => {
-    // Linear links route in-app whenever Linear is connected, independent of the PR setting.
-    if (!shouldOpenPullRequestExternally(event) && !event.shiftKey && !event.altKey) {
-      // Read at click time so links do not subscribe to Linear status.
-      const status = appAtomRegistry.get(linearStatusAtom);
-      const issue = resolveLinearIssueLinkIdentifier(targetUrl, status);
-      if (issue !== null) {
-        void navigate({ to: "/linear", search: { issue } });
-        event.preventDefault();
-        event.stopPropagation();
-        return true;
+    if (shouldOpenPullRequestExternally(event)) return false;
+    // Linear links open in the Linear page whether or not PR links open in the app. Status is
+    // read at click time so links do not subscribe to it.
+    const linearIssue =
+      event.shiftKey || event.altKey
+        ? null
+        : resolveLinearIssueLinkIdentifier(targetUrl, appAtomRegistry.get(linearStatusAtom));
+    if (linearIssue !== null) {
+      // From inside the Linear page, keep its scope and filters like a sub-issue click does.
+      if (router.state.location.pathname === "/linear") {
+        void navigate({
+          from: "/linear",
+          to: "/linear",
+          search: (previous) => ({ ...previous, issue: linearIssue }),
+        });
+      } else {
+        void navigate({ to: "/linear", search: { issue: linearIssue } });
       }
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
     }
-    if (!openInApp || shouldOpenPullRequestExternally(event)) return false;
+    if (!openInApp) return false;
     const resolvedThreadRef = targetThreadRef ?? threadRef;
     const resolvedPanelRef = panelRef ?? resolvedThreadRef;
     const openPullRequest = () => {
