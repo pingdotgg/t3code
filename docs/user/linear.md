@@ -12,7 +12,8 @@ Create issues and Create comments, or full access. Paste it into **Settings → 
 Linear** and choose **Verify & save**.
 
 The key is stored in the secret store of the T3 Code server you are connected to, and it never
-leaves that server. Linear is set up on your primary environment only. If Linear later rejects the
+leaves that server. The Linear page is served by your primary environment; to let another machine
+update Linear itself, see [Choosing the machine](#choosing-the-machine). If Linear later rejects the
 key, the page asks for a new one. **Disconnect** removes the key but keeps your mappings and the
 links between issues and threads.
 
@@ -37,10 +38,10 @@ state. A pipeline keeps one comment up to date as its steps finish.
 With two or more connected machines that have the project, the pipeline dialog shows a **Machine**
 control. The pipeline runs on the machine you pick, in that machine's copy of the project, and its
 pipelines are listed: switching machines keeps the pipeline with the same name selected. **Auto
-balance** (when [load balancing](./remote-access.md#balance-new-threads-across-machines) is on)
-picks the machine with the most free CPU and memory that has the providers the pipeline needs.
-Machines set to Manual only are never picked automatically. The pick stays until you choose Auto
-balance again.
+balance** (when [load balancing](./remote-access.md#balance-new-threads-across-machines) is on,
+and then the default) picks the machine with the most free CPU and memory that has the providers
+the pipeline needs. Machines set to Manual only are never picked automatically. The pick stays
+until you choose Auto balance again.
 
 The Linear page and its project mappings always belong to the machine that serves Linear, so the
 project list is that machine's. Only machines that have the same project can run it.
@@ -51,7 +52,8 @@ What happens in Linear depends on the machine's own Linear connection:
   issue and keeps the comment up to date, as it does on the main machine.
 - **Otherwise:** the main machine moves the issue and posts one comment naming the pipeline and
   machine with a link to the run. That comment is not updated afterwards. The issue still shows
-  its T3 activity, and opening it goes to the run on that machine.
+  its T3 activity, and opening it goes to the run on that machine. If the main machine runs an
+  older T3 Code, the run is not linked to the issue until you update it.
 
 To make the first case work, connect the same Linear workspace on the other machine from that
 machine's own T3 Code (Settings → Integrations → Linear).
