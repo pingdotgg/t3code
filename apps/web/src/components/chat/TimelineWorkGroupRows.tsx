@@ -499,7 +499,7 @@ function LiveActivityRow({
   return (
     <div
       ref={animated ? observeVisibleAnimation : undefined}
-      className="relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed"
+      className="relative min-h-6 w-full min-w-0 overflow-hidden rounded-md"
     >
       <LiveActivityContent
         label={label}
@@ -746,34 +746,37 @@ export function BackgroundActivityTimelineRow({
       label={
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="shrink-0 text-label">{label}</span>
-          {[...sources].map(([kind, count]) => {
-            const Icon =
-              kind === "monitor"
-                ? ActivityIcon
-                : kind === "command"
-                  ? TerminalIcon
-                  : kind === "subagent" || kind === "delegated_task"
-                    ? UsersIcon
-                    : BellIcon;
-            return (
-              <span
-                key={kind}
-                aria-label={`${count} ${kind.replaceAll("_", " ")}`}
-                className="inline-flex shrink-0 items-center gap-1 text-dim-foreground"
-              >
-                <Icon aria-hidden className="size-3" />
-                {count}
-              </span>
-            );
-          })}
-          <span className="min-w-0 truncate text-meta text-muted-foreground">{summary}</span>
+          <span className="min-w-0 flex-1 truncate text-body text-dim-foreground">{summary}</span>
         </span>
       }
       trailing={
-        <ChevronRightIcon
-          aria-hidden
-          className={cn("size-3 text-muted-foreground", row.expanded && "rotate-90")}
-        />
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="flex items-center gap-0.75">
+            {[...sources].map(([kind, count]) => {
+              const Icon =
+                kind === "monitor"
+                  ? ActivityIcon
+                  : kind === "command"
+                    ? TerminalIcon
+                    : kind === "subagent" || kind === "delegated_task"
+                      ? UsersIcon
+                      : BellIcon;
+              return (
+                <span
+                  key={kind}
+                  aria-label={`${count} ${kind.replaceAll("_", " ")}`}
+                  className="inline-flex shrink-0 items-center gap-1 text-dim-foreground"
+                >
+                  <Icon aria-hidden className="size-3" />
+                </span>
+              );
+            })}
+          </span>
+          <ChevronRightIcon
+            aria-hidden
+            className={cn("size-3 text-muted-foreground", row.expanded && "rotate-90")}
+          />
+        </span>
       }
     />
   );
@@ -831,7 +834,7 @@ function WorkingWindowText({
   const text = liveText ?? item.message.text;
   if (text.trim().length === 0) return null;
   return (
-    <div className="min-w-0 px-1 py-1">
+    <div className="min-w-0 py-2">
       <ChatMarkdown
         text={text}
         cwd={ctx.markdownCwd}
@@ -938,7 +941,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
           aria-label={open ? "Work history" : undefined}
           className={cn(
             // The gap under the bar sits inside the window, so its fade reaches the hairline.
-            "flex min-w-0 flex-col pt-2",
+            "flex min-w-0 flex-col gap-1 pt-2",
             !open && "max-h-[220px] justify-end overflow-hidden",
             !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
           )}
