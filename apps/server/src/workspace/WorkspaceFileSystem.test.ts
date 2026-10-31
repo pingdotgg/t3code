@@ -405,6 +405,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect("contents" in error).toBe(false);
       }),
     );
+
+    it.effect("keeps a UTF-8 byte-order mark so saving the contents back preserves it", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "script.ps1");
+        const bom = [0xef, 0xbb, 0xbf];
+        yield* fileSystem.writeFile(
+          absolutePath,
+          Uint8Array.from([...bom, ...new TextEncoder().encode("Write-Host 'é'\r\n")]),
+        );
+
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath: "script.ps1" });
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "script.ps1",
+          contents: `${read.contents}Write-Host 'ü'\r\n`,
+        });
+
+        const saved = yield* fileSystem.readFile(absolutePath);
+        expect([...saved.subarray(0, 3)]).toEqual(bom);
+        expect(new TextDecoder().decode(saved)).toBe("Write-Host 'é'\r\nWrite-Host 'ü'\r\n");
+      }),
+    );
   });
 
   describe("writeFile", () => {

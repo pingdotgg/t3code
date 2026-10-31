@@ -53,6 +53,10 @@ Done.`),
     expect(decodeLenientJson('{"values":[1, 2,],}')).toEqual({ values: [1, 2] });
   });
 
+  it("decodes a document that starts with a UTF-8 byte-order mark", () => {
+    expect(decodeLenientJson('\uFEFF{"scripts":[]}')).toEqual({ scripts: [] });
+  });
+
   it("keeps properties after CR-terminated comments in mixed line endings", () => {
     expect(decodeLenientJson('{\n"enabled":true,// comment\r"values":[1,2],\n}')).toEqual({
       enabled: true,

@@ -7,5 +7,10 @@ const LEADING_FRONTMATTER =
  * line breaks stay, so source offsets (task checkbox edits) stay valid.
  */
 export function maskMarkdownFrontmatter(markdown: string): string {
-  return markdown.replace(LEADING_FRONTMATTER, (block) => block.replace(/[^\r\n]/g, " "));
+  return (
+    markdown
+      .replace(LEADING_FRONTMATTER, (block) => block.replace(/[^\r\n]/g, " "))
+      // Parsers skip a leading BOM without counting it, which shifts every offset by one.
+      .replace(/^\uFEFF/, " ")
+  );
 }
