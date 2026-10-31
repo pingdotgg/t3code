@@ -31,7 +31,8 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -313,6 +314,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
 }
 
 function SidebarControl() {
+  const sidebarSide = useClientSettings((settings) => settings.sidebarSide);
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -389,6 +391,7 @@ function SidebarControl() {
                 "pointer-events-auto",
                 isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
               )}
+              side={isMobile ? "left" : sidebarSide}
               aria-label="Toggle main sidebar"
             />
           }
@@ -402,6 +405,9 @@ function SidebarControl() {
 }
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
+  const preferredSidebarSide = useClientSettings((settings) => settings.sidebarSide);
+  const isMobile = useMediaQuery("max-md");
+  const sidebarSide = isMobile ? "left" : preferredSidebarSide;
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
@@ -445,14 +451,15 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <SidebarProvider
-        className="h-dvh! min-h-0!"
+        className={cn("h-dvh! min-h-0!", sidebarSide === "right" && "flex-row-reverse")}
+        data-main-sidebar-side={sidebarSide}
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
         defaultOpen
         style={sidebarProviderStyle}
       >
         <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
         <Sidebar
-          side="left"
+          side={sidebarSide}
           collapsible="offcanvas"
           data-app-sidebar=""
           {...sidebarArea}
@@ -467,6 +474,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
             onResize: setSidebarWidth,
           }}
+          className={cn(sidebarSide === "right" && "[--workspace-titlebar-content-left:0.75rem]")}
           style={windowControlsInsetStyle}
         >
           <ThreadSidebar routeReveal={sidebarRouteReveal} />
