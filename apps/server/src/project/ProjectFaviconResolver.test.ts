@@ -41,6 +41,17 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
 });
 
+const writeAppIconSet = Effect.fn("writeAppIconSet")(function* (
+  cwd: string,
+  relativePath: string,
+  images: ReadonlyArray<{ readonly filename: string; readonly [key: string]: unknown }>,
+) {
+  yield* writeTextFile(cwd, `${relativePath}/Contents.json`, JSON.stringify({ images }));
+  for (const image of images) {
+    yield* writeTextFile(cwd, `${relativePath}/${image.filename}`, "icon");
+  }
+});
+
 const makeResolverWithFileSystem = (fileSystem: FileSystem.FileSystem) =>
   ProjectFaviconResolver.make.pipe(
     Effect.provide([WorkspacePaths.layer, T3ProjectFileLoader.layer]),
@@ -241,6 +252,353 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         );
 
         expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "favicon.svg"));
+      }),
+    );
+
+    it.effect("uses the icon an Expo app.json declares", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "app.json",
+          JSON.stringify({ expo: { icon: "./images/brand-icon.png" } }),
+        );
+        yield* writeTextFile(cwd, "images/brand-icon.png", "icon");
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "images/brand-icon.png"));
+      }),
+    );
+
+    it.effect("prefers the iOS icon an Expo app.json declares", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "app.json",
+          JSON.stringify({ expo: { icon: "./common.png", ios: { icon: "./ios.png" } } }),
+        );
+        yield* writeTextFile(cwd, "common.png", "icon");
+        yield* writeTextFile(cwd, "ios.png", "icon");
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "ios.png"));
+      }),
+    );
+
+    it.effect("uses the light variant of an Expo iOS icon", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "app.json",
+          JSON.stringify({ expo: { ios: { icon: { dark: "./dark.png", light: "./light.png" } } } }),
+        );
+        yield* writeTextFile(cwd, "dark.png", "icon");
+        yield* writeTextFile(cwd, "light.png", "icon");
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "light.png"));
+      }),
+    );
+
+    it.effect("reads an Expo app.json without the expo wrapper", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "app.json", JSON.stringify({ icon: "./images/main.png" }));
+        yield* writeTextFile(cwd, "images/main.png", "icon");
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "images/main.png"));
+      }),
+    );
+
+    it.effect("ignores an Expo icon outside the workspace", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const parent = yield* makeTempDir;
+        const cwd = path.join(parent, "workspace");
+        yield* writeTextFile(parent, "secret.png", "icon");
+        yield* writeTextFile(cwd, "app.json", JSON.stringify({ expo: { icon: "../secret.png" } }));
+
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+      }),
+    );
+
+    it.effect("bounds the reads an app icon search makes across many catalogs", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir;
+        for (let index = 0; index < 300; index += 1) {
+          yield* writeTextFile(
+            cwd,
+            `Catalog${index}.xcassets/AppIcon.appiconset/Contents.json`,
+            JSON.stringify({ images: [] }),
+          );
+        }
+        let reads = 0;
+        const resolver = yield* makeResolverWithFileSystem(
+          FileSystem.FileSystem.of({
+            ...fileSystem,
+            readDirectory: (...args) => {
+              reads += 1;
+              return fileSystem.readDirectory(...args);
+            },
+            readFileString: (filePath, encoding) => {
+              if (filePath.endsWith("Contents.json")) reads += 1;
+              return fileSystem.readFileString(filePath, encoding);
+            },
+          }),
+        );
+
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+        expect(reads).toBeLessThanOrEqual(256);
+      }),
+    );
+
+    it.effect("tolerates a malformed app.json", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "app.json", "{ not json");
+        yield* writeAppIconSet(cwd, "App/Assets.xcassets/AppIcon.appiconset", [
+          { filename: "icon.png", idiom: "universal", size: "1024x1024" },
+        ]);
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "App/Assets.xcassets/AppIcon.appiconset/icon.png"),
+        );
+      }),
+    );
+
+    it.effect("finds app icons in native, React Native, and Capacitor layouts", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        for (const catalog of [
+          "MyApp/Assets.xcassets",
+          "ios/MyApp/Images.xcassets",
+          "ios/App/App/Assets.xcassets",
+          "apps/ios/MyApp/Assets.xcassets",
+        ]) {
+          const cwd = yield* makeTempDir;
+          yield* writeAppIconSet(cwd, `${catalog}/AppIcon.appiconset`, [
+            { filename: "icon.png", idiom: "universal", size: "1024x1024" },
+          ]);
+
+          expect(yield* resolver.resolvePath(cwd)).toBe(
+            path.join(cwd, catalog, "AppIcon.appiconset/icon.png"),
+          );
+        }
+      }),
+    );
+
+    it.effect("picks the smallest app icon that stays sharp", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeAppIconSet(cwd, "App/Assets.xcassets/AppIcon.appiconset", [
+          { filename: "20.png", idiom: "iphone", scale: "2x", size: "20x20" },
+          { filename: "60.png", idiom: "iphone", scale: "2x", size: "60x60" },
+          { filename: "60@3.png", idiom: "iphone", scale: "3x", size: "60x60" },
+          { filename: "1024.png", idiom: "ios-marketing", scale: "1x", size: "1024x1024" },
+        ]);
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "App/Assets.xcassets/AppIcon.appiconset/60.png"),
+        );
+      }),
+    );
+
+    it.effect("skips dark and tinted app icon variants", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeAppIconSet(cwd, "App/Assets.xcassets/AppIcon.appiconset", [
+          {
+            appearances: [{ appearance: "luminosity", value: "dark" }],
+            filename: "dark.png",
+            idiom: "universal",
+            size: "1024x1024",
+          },
+          { filename: "light.png", idiom: "universal", size: "1024x1024" },
+        ]);
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "App/Assets.xcassets/AppIcon.appiconset/light.png"),
+        );
+      }),
+    );
+
+    it.effect("treats empty app icon appearances as the default icon", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeAppIconSet(cwd, "App/Assets.xcassets/AppIcon.appiconset", [
+          { appearances: [], filename: "icon.png", idiom: "universal", size: "1024x1024" },
+        ]);
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "App/Assets.xcassets/AppIcon.appiconset/icon.png"),
+        );
+      }),
+    );
+
+    it.effect("bounds the file checks for images an app icon set lists", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "App/Assets.xcassets/AppIcon.appiconset/Contents.json",
+          JSON.stringify({
+            images: Array.from({ length: 1000 }, (_, index) => ({ filename: `${index}.png` })),
+          }),
+        );
+        let checks = 0;
+        const resolver = yield* makeResolverWithFileSystem(
+          FileSystem.FileSystem.of({
+            ...fileSystem,
+            stat: (filePath) => {
+              if (filePath.includes(".appiconset")) checks += 1;
+              return fileSystem.stat(filePath);
+            },
+          }),
+        );
+
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+        expect(checks).toBeLessThanOrEqual(256);
+      }),
+    );
+
+    it.effect("prefers the app's icon over its extensions and alternates", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const image = [{ filename: "icon.png", idiom: "universal", size: "1024x1024" }];
+        yield* writeAppIconSet(cwd, "AppWatch/Assets.xcassets/AppIcon.appiconset", image);
+        yield* writeAppIconSet(cwd, "AppWidget/Assets.xcassets/AppIcon.appiconset", image);
+        yield* writeAppIconSet(cwd, "Zebra/Assets.xcassets/AppIcon-blue.appiconset", image);
+        yield* writeAppIconSet(cwd, "Zebra/Assets.xcassets/AppIcon.appiconset", image);
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "Zebra/Assets.xcassets/AppIcon.appiconset/icon.png"),
+        );
+      }),
+    );
+
+    it.effect("skips an app icon set with no image and keeps looking", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "App/Assets.xcassets/AppIcon.appiconset/Contents.json",
+          JSON.stringify({ images: [{ idiom: "universal", size: "1024x1024" }] }),
+        );
+        yield* writeAppIconSet(cwd, "Other/Assets.xcassets/AppIcon.appiconset", [
+          { filename: "icon.png", idiom: "universal", size: "1024x1024" },
+        ]);
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "Other/Assets.xcassets/AppIcon.appiconset/icon.png"),
+        );
+      }),
+    );
+
+    it.effect("does not search dependency folders for app icons", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        for (const dependency of ["node_modules/pkg", "ios/Pods/Lib", "build/App"]) {
+          yield* writeAppIconSet(cwd, `${dependency}/Assets.xcassets/AppIcon.appiconset`, [
+            { filename: "icon.png", idiom: "universal", size: "1024x1024" },
+          ]);
+        }
+
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+      }),
+    );
+
+    it.effect("uses the Android icon an Expo app.json declares", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "app.json",
+          JSON.stringify({ expo: { android: { icon: "./android-icon.png" } } }),
+        );
+        yield* writeTextFile(cwd, "android-icon.png", "icon");
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "android-icon.png"));
+      }),
+    );
+
+    it.effect("finds launcher icons in Android layouts", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        for (const icon of [
+          "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+          "app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp",
+        ]) {
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, icon, "icon");
+
+          expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, icon));
+        }
+      }),
+    );
+
+    it.effect("picks the smallest launcher icon that stays sharp", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        for (const density of ["mdpi", "hdpi", "xhdpi", "xxxhdpi"]) {
+          yield* writeTextFile(cwd, `app/src/main/res/mipmap-${density}/ic_launcher.png`, "icon");
+        }
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "app/src/main/res/mipmap-xhdpi/ic_launcher.png"),
+        );
+      }),
+    );
+
+    it.effect("ignores adaptive launcher icons that are only XML", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml", "<xml />");
+
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+      }),
+    );
+
+    it.effect("prefers existing web icons over app icons", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "public/favicon.svg", "<svg>web</svg>");
+        yield* writeAppIconSet(cwd, "App/Assets.xcassets/AppIcon.appiconset", [
+          { filename: "icon.png", idiom: "universal", size: "1024x1024" },
+        ]);
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "public/favicon.svg"));
       }),
     );
 
