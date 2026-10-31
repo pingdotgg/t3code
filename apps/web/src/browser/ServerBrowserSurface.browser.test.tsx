@@ -128,6 +128,15 @@ describe("ServerBrowserSurface clipboard commands", () => {
       { type: "key", action: "up", key: "x", code: "KeyX", keyCode: 88, modifiers: 2 },
     ]);
     expect(input.value).toBe("\u200b");
+
+    // macOS gives no letter keyup under Command, and Electron's menu can cut after Meta keyup.
+    mocks.sent.length = 0;
+    await userEvent.keyboard("{Meta>}{x>}{/Meta}");
+    expect(document.execCommand("cut")).toBe(true);
+    expect(keys().filter((key) => key.key === "x")).toEqual([
+      { type: "key", action: "down", key: "x", code: "KeyX", keyCode: 88, modifiers: 4 },
+    ]);
+    await userEvent.keyboard("{/x}");
   });
 
   it("sends nothing when another viewer controls the page", async () => {

@@ -675,7 +675,9 @@ export function ServerBrowserSurface(props: {
 
   const handleKey = (action: "down" | "up", event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (controlRef.current?.controller !== "you") return;
-    keySentRef.current = clipboardKeySentRef.current = false;
+    keySentRef.current = false;
+    // macOS can fire the shortcut's copy or cut after its keyups, so only a new key ends it.
+    if (action === "down") clipboardKeySentRef.current = false;
     if (
       event.nativeEvent.isComposing ||
       event.keyCode === 229 ||
@@ -716,8 +718,9 @@ export function ServerBrowserSurface(props: {
       !shortcut &&
       (text !== undefined || event.key === "Backspace" || event.key === "Delete");
     // The browser fires copy or cut for this key too; the page already has it.
-    clipboardKeySentRef.current =
-      action === "down" && shortcut && ["c", "x"].includes(event.key.toLowerCase());
+    if (action === "down" && shortcut && ["c", "x"].includes(event.key.toLowerCase())) {
+      clipboardKeySentRef.current = true;
+    }
     if (shortcut) return;
     event.preventDefault();
     event.stopPropagation();
