@@ -1,13 +1,15 @@
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { CheckIcon, CloudIcon, FolderGit2Icon, GitBranchIcon } from "lucide-react";
 import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 
+import { CheckIcon, CloudIcon, GitBranchIcon } from "lucide-react";
+
+import { useRelativeTimeState } from "../hooks/useRelativeTimeState";
+import { Badge } from "./ui/badge";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
-import { Badge } from "./ui/badge";
 import { Switch } from "./ui/switch";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
 import {
@@ -259,11 +261,18 @@ export function BranchPicker({
   );
 }
 
+/** A section label ("Local", "Remote", "Pull requests") drawn above a group's first row. */
+export function BranchPickerGroupLabel({ children }: { children: ReactNode }) {
+  return <div className="px-2 pt-1.5 pb-1 text-meta text-dim-foreground">{children}</div>;
+}
+
 export function BranchPickerRefItem({
   branch: refName,
   projectCwd: activeProjectCwd,
   index,
   value,
+  selected = false,
+  groupLabel = null,
   disabled,
   onClick,
   onContextMenu,
@@ -272,6 +281,10 @@ export function BranchPickerRefItem({
   projectCwd: string | null;
   index: number;
   value?: string;
+  /** The ref the thread is on, marked with a check. */
+  selected?: boolean;
+  /** Set on the first row of a group to draw its section label above it. */
+  groupLabel?: string | null;
   disabled?: boolean;
   onClick: ComponentProps<typeof ComboboxItem>["onClick"];
   onContextMenu?: ComponentProps<typeof ComboboxItem>["onContextMenu"];
@@ -279,30 +292,37 @@ export function BranchPickerRefItem({
   const itemValue = refName.name;
   const hasSecondaryWorktree =
     refName.worktreePath && activeProjectCwd && refName.worktreePath !== activeProjectCwd;
-  const badge = hasSecondaryWorktree ? "worktree" : refName.isDefault ? "default" : null;
-  const Icon = refName.isRemote ? CloudIcon : hasSecondaryWorktree ? FolderGit2Icon : GitBranchIcon;
+  const badge = refName.current ? "current" : hasSecondaryWorktree ? "worktree" : null;
+  const relative = useRelativeTimeState(
+    refName.lastCommitAt === undefined ? null : new Date(refName.lastCommitAt * 1000).toISOString(),
+  );
+  const age =
+    relative.status === "relative" ? (relative.suffix === null ? "now" : relative.value) : null;
+  const RefIcon = refName.isRemote ? CloudIcon : GitBranchIcon;
   return (
-    <ComboboxItem
-      disabled={disabled}
-      hideIndicator
-      key={itemValue}
-      index={index}
-      value={value ?? itemValue}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-    >
-      <div className="flex w-full min-w-0 items-center gap-2.5">
-        <Icon aria-hidden className="size-[15px] shrink-0 text-muted-foreground" />
-        <MiddleTruncate value={itemValue} className="flex-1" />
-        {badge ? (
-          <Badge variant="secondary" size="sm">
-            {badge}
-          </Badge>
-        ) : null}
-        {refName.current ? (
-          <CheckIcon aria-label="Current branch" className="size-[13px] shrink-0" />
-        ) : null}
-      </div>
-    </ComboboxItem>
+    <div>
+      {groupLabel ? <BranchPickerGroupLabel>{groupLabel}</BranchPickerGroupLabel> : null}
+      <ComboboxItem
+        disabled={disabled}
+        hideIndicator
+        key={itemValue}
+        index={index}
+        value={value ?? itemValue}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+      >
+        <div className="flex w-full min-w-0 items-center gap-2">
+          <RefIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          <MiddleTruncate value={itemValue} className="flex-1" />
+          {badge ? <span className="shrink-0 text-micro text-dim-foreground">{badge}</span> : null}
+          {refName.isDefault ? <Badge variant="secondary">default</Badge> : null}
+          {selected ? (
+            <CheckIcon aria-hidden className="size-3.5 shrink-0 text-foreground" />
+          ) : age ? (
+            <span className="shrink-0 text-meta text-dim-foreground tabular-nums">{age}</span>
+          ) : null}
+        </div>
+      </ComboboxItem>
+    </div>
   );
 }
