@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { compareTimestamps, msUntilRelativeTimeChange, relativeTime } from "./time";
+import { byTimestamp, compareTimestamps, msUntilRelativeTimeChange, relativeTime } from "./time";
 
 const at = "2026-10-19T12:00:00.000Z";
 const timestamp = Date.parse(at);
@@ -19,6 +19,18 @@ describe("timestamp order", () => {
       "2026-07-05T00:30:00Z",
       "2026-07-05T00:30:00.5Z",
     ]);
+  });
+  it("keeps equal instants in input order whichever way it sorts", () => {
+    const rows = [
+      { id: "comment", date: "2026-07-05T00:30:00Z" },
+      { id: "commit", date: "2026-07-04T20:30:00-04:00" },
+      { id: "older", date: "2026-07-04T00:00:00Z" },
+    ];
+    const ids = (newestFirst: boolean) =>
+      rows.toSorted(byTimestamp(newestFirst)).map((row) => row.id);
+
+    expect(ids(false)).toEqual(["older", "comment", "commit"]);
+    expect(ids(true)).toEqual(["comment", "commit", "older"]);
   });
 });
 
