@@ -68,7 +68,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   if (envLocked || (onEnvironmentChange === undefined && onAddToMachine === undefined)) {
     const lockedRow = (
       <span
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
+        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
         data-composer-context-control
       >
         <EnvironmentMachineIcon
