@@ -1,8 +1,4 @@
-import {
-  executeAtomQuery,
-  runAtomCommand,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
@@ -17,6 +13,7 @@ import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessT
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
+import { readProjectFilesToCopy } from "./readProjectFilesToCopy";
 
 /** Matches the server's read cap: a larger file would arrive truncated. */
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
@@ -104,21 +101,7 @@ export function dismissProjectFileCopy(ref: ScopedProjectRef) {
  */
 export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<void> {
   // Read first, so the copy reflects the files as they were when the user asked.
-  const reads = await Promise.all(
-    input.files.map(async (relativePath) => {
-      const result = await executeAtomQuery(
-        appAtomRegistry,
-        projectEnvironment.readFile({
-          environmentId: input.source.environmentId,
-          input: { cwd: input.source.cwd, relativePath },
-        }),
-        { label: "Read file to copy", reportFailure: false, refresh: true },
-      );
-      if (result._tag === "Failure") return { relativePath, error: failureMessage(result) };
-      if (result.value.truncated) return { relativePath, error: "Too large to copy." };
-      return { relativePath, contents: result.value.contents };
-    }),
-  );
+  const reads = await readProjectFilesToCopy(input.source, input.files);
 
   const targetRef = { environmentId: input.target.environmentId, projectId: input.projectId };
   const copyKey = scopedProjectKey(targetRef);

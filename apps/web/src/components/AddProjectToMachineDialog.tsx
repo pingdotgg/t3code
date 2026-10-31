@@ -126,7 +126,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     project && canListFiles
       ? projectEnvironment.listIgnoredFiles({
           environmentId: project.environmentId,
-          input: { cwd: project.workspaceRoot },
+          input: { cwd: project.workspaceRoot, includeDirectories: true },
         })
       : null,
   );
@@ -134,9 +134,13 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const [selected, setSelected] = useState<ReadonlySet<string> | null>(null);
   const selectedFiles = selected ?? defaultSelection(files);
   const copyable = files.filter((file) => file.byteLength <= COPYABLE_FILE_MAX_BYTES);
-  const selectedBytes = files
-    .filter((file) => selectedFiles.has(file.path))
-    .reduce((total, file) => total + file.byteLength, 0);
+  const selectedBytes = files.some(
+    (file) => selectedFiles.has(file.path) && file.path.endsWith("/"),
+  )
+    ? null
+    : files
+        .filter((file) => selectedFiles.has(file.path))
+        .reduce((total, file) => total + file.byteLength, 0);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -254,7 +258,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                 <span>
                   {selectedFiles.size === 0
                     ? "no files"
-                    : `+ ${selectedFiles.size} ${selectedFiles.size === 1 ? "file" : "files"}`}
+                    : `+ ${selectedFiles.size} ${selectedFiles.size === 1 ? "item" : "items"}`}
                 </span>
               </div>
               <div className="flex min-w-0 flex-col gap-1">
@@ -331,12 +335,14 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
             {canListFiles ? (
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
-                  <Label className="flex-1">Copy ignored files</Label>
+                  <Label className="flex-1">Copy ignored files and folders</Label>
                   {copyable.length > 0 ? (
                     <>
                       <span className="text-muted-foreground text-xs">
                         {selectedFiles.size} of {files.length}
-                        {selectedBytes > 0 ? ` · ${formatBytes(selectedBytes)}` : ""}
+                        {selectedBytes !== null && selectedBytes > 0
+                          ? ` · ${formatBytes(selectedBytes)}`
+                          : ""}
                       </span>
                       <Button
                         type="button"
@@ -360,8 +366,8 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                 ) : files.length === 0 ? (
                   <p className="text-muted-foreground text-xs">
                     {ignoredFiles.isSuccess
-                      ? "No ignored files to copy."
-                      : "Finding ignored files…"}
+                      ? "No ignored files or folders to copy."
+                      : "Finding ignored files and folders…"}
                   </p>
                 ) : (
                   <div className="max-h-52 overflow-y-auto rounded-md border">
@@ -377,12 +383,12 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                 )}
                 {ignoredFiles.data?.truncated ? (
                   <p className="text-muted-foreground text-xs">
-                    Showing the first {files.length} files.
+                    Showing the first {files.length} items.
                   </p>
                 ) : null}
                 <p className="text-muted-foreground text-xs">
-                  Files are copied after the clone finishes. Folders git ignores whole, like
-                  node_modules, are left out.
+                  Files are copied after the clone finishes. Selected folders include their files
+                  and subfolders.
                 </p>
               </div>
             ) : null}
@@ -441,7 +447,7 @@ function IgnoredFileRow({
       <Checkbox checked={checked} disabled={tooLarge} onCheckedChange={onCheckedChange} />
       <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
       <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-        {tooLarge ? "Over 1 MB" : formatBytes(file.byteLength)}
+        {file.path.endsWith("/") ? "Folder" : tooLarge ? "Over 1 MB" : formatBytes(file.byteLength)}
       </span>
     </label>
   );
