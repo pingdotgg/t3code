@@ -419,9 +419,9 @@ export function SourceControlSettingsPanel() {
     </Tooltip>
   );
 
-  const providersTitle = `Source Control Providers${environmentSuffix}`;
+  const providersTitle = "Source Control Providers";
   return (
-    <SettingsPageContainer>
+    <SettingsPageContainer className="max-w-[688px]">
       <ProjectDefaultsSettings category="source-control" />
       {environmentId === null ? (
         <SettingsSection
