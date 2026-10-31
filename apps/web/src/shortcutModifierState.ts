@@ -31,10 +31,9 @@ export function useShortcutModifierState(ignoreEditable = false): ShortcutModifi
   const [state, setState] = useState(EMPTY_SHORTCUT_MODIFIER_STATE);
   const stateRef = useRef(EMPTY_SHORTCUT_MODIFIER_STATE);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window key, focus, paste and blur listeners that track held shortcut modifiers
   useEffect(() => {
     const updateState = (next: ShortcutModifierState) => {
-      // Even a no-op state dispatch can cost work in the sidebar's large tree.
-      // Ordinary typing must return before dispatching a React update.
       if (areShortcutModifierStatesEqual(stateRef.current, next)) return;
       stateRef.current = next;
       setState(next);
@@ -46,9 +45,7 @@ export function useShortcutModifierState(ignoreEditable = false): ShortcutModifi
           : shortcutModifierStateAfterKeyboardEvent(stateRef.current, event),
       );
     };
-    // Dictation tools (Wispr Flow) paste with a synthetic ⌘V whose Meta keyup
-    // never reaches the page, so the tracked state stays "⌘ held" forever and
-    // the thread jump hints stick on screen.
+    // Dictation tools can omit Meta keyup after synthetic paste, leaving jump hints stuck.
     const onResetEvent = () => {
       updateState(EMPTY_SHORTCUT_MODIFIER_STATE);
     };
@@ -103,10 +100,7 @@ export function shortcutModifierStateAfterKeyboardEvent(
       [normalizedModifierKey]: event.type === "keydown",
     };
   } else {
-    // After a dictation tool's synthetic ⌘V (Wispr Flow), the browser can keep
-    // reporting metaKey=true on real key events (Enter to submit) until the
-    // user physically taps ⌘. Trusting that flag would mark ⌘ as held and stick
-    // the thread jump hints.
+    // Dictation paste can poison real events with metaKey=true until a physical Meta press.
     nextState = {
       metaKey: currentState.metaKey && event.metaKey,
       ctrlKey: currentState.ctrlKey && event.ctrlKey,
