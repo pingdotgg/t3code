@@ -1722,6 +1722,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     exitCode: Schema.optional(Schema.Int),
     /** Set when the command is a monitor, so background work lists it as a monitor. */
     monitor: Schema.optional(Schema.Boolean),
+    /** Failing tests named by a test runner summary, derived when output is stripped for the wire. */
+    failedTestCount: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2566,6 +2568,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     exitCode: Schema.optional(Schema.Int),
     /** Set when the command is a monitor, so background work lists it as a monitor. */
     monitor: Schema.optional(Schema.Boolean),
+    /** Failing tests named by a test runner summary, derived when output is stripped for the wire. */
+    failedTestCount: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

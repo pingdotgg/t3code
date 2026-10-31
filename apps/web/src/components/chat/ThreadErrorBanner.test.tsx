@@ -6,6 +6,7 @@ import {
   getThreadErrorBannerMessage,
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
+  threadErrorBannerItem,
 } from "./ThreadErrorBanner";
 
 describe("getThreadErrorBannerMessage", () => {
@@ -41,5 +42,17 @@ describe("ThreadErrorBanner", () => {
         isThreadErrorBannerDismissedForSession(newErrorKey),
       ),
     ).toBe(true);
+  });
+  it("shows the provider's message under a Run failed title", () => {
+    const item = threadErrorBannerItem({
+      bannerKey: getThreadErrorBannerKey("env:thread-f", "stream disconnected"),
+      error: "stream disconnected",
+      onDismiss: () => {},
+    });
+    expect(item?.title).toBe("Run failed");
+    expect(item?.description).toBe("stream disconnected");
+    expect(item?.variant).toBe("error");
+    expect(item?.dismissLabel).toBe("Dismiss error");
+    expect(threadErrorBannerItem({ bannerKey: null, error: null })).toBeNull();
   });
 });
