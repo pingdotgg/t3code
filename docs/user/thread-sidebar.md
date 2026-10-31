@@ -5,8 +5,10 @@ need a separate branch and working directory.
 
 ## Start a thread
 
-On web and desktop, a new thread keeps the current project and carries your model
-and mode selections, unless the destination project has its own model default.
+On web and desktop, **New thread** opens the project chooser in the default
+sidebar. Shift-click, `chat.newLocal`, and the folder sidebar keep the current
+project. New threads carry your model and mode selections, unless the destination
+project has its own model default.
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
