@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -76,6 +77,23 @@ export class OpenCode2Client extends Context.Service<
 const SILENT_STREAM_TIMEOUT = "45 seconds";
 
 const decodeEvent = Schema.decodeUnknownResult(Schema.fromJsonString(OpenCodeEvent));
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const decodeEventValue = Schema.decodeUnknownResult(OpenCodeEvent);
+
+// OpenCode 2.1+ omits data.recent on compaction events; the bundled 2.0 schema still requires it.
+const decodeCompactionWithoutRecent = (data: string) => {
+  const frame = Option.getOrUndefined(decodeJson(data));
+  if (
+    !Predicate.isObject(frame) ||
+    (frame.type !== "session.compaction.started" && frame.type !== "session.compaction.ended") ||
+    !Predicate.isObject(frame.data) ||
+    "recent" in frame.data
+  ) {
+    return Option.none();
+  }
+  return Result.getSuccess(decodeEventValue({ ...frame, data: { ...frame.data, recent: "" } }));
+};
+
 const decodeEnvelope = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -128,8 +146,12 @@ const readEvents = HttpClient.get("/api/event", {
       Stream.pipeThroughChannel(Sse.decode()),
       Stream.filterMapEffect((frame) => {
         const decoded = decodeEvent(frame.data);
-        return Result.isSuccess(decoded)
-          ? Effect.succeed(Result.succeed<OpenCode2StreamEvent>(decoded.success))
+        if (Result.isSuccess(decoded)) {
+          return Effect.succeed(Result.succeed<OpenCode2StreamEvent>(decoded.success));
+        }
+        const compaction = decodeCompactionWithoutRecent(frame.data);
+        return Option.isSome(compaction)
+          ? Effect.succeed(Result.succeed<OpenCode2StreamEvent>(compaction.value))
           : undecodable(frame.data);
       }),
     ),
