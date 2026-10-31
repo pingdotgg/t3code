@@ -45,6 +45,19 @@ vi.mock(import("../state/presentation"), async (original) => {
     },
   };
 });
+vi.mock(import("../state/threads"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentThreadShells: {
+      ...actual.environmentThreadShells,
+      pendingSubagentRequestsAtom: (() => noRequestsAtom) as never,
+      get delegatedUnderParentAtom() {
+        return noDelegatedAtom as never;
+      },
+    },
+  };
+});
 vi.mock(import("../hooks/useSettings"), async (original) => ({
   ...(await original()),
   subscribeClientSettings: ((listener: () => void) => {
@@ -68,6 +81,8 @@ import { startThreadNotifications } from "./ThreadNotificationCoordinator";
 let registry: AtomRegistry.AtomRegistry;
 const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
 const environmentIdsAtom = Atom.make<ReadonlyArray<string>>([]);
+const noRequestsAtom = Atom.make(new Map());
+const noDelegatedAtom = Atom.make<ReadonlySet<string>>(new Set<string>());
 state.shells = { set: (id, value) => registry.set(shellAtom(id), value) };
 
 class TestNotification extends EventTarget {
@@ -245,3 +260,73 @@ it("holds a completion through a continuation gap and notifies once it settles",
   await vi.advanceTimersByTimeAsync(1);
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
 });
+
+it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
+  "notifies for offline completion and %s once across reconnects",
+  async (flag) => {
+    await using app = setup();
+    const asking = { id: "asking", hasPendingApprovals: true };
+    const offline = { id: "offline", [flag]: true };
+    const done = {
+      id: "done",
+      latestTurn: {
+        turnId: "done-turn",
+        state: "completed",
+        completedAt: "2026-09-13T07:00:00.000Z",
+      },
+    };
+    state.shells.set("one", shell({ id: "working" }, { id: "asking" }, { id: "offline" }, done));
+    app.start();
+    using _timers = fakeTimers();
+    state.shells.set("one", shell({ id: "working" }, asking, { id: "offline" }, done));
+    state.shells.set("one", {
+      ...shell({ id: "working" }, asking, { id: "offline" }, done),
+      status: "cached",
+    });
+
+    const completed = {
+      id: "working",
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
+    };
+    state.shells.set("one", {
+      ...shell(completed, asking, offline, done),
+      status: "synchronizing",
+    });
+    state.shells.set("one", shell(completed, asking, offline, done));
+
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+      "Approval needed",
+      flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
+    ]);
+    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+    state.shells.set("one", { ...shell(completed, asking, offline, done), status: "cached" });
+    state.shells.set("one", shell(completed, asking, offline, done));
+    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+      "Approval needed",
+      flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
+      "Thread completed",
+    ]);
+  },
+);
+
+it.each([false, true])(
+  "rechecks a pending completion after reconnect (continued: %s)",
+  async (continued) => {
+    await using app = setup();
+    app.start();
+    using _timers = fakeTimers();
+    const completed = shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
+    });
+    state.shells.set("one", completed);
+    state.shells.set("one", { ...completed, status: "cached" });
+    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+    expect(TestNotification.sent).toEqual([]);
+    state.shells.set("one", continued ? shell() : completed);
+    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual(
+      continued ? [] : ["Thread completed"],
+    );
+  },
+);

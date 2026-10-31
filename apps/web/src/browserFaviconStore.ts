@@ -175,7 +175,7 @@ function mergeBrowserFaviconState(
 function useFaviconProjectRefForThread(threadRef: ScopedThreadRef): ScopedProjectRef | null {
   const shell = useQuietThreadShell(threadRef);
   const draftProjectRef = useComposerDraftStore((state) => {
-    const draft = state.draftThreadsByThreadKey[scopedThreadKey(threadRef)];
+    const draft = state.getDraftSessionByRef(threadRef);
     return draft ? scopedProjectKey(scopeProjectRef(draft.environmentId, draft.projectId)) : null;
   });
   if (shell?.projectId) return scopeProjectRef(threadRef.environmentId, shell.projectId);
@@ -185,8 +185,7 @@ function useFaviconProjectRefForThread(threadRef: ScopedThreadRef): ScopedProjec
 function readThreadProjectRef(threadRef: ScopedThreadRef): ScopedProjectRef | null {
   const projectId = readThreadShell(threadRef)?.projectId;
   if (projectId) return scopeProjectRef(threadRef.environmentId, projectId);
-  const draft =
-    useComposerDraftStore.getState().draftThreadsByThreadKey[scopedThreadKey(threadRef)];
+  const draft = useComposerDraftStore.getState().getDraftSessionByRef(threadRef);
   return draft ? scopeProjectRef(draft.environmentId, draft.projectId) : null;
 }
 
