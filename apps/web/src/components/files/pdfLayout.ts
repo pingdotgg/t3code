@@ -56,18 +56,65 @@ export function pdfPageText(
   return items.map((item) => ("str" in item ? item.str + (item.hasEOL ? "\n" : "") : "")).join("");
 }
 
+/**
+ * Lowercased search text with each whitespace run, line ends included, read as one space, and a
+ * hyphen that ends a line between letters dropped, as pdf.js's own find does. `owner` maps each
+ * character back to the run it came from.
+ */
+function pdfFindText(runs: readonly string[]) {
+  const chars = runs.flatMap((run, index) =>
+    Array.from(run.toLowerCase(), (char) => ({ char, run: index })),
+  );
+  let text = "";
+  let last = "";
+  const owner: number[] = [];
+  for (let index = 0; index < chars.length; index++) {
+    const { char, run } = chars[index]!;
+    if (/\s/.test(char)) {
+      if (!text.endsWith(" ")) {
+        text += " ";
+        last = " ";
+        owner.push(run);
+      }
+    } else if (
+      char === "-" &&
+      chars[index + 1]?.char === "\n" &&
+      /\p{L}/u.test(last) &&
+      /\p{L}/u.test(chars[index + 2]?.char ?? "")
+    ) {
+      index++;
+    } else {
+      text += char;
+      last = char;
+      for (let unit = 0; unit < char.length; unit++) owner.push(run);
+    }
+  }
+  return { text, owner };
+}
+
+/** Whether a page's text holds the query, under the same rules as `pdfFindMatchRuns`, without
+ * mapping characters back to runs: the page scan checks every page on each query. */
+export function pdfFindIncludes(text: string, query: string) {
+  const needle = query.toLowerCase().replace(/\s+/g, " ");
+  if (!needle.trim()) return false;
+  return text
+    .toLowerCase()
+    .replace(/(\p{L})-\n(?=\p{L})/gu, "$1")
+    .replace(/\s+/g, " ")
+    .includes(needle);
+}
+
 /** Which text runs hold part of a case-insensitive match, when pdf.js splits words across spans. */
 export function pdfFindMatchRuns(runs: readonly string[], query: string) {
-  const texts = runs.map((run) => run.toLowerCase());
-  const text = texts.join("");
-  const needle = query.toLowerCase();
-  let match = needle.trim() ? text.indexOf(needle) : -1;
-  let offset = 0;
-  return texts.map((run) => {
-    while (match !== -1 && match + needle.length <= offset)
-      match = text.indexOf(needle, match + needle.length);
-    const hit = match !== -1 && match < offset + run.length;
-    offset += run.length;
-    return hit;
-  });
+  const { text, owner } = pdfFindText(runs);
+  const needle = query.toLowerCase().replace(/\s+/g, " ");
+  const hits = runs.map(() => false);
+  if (!needle.trim()) return hits;
+  for (
+    let match = text.indexOf(needle);
+    match !== -1;
+    match = text.indexOf(needle, match + needle.length)
+  )
+    for (let index = match; index < match + needle.length; index++) hits[owner[index]!] = true;
+  return hits;
 }

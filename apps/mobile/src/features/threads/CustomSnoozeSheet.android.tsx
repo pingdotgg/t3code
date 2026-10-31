@@ -62,6 +62,7 @@ function systemUses24HourClock() {
 export function CustomSnoozeSheet(props: Props) {
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const [is24Hour, setIs24Hour] = useState(systemUses24HourClock);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to re-read the native 24-hour clock setting when the app resumes
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") setIs24Hour(systemUses24HourClock());
@@ -146,6 +147,7 @@ export function CustomSnoozeSheet(props: Props) {
                 <Text style={titleTypography}>Custom snooze</Text>
                 <RNHostView matchContents={{ vertical: true }} modifiers={[fillMaxWidth()]}>
                   <SegmentedControl
+                    variant="card"
                     options={modes}
                     selected={mode}
                     onSelect={(value) => {
@@ -157,6 +159,7 @@ export function CustomSnoozeSheet(props: Props) {
                 {mode === "date" ? (
                   <RNHostView matchContents={{ vertical: true }} modifiers={[fillMaxWidth()]}>
                     <SegmentedControl
+                      variant="card"
                       options={[
                         {
                           value: "date",
@@ -233,7 +236,12 @@ export function CustomSnoozeSheet(props: Props) {
                     </FilledTonalIconButton>
                   </Row>
                   <RNHostView matchContents={{ vertical: true }} modifiers={[fillMaxWidth()]}>
-                    <SegmentedControl options={units} selected={unit} onSelect={setUnit} />
+                    <SegmentedControl
+                      variant="card"
+                      options={units}
+                      selected={unit}
+                      onSelect={setUnit}
+                    />
                   </RNHostView>
                 </Column>
               )}

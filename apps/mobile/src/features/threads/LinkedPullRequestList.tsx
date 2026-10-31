@@ -17,7 +17,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
-import { relativeTime } from "../../lib/time";
+import { RelativeTime } from "../../components/RelativeTime";
 import type { EnvironmentRuntimeState } from "../../state/remote-runtime-types";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useSystemFontScale } from "../../lib/useSystemFontScale";
@@ -39,7 +39,7 @@ export function useLinkedPullRequestLines(
   thread: EnvironmentThreadShell | null,
   runtime: EnvironmentRuntimeState | null,
 ) {
-  const supported = runtime?.serverConfig?.environment.capabilities.threadPullRequests === true;
+  const supported = (runtime?.serverConfig ?? null) !== null;
   const pullRequests = thread?.pullRequests;
   return useMemo(() => {
     const chains = resolveThreadPullRequestChains(supported ? (pullRequests ?? []) : []);
@@ -152,7 +152,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
               ) : null}
               {snapshot?.updatedAt ? (
                 <Text className="text-2xs tabular-nums text-foreground-tertiary">
-                  {relativeTime(snapshot.updatedAt)}
+                  <RelativeTime timestamp={snapshot.updatedAt} />
                 </Text>
               ) : null}
             </View>

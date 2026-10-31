@@ -1,11 +1,11 @@
 import { useSystemFontScale } from "../../lib/useSystemFontScale";
-import type { TerminalOutputState } from "@t3tools/client-runtime/state/terminal";
+import type { TerminalGrid, TerminalOutputState } from "@t3tools/client-runtime/state/terminal";
 import {
   memo,
-  useCallback,
   useEffect,
   useEffectEvent,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type Ref,
@@ -25,7 +25,6 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
-  getNativeTerminalHardwareKeyRevision,
   resolveNativeTerminalSurfaceView,
   supportsNativeTerminalOutput,
   type NativeTerminalSurfaceHandle,
@@ -35,7 +34,6 @@ import {
   getMobileTerminalTheme,
   type TerminalTheme,
 } from "./terminalTheme";
-import { terminalDebugLog } from "./terminalDebugLog";
 import { useTerminalSurfaceBuffer } from "./useTerminalSurfaceBuffer";
 import { createTerminalOutputWriter } from "./terminalOutputWriter";
 
@@ -59,6 +57,7 @@ interface TerminalSurfaceProps extends ViewProps {
   readonly buffer: string | null;
   readonly output: TerminalOutputState | null;
   readonly fontSize?: number;
+  readonly grid?: TerminalGrid | null;
   readonly isRunning: boolean;
   readonly readOnly?: boolean;
   readonly autoFocus?: boolean;
@@ -96,6 +95,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
   const effectiveFontSize = scaleSystemFont(fontSize);
   const [viewport, setViewport] = useState<{ width: number; height: number } | null>(null);
   const resize = useEffectEvent(props.onResize);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the terminal grid in sync with viewport and system font changes
   useEffect(() => {
     if (viewport) resize(estimateGridSize({ ...viewport, fontSize: effectiveFontSize }));
   }, [viewport, effectiveFontSize]);
@@ -226,12 +226,18 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
-  const hasNativeSurface = Boolean(NativeTerminalSurfaceView);
+  const gridCols = props.grid?.cols;
+  const gridRows = props.grid?.rows;
+  const sharedGrid = useMemo(
+    () => (gridCols !== undefined && gridRows !== undefined ? [gridCols, gridRows] : []),
+    [gridCols, gridRows],
+  );
   const streaming = supportsNativeTerminalOutput();
   const nativeRef = useRef<NativeTerminalSurfaceHandle>(null);
   const writerRef = useRef<ReturnType<typeof createTerminalOutputWriter> | null>(null);
   const [nativeReady, setNativeReady] = useState(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the output writer for the native terminal view once it is ready and disposes it on cleanup
   useEffect(() => {
     const view = nativeRef.current;
     if (!streaming || !nativeReady || view === null) return;
@@ -243,6 +249,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
     };
   }, [nativeReady, streaming]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- streams new terminal output into the native terminal view through its writer
   useEffect(() => {
     if (!streaming || !nativeReady || props.output === null) return;
     void writerRef.current?.write(props.output).catch((error: unknown) => {
@@ -250,38 +257,20 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
     });
   }, [nativeReady, props.output, streaming]);
 
-  useEffect(() => {
-    terminalDebugLog("native:surface", {
-      terminalKey: props.terminalKey,
-      native: hasNativeSurface,
-      hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
-      bufferLen: props.buffer.length,
-      isRunning: props.isRunning,
+  const handleNativeInput = (event: NativeSyntheticEvent<TerminalInputEvent>) => {
+    if (!props.isRunning || props.readOnly) {
+      return;
+    }
+    onInput(event.nativeEvent.data);
+  };
+  const handleNativeResize = (event: NativeSyntheticEvent<TerminalResizeEvent>) => {
+    // The first grid event comes from the mounted native surface, after registration.
+    setNativeReady(true);
+    onResize({
+      cols: event.nativeEvent.cols,
+      rows: event.nativeEvent.rows,
     });
-  }, [hasNativeSurface, props.buffer.length, props.isRunning, props.terminalKey]);
-  const handleNativeInput = useCallback(
-    (event: NativeSyntheticEvent<TerminalInputEvent>) => {
-      if (!props.isRunning || props.readOnly) {
-        return;
-      }
-      terminalDebugLog("native:onInput", {
-        codes: Array.from(event.nativeEvent.data, (char) => char.codePointAt(0)),
-      });
-      onInput(event.nativeEvent.data);
-    },
-    [onInput, props.isRunning, props.readOnly],
-  );
-  const handleNativeResize = useCallback(
-    (event: NativeSyntheticEvent<TerminalResizeEvent>) => {
-      // The first grid event comes from the mounted native surface, after registration.
-      setNativeReady(true);
-      onResize({
-        cols: event.nativeEvent.cols,
-        rows: event.nativeEvent.rows,
-      });
-    },
-    [onResize],
-  );
+  };
 
   if (NativeTerminalSurfaceView) {
     return (
@@ -299,6 +288,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
           terminalKey={props.terminalKey}
           initialBuffer={streaming ? "" : props.buffer}
           fontSize={scaleSystemFont(fontSize)}
+          sharedGrid={sharedGrid}
           style={{ flex: 1 }}
           themeConfig={buildGhosttyThemeConfig(theme)}
           onInput={handleNativeInput}
