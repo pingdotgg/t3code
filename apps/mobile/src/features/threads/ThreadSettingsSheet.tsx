@@ -306,6 +306,7 @@ type ThreadSettingsSessionValue = {
   readonly favoritesLoaded: boolean;
   readonly toggleFavorite: (option: ModelOption) => void;
   readonly toggleHidden: (option: ModelOption) => void;
+  readonly withHiddenOverride: (option: ModelOption) => ModelOption;
   readonly manageHidden: boolean;
   readonly setManageHidden: (value: boolean) => void;
   readonly runtimeMode: RuntimeMode;
@@ -362,16 +363,17 @@ function ThreadSettingsSessionProvider(
             props.lockedProviderInstanceId,
             props.projectId,
             true,
-          ).map((option) => {
-            const override = hiddenOverrides.get(option.key);
-            // A save's settings push can land after its response; hold the tapped value until the next push.
-            return override &&
-              (override.settledSettings === null || override.settledSettings === settings)
-              ? { ...option, isHidden: override.hidden }
-              : option;
-          }),
+          ),
         )
       : props.providerGroups;
+  // Rows apply this from context: the list hands rows their new item data a commit after the tap.
+  const withHiddenOverride = (option: ModelOption) => {
+    const override = hiddenOverrides.get(option.key);
+    // A save's settings push can land after its response; hold the tapped value until the next push.
+    return override && (override.settledSettings === null || override.settledSettings === settings)
+      ? { ...option, isHidden: override.hidden }
+      : option;
+  };
   const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
     : EMPTY_MODEL_FAVORITES;
@@ -629,6 +631,7 @@ function ThreadSettingsSessionProvider(
     manageHidden,
     setManageHidden,
     toggleHidden,
+    withHiddenOverride,
     runtimeMode: compatibleRuntimeMode,
     runtimeModeChoices,
     onUpdateRuntimeMode: props.onUpdateRuntimeMode,
@@ -715,23 +718,22 @@ function ThreadSettingsModelListRow(props: {
   readonly isLast: boolean;
 }) {
   const session = useThreadSettingsSession();
-  const onPress = () => session.pressModel(props.option);
+  const option = session.manageHidden ? session.withHiddenOverride(props.option) : props.option;
+  const onPress = () => session.pressModel(option);
 
   return (
     <ModelRow
       isFirst={props.isFirst}
       isLast={props.isLast}
       onPress={onPress}
-      isFavorite={session.favoriteKeys.has(props.option.key)}
+      isFavorite={session.favoriteKeys.has(option.key)}
       favoritesLoaded={session.favoritesLoaded}
-      onToggleFavorite={() => session.toggleFavorite(props.option)}
+      onToggleFavorite={() => session.toggleFavorite(option)}
       onToggleHidden={
-        session.manageHidden && props.option.canHide
-          ? () => session.toggleHidden(props.option)
-          : undefined
+        session.manageHidden && option.canHide ? () => session.toggleHidden(option) : undefined
       }
-      option={props.option}
-      selected={session.isDisplayed(props.option)}
+      option={option}
+      selected={session.isDisplayed(option)}
     />
   );
 }
