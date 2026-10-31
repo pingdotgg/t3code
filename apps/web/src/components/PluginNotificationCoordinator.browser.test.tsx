@@ -19,7 +19,9 @@ vi.mock("@tanstack/react-router", async () => {
     useNavigate: () => () => undefined,
   };
 });
-vi.mock("../state/environments", () => ({ useEnvironmentIds: () => testState.environmentIds }));
+vi.mock("../state/environments", () => ({
+  useEnvironments: () => testState.environmentIds.map((environmentId) => ({ environmentId })),
+}));
 vi.mock("../state/pluginNotifications", () => ({
   usePluginNotificationFrame: (environmentId: string) =>
     testState.frames.get(environmentId) ?? null,

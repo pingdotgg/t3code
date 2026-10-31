@@ -114,9 +114,8 @@ export const make = Effect.fn("PluginNotifications.make")(function* () {
         if (oldest === undefined) return yield* Queue.take(retaining);
         const now = yield* elapsedMillis;
         if (oldest.expiresAt > now)
-          return yield* Effect.raceFirst(
-            Effect.sleep(oldest.expiresAt - now),
-            Queue.take(retaining),
+          return yield* Queue.take(retaining).pipe(
+            Effect.timeoutOrElse({ duration: oldest.expiresAt - now, orElse: () => Effect.void }),
           );
         yield* remove((entry) => entry.expiresAt > now);
       }),
