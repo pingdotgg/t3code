@@ -40,11 +40,13 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     stateDir: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
+  arch: NodeJS.Architecture = "arm64",
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-agent-start-" });
   const hub = { running: true, spawnFails: false };
+  const spawnedArgs: Array<ReadonlyArray<string>> = [];
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
   for (const [name, version, entry] of [
@@ -62,10 +64,12 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
+    Effect.provideService(HostProcess.Architecture, arch),
     Effect.provideService(
       ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() =>
-        hub.spawnFails
+      ChildProcessSpawner.make((command) => {
+        if (command._tag === "StandardCommand") spawnedArgs.push(command.args);
+        return hub.spawnFails
           ? Effect.fail(
               PlatformError.systemError({
                 _tag: "NotFound",
@@ -88,8 +92,8 @@ const agentFixture = Effect.fn("agentFixture")(function* (
                 getOutputFd: () => Stream.empty,
                 unref: Effect.succeed(Effect.void),
               }),
-            ),
-      ),
+            );
+      }),
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) =>
@@ -114,7 +118,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir, hub, daemonHealthy };
+  return { host, fs, stateDir, hub, daemonHealthy, spawnedArgs };
 });
 
 describe("AgentDevice startup", () => {
@@ -586,19 +590,27 @@ it.effect("reports iOS unavailable on a Mac whose server cannot load serve-sim",
         );
     expect(yield* reason("arm64")).toBeNull();
     expect(yield* reason("x64")).toBe(
-      "iOS Simulators need an Apple silicon Mac running the Apple silicon build of T3 Code.",
+      "iOS Simulators need an Apple silicon Mac with T3 Code running as arm64, not under Rosetta.",
     );
     // A packaged server runs the hub on PATH's Node, so its own architecture decides nothing.
     expect(yield* reason("x64", true)).toBeNull();
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it("limits the hub to Android where it cannot serve iOS Simulators", () => {
-  const { hubPlatformArguments } = LocalDeviceHost.__testing;
-  expect(hubPlatformArguments("darwin", true)).toEqual([]);
-  expect(hubPlatformArguments("darwin", false)).toEqual(["--platform", "android"]);
-  expect(hubPlatformArguments("linux", true)).toEqual(["--platform", "android"]);
-});
+it.effect.each([
+  { arch: "arm64", platformArgs: [] },
+  { arch: "x64", platformArgs: ["--platform", "android"] },
+] as const)("starts the hub on a $arch Mac with $platformArgs", ({ arch, platformArgs }) =>
+  Effect.gen(function* () {
+    const { spawnedArgs } = yield* agentFixture(
+      () => Effect.succeed(processOutput(0)),
+      processOutput(0),
+      arch,
+    );
+    const hubArgs = spawnedArgs.find((args) => args.includes("--hide-boot-device"));
+    expect(hubArgs?.slice(hubArgs.indexOf("--hide-boot-device") + 1)).toEqual(platformArgs);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect(
   "constructs and inspects an unconfigured host without installing or starting helpers",

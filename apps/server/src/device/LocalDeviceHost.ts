@@ -117,7 +117,7 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   if (platform === "ios") {
     if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
     if (yield* hubCannotLoadServeSim)
-      return "iOS Simulators need an Apple silicon Mac running the Apple silicon build of T3 Code.";
+      return "iOS Simulators need an Apple silicon Mac with T3 Code running as arm64, not under Rosetta.";
     if (!(yield* isCommandAvailable("xcrun"))) return "Xcode command line tools were not found.";
     return null;
   }
@@ -892,7 +892,6 @@ export const __testing = {
   AgentDeviceDaemonFile,
   androidSdk,
   platformReason,
-  hubPlatformArguments,
   deviceHostEnvironment,
   hubEnvironment,
 };
