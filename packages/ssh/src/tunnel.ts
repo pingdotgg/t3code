@@ -527,8 +527,7 @@ const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
 STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.t3"
-DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
+SERVER_HOME_FILE="$STATE_DIR/server-home"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -543,19 +542,40 @@ trap cleanup_runner_next EXIT
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
+chmod 700 "$RUNNER_NEXT"
+# Resolve with the new runner before replacing the old one: a failed home
+# change must not consume the runner-change signal used for future updates.
+DEFAULT_SERVER_HOME="$("$RUNNER_NEXT" __ssh-helper home-dir)"
+if [ -z "$DEFAULT_SERVER_HOME" ]; then
+  printf 'Could not resolve the remote T3 home.\\n' >&2
+  exit 1
+fi
+# kill -0 also succeeds for a server that exited but was not reaped yet, so
+# a zombie does not count as running. Without ps to tell, trust kill -0.
+server_running() {
+  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
+  case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in
+    *Z*) return 1 ;;
+  esac
+}
+PREVIOUS_SERVER_HOME="$(cat "$SERVER_HOME_FILE" 2>/dev/null || printf '%s' "$HOME/.t3")"
+# A home change must not redirect pairing to another environment while the
+# previously managed server is still running. Leave it for an explicit stop.
+if [ "$PREVIOUS_SERVER_HOME" != "$DEFAULT_SERVER_HOME" ] && [ "$(cat "$MANAGED_FILE" 2>/dev/null || true)" = "managed" ]; then
+  PREVIOUS_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+  if server_running "$PREVIOUS_PID"; then
+    printf 'The SSH-managed server still uses %s. Stop it before changing the T3 home to %s.\\n' "$PREVIOUS_SERVER_HOME" "$DEFAULT_SERVER_HOME" >&2
+    exit 1
+  fi
+fi
+DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 RUNNER_CHANGED=0
 if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
   RUNNER_CHANGED=1
 fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
-chmod 700 "$RUNNER_FILE"
 T3_ARCHIVE_MODE=@@T3_ARCHIVE_MODE@@
-if [ "$T3_ARCHIVE_MODE" = "1" ]; then
-  # The archive ships the helpers below inside the executable; the remote
-  # needs no Node at all. Resolving the runner once here also downloads the
-  # archive before the port and readiness probes rely on it.
-  "$RUNNER_FILE" --version >/dev/null
-elif ! ensure_remote_node_path; then
+if [ "$T3_ARCHIVE_MODE" != "1" ] && ! ensure_remote_node_path; then
   printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
   exit 1
 fi
@@ -584,14 +604,6 @@ wait_for_pid_exit() {
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
-}
-# kill -0 also succeeds for a server that exited but was not reaped yet, so
-# a zombie does not count as running. Without ps to tell, trust kill -0.
-server_running() {
-  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
-  case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in
-    *Z*) return 1 ;;
-  esac
 }
 resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then
@@ -622,6 +634,13 @@ NODE
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+if [ "$PREVIOUS_SERVER_HOME" != "$DEFAULT_SERVER_HOME" ]; then
+  # A remembered port may belong to an external server using the old home.
+  # Rediscover against the selected home without stopping that server.
+  REMOTE_PID=""
+  REMOTE_PORT=""
+  REMOTE_MANAGED=""
+fi
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
@@ -658,6 +677,10 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
       REMOTE_MANAGED="external"
     fi
   else
+    if [ "$PREVIOUS_SERVER_HOME" != "$DEFAULT_SERVER_HOME" ]; then
+      printf 'The server in %s did not become ready. Retry the connection; the server was left running.\\n' "$DEFAULT_SERVER_HOME" >&2
+      exit 1
+    fi
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
     REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
@@ -719,19 +742,27 @@ if [ -z "$REMOTE_PORT" ]; then
     exit 1
   fi
 fi
+printf '%s\\n' "$DEFAULT_SERVER_HOME" >"$SERVER_HOME_FILE"
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
 chmod 700 "$RUNNER_FILE"
-PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
+if [ -f "$STATE_DIR/server-home" ]; then
+  PAIRING_BASE_DIR="$(cat "$STATE_DIR/server-home")"
+else
+  PAIRING_BASE_DIR="$("$RUNNER_FILE" __ssh-helper home-dir)"
+fi
+if [ -z "$PAIRING_BASE_DIR" ]; then
+  printf 'Could not resolve the remote T3 home for pairing.\\n' >&2
+  exit 1
+fi
 "$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
 `;
 
