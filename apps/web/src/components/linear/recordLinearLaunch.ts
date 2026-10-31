@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
+import { configuredHostedAppUrl } from "../../hostedPairing";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readPrimaryEnvironmentId } from "../../state/environments";
 import { linearEnvironment } from "../../state/linear";
@@ -30,7 +31,7 @@ export async function recordLinearLaunch(input: {
   const warn = (description: string) =>
     toastManager.add({
       type: "warning",
-      title: `Couldn't update ${input.identifier} in Linear`,
+      title: `Could not update ${input.identifier} in Linear`,
       description,
     });
   try {
@@ -53,7 +54,10 @@ export async function recordLinearLaunch(input: {
                 },
               }),
           threadUrl: linearThreadUrl({
-            origin: window.location.origin,
+            // The desktop app's custom scheme can't be opened from Linear.
+            origin: /^https?:$/u.test(window.location.protocol)
+              ? window.location.origin
+              : configuredHostedAppUrl(),
             environmentId: input.environmentId,
             threadId: input.target.threadId,
           }),

@@ -51,6 +51,8 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/connections",
   // Access picks its environment on the page itself.
   "/settings/access",
+  // Linear is served by the primary environment whatever scope is selected.
+  "/settings/linear",
   "/settings/about",
 ]);
 

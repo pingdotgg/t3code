@@ -41,6 +41,17 @@ export function keepPrevious<Target, A, E>(
   return (target) => wrapped(family(target));
 }
 
+/** Changes on every server push and poll tick; queries refresh only when this value changes. */
+export function linearRefreshSignal(
+  refreshes: Atom.Atom<AsyncResult.AsyncResult<number, unknown>>,
+  pollTick: Atom.Atom<number>,
+): Atom.Atom<string> {
+  return Atom.readable((get) => {
+    const revision = Option.getOrElse(AsyncResult.value(get(refreshes)), () => 0);
+    return `${revision}:${get(pollTick)}`;
+  });
+}
+
 /**
  * Linear is reached through the primary environment only (the server holds the API key), so
  * callers always pass the primary environment id.
@@ -63,10 +74,9 @@ export function createLinearEnvironmentAtoms<R, E>(
    */
   const pollTick = Atom.make(0).pipe(Atom.withLabel("environment-data:linear:poll-tick"));
   const triggers = Atom.family((environmentId: EnvironmentId) =>
-    Atom.readable((get) => {
-      get(refreshes({ environmentId, input: {} }));
-      return get(pollTick);
-    }).pipe(Atom.withLabel(`environment-data:linear:trigger:${environmentId}`)),
+    linearRefreshSignal(refreshes({ environmentId, input: {} }), pollTick).pipe(
+      Atom.withLabel(`environment-data:linear:trigger:${environmentId}`),
+    ),
   );
   const refreshTrigger = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
     triggers(environmentId);
@@ -104,6 +114,7 @@ export function createLinearEnvironmentAtoms<R, E>(
         tag: WS_METHODS.linearTeamMetadata,
         staleTimeMs: 5 * 60_000,
         idleTtlMs: LINEAR_IDLE_TTL_MS,
+        refreshTrigger,
       }),
     ),
     projects: keepPrevious(
@@ -157,6 +168,7 @@ export function createLinearEnvironmentAtoms<R, E>(
         tag: WS_METHODS.linearViews,
         staleTimeMs: 5 * 60_000,
         idleTtlMs: LINEAR_IDLE_TTL_MS,
+        refreshTrigger,
       }),
     ),
     search: keepPrevious(

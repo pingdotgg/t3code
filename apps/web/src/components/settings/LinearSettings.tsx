@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { LinearConnectionStatus } from "@t3tools/contracts";
 import { CheckIcon, ExternalLinkIcon, KeyRoundIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
@@ -5,9 +6,15 @@ import { useState } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { requestConfirmDialog } from "../../confirmDialog";
+import { useEnvironments } from "../../state/environments";
+import { linearEnvironment } from "../../state/linear";
 import { classifyLinearFailure } from "../linear/linearDegradation";
 import { LinearAvatar, LinearGlyph, LinearTeamBadge } from "../linear/linearIcons";
-import { useLinearCommands, useLinearStatus } from "../linear/useLinearData";
+import {
+  useLinearCommands,
+  useLinearEnvironmentId,
+  useLinearStatus,
+} from "../linear/useLinearData";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -44,8 +51,16 @@ function connectFailureMessage(failure: unknown): string {
 export function LinearSettingsPanel() {
   const status = useLinearStatus();
   const state = status.data?.state ?? null;
+  const environmentId = useLinearEnvironmentId();
+  const { environments } = useEnvironments();
+  const environment = environments.find((entry) => entry.environmentId === environmentId);
   return (
     <SettingsPageContainer>
+      {environments.length > 1 && environment ? (
+        <p className="px-3 text-sm text-muted-foreground sm:px-4">
+          Linear settings apply to {environment.label}.
+        </p>
+      ) : null}
       {state === null ? (
         <SettingsSection {...searchableSetting("linear")}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
@@ -81,9 +96,33 @@ function ConnectionBadge({ state }: { readonly state: LinearConnectionStatus["st
   );
 }
 
+function useLinearDisconnect() {
+  const commands = useLinearCommands();
+  const [disconnecting, setDisconnecting] = useState(false);
+  const canDisconnect = useAtomValue(
+    linearEnvironment.disconnect.permissionAtom(commands.environmentId),
+  );
+  const disconnect = async () => {
+    const message =
+      "Disconnect Linear? The API key is deleted from the server. Your project mappings and launch history are kept.";
+    const confirmed =
+      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
+    if (!confirmed) return;
+    setDisconnecting(true);
+    const result = await commands.disconnect();
+    setDisconnecting(false);
+    if (result !== null && result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Could not disconnect Linear" });
+    }
+  };
+  return { disconnect, disconnecting, canDisconnect };
+}
+
 /** Disconnected, or connected with a key Linear no longer accepts. */
 function LinearConnectCard({ reconnect }: { readonly reconnect: boolean }) {
   const commands = useLinearCommands();
+  const canConnect = useAtomValue(linearEnvironment.connect.permissionAtom(commands.environmentId));
+  const { disconnect, disconnecting, canDisconnect } = useLinearDisconnect();
   const [apiKey, setApiKey] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,20 +144,13 @@ function LinearConnectCard({ reconnect }: { readonly reconnect: boolean }) {
     }
   };
 
-  const disconnect = async () => {
-    const result = await commands.disconnect();
-    if (result !== null && result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not disconnect Linear" });
-    }
-  };
-
   return (
     <SettingsSection
       {...searchableSetting("linear")}
       headerAction={<ConnectionBadge state={reconnect ? "invalid" : "disconnected"} />}
     >
       <div className="flex items-start gap-3.5 px-4 py-4">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-white">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
           <LinearGlyph className="size-5" />
         </span>
         <div className="min-w-0 space-y-3">
@@ -169,7 +201,7 @@ function LinearConnectCard({ reconnect }: { readonly reconnect: boolean }) {
             spellCheck={false}
             placeholder="lin_api_..."
             value={apiKey}
-            disabled={pending}
+            disabled={pending || !canConnect}
             aria-invalid={error !== null}
             onChange={(event) => {
               setApiKey(event.target.value);
@@ -177,7 +209,11 @@ function LinearConnectCard({ reconnect }: { readonly reconnect: boolean }) {
             }}
             className="max-w-sm flex-1"
           />
-          <Button type="submit" size="sm" disabled={pending || apiKey.trim().length === 0}>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={pending || !canConnect || apiKey.trim().length === 0}
+          >
             {pending ? <Spinner size="sm" /> : null}
             Verify &amp; save
           </Button>
@@ -186,6 +222,7 @@ function LinearConnectCard({ reconnect }: { readonly reconnect: boolean }) {
               type="button"
               size="sm"
               variant="ghost-destructive"
+              disabled={disconnecting || !canDisconnect}
               onClick={() => void disconnect()}
             >
               Disconnect
@@ -208,7 +245,7 @@ function LinearConnectCard({ reconnect }: { readonly reconnect: boolean }) {
             <ExternalLinkIcon aria-hidden className="size-3" />
           </a>
           <span className="ms-2">
-            Stored in the T3 server&apos;s secret store. Keys inherit your Linear permissions.
+            Stored in the server&apos;s secret store. Keys inherit your Linear permissions.
           </span>
         </p>
       </form>
@@ -218,8 +255,9 @@ function LinearConnectCard({ reconnect }: { readonly reconnect: boolean }) {
 
 function LinearConnectedCard({ status }: { readonly status: LinearConnectionStatus }) {
   const commands = useLinearCommands();
+  const canResync = useAtomValue(linearEnvironment.resync.permissionAtom(commands.environmentId));
+  const { disconnect, disconnecting, canDisconnect } = useLinearDisconnect();
   const [resyncing, setResyncing] = useState(false);
-  const [disconnecting, setDisconnecting] = useState(false);
 
   const resync = async () => {
     setResyncing(true);
@@ -227,20 +265,6 @@ function LinearConnectedCard({ status }: { readonly status: LinearConnectionStat
     setResyncing(false);
     if (result !== null && result._tag === "Failure") {
       toastManager.add({ type: "error", title: "Could not resync Linear" });
-    }
-  };
-
-  const disconnect = async () => {
-    const message =
-      "Disconnect Linear? The API key is deleted from the server. Your project mappings and launch history are kept.";
-    const confirmed =
-      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
-    if (!confirmed) return;
-    setDisconnecting(true);
-    const result = await commands.disconnect();
-    setDisconnecting(false);
-    if (result !== null && result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not disconnect Linear" });
     }
   };
 
@@ -252,7 +276,7 @@ function LinearConnectedCard({ status }: { readonly status: LinearConnectionStat
     >
       <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4">
         <div className="flex min-w-0 items-start gap-3.5">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-white">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <LinearGlyph className="size-5" />
           </span>
           <div className="min-w-0 space-y-1.5">
@@ -299,7 +323,7 @@ function LinearConnectedCard({ status }: { readonly status: LinearConnectionStat
           <Button
             size="sm"
             variant="outline"
-            disabled={resyncing || disconnecting}
+            disabled={resyncing || disconnecting || !canResync}
             onClick={() => void resync()}
           >
             {resyncing ? <Spinner size="sm" /> : <RefreshCwIcon aria-hidden />}
@@ -308,7 +332,7 @@ function LinearConnectedCard({ status }: { readonly status: LinearConnectionStat
           <Button
             size="sm"
             variant="destructive-outline"
-            disabled={resyncing || disconnecting}
+            disabled={resyncing || disconnecting || !canDisconnect}
             onClick={() => void disconnect()}
           >
             Disconnect

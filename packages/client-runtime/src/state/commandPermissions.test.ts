@@ -183,11 +183,16 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect("requires the destination settings grant to check OTLP endpoints", () =>
+  it.effect.each([
+    WS_METHODS.serverCheckOtlpEndpoint,
+    WS_METHODS.linearConnect,
+    WS_METHODS.linearDisconnect,
+    WS_METHODS.linearResync,
+  ])("requires the destination settings grant for %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* setup;
-        const check = createCommandPermissions(runtime, WS_METHODS.serverCheckOtlpEndpoint);
+        const check = createCommandPermissions(runtime, method);
         registry.set(sessions(env), AsyncResult.success(grant(true)));
         expect(registry.get(check.permissionAtom(env))).toBe(false);
         registry.set(
@@ -209,6 +214,7 @@ describe("command permissions", () => {
     WS_METHODS.pipelinesUpsert,
     WS_METHODS.pipelineRunsCancel,
     WS_METHODS.pipelineRunsRevise,
+    WS_METHODS.linearRecordLaunch,
     ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.scoped(

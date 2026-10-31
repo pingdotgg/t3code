@@ -49,6 +49,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.sourceControlSignInStart]: AuthSettingsWriteScope,
   [WS_METHODS.sourceControlSignInWait]: AuthSettingsWriteScope,
   [WS_METHODS.sourceControlSignInCancel]: AuthSettingsWriteScope,
+  [WS_METHODS.linearConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.linearDisconnect]: AuthSettingsWriteScope,
+  [WS_METHODS.linearResync]: AuthSettingsWriteScope,
   [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneCancel]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneRetry]: AuthSourceControlWriteScope,
@@ -78,6 +81,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pipelineRunsRevise]: AuthOrchestrationOperateScope,
   [WS_METHODS.pipelineRunsCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.pipelineRunsSetPauseBefore]: AuthOrchestrationOperateScope,
+  // Recording a launch can move the Linear issue and comment on it.
+  [WS_METHODS.linearRecordLaunch]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // Force stop kills agent processes, as Stop on a terminal does.
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,

@@ -133,21 +133,32 @@ function bumpLinearPollTick() {
   appAtomRegistry.update(linearEnvironment.pollTick, (tick) => tick + 1);
 }
 
+const RETURN_REFRESH_MIN_GAP_MS = 15_000;
+
 /** Re-reads Linear every 60s while the page is visible and when the window regains focus. */
 export function useLinearPolling(enabled: boolean) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timers and window listeners that bump the shared poll tick while the Linear page is mounted
   useEffect(() => {
     if (!enabled) return;
+    let lastBumpAt = Date.now();
+    const bump = () => {
+      lastBumpAt = Date.now();
+      bumpLinearPollTick();
+    };
     const refreshIfVisible = () => {
-      if (document.visibilityState === "visible") bumpLinearPollTick();
+      if (document.visibilityState === "visible") bump();
+    };
+    // Focus and visibilitychange both fire on one return, and app switching refocuses often.
+    const refreshOnReturn = () => {
+      if (Date.now() - lastBumpAt >= RETURN_REFRESH_MIN_GAP_MS) refreshIfVisible();
     };
     const interval = window.setInterval(refreshIfVisible, LINEAR_POLL_INTERVAL_MS);
-    window.addEventListener("focus", refreshIfVisible);
-    document.addEventListener("visibilitychange", refreshIfVisible);
+    window.addEventListener("focus", refreshOnReturn);
+    document.addEventListener("visibilitychange", refreshOnReturn);
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener("focus", refreshIfVisible);
-      document.removeEventListener("visibilitychange", refreshIfVisible);
+      window.removeEventListener("focus", refreshOnReturn);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
     };
   }, [enabled]);
 }
