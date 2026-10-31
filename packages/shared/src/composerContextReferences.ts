@@ -369,7 +369,9 @@ const PROVIDER_ENVELOPE = new RegExp(
 
 // Restore reference links in provider echoes of projected prompts.
 export function restoreComposerContextReferences(providerText: string): string {
-  if (!providerText.includes("; ref=")) return providerText;
+  if (!providerText.includes("; ref=") && !providerText.includes(`<${CONTEXT_ENVELOPE_TAG}`)) {
+    return providerText;
+  }
   return providerText
     .replace(PROVIDER_ENVELOPE, "")
     .replace(PROVIDER_MARKER, (marker, kindName: string, label: string, contextId: string) => {
