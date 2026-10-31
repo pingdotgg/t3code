@@ -1387,6 +1387,10 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.device.audio-input</key>
     <true/>
+    <!-- Same inheritance: without this, tccd rejects Apple Events sent by
+         agent helpers such as Codex computer use. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2833,6 +2837,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           "T3 Code lets commands run by terminals and coding agents use the camera.",
         NSMicrophoneUsageDescription:
           "T3 Code lets commands run by terminals and coding agents use the microphone.",
+        NSAppleEventsUsageDescription:
+          "T3 Code lets commands run by terminals and coding agents control other apps.",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [
