@@ -69,8 +69,8 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
         render={
           <Button
             type="button"
-            variant="ghost"
-            size="icon-xs"
+            variant="secondary"
+            size="icon-sm"
             aria-label="Refresh workspace files"
             onClick={props.onRefresh}
           />
