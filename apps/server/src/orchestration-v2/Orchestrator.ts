@@ -4158,10 +4158,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (runtimeModeCeiling === undefined) return;
     const runtimeModes = new Map<ThreadId, RuntimeMode>();
     for (const threadId of threadsStartingWork(events)) {
-      const shell = yield* projectionStore
-        .getThreadShell(threadId)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
-      if (shell !== null) runtimeModes.set(threadId, shell.runtimeMode);
+      const thread = yield* projectionStore.getThread(threadId).pipe(
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+      );
+      if (thread !== null) runtimeModes.set(threadId, thread.runtimeMode);
     }
     const refusal = runtimeModeCeilingRefusal(
       runtimeModeCeiling.maxRuntimeMode,

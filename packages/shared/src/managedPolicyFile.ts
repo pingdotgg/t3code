@@ -1,8 +1,10 @@
 import { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -26,8 +28,9 @@ export function managedPolicyPath(platform: NodeJS.Platform): string {
     case "darwin":
       return "/Library/Application Support/T3Code/policy.json";
     case "win32":
-      // Not %ProgramData%: users can point that variable somewhere they write.
-      return "C:\\ProgramData\\T3Code\\policy.json";
+      // Not ProgramData, where a user can create the folder first and own it; and not
+      // %ProgramFiles%, which a user can point somewhere they write.
+      return "C:\\Program Files\\T3Code\\policy.json";
     default:
       return "/etc/t3code/policy.json";
   }
@@ -91,17 +94,22 @@ const WINDOWS_POLICIES_ROOT = "HKLM\\SOFTWARE\\Policies";
 const PLUTIL = "/usr/bin/plutil";
 const REG = "C:\\Windows\\System32\\reg.exe";
 
-const run = Effect.fnUntraced(function* (command: string, args: ReadonlyArray<string>) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const handle = yield* spawner.spawn(
-    ChildProcess.make(command, args, { stdin: "ignore", stderr: "ignore" }),
-  );
-  const [stdout, exitCode] = yield* Effect.all(
-    [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
-    { concurrency: 2 },
-  );
-  return { stdout, exitCode: Number(exitCode) };
-}, Effect.scoped);
+// A hung query must not hang startup; a timeout reads as a failed query.
+const run = Effect.fnUntraced(
+  function* (command: string, args: ReadonlyArray<string>) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(command, args, { stdin: "ignore", stderr: "ignore" }),
+    );
+    const [stdout, exitCode] = yield* Effect.all(
+      [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+      { concurrency: 2 },
+    );
+    return { stdout, exitCode: Number(exitCode) };
+  },
+  Effect.scoped,
+  Effect.timeout(Duration.seconds(10)),
+);
 
 /** The JSON in `reg query` output for the `Policy` value, or undefined when it has none. */
 function parseRegistryPolicy(output: string): string | undefined {
@@ -175,9 +183,14 @@ const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platfor
         ),
       );
     // reg exits 1 both for a missing value and for a failed query. The Policies key exists on
-    // every Windows install, so reading it first separates the two.
-    if ((yield* query([WINDOWS_POLICIES_ROOT])).exitCode !== 0) {
-      return yield* new ManagedPolicyFileError({ path, reason: "the registry cannot be read" });
+    // every Windows install, so reading it first separates the two. When reg cannot read even
+    // that, as where registry tools are blocked, only the policy file can apply.
+    const root = yield* query([WINDOWS_POLICIES_ROOT]).pipe(Effect.option);
+    if (Option.isNone(root) || root.value.exitCode !== 0) {
+      yield* Effect.logWarning(
+        "The Windows registry cannot be read; only the policy file applies.",
+      );
+      return undefined;
     }
     const queried = yield* query([path, "/v", "Policy"]);
     if (queried.exitCode === 1) return undefined;

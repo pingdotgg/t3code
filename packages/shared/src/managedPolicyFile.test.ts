@@ -1,9 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
@@ -15,7 +17,8 @@ import {
 
 const policy = JSON.stringify({ schemaVersion: 1, organization: "Example Corp" });
 
-type Result = { readonly stdout: string; readonly exitCode: number };
+/** What a command prints and exits with; `exitCode: "hang"` never exits. */
+type Result = { readonly stdout: string; readonly exitCode: number | "hang" };
 
 /** Files that exist, and what a command prints and exits with, by command name and arguments. */
 const machine = (
@@ -39,7 +42,10 @@ const machine = (
         return Effect.succeed(
           ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),
-            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
+            exitCode:
+              result.exitCode === "hang"
+                ? Effect.never
+                : Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
             isRunning: Effect.succeed(false),
             kill: () => Effect.void,
             unref: Effect.succeed(Effect.void),
@@ -125,7 +131,11 @@ describe("readManagedPolicy", () => {
   it.effect("reads the Windows Policies registry value, and treats a missing one as none", () =>
     Effect.gen(function* () {
       // The Policies root answers unless the registry itself cannot be read.
-      const reg = (stdout: string, exitCode = 0, rootExitCode = 0) => ({
+      const reg = (
+        stdout: string,
+        exitCode: number | "hang" = 0,
+        rootExitCode: number | "hang" = 0,
+      ) => ({
         "C:\\Windows\\System32\\reg.exe": (args: ReadonlyArray<string>) =>
           args.includes("/v") ? { stdout, exitCode } : { stdout: "", exitCode: rootExitCode },
       });
@@ -134,8 +144,14 @@ describe("readManagedPolicy", () => {
 
       assert.equal(yield* read("win32", {}, reg(output("REG_SZ", policy))), WINDOWS_POLICY_KEY);
       assert.isUndefined(yield* read("win32", {}, reg("", 1)));
-      // A query that fails exits 1 too, so it must not read as no policy.
-      assert.include(yield* read("win32", {}, reg("", 1, 1)), "registry cannot be read");
+      // Where reg cannot read the registry at all, the file still applies.
+      assert.isUndefined(yield* read("win32", {}, reg("", 1, 1)));
+      assert.equal(
+        yield* read("win32", { [managedPolicyPath("win32")]: policy }, reg("", 1, 1)),
+        managedPolicyPath("win32"),
+      );
+      // Once reg works, a failed query of the value is not read as no policy.
+      assert.include(yield* read("win32", {}, reg("", 5)), "cannot be read as a string");
       assert.equal(
         yield* read("win32", { [managedPolicyPath("win32")]: policy }, reg("", 1)),
         managedPolicyPath("win32"),
@@ -145,6 +161,17 @@ describe("readManagedPolicy", () => {
         yield* read("win32", {}, reg(output("REG_SZ", "{ not json"))),
         "does not match the policy schema",
       );
+      // A hung query times out: the root as unreadable, the value as a failure.
+      const timedOut = (stdout: string, exitCode: number | "hang", rootExitCode: number | "hang") =>
+        Effect.gen(function* () {
+          const fiber = yield* read("win32", {}, reg(stdout, exitCode, rootExitCode)).pipe(
+            Effect.forkChild,
+          );
+          yield* TestClock.adjust("10 seconds");
+          return yield* Fiber.join(fiber);
+        });
+      assert.isUndefined(yield* timedOut("", 1, "hang"));
+      assert.include(yield* timedOut("", "hang", 0), "registry cannot be read");
     }),
   );
 });

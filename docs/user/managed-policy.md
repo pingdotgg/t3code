@@ -48,23 +48,32 @@ Use one of these per machine:
 | OS      | Native policy                                                       | Policy file                                       |
 | ------- | ------------------------------------------------------------------- | ------------------------------------------------- |
 | macOS   | Configuration profile for `com.t3tools.t3code`                      | `/Library/Application Support/T3Code/policy.json` |
-| Windows | `Policy` string value under `HKLM\SOFTWARE\Policies\T3Tools\T3Code` | `C:\ProgramData\T3Code\policy.json`               |
+| Windows | `Policy` string value under `HKLM\SOFTWARE\Policies\T3Tools\T3Code` | `C:\Program Files\T3Code\policy.json`             |
 | Linux   |                                                                     | `/etc/t3code/policy.json`                         |
 
 T3 Code does not merge sources. If a machine has both a native policy and a policy file, T3 Code
 refuses to start until you remove one.
 
-**Policy file.** Copy the JSON to the path for the OS. Make it writable only by administrators.
+**Policy file.** Copy the JSON to the path for the OS. Make it and its folder writable only by
+administrators.
 
 **macOS configuration profile.** Add a custom settings payload for the preference domain
 `com.t3tools.t3code`. The payload's keys are the policy's top-level keys (`schemaVersion`,
 `organization`, `supportUrl`, `settings`, `limits`); JSON objects become dictionaries and lists
-become arrays. Install it as a device profile, since T3 Code ignores user profiles, and deploy only
-one profile for this domain. A profile cannot hold `null`, so use a policy file if a setting's
-value must be `null`.
+become arrays. To make the payload from a policy file you checked, run
+`plutil -convert xml1 -o com.t3tools.t3code.plist policy.json` and upload the result. Install it as
+a device profile, since T3 Code ignores user profiles, and deploy only one profile for this domain.
+A profile cannot hold `null`, so use a policy file if a setting's value must be `null`.
 
-**Windows registry.** Set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON.
-Group Policy Preferences, an Intune script, or `reg add` can all write it.
+**Windows registry.** Set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON,
+from Group Policy Preferences or an Intune script. T3 Code reads it with `reg.exe`; where registry
+tools are blocked for users, deploy the policy file instead. In PowerShell, as an administrator:
+
+```powershell
+$json = (Get-Content -Raw -Encoding UTF8 policy.json) -replace '\r?\n\s*', ''
+New-Item -Path HKLM:\SOFTWARE\Policies\T3Tools\T3Code -Force | Out-Null
+Set-ItemProperty -Path HKLM:\SOFTWARE\Policies\T3Tools\T3Code -Name Policy -Value $json -Type String
+```
 
 ## Change or remove a policy
 
@@ -107,6 +116,11 @@ A few settings need care:
 - A setting that can be empty, such as `defaultModelSelection`, is managed as a whole. You cannot
   manage one field inside it.
 - `defaultRuntimeMode` cannot be broader than [`maxRuntimeMode`](#permission-modes).
+- `worktreeCleanup`, which projects can also set, overrides the `worktree` rules in
+  `storageCleanup`. Lock it along with those rules; T3 Code refuses a policy that locks only the
+  rules.
+- Manage `idleCompaction`, not the older `compactIdleThreads`. A Claude instance's own idle
+  compaction choice still wins over `idleCompaction`.
 
 ## Limits
 
@@ -146,11 +160,16 @@ run another turn until someone lowers its mode; its queued messages send once th
 threads start at the limit when the user's default is above it.
 
 With `maxRuntimeMode` set, you own each provider's launch settings: binary path, launch arguments,
-config home, and every environment variable. They come from
+config home, and the environment variables set on each provider. They come from
 [`providers.instances`](#providers) or T3 Code's defaults, and users cannot change them, because a
 wrapper script, a launch flag, or a variable such as `NODE_OPTIONS` could otherwise turn off the
 provider's approvals. Pin the variables your users need, such as a gateway URL, in
-`providers.instances`.
+`providers.instances`. Variables in the environment that starts T3 Code itself still reach
+providers.
+
+ACP agents' own mode menus have no effect under `maxRuntimeMode`, except Antigravity's, whose modes
+T3 Code can place under the limit. Users still choose which ACP Registry agent runs; leave
+`acpRegistry` out of `allowedDrivers` to stop that.
 
 The limit decides which modes T3 Code asks the provider for. It is not a sandbox. Providers still
 read their own configuration from the user's home directory, such as `~/.claude` and `~/.codex`,
@@ -159,24 +178,37 @@ and users can run the provider's CLI outside T3 Code. See
 
 ### Clients and T3 Connect
 
-`clients` lists what may connect to the server:
+`clients` lists how the server may run:
 
-- `desktop`: the desktop app on this machine.
-- `local-browser`: a browser on this machine.
-- `remote`: phones, other computers, app.t3.codes, and anything else over the network.
+- `desktop`: as the desktop app's own server.
+- `local-browser`: as a server only browsers on this machine reach, such as `npx t3`.
+- `remote`: reachable from phones, other computers, and app.t3.codes over the network.
+
+`remote` is the line that matters. A server reachable from the network also accepts browsers on
+this machine, and the two local kinds differ only in how T3 Code was started. On machines with the
+desktop app, keep `desktop` in the list, or the app cannot start.
 
 Without `remote`, the server listens only on this machine, creates no pairing links, and signs out
-devices that paired earlier. That also turns off T3 Connect. To keep other remote access but turn
-off T3 Connect alone, set `"connect": false`.
+devices that paired earlier. The desktop app starts with network access and Tailscale Serve off,
+whatever the user chose. That also turns off T3 Connect. To keep other remote access but turn off
+T3 Connect alone, set `"connect": false`.
+
+When it starts, the server also turns off Tailscale Serve HTTPS forwarding to its port, such as one
+`t3 pair --tailscale` set up. It does not start while that forwarding stays on, or while
+Tailscale's answer cannot be read. It does start when Tailscale is not installed, not running, or
+logged out, since nothing forwards then; a mapping Tailscale kept returns when Tailscale runs
+again, so restart T3 Code after that.
 
 ### Other capabilities
 
 - `webhookTasks: false`: scheduled tasks cannot use webhook triggers. Existing webhook tasks stay
-  but do not run.
+  but do not run, and cannot be turned back on. Users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
-- `telemetry: false`: T3 Code sends no [product usage data](./telemetry.md) or relay connection
-  traces, whatever the environment says. `true` cannot turn them on for a user who turned them off.
+- `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
+  relay connection traces, whatever the environment says. `true` cannot turn them on for a user who
+  turned them off. A browser that opens the server, such as app.t3.codes, still sends its own relay
+  traces.
 
 ### Providers
 
@@ -190,7 +222,7 @@ marked unavailable, and users can still turn those providers off.
 that routes Claude through Amazon Bedrock or a base URL for a company gateway. `binaryPath` and
 `launchArgs` work only for providers that have those settings. With `"locked": true`, users cannot
 change the fields you set. With `"locked": false`, the fields fill in only what the user left
-empty. A locked Codex instance, or any Codex instance under `maxRuntimeMode`, also rules out
+empty. A `codex` entry that is locked, or any `codex` entry under `maxRuntimeMode`, also rules out
 [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), since that runtime would skip
 your fields.
 
@@ -209,9 +241,15 @@ The policy controls what T3 Code does. Agents run through each provider's own CL
 can also run outside T3 Code. To restrict those CLIs, use their own managed configuration, such as
 Claude Code's managed settings.
 
-On Windows, a T3 Code server running inside WSL reads `/etc/t3code/policy.json` in that distro,
-not the Windows policy. Deploy the policy file there too if your users run T3 Code in WSL.
+On a managed Windows machine, the desktop app does not run a WSL environment. A T3 Code server a
+user starts inside WSL reads `/etc/t3code/policy.json` in that distro, not the Windows policy.
+Deploy the policy file there too if your users run T3 Code in WSL.
+
+Without `remote`, T3 Code does not expose the server, but a user can still forward its local port
+with other tools.
 
 A user with administrator rights on the machine can edit or remove the policy. T3 Code enforces
 the policy in its own processes, which run as the user, so it stops users from changing managed
-settings in T3 Code but does not stop a user who modifies or replaces T3 Code itself.
+settings in T3 Code but does not stop a user who modifies or replaces T3 Code itself. A version
+from before managed policy ignores it too. To control which builds can run, use your device
+management tool's application controls.

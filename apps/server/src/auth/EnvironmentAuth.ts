@@ -23,6 +23,7 @@ import {
   type DpopFailureReason as DpopFailureReasonType,
   mcpClientScopes,
 } from "@t3tools/contracts";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -1420,12 +1421,19 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
     readonly pairingLinks: PairingGrantStore.PairingGrantStore["Service"];
   },
 ) {
+  const remoteAllowed = ManagedLimits.allowsRemoteClients(policy);
   const disallowed = new Set<string>();
-  if (!ManagedLimits.allowsRemoteClients(policy)) disallowed.add(LINK_PAIRED_SUBJECTS.link);
+  if (!remoteAllowed) disallowed.add(LINK_PAIRED_SUBJECTS.link);
   if (!ManagedLimits.allowsConnect(policy)) disallowed.add(LINK_PAIRED_SUBJECTS.connect);
   if (disallowed.size === 0) return;
-  const sessions = (yield* stores.sessions.listActive()).filter((session) =>
-    disallowed.has(session.subject),
+  const sessions = (yield* stores.sessions.listActive()).filter(
+    (session) =>
+      disallowed.has(session.subject) ||
+      // The startup link also pairs browsers on this machine; only a device elsewhere goes.
+      (!remoteAllowed &&
+        session.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT &&
+        session.client.ipAddress !== undefined &&
+        !isLocalLoopbackHost(session.client.ipAddress)),
   );
   const links = (yield* stores.pairingLinks.listActive()).filter((link) =>
     disallowed.has(link.subject),

@@ -53,11 +53,13 @@ const PACKAGED_CLIENTS: ReadonlyArray<ProviderClientDefinition> = [
 
 /**
  * Fields that make an instance launch without the settings a pin sets: managed Codex runs T3's own
- * runtime against OpenAI. A policy that owns a pin owns these too, leaving them at their defaults.
+ * runtime against OpenAI. A policy that owns a pin owns these too, holding each at the value given
+ * here, which clients still send when they add an instance.
  */
-const PIN_BYPASS_FIELDS: ReadonlyMap<ProviderDriverKind, ReadonlyArray<string>> = new Map([
-  [ProviderDriverKind.make("codex"), ["setupMode"]],
-]);
+const PIN_BYPASS_FIELDS: ReadonlyMap<
+  ProviderDriverKind,
+  Readonly<Record<string, unknown>>
+> = new Map([[ProviderDriverKind.make("codex"), { setupMode: "existing" }]]);
 
 /** Drivers this build knows, by the names users see; a policy naming any other is refused. */
 const KNOWN_DRIVERS: ReadonlyMap<ProviderDriverKind, KnownDriver> = new Map([
@@ -281,7 +283,7 @@ export function makeManagedProviders(
   const rules = new Map<ProviderDriverKind, DriverRule>();
   for (const [driver, known] of KNOWN_DRIVERS) {
     const pin = pins.get(driver);
-    const bypasses = pin === undefined ? [] : (PIN_BYPASS_FIELDS.get(driver) ?? []);
+    const bypasses = pin === undefined ? [] : Object.keys(PIN_BYPASS_FIELDS.get(driver) ?? {});
     if (maxRuntimeMode !== undefined) {
       rules.set(driver, {
         pin,
@@ -416,10 +418,15 @@ export function makeManagedProviders(
     rule: DriverRule,
   ): Locked | { readonly _tag: "Kept"; readonly instance: ProviderInstanceConfig | undefined } => {
     const config = { ...configRecord(next) };
+    const harmless = PIN_BYPASS_FIELDS.get(next.driver) ?? {};
     for (const field of [...rule.config, ...rule.fill]) {
       const value = configValue(next, field);
       const storedValue = configValue(stored, field);
-      if (sameValue(value, pinnedValue(rule.pin, field)) || sameValue(value, storedValue)) {
+      if (
+        sameValue(value, pinnedValue(rule.pin, field)) ||
+        sameValue(value, storedValue) ||
+        (field in harmless && sameValue(value, harmless[field]))
+      ) {
         if (storedValue === undefined) delete config[field];
         else config[field] = configRecord(stored)[field];
       } else if (rule.config.includes(field)) {

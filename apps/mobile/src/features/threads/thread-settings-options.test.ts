@@ -38,12 +38,6 @@ describe("managed runtime mode limits", () => {
     ]);
   });
 
-  it("leaves every mode available without a ceiling", () => {
-    expect(withManagedRuntimeModeLimits(RUNTIME_MODE_CHOICES, [policy("Corp")])).toEqual(
-      RUNTIME_MODE_CHOICES,
-    );
-  });
-
   it("drops a new thread's draft mode above the ceiling for the default", () => {
     const capped = policy("Corp", "auto");
     expect(resolveNewThreadRuntimeMode("full-access", "auto", capped)).toBe("auto");

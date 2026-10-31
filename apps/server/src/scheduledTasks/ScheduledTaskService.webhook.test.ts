@@ -453,6 +453,14 @@ it.effect("a policy without webhook tasks keeps existing ones but refuses saves 
               .pipe(Effect.flip);
             assert.equal(created.message, blocked);
 
+            // Turned off, it can still be edited, but not turned back on.
+            yield* service.setEnabled({ id: task.id, enabled: false });
+            yield* service.upsert(yield* webhookTaskInput({ enabled: false }));
+            const reenabled = yield* service
+              .setEnabled({ id: task.id, enabled: true })
+              .pipe(Effect.flip);
+            assert.equal(reenabled.message, blocked);
+
             const result = yield* service.triggerWebhook(requestFor(task));
             assert.equal(result._tag, "blocked_by_policy");
             assert.equal(yield* Queue.size(launches), 0);

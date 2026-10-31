@@ -76,7 +76,7 @@ describe("importPolicyRefusal", () => {
       }),
     ).toBe(denied);
     const unreadable =
-      "The managed policy at C:\\ProgramData\\T3 Code\\policy.json could not be read, so importing browser cookies is not allowed.";
+      "The managed policy at C:\\Program Files\\T3Code\\policy.json could not be read, so importing browser cookies is not allowed.";
     expect(importPolicyRefusal({ message: `Error: ${unreadable}` })).toBe(unreadable);
   });
 

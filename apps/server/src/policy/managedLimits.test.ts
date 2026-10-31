@@ -1,6 +1,10 @@
 import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as PlatformError from "effect/PlatformError";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as ManagedLimits from "./managedLimits.ts";
 import * as ManagedPolicy from "./ManagedPolicy.ts";
@@ -83,4 +87,105 @@ it.effect("tells clients Connect is off when the policy leaves out remote client
     assert.isTrue(ManagedLimits.allowsConnect(policy({ clients: ["remote"] })));
     assert.isFalse(ManagedLimits.allowsConnect(policy({ connect: false })));
   }),
+);
+
+it.effect(
+  "turns off Tailscale Serve that forwards here, and refuses to start if it stays on",
+  () => {
+    const forwardsHere = JSON.stringify({
+      Web: { "box.tailnet.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } } } },
+    });
+    interface Answers {
+      readonly status?: {
+        readonly stdout: string;
+        readonly exitCode: number;
+        readonly stderr?: string;
+      };
+      readonly offExitCode?: number;
+    }
+    // `tailscale serve status` answers with `status`; turning a port off exits with `offExitCode`.
+    const close = (answers: Answers, offCalls: Array<ReadonlyArray<string>> = []) =>
+      ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+            const isStatus = args.includes("status");
+            if (!isStatus) offCalls.push(args);
+            const status = answers.status ?? { stdout: forwardsHere, exitCode: 0 };
+            const text = (value: string | undefined) =>
+              value === undefined ? Stream.empty : Stream.make(new TextEncoder().encode(value));
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                exitCode: Effect.succeed(
+                  ChildProcessSpawner.ExitCode(
+                    isStatus ? status.exitCode : (answers.offExitCode ?? 0),
+                  ),
+                ),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: isStatus ? text(status.stdout) : Stream.empty,
+                stderr: isStatus ? text(status.stderr) : Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            );
+          }),
+        ),
+      );
+    return Effect.gen(function* () {
+      const offCalls: Array<ReadonlyArray<string>> = [];
+      yield* close({}, offCalls);
+      assert.deepEqual(offCalls, [["serve", "--https=443", "off"]]);
+      const stuck = yield* close({ offExitCode: 1 }).pipe(Effect.flip);
+      assert.include(stuck.message, "Tailscale Serve on port 443");
+      // An answer that cannot be read might hide a mapping, so the server does not start.
+      const dialFailure = (reason: string) =>
+        `Failed to connect to local Tailscale daemon for /localapi/v0/serve-config; not running? Error: dial unix /var/run/tailscale/tailscaled.sock: connect: ${reason}`;
+      for (const status of [
+        { stdout: "", exitCode: 1, stderr: "something unexpected" },
+        { stdout: "not json", exitCode: 0 },
+        { stdout: "", exitCode: 1, stderr: "Access denied: serve config denied" },
+        { stdout: "", exitCode: 1, stderr: dialFailure("permission denied") },
+      ]) {
+        const unread = yield* close({ status }).pipe(Effect.flip);
+        assert.include(unread.message, "does not start until Tailscale Serve can be checked");
+      }
+      // Tailscale down, logged out, or not installed forwards nothing now.
+      for (const stderr of [
+        dialFailure("connection refused"),
+        "NeedsLogin: not logged in",
+        String.raw`Get "http://local-tailscaled.sock/localapi/v0/serve-config": open \\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled: The system cannot find the file specified.`,
+      ]) {
+        yield* close({ status: { stdout: "", exitCode: 1, stderr } });
+      }
+      const spawnFailing = (tag: "NotFound" | "PermissionDenied") =>
+        ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.fail(
+                PlatformError.systemError({ _tag: tag, module: "ChildProcess", method: "spawn" }),
+              ),
+            ),
+          ),
+        );
+      yield* spawnFailing("NotFound");
+      // Node throws this instead when PATH ends in a file.
+      yield* ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.die(Object.assign(new Error("spawn tailscale ENOTDIR"), { code: "ENOTDIR" })),
+          ),
+        ),
+      );
+      // A CLI that is there but will not run might still front a daemon with a mapping.
+      yield* spawnFailing("PermissionDenied").pipe(Effect.flip);
+    });
+  },
 );

@@ -74,6 +74,13 @@ it.layer(NodeServices.layer)("EnvironmentAuth administrative operations", (it) =
       const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const phone = yield* sessions.issue({ subject: "one-time-token" });
       const bot = yield* sessions.issue({ subject: "cli-issued-session" });
+      const startup = (ipAddress: string) =>
+        sessions.issue({
+          subject: EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
+          client: { deviceType: "unknown", ipAddress },
+        });
+      const startupPhone = yield* startup("192.168.1.20");
+      const startupBrowser = yield* startup("127.0.0.1");
       yield* environmentAuth.createPairingLink({ subject: "one-time-token" });
 
       yield* EnvironmentAuth.make.pipe(
@@ -84,8 +91,35 @@ it.layer(NodeServices.layer)("EnvironmentAuth administrative operations", (it) =
 
       const remaining = (yield* sessions.listActive()).map((session) => session.sessionId);
       assert.notInclude(remaining, phone.sessionId);
+      assert.notInclude(remaining, startupPhone.sessionId);
+      assert.include(remaining, startupBrowser.sessionId);
       assert.include(remaining, bot.sessionId);
       assert.lengthOf(yield* pairingLinks.listActive(), 0);
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("revokes only T3 Connect clients when the policy keeps remote clients", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const phone = yield* sessions.issue({ subject: "one-time-token" });
+      const connect = yield* sessions.issue({ subject: "cloud-connect" });
+
+      yield* EnvironmentAuth.make.pipe(
+        Effect.provide(
+          Layer.merge(
+            ManagedPolicy.layerTest({
+              schemaVersion: 1,
+              organization: "Example Corp",
+              limits: { connect: false },
+            }),
+            layerServerConfig(),
+          ),
+        ),
+      );
+
+      const remaining = (yield* sessions.listActive()).map((session) => session.sessionId);
+      assert.include(remaining, phone.sessionId);
+      assert.notInclude(remaining, connect.sessionId);
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 

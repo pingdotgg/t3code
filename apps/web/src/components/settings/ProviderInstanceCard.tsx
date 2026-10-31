@@ -1259,13 +1259,18 @@ export function ProviderInstanceCard({
         {instanceLocks?.wholeEnvironment ? (
           <ManagedNotice>{instanceLocks.reason}</ManagedNotice>
         ) : null}
-        <ProviderEnvironmentSection
-          environment={genericEnvironment}
-          onChange={updateGenericEnvironment}
-          managed={
-            instanceLocks && { names: instanceLocks.environmentNames, reason: instanceLocks.reason }
-          }
-        />
+        <div className={instanceLocks?.wholeEnvironment ? "opacity-50" : undefined}>
+          <ProviderEnvironmentSection
+            environment={genericEnvironment}
+            onChange={updateGenericEnvironment}
+            managed={
+              instanceLocks && {
+                names: instanceLocks.environmentNames,
+                reason: instanceLocks.reason,
+              }
+            }
+          />
+        </div>
       </SettingsSection>
       {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
         <AcpSessionManagementSection

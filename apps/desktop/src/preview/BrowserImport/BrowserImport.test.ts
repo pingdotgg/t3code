@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 
 import * as BrowserSession from "../BrowserSession.ts";
 import { readManagedPolicyFile } from "@t3tools/shared/managedPolicyFile";
+import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as BrowserImport from "./BrowserImport.ts";
 import { BROWSER_IMPORT_SOURCES, sourcePathContext } from "./Sources.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -53,6 +54,7 @@ const withImporter = Effect.fnUntraced(function* () {
     Effect.provide(
       BrowserImport.layer.pipe(
         Layer.provide(layerRejectedBeforeSession),
+        Layer.provide(DesktopManagedPolicy.layerTest()),
         Layer.provide(layerEnvironment),
         Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
         Layer.provide(Layer.succeed(HostProcess.ExecutablePath, "/Applications/T3 Code.app")),

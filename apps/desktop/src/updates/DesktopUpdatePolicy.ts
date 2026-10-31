@@ -10,12 +10,11 @@ import {
   type ManagedPolicyDocument,
   type ManagedUpdatesMode,
 } from "@t3tools/contracts";
-import { readManagedPolicy } from "@t3tools/shared/managedPolicyFile";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 
 export interface UpdatePolicy {
@@ -51,8 +50,7 @@ function resolveUpdatePolicy(document: ManagedPolicyDocument | undefined): Updat
 const { logInfo, logError } = DesktopObservability.makeComponentLogger("desktop-update-policy");
 
 const make = Effect.gen(function* () {
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  return yield* readManagedPolicy(environment.platform).pipe(
+  return yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
     Effect.map((found) => ({
       source: found?.source,
       policy: resolveUpdatePolicy(found?.document),

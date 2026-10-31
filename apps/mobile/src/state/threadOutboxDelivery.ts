@@ -16,6 +16,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  managedRuntimeModeDenial,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
   type MessageId,
@@ -57,7 +58,6 @@ import {
 } from "./thread-outbox";
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
-  managedRuntimeModeRefusal,
   isQueuedThreadCreationSendable,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
@@ -783,13 +783,13 @@ export function createThreadOutboxDelivery(): {
       );
       return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
     }
-    const runtimeModeRefusal = managedRuntimeModeRefusal(
+    // The server would refuse this mode in settings sync, which retries forever; stop first.
+    const runtimeModeDenial = managedRuntimeModeDenial(
       serverConfig.managedPolicy,
       settings.runtimeMode,
-      true,
     );
-    if (runtimeModeRefusal !== null) {
-      return restoreQueuedMessage(queuedMessage, runtimeModeRefusal);
+    if (runtimeModeDenial !== undefined) {
+      return restoreQueuedMessage(queuedMessage, runtimeModeDenial);
     }
 
     if (settings.runtimeMode !== thread.runtimeMode) {
@@ -958,13 +958,12 @@ export function createThreadOutboxDelivery(): {
       );
       return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
     }
-    const runtimeModeRefusal = managedRuntimeModeRefusal(
+    const runtimeModeDenial = managedRuntimeModeDenial(
       serverConfig.managedPolicy,
       settings.runtimeMode,
-      false,
     );
-    if (runtimeModeRefusal !== null) {
-      return restoreQueuedMessage(queuedMessage, runtimeModeRefusal);
+    if (runtimeModeDenial !== undefined) {
+      return restoreQueuedMessage(queuedMessage, runtimeModeDenial);
     }
     let prepared: PreparedTurnAttachments;
     let persistedMessage: QueuedThreadMessage;

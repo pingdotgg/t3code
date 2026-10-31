@@ -484,6 +484,10 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "textGenerationModelSelection",
   "fallbackModelSelection",
   "pullRequestMergeMethod",
+  // Empty by default, these hold one whole value, which a managed policy can default.
+  ...Object.entries(DEFAULT_SERVER_SETTINGS).flatMap(([key, value]) =>
+    value === null ? [key] : [],
+  ),
 ]);
 
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
@@ -649,10 +653,22 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // The file before this write, parsed; only read when policy defaults need it.
+  const readStoredSettings = Effect.gen(function* () {
+    if (!(yield* readConfigExists)) return undefined;
+    const parsed = decodeSettingsFileJsonExit(yield* readRawConfig);
+    return Exit.isSuccess(parsed) ? parsed.value : undefined;
+  });
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
+      const stripped = stripDefaultServerSettings(settings, managed.defaults) ?? {};
       const sparseSettingsJson = yield* encodeServerSettingsJson(
-        stripDefaultServerSettings(settings, managed.defaults) ?? {},
+        managed.keepStored === undefined
+          ? stripped
+          : managed.keepStored(stripped, settings, yield* readStoredSettings, (key) =>
+              ATOMIC_SETTINGS_KEYS.has(key),
+            ),
       );
 
       return yield* writeFileStringAtomically({

@@ -5,6 +5,7 @@ import {
   ProjectSettingsOverrides,
   type RuntimeMode,
   ServerSettings,
+  withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
@@ -25,7 +26,30 @@ const UNMANAGEABLE_KEYS: ReadonlySet<string> = new Set([
   "projectScriptOverrides",
 ]);
 
+/** Legacy settings the server derives from another on every write; manage that one instead. */
+const DERIVED_FROM: ReadonlyMap<string, string> = new Map([
+  ["compactIdleThreads", "idleCompaction"],
+]);
+
+/**
+ * Settings another one overrides when it is set: `worktreeCleanup`, also per project, wins over
+ * the worktree rules in `storageCleanup`. A lock on the first alone would look enforced without
+ * being, so the second must be locked too.
+ */
+const OVERRIDDEN_BY: ReadonlyArray<readonly [overridden: string, by: string]> = [
+  ["storageCleanup.worktree", "worktreeCleanup"],
+];
+
 type Segments = ReadonlyArray<string>;
+
+/**
+ * The server derives the legacy switch from `idleCompaction` on every write, and shipped clients
+ * still read it, so values the policy sets carry the matching switch.
+ */
+const syncIdleCompaction = (settings: ServerSettings): ServerSettings =>
+  settings.idleCompaction === undefined
+    ? settings
+    : withIdleCompaction(settings, settings.idleCompaction);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -124,9 +148,24 @@ export interface ManagedSettings {
     | { readonly _tag: "Allowed"; readonly settings: ServerSettings }
     | { readonly _tag: "Locked"; readonly path: string };
   readonly lockedPaths: ReadonlyArray<string>;
+  /**
+   * Put back into a stripped settings file the values `stored`, the file before this write, held
+   * at or under paths the policy defaults: equal to the policy's default, they are still the
+   * user's choice. A key `isAtomic` names comes back whole or not at all. Undefined without
+   * policy defaults, so writers can skip reading the file.
+   */
+  readonly keepStored:
+    | ((
+        stripped: unknown,
+        settings: ServerSettings,
+        stored: unknown,
+        isAtomic: (key: string) => boolean,
+      ) => unknown)
+    | undefined;
 }
 
 export const unmanagedSettings: ManagedSettings = {
+  keepStored: undefined,
   withDefaults: (persisted) => persisted,
   defaults: DEFAULT_SERVER_SETTINGS,
   applyLocks: (settings) => settings,
@@ -212,7 +251,28 @@ export function makeManagedSettings(
     if (!(head in ServerSettings.fields) || UNMANAGEABLE_KEYS.has(head)) {
       return { _tag: "Invalid", reason: `"${path}" is not a setting this version can manage` };
     }
+    const source = DERIVED_FROM.get(head);
+    if (source !== undefined) {
+      return {
+        _tag: "Invalid",
+        reason: `"${head}" follows "${source}"; manage "${source}" instead`,
+      };
+    }
     (setting.locked ? locks : defaults).push({ path, segments, value: setting.value });
+  }
+
+  for (const lock of locks) {
+    const unheld = OVERRIDDEN_BY.find(
+      ([overridden, by]) =>
+        (lock.path.startsWith(overridden) || overridden.startsWith(`${lock.path}.`)) &&
+        !locks.some((other) => other.path === by),
+    );
+    if (unheld !== undefined) {
+      return {
+        _tag: "Invalid",
+        reason: `"${lock.path}" can be overridden by "${unheld[1]}"; lock "${unheld[1]}" too`,
+      };
+    }
   }
 
   // Apply every entry to the built-in defaults at once, and read each value back: a typo in a
@@ -284,6 +344,7 @@ export function makeManagedSettings(
     decodedValue: getPath(decoded.value, entry.segments),
   }));
   const lockedPaths = locks.map((entry) => entry.path);
+  const idleCompactionLocked = lockedPaths.includes("idleCompaction");
   const lockCache = new WeakMap<ServerSettings, ServerSettings>();
 
   const applyLocks = (current: ServerSettings): ServerSettings => {
@@ -304,8 +365,9 @@ export function makeManagedSettings(
               encodeSettings(current),
             ),
           );
+    const derived = idleCompactionLocked ? syncIdleCompaction(locked) : locked;
     const result =
-      maxRuntimeMode === undefined ? locked : clampDefaultRuntimeModes(locked, maxRuntimeMode);
+      maxRuntimeMode === undefined ? derived : clampDefaultRuntimeModes(derived, maxRuntimeMode);
     lockCache.set(current, result);
     return result;
   };
@@ -348,14 +410,63 @@ export function makeManagedSettings(
     return { _tag: "Allowed", settings: decodeSettings(kept) };
   };
 
+  // A file from before a setting replaced its legacy key holds the user's choice in that key, which
+  // a default for the new setting would otherwise override.
+  const withoutLegacyChoices = (persisted: unknown): unknown => {
+    if (!isRecord(persisted) || !isRecord(defaultsTree)) return defaultsTree;
+    const kept = { ...defaultsTree };
+    for (const [legacy, source] of DERIVED_FROM) {
+      if (persisted[legacy] !== undefined && persisted[source] === undefined) delete kept[source];
+    }
+    return kept;
+  };
+
+  // The paths keepStored puts back: each default, cut at an atomic setting, and the legacy key a
+  // defaulted setting replaced, which an older file holds the user's choice in.
+  const restoredPaths = (isAtomic: (key: string) => boolean): ReadonlyArray<Segments> => [
+    ...defaults.map((entry) => {
+      const atomicAt = entry.segments.findIndex(isAtomic);
+      return atomicAt === -1 ? entry.segments : entry.segments.slice(0, atomicAt + 1);
+    }),
+    ...[...DERIVED_FROM]
+      .filter(([, source]) => defaults.some((entry) => entry.path === source))
+      .map(([legacy]) => [legacy]),
+  ];
+
+  const keepStored: ManagedSettings["keepStored"] =
+    defaults.length === 0
+      ? undefined
+      : (stripped, settings, stored, isAtomic) => {
+          const encoded = encodeSettings(settings);
+          const restore = (tree: unknown, segments: Segments): unknown => {
+            const previous = getPath(stored, segments);
+            if (previous === undefined) return tree;
+            if (isRecord(previous) && !isAtomic(segments.at(-1) ?? "")) {
+              return Object.keys(previous).reduce<unknown>(
+                (next, key) => restore(next, [...segments, key]),
+                tree,
+              );
+            }
+            return getPath(tree, segments) === undefined &&
+              jsonEqual(previous, getPath(encoded, segments))
+              ? setPath(tree, segments, getPath(settings, segments))
+              : tree;
+          };
+          // A default inside an atomic setting restores that whole setting, never part of it.
+          return restoredPaths(isAtomic).reduce<unknown>(restore, stripped);
+        };
+
   return {
     _tag: "Valid",
     settings: {
-      withDefaults: (persisted) => fillMissing(persisted, defaultsTree),
-      defaults: decodeSettings(
-        defaults.reduce<unknown>(
-          (tree, entry) => setPath(tree, entry.segments, entry.value),
-          builtIn,
+      keepStored,
+      withDefaults: (persisted) => fillMissing(persisted, withoutLegacyChoices(persisted)),
+      defaults: syncIdleCompaction(
+        decodeSettings(
+          defaults.reduce<unknown>(
+            (tree, entry) => setPath(tree, entry.segments, entry.value),
+            builtIn,
+          ),
         ),
       ),
       applyLocks,

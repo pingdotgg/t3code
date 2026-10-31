@@ -45,7 +45,7 @@ type LimitsSummary = NonNullable<ManagedPolicySummary["limits"]>;
  */
 export function deniedBy(
   policy: Pick<ManagedPolicy["Service"], "document">,
-  capability: "webhookTasks" | "telemetry" | "browserCookieImport",
+  capability: "webhookTasks" | "telemetry",
 ): string | undefined {
   return policy.document?.limits?.[capability] === false ? policy.document.organization : undefined;
 }
@@ -127,7 +127,6 @@ function summarizeLimits(
             ...(Object.keys(lockedInstanceFields).length === 0 ? {} : { lockedInstanceFields }),
           },
         }),
-    // A feed URL can carry a token, and no client needs it.
     ...(updates === undefined
       ? {}
       : {

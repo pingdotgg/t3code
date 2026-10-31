@@ -329,11 +329,13 @@ const layerHttpServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     // Before binding: a host the policy does not allow must never listen, not even briefly.
-    yield* ManagedLimits.checkServerReachability(yield* ManagedPolicy.ManagedPolicy, {
+    const policy = yield* ManagedPolicy.ManagedPolicy;
+    yield* ManagedLimits.checkServerReachability(policy, {
       authPolicy: EnvironmentAuthPolicy.resolveServerAuthPolicy(config),
       host: config.host,
       tailscaleServeEnabled: config.tailscaleServeEnabled,
     });
+    yield* ManagedLimits.closeTailscaleServeTo(policy, config.port);
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(

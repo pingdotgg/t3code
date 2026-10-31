@@ -35,7 +35,7 @@ export function managedTelemetryOffMessage(
   policy: ManagedPolicySummary | undefined,
 ): string | undefined {
   return policy?.limits?.telemetry === false
-    ? `${policy.organization} turned off anonymous usage data on this machine.`
+    ? `${policy.organization} turned off anonymous usage data.`
     : undefined;
 }
 

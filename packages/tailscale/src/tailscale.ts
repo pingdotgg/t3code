@@ -42,6 +42,7 @@ const TailscaleCommandContext = {
 export const TailscaleStderrDiagnostic = Schema.Literals([
   "no-existing-handler",
   "not-logged-in",
+  "not-running",
   "permission-denied",
   "unknown",
 ]);
@@ -52,6 +53,12 @@ const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
 > = [
   [/handler does not exist/i, "no-existing-handler"],
   [/not logged in|logged out|needs? login/i, "not-logged-in"],
+  // Only answers that confirm no daemon; a dial can also fail for want of permission. Windows
+  // reports a missing service as its pipe not being found, without the usual prefix.
+  [
+    /doesn't appear to be running|tailscaled\.service not running|tailscale is stopped|tailscaled: the system cannot find the file specified|failed to connect to local tailscale[\s\S]*(connection refused|no such file or directory|cannot find the file)/i,
+    "not-running",
+  ],
   [/permission denied|access denied|must be root|operation not permitted/i, "permission-denied"],
 ];
 
@@ -222,7 +229,7 @@ export const parseTailscaleStatus = (
   );
 
 const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function* (
-  subcommand: "status" | "debug",
+  subcommand: "status" | "serve" | "debug",
   args: readonly string[],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -449,6 +456,57 @@ export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe"
     TAILSCALE_SERVE_TIMEOUT,
   );
 });
+
+const TailscaleServeStatusJson = Schema.Struct({
+  Web: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        Handlers: Schema.optional(
+          Schema.Record(Schema.String, Schema.Struct({ Proxy: Schema.optional(Schema.String) })),
+        ),
+      }),
+    ),
+  ),
+});
+// A node without any Serve configuration prints `null`.
+const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.NullOr(TailscaleServeStatusJson)),
+);
+const LOOPBACK_SERVE_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * The HTTPS ports whose Serve handlers proxy to `localPort` on this machine's loopback, or
+ * undefined when the status cannot be read.
+ */
+export const parseTailscaleServePortsProxyingTo = (
+  rawServeStatusJson: string,
+  localPort: number,
+): ReadonlyArray<number> | undefined => {
+  const status = decodeTailscaleServeStatusJson(rawServeStatusJson);
+  if (Option.isNone(status)) return undefined;
+  return Object.entries(status.value?.Web ?? {}).flatMap(([hostPort, site]) => {
+    const servePort = Number(hostPort.slice(hostPort.lastIndexOf(":") + 1));
+    const proxiesHere = Object.values(site.Handlers ?? {}).some((handler) => {
+      if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return false;
+      const target = new URL(handler.Proxy);
+      const port = target.port || (target.protocol === "https:" ? "443" : "80");
+      return LOOPBACK_SERVE_HOSTS.has(target.hostname) && port === String(localPort);
+    });
+    return proxiesHere && Number.isInteger(servePort) ? [servePort] : [];
+  });
+};
+
+/** The HTTPS Serve ports that forward to `localPort` on this machine. */
+export const readTailscaleServePortsProxyingTo = (localPort: number) =>
+  readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
+    Effect.flatMap((status) => {
+      const ports = parseTailscaleServePortsProxyingTo(status, localPort);
+      return ports === undefined
+        ? Effect.fail(new TailscaleStatusParseError({ cause: "unreadable serve status" }))
+        : Effect.succeed(ports);
+    }),
+  );
 
 export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
   function* (input: { readonly baseUrl: string; readonly timeout?: Duration.Input }) {

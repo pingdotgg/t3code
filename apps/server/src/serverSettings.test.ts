@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  globalIdleCompaction,
   type ManagedPolicyDocument,
   ModelSelection,
   ProjectId,
@@ -1963,6 +1964,99 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
     }).pipe(Effect.provide(layerServerSettings(policy))),
   );
 
+  it.effect("keeps a stored value that equals a policy default through unrelated writes", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({ defaultRuntimeMode: "approval-required" }),
+      );
+
+      yield* service.updateSettings({ defaultAutoPull: true });
+      assert.include(yield* fs.readFileString(config.settingsPath), '"approval-required"');
+    }).pipe(Effect.provide(layerServerSettings(policy))),
+  );
+
+  it.effect("keeps stored values under whole-object policy defaults, and only the user's", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const selection = {
+        ...DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+        model: "managed",
+      };
+      const chosenModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-mini" };
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          storageCleanup: { logsAfterDays: 30, browserArtifactsAfterDays: 7 },
+          textGenerationModelSelection: selection,
+        }),
+      );
+
+      // Picking another model on the policy's instance differs from the policy in one field only.
+      yield* service.updateSettings({ defaultAutoPull: true, defaultModelSelection: chosenModel });
+      const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.deepEqual(stored.storageCleanup, { logsAfterDays: 30, browserArtifactsAfterDays: 7 });
+      // Model selections are saved whole, never as the fields that differ from the policy's.
+      assert.deepEqual(stored.textGenerationModelSelection, selection);
+      assert.deepEqual(stored.defaultModelSelection, chosenModel);
+      // The switch the server derives from the policy's idle compaction stays out of the file.
+      assert.notProperty(stored, "compactIdleThreads");
+    }).pipe(
+      Effect.provide(
+        layerServerSettings({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          settings: {
+            storageCleanup: {
+              value: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, logsAfterDays: 30 },
+              locked: false,
+            },
+            "textGenerationModelSelection.model": { value: "managed", locked: false },
+            defaultModelSelection: {
+              value: { instanceId: "codex", model: "gpt-managed" },
+              locked: false,
+            },
+            idleCompaction: { value: "beforeCacheExpires", locked: false },
+          },
+        }),
+      ),
+    ),
+  );
+
+  it.effect(
+    "keeps an idle compaction choice saved before idleCompaction over a policy default",
+    () =>
+      // The file holds only the legacy switch: off differs from the policy's default, on matches it.
+      Effect.forEach([false, true], (compactIdleThreads) =>
+        Effect.gen(function* () {
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const chosen = compactIdleThreads ? "beforeCacheExpires" : "onReturn";
+          yield* fs.writeFileString(config.settingsPath, JSON.stringify({ compactIdleThreads }));
+
+          assert.equal((yield* service.getSettings).idleCompaction, chosen);
+          yield* service.updateSettings({ defaultAutoPull: true });
+          // What applies once the policy is gone is still the user's choice.
+          const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+          assert.equal(globalIdleCompaction(stored), chosen);
+        }).pipe(
+          Effect.provide(
+            layerServerSettings({
+              schemaVersion: 1,
+              organization: "Example Corp",
+              settings: { idleCompaction: { value: "beforeCacheExpires", locked: false } },
+            }),
+          ),
+        ),
+      ),
+  );
+
   it.effect("lays locks over the user's own and per-project values without persisting them", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -2214,6 +2308,12 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
         })
         .pipe(Effect.flip);
       assert.equal(refused.managedSetting, "providerInstances.codex_new.config.setupMode");
+      // Adding a Codex instance sends the default setup, which leaves the pin in charge.
+      yield* service.updateProviderInstance({
+        operation: "upsert",
+        instanceId: ProviderInstanceId.make("codex_cli"),
+        instance: { driver: codex, config: { setupMode: "existing" } },
+      });
     }).pipe(
       Effect.provide(
         layerServerSettings({

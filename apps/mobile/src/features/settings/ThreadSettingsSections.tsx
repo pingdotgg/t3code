@@ -1,5 +1,9 @@
 import { Button } from "../../components/ui/Button";
-import { AuthSettingsWriteScope, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  isManagedSettingPath,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -236,21 +240,26 @@ function BetaSettingsSection() {
   return (
     <View className="gap-3">
       <SettingsSection title="Beta: Linked environments">
-        {supported.map((environment) => (
-          <SettingsSwitchRow
-            key={environment.environmentId}
-            icon="link"
-            label={environment.label}
-            value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
-            disabled={!writable.has(environment.environmentId)}
-            onValueChange={(value) =>
-              void updateSettings({
-                environmentId: environment.environmentId,
-                input: { patch: { linkedEnvironmentsEnabled: value } },
-              })
-            }
-          />
-        ))}
+        {supported.map((environment) => {
+          const policy = environment.serverConfig?.managedPolicy;
+          const managed = isManagedSettingPath(policy, "linkedEnvironmentsEnabled");
+          return (
+            <SettingsSwitchRow
+              key={environment.environmentId}
+              icon="link"
+              label={environment.label}
+              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+              value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
+              disabled={managed || !writable.has(environment.environmentId)}
+              onValueChange={(value) =>
+                void updateSettings({
+                  environmentId: environment.environmentId,
+                  input: { patch: { linkedEnvironmentsEnabled: value } },
+                })
+              }
+            />
+          );
+        })}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         Let agents on a machine work on your other machines, and theirs on it. Turn it on for each

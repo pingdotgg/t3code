@@ -20,8 +20,9 @@ import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { type ManagedPolicyFileError, readManagedPolicy } from "@t3tools/shared/managedPolicyFile";
+import type { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 
+import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as BrowserSession from "../BrowserSession.ts";
 import { ChromiumCookieReadError, readChromiumCookies } from "./ChromiumCookies.ts";
 import type { CookieReadResult } from "./CookieDatabase.ts";
@@ -70,9 +71,8 @@ export class BrowserImportPolicyError extends Schema.TaggedError<BrowserImportPo
 }
 
 /**
- * Read at each import so a newly deployed policy applies without a restart. A file that cannot be
- * read or decoded denies the import: cookies are credentials, and the server refuses to start on
- * the same file anyway.
+ * A policy that cannot be read or decoded denies the import: cookies are credentials, and the
+ * server refuses to start on the same policy anyway.
  */
 export const checkBrowserImportPolicy = Effect.fn("BrowserImport.checkPolicy")(function* <R>(
   readPolicy: Effect.Effect<
@@ -195,6 +195,7 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
 /** @public */
 export const make = Effect.gen(function* BrowserImportMake() {
   const browserSession = yield* BrowserSession.BrowserSession;
+  const managedPolicy = yield* DesktopManagedPolicy.DesktopManagedPolicy;
   const platform = yield* HostProcess.Platform;
   const executablePath = yield* HostProcess.ExecutablePath;
   const platformServices = yield* Effect.context<
@@ -222,9 +223,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
     readonly persistent: boolean;
     readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
   }) {
-    yield* checkBrowserImportPolicy(readManagedPolicy(platform)).pipe(
-      Effect.provide(platformServices),
-    );
+    yield* checkBrowserImportPolicy(managedPolicy.read);
     const definition = BROWSER_IMPORT_SOURCES.find(
       (candidate) => candidate.id === input.input.sourceId,
     );

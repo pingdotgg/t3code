@@ -22,15 +22,8 @@ const describePolicy = (policy: ManagedPolicy.ManagedPolicy["Service"]) => {
         `  ${path} = ${JSON.stringify(setting.value)} (${setting.locked ? "locked" : "default"})`,
     ),
   ];
-  const {
-    settings: _settings,
-    organization: _organization,
-    supportUrl: _supportUrl,
-    schemaVersion: _version,
-    ...rest
-  } = document;
-  if (Object.keys(rest).length > 0) {
-    lines.push("", "Limits:", JSON.stringify(rest, null, 2));
+  if (document.limits !== undefined) {
+    lines.push("", "Limits:", JSON.stringify(document.limits, null, 2));
   }
   return `${lines.join("\n")}\n`;
 };

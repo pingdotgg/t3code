@@ -37,7 +37,7 @@ import type {
 import {
   EnvironmentRequestInvalidError,
   AuthOrchestrationOperateScope,
-  isRuntimeModeAbove,
+  clampManagedRuntimeMode,
   managedRuntimeModeDenial,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -923,9 +923,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const runtimeModeCeilingFallback =
     runtimeModeCeilingDenial === undefined
       ? undefined
-      : compatibleRuntimeModes.findLast(
-          (mode) => !isRuntimeModeAbove(mode, managedPolicy?.limits?.maxRuntimeMode),
-        );
+      : clampManagedRuntimeMode(managedPolicy, compatibleRuntimeMode, compatibleRuntimeModes);
 
   const providerSendBlockReason = getAntigravitySendBlockReason(
     selectedProviderEntry?.snapshot,

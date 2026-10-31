@@ -296,7 +296,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         restartContinuationOfRunId: input.sourceRunId,
       })
       .pipe(
-        // Disabled instances cannot resume; still run success cleanup so delegated children recover without futile retries.
+        // Disabled instances, and threads above a policy ceiling, cannot resume; still run success
+        // cleanup so delegated children recover without futile retries.
         Effect.catchTags({
           ThreadManagementProviderInstanceDisabledError: (error) =>
             Effect.logInfo("orchestration-v2.restart-continuation.instance-disabled", {
@@ -304,6 +305,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
               sourceRunId: input.sourceRunId,
               projectId: error.projectId,
               instanceId: error.instanceId,
+            }),
+          OrchestratorRuntimeModeAboveCeilingError: () =>
+            Effect.logInfo("orchestration-v2.restart-continuation.above-ceiling", {
+              threadId: input.threadId,
+              sourceRunId: input.sourceRunId,
             }),
         }),
       );

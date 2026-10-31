@@ -23,7 +23,7 @@ import {
 
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
-import { useManagedPolicy } from "../../state/managedPolicy";
+import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
@@ -374,6 +374,9 @@ export function AddProviderInstanceDialog({
     setHasAttemptedSubmit(false);
   };
 
+  // A policy that owns this driver's launch settings also rules out ChatGPT's own runtime.
+  const driverLocks = managedInstanceLocks(managedPolicy, driver);
+
   const handleSave = async () => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     if (isSaving || createdInstanceId) return;
@@ -697,6 +700,9 @@ export function AddProviderInstanceDialog({
                     idPrefix={`add-provider-${driver}`}
                     variant="settings"
                     onChange={setConfigDraft}
+                    managed={
+                      driverLocks && { keys: driverLocks.configKeys, reason: driverLocks.reason }
+                    }
                   />
                 </SettingsGroup>
               ) : !isAcpRegistry && wizardStep === 2 ? (
@@ -728,10 +734,12 @@ export function AddProviderInstanceDialog({
                   <Button variant="outline" size="sm" onClick={() => navigateToStep(1)}>
                     Configure manually
                   </Button>
-                  <ChatGptConnectionButton
-                    size="sm"
-                    onClick={() => setAddingChatGptAccount(true)}
-                  />
+                  {driverLocks?.configKeys.has("setupMode") ? null : (
+                    <ChatGptConnectionButton
+                      size="sm"
+                      onClick={() => setAddingChatGptAccount(true)}
+                    />
+                  )}
                 </>
               ) : wizardStep < (isAcpRegistry ? 1 : 2) ? (
                 <Button

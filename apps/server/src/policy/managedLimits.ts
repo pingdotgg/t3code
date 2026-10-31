@@ -9,7 +9,13 @@ import type {
   ManagedPolicyDocument,
   ServerAuthPolicy,
 } from "@t3tools/contracts";
+import {
+  disableTailscaleServe,
+  readTailscaleServePortsProxyingTo,
+  type TailscaleStderrDiagnostic,
+} from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 type PolicyDocument = { readonly document: ManagedPolicyDocument | undefined };
@@ -70,6 +76,62 @@ const refuse = (policy: PolicyDocument, action: string, detail?: string) =>
   });
 
 export const refuseConnect = (policy: PolicyDocument) => refuse(policy, "T3 Connect");
+
+// Node throws ENOTDIR, outside the spawner's error mapping, when PATH ends in a file.
+const isMissingCli = (cause: unknown) =>
+  (PlatformError.isPlatformError(cause) && cause.reason._tag === "NotFound") ||
+  (cause instanceof Error && "code" in cause && cause.code === "ENOTDIR");
+
+/** Tailscale answers that leave nothing forwarding here right now. */
+const NOTHING_TO_CLOSE: ReadonlySet<TailscaleStderrDiagnostic | undefined> = new Set([
+  "not-running",
+  "not-logged-in",
+]);
+
+/**
+ * Turns off Tailscale Serve that forwards to `port`, such as one `t3 pair --tailscale` left from
+ * before the policy. Runs before the server binds, and fails when such a mapping stays on or
+ * Tailscale's answer cannot be read. Without the CLI, or with Tailscale down or logged out,
+ * nothing forwards, so nothing is closed.
+ */
+export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServeTo")(function* (
+  policy: PolicyDocument,
+  port: number,
+) {
+  if (allowsRemoteClients(policy)) return;
+  const servePorts = yield* readTailscaleServePortsProxyingTo(port).pipe(
+    Effect.catchTags({
+      // Only a CLI that is not there; one that will not run might still front a daemon.
+      TailscaleCommandSpawnError: (error) =>
+        isMissingCli(error.cause) ? Effect.succeed([]) : Effect.fail(error),
+      TailscaleCommandExitError: (error) =>
+        NOTHING_TO_CLOSE.has(error.stderrDiagnostic) ? Effect.succeed([]) : Effect.fail(error),
+    }),
+    // Tailscale errors carry only labelled diagnostics, never raw stderr, so they are safe to log.
+    Effect.tapError((cause) =>
+      Effect.logWarning("Tailscale Serve could not be checked", { cause }),
+    ),
+    Effect.mapError(() =>
+      refuseRemoteClients(
+        policy,
+        "so the server does not start until Tailscale Serve can be checked",
+      ),
+    ),
+  );
+  for (const servePort of servePorts) {
+    yield* disableTailscaleServe({ servePort }).pipe(
+      Effect.mapError(() =>
+        refuseRemoteClients(
+          policy,
+          `so Tailscale Serve on port ${servePort}, which forwards here, must be turned off first`,
+        ),
+      ),
+    );
+    yield* Effect.logInfo("Turned off Tailscale Serve the managed policy does not allow", {
+      servePort,
+    });
+  }
+});
 
 export const refuseRemoteClients = (policy: PolicyDocument, detail?: string) =>
   refuse(policy, AUTH_POLICY_ACTION["remote-reachable"], detail);

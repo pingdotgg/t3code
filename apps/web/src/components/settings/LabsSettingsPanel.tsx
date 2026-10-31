@@ -108,7 +108,8 @@ function GuestLinksRow() {
       serverScoped
       {...searchableSetting("guest-links")}
       settingKeys={["guestSharingEnabled"]}
-      managed={connectDenial}
+      // Turning guest links off still works without T3 Connect.
+      managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
         <>
           Share a thread with a guest who watches it live in their browser and sends messages you

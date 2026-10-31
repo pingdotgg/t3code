@@ -60,7 +60,6 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.deepEqual(policy.summary?.limits, { webhookTasks: false, telemetry: true });
       assert.equal(ManagedPolicy.deniedBy(policy, "webhookTasks"), "Example Corp");
       assert.isUndefined(ManagedPolicy.deniedBy(policy, "telemetry"));
-      assert.isUndefined(ManagedPolicy.deniedBy(policy, "browserCookieImport"));
     }),
   );
 
@@ -106,6 +105,16 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             ...base,
             settings: { "defaultModelSelection.model": { value: "gpt-5.4", locked: true } },
           }),
+          // The server derives it from idleCompaction on every write.
+          JSON.stringify({
+            ...base,
+            settings: { compactIdleThreads: { value: false, locked: true } },
+          }),
+          // It would look locked while worktreeCleanup, which overrides it, stays the user's.
+          JSON.stringify({
+            ...base,
+            settings: { "storageCleanup.worktreeAfterDays": { value: 7, locked: true } },
+          }),
         ],
         (contents) =>
           loadFrom(contents).pipe(
@@ -113,11 +122,13 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             Effect.map((error) => error.reason),
           ),
       );
-      assert.lengthOf(reasons, 9);
+      assert.lengthOf(reasons, 11);
       assert.include(reasons[3], "storageCleanup.logsAfterDayz");
       assert.include(reasons[6], "adds entries users could not remove");
       assert.include(reasons[7], "adds entries users could not remove");
       assert.include(reasons[8], 'manage "defaultModelSelection" as a whole');
+      assert.include(reasons[9], 'manage "idleCompaction" instead');
+      assert.include(reasons[10], 'lock "worktreeCleanup" too');
     }),
   );
 
@@ -229,6 +240,8 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
           withProviders({
             instances: { codex: { locked: true, environment: [{ name: "1BAD", value: "" }] } },
           }),
+          // No provider could run at all.
+          withProviders({ allowedDrivers: [] }),
         ],
         (contents) =>
           loadFrom(contents).pipe(
@@ -236,7 +249,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             Effect.map((error) => error.reason),
           ),
       );
-      assert.lengthOf(reasons, 5);
+      assert.lengthOf(reasons, 6);
       assert.include(reasons[0], "notAProvider");
       assert.include(reasons[1], "notAProvider");
       assert.include(reasons[2], "launchArgs");

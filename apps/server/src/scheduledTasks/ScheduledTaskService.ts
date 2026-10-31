@@ -1149,17 +1149,20 @@ export const layer = Layer.effect(
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input) {
-      if (input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
+      // A webhook task the policy blocks can still be edited while it is off.
+      if (input.enabled && input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
         return yield* taskError(
           webhookPolicyBlock,
           input.id === undefined ? {} : { taskId: input.id },
         );
       }
       // Refused on save rather than at run time; a disabled task can still be saved, so one
-      // stored above the ceiling can be turned off before its mode is lowered.
-      const modeDenial = input.enabled
-        ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
-        : undefined;
+      // stored above the ceiling can be turned off before its mode is lowered. A task bound to a
+      // thread runs in that thread's mode, which the orchestrator checks instead.
+      const modeDenial =
+        input.enabled && input.threadId == null
+          ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
+          : undefined;
       if (modeDenial !== undefined) {
         return yield* taskError(modeDenial, input.id === undefined ? {} : { taskId: input.id });
       }
@@ -1294,9 +1297,17 @@ export const layer = Layer.effect(
     )(function* (input) {
       const existing = yield* loadTask(input.id);
       if (existing.enabled === input.enabled) return { task: existing };
-      const modeDenial = input.enabled
-        ? managedRuntimeModeDenial(managedPolicy.summary, existing.runtimeMode)
-        : undefined;
+      if (
+        input.enabled &&
+        existing.schedule.type === "webhook" &&
+        webhookPolicyBlock !== undefined
+      ) {
+        return yield* taskError(webhookPolicyBlock, { taskId: input.id });
+      }
+      const modeDenial =
+        input.enabled && existing.threadId === null
+          ? managedRuntimeModeDenial(managedPolicy.summary, existing.runtimeMode)
+          : undefined;
       if (modeDenial !== undefined) {
         return yield* taskError(modeDenial, { taskId: input.id });
       }

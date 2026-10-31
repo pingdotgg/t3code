@@ -38,6 +38,7 @@ import {
 } from "./SettingInheritance";
 
 const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
+const EMPTY_MANAGED_PATHS: readonly string[] = [];
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -308,6 +309,7 @@ export function SettingsRow({
   control,
   serverScoped = false,
   settingKeys = EMPTY_SETTING_KEYS,
+  managedPaths = EMPTY_MANAGED_PATHS,
   mixed: mixedOverride,
   managed,
   children,
@@ -322,6 +324,8 @@ export function SettingsRow({
   control?: ReactNode;
   serverScoped?: boolean;
   settingKeys?: readonly (keyof ServerSettings)[];
+  /** Dot paths inside a setting, such as `storageCleanup.logsAfterDays`, an administrator can lock. */
+  managedPaths?: readonly string[];
   mixed?: boolean;
   /** Why an administrator's policy turns this row's control off, from the contract's denial helpers. */
   managed?: string | undefined;
@@ -343,8 +347,9 @@ export function SettingsRow({
     : primaryCanWrite;
   const serverConfigs = useServerConfigs();
   // An administrator's lock on any target wins over every other reason a control is inert.
+  const lockablePaths = [...settingKeys, ...managedPaths];
   const managedBy =
-    settingKeys.length === 0
+    lockablePaths.length === 0
       ? undefined
       : (context
           ? context.connectedEnvironments.map((environment) => environment.serverConfig)
@@ -353,7 +358,8 @@ export function SettingsRow({
           .map((config) => config?.managedPolicy)
           .find(
             (policy) =>
-              policy !== undefined && settingKeys.some((key) => isManagedSettingPath(policy, key)),
+              policy !== undefined &&
+              lockablePaths.some((path) => isManagedSettingPath(policy, path)),
           )?.organization;
   const clearOverrides = useClearScopedSettings();
   const clearProjectOverrides = useClearProjectOverrides();

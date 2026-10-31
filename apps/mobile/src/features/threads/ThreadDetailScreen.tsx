@@ -1456,6 +1456,12 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     <ManagedRuntimeModeNotice
                       threadKey={selectedThreadKey}
                       threadRuntimeMode={props.selectedThread.runtimeMode}
+                      supportedRuntimeModes={
+                        props.serverConfig?.providers.find(
+                          (provider) =>
+                            provider.instanceId === props.selectedThread.modelSelection.instanceId,
+                        )?.supportedRuntimeModes
+                      }
                       policy={props.serverConfig?.managedPolicy}
                     />
                   ) : null}

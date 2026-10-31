@@ -6,8 +6,6 @@ import {
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import {
-  managedRuntimeModeDenial,
-  type ManagedPolicySummary,
   CommandId,
   EnvironmentId,
   IsoDateTime,
@@ -270,20 +268,6 @@ export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
     }
   }
   return isTransportConnectionErrorMessage(errorMessage(error));
-}
-
-/**
- * Why the server would refuse a queued message's runtime mode, worded like its own refusal.
- * Sending anyway fails in settings sync, which retries forever, so delivery stops first.
- */
-export function managedRuntimeModeRefusal(
-  policy: ManagedPolicySummary | undefined,
-  runtimeMode: RuntimeMode,
-  existingThread: boolean,
-): string | null {
-  const denial = managedRuntimeModeDenial(policy, runtimeMode);
-  if (denial === undefined) return null;
-  return existingThread ? `${denial} Switch this thread's mode to continue.` : denial;
 }
 
 export type ThreadOutboxCommandStage = "settings-sync" | "start-turn";

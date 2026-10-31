@@ -2,8 +2,8 @@ import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
   type DesktopUpdateChannel,
   type EnvironmentId,
+  managedNightlyDeniedMessage,
   managedUpdatesDenial,
-  managedUpdatesMessage,
   type ServerConfig,
   type ServerSelfUpdateCapability,
 } from "@t3tools/contracts";
@@ -102,7 +102,7 @@ export function collectServerUpdateTargets(
       continue;
     }
     const selfUpdate = resolveServerSelfUpdateCapability(config);
-    const managedDenial = managedUpdateDenial(
+    const managedDenial = managedMachineUpdateDenial(
       config,
       selfUpdate === "desktop-managed" ? undefined : targetVersion,
     );
@@ -216,13 +216,11 @@ export function localSwitchBlockReason(
   );
 }
 
-/** Servers move to the release; desktop-managed hosts reinstall their app on its track. A desktop
- * host already current gets a track-only request, since its saved track may still differ. */
 /**
  * The server refuses these with the same message; say so before the run instead of after.
  * `targetVersion` is undefined when the server picks its own version, as desktop apps do.
  */
-function managedUpdateDenial(
+function managedMachineUpdateDenial(
   config: NonNullable<UpdateEverythingMachine["serverConfig"]>,
   targetVersion: string | undefined,
 ): string | undefined {
@@ -233,11 +231,13 @@ function managedUpdateDenial(
     policy.limits?.updates?.allowNightly === false &&
     targetVersion !== undefined &&
     cliReleaseChannelOf(targetVersion) !== "stable"
-      ? managedUpdatesMessage(policy.organization)
+      ? managedNightlyDeniedMessage(policy.organization)
       : undefined)
   );
 }
 
+/** Servers move to the release; desktop-managed hosts reinstall their app on its track. A desktop
+ * host already current gets a track-only request, since its saved track may still differ. */
 export function collectChannelSwitchTargets(
   machines: ReadonlyArray<UpdateEverythingMachine>,
   release: ChannelSwitchRelease,
@@ -276,7 +276,7 @@ export function collectChannelSwitchTargets(
         !("skip" in move) &&
         move.selfUpdate === "desktop-managed" &&
         unavailableReason(machine) === null &&
-        managedUpdateDenial(config, release.version) === undefined
+        managedMachineUpdateDenial(config, release.version) === undefined
       ) {
         targets.push({ ...target(move.selfUpdate, serverVersion), trackOnly: true });
       }
@@ -287,7 +287,7 @@ export function collectChannelSwitchTargets(
       skip(unavailable ?? "not connected");
       continue;
     }
-    const managedDenial = managedUpdateDenial(config, release.version);
+    const managedDenial = managedMachineUpdateDenial(config, release.version);
     if (managedDenial !== undefined) {
       skip(managedDenial);
       continue;

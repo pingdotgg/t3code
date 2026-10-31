@@ -260,7 +260,10 @@ describe("collectChannelSwitchTargets", () => {
         `its database has changes ${NIGHTLY} does not support yet; stay on Stable until Nightly has them`,
       ],
       ["old-desktop", "needs a newer desktop app"],
-      ["no-nightly", "Example Corp manages T3 Code updates."],
+      [
+        "no-nightly",
+        "Example Corp manages T3 Code updates. Only stable releases can be installed.",
+      ],
     ]);
   });
 });

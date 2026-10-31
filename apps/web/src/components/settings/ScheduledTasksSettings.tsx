@@ -69,7 +69,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionStatusDot";
 import {
   AuthOrchestrationOperateScope,
-  isRuntimeModeAbove,
+  clampManagedRuntimeMode,
   managedCapabilityDenial,
 } from "@t3tools/contracts";
 import { useManagedPolicy } from "~/state/managedPolicy";
@@ -1132,7 +1132,6 @@ function ScheduledTaskEditorForm({
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
-  const maxRuntimeMode = environment?.serverConfig?.managedPolicy?.limits?.maxRuntimeMode;
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -1278,9 +1277,9 @@ function ScheduledTaskEditorForm({
       workspaceStrategy,
       modelSelection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
-      runtimeMode: isRuntimeModeAbove(draft.runtimeMode, maxRuntimeMode)
-        ? (maxRuntimeMode ?? draft.runtimeMode)
-        : draft.runtimeMode,
+      runtimeMode:
+        clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, draft.runtimeMode) ??
+        draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
     };
@@ -1552,7 +1551,7 @@ function ScheduledTaskEditorForm({
             {webhookDenial !== undefined ? (
               <ManagedNotice>
                 {draft.scheduleMode === "webhook"
-                  ? `${webhookDenial} Switch this task to a time or an interval to save it.`
+                  ? `${webhookDenial} Switch this task to a time or an interval, or turn it off, to save it.`
                   : webhookDenial}
               </ManagedNotice>
             ) : null}
@@ -1813,7 +1812,7 @@ function ScheduledTaskEditorForm({
             editingTaskMissing ||
             !connected ||
             !tasksQuery.data ||
-            (draft.scheduleMode === "webhook" && webhookDenial !== undefined)
+            (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined)
           }
           onClick={() => void submit()}
         >

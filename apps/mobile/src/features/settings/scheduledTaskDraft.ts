@@ -234,11 +234,9 @@ export function hasScheduledTaskDraftChanges(
   return draftSignature(initial) !== draftSignature(current);
 }
 
-/** New tasks run with full access unless the environment's managed policy caps runtime modes. */
 export function createDraft(
   projectId: ProjectId | null,
   modelSelection: ModelSelection | null,
-  maxRuntimeMode?: RuntimeMode,
 ): ScheduledTaskDraft {
   return {
     task: null,
@@ -253,7 +251,7 @@ export function createDraft(
     checkoutPath: "",
     enabled: true,
     startFromOrigin: true,
-    runtimeMode: maxRuntimeMode ?? "full-access",
+    runtimeMode: "full-access",
   };
 }
 

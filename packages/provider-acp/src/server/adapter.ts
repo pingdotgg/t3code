@@ -6757,7 +6757,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 (option.category === "mode" || option.category === "collaboration_mode"),
             );
           const withinCeiling = (selection: { readonly id: string; readonly value: unknown }) => {
-            if (ceiling === undefined || !isModeChoice(selection.id)) return true;
+            if (ceiling === undefined || ceiling === "full-access" || !isModeChoice(selection.id)) {
+              return true;
+            }
             const granted =
               typeof selection.value === "string"
                 ? flavor.runtimeModeForSessionMode?.(selection.value)
