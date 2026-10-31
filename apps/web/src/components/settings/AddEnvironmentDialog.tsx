@@ -52,8 +52,8 @@ import { useEnvironmentQuery } from "~/state/query";
 import { desktopSshHostsStateAtom, filterDiscoveredSshHosts } from "~/state/desktopSshHosts";
 import {
   type EnvironmentPresentation,
-  usePrimaryEnvironment,
   useRelayEnvironmentDiscovery,
+  useSandboxProvisionerEnvironmentId,
 } from "~/state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -97,14 +97,7 @@ export function AddEnvironmentDialog({
     reportFailure: false,
   });
   const relayDiscoveryState = useRelayEnvironmentDiscovery();
-  const primaryEnvironment = usePrimaryEnvironment();
-  // Hosted web registers no primary environment, so fall back to a saved connected one; the
-  // sandbox RPCs run on whichever server the client is paired with.
-  const provisionerEnvironment =
-    primaryEnvironment ??
-    savedEnvironments.find((environment) => environment.connection.phase === "connected") ??
-    savedEnvironments[0] ??
-    null;
+  const provisionerEnvironmentId = useSandboxProvisionerEnvironmentId();
   const savedDesktopSshEnvironmentKeys = (() => {
     const keys = new Set<string>();
     for (const environment of savedEnvironments) {
@@ -626,7 +619,7 @@ export function AddEnvironmentDialog({
                 icon={<ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />}
                 onClick={() => setSavedBackendMode("remote")}
               />
-              {provisionerEnvironment !== null && routeTarget === null ? (
+              {provisionerEnvironmentId !== null && routeTarget === null ? (
                 <EnvironmentModeCard
                   selected={savedBackendMode === "sandbox"}
                   disabled={isAddingSavedBackend || isProvisioningSandbox}
@@ -649,10 +642,10 @@ export function AddEnvironmentDialog({
             </div>
             <AnimatedHeight>
               {savedBackendMode === "sandbox" &&
-              provisionerEnvironment !== null &&
+              provisionerEnvironmentId !== null &&
               routeTarget === null ? (
                 <SandboxEnvironmentFields
-                  environmentId={provisionerEnvironment.environmentId}
+                  environmentId={provisionerEnvironmentId}
                   error={error}
                   onErrorChange={onErrorChange}
                   onProvisioningChange={handleSandboxProvisioningChange}

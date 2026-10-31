@@ -7,7 +7,7 @@ import {
 import type { SandboxRecord } from "@t3tools/contracts";
 
 import { serverEnvironment } from "~/state/server";
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { useSandboxProvisionerEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./settingsLayout";
@@ -39,12 +39,12 @@ const failureMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "The sandbox action failed.";
 
 export function SandboxManagementSection() {
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const provisionerEnvironmentId = useSandboxProvisionerEnvironmentId();
   const list = useEnvironmentQuery(
-    primaryEnvironmentId === null
+    provisionerEnvironmentId === null
       ? null
       : serverEnvironment.sandboxesList({
-          environmentId: primaryEnvironmentId,
+          environmentId: provisionerEnvironmentId,
           input: undefined,
         }),
   );
@@ -54,18 +54,18 @@ export function SandboxManagementSection() {
   });
   const [pendingEnvironmentId, setPendingEnvironmentId] = useState<string | null>(null);
   const sandboxes = list.data?.sandboxes ?? [];
-  if (primaryEnvironmentId === null || sandboxes.length === 0) return null;
+  if (provisionerEnvironmentId === null || sandboxes.length === 0) return null;
 
   const run = async (sandbox: SandboxRecord, action: "stop" | "resume") => {
     setPendingEnvironmentId(sandbox.environmentId);
     const result =
       action === "stop"
         ? await stopSandbox({
-            environmentId: primaryEnvironmentId,
+            environmentId: provisionerEnvironmentId,
             input: { environmentId: sandbox.environmentId },
           })
         : await resumeSandbox({
-            environmentId: primaryEnvironmentId,
+            environmentId: provisionerEnvironmentId,
             input: { environmentId: sandbox.environmentId },
           });
     setPendingEnvironmentId(null);
