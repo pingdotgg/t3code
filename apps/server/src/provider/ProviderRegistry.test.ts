@@ -1882,6 +1882,167 @@ it.layer(
       }),
     );
 
+    it.effect("streams the terminal update state when it lands during a slow cache write", () =>
+      Effect.gen(function* () {
+        const claudeDriver = ProviderDriverKind.make("claude");
+        const claudeInstanceId = ProviderInstanceId.make("claude");
+        const initialProvider = {
+          instanceId: claudeInstanceId,
+          driver: claudeDriver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-04-14T00:00:00.000Z",
+          version: "2.1.300",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const verifyingProvider = { ...initialProvider, checkedAt: "2026-04-14T00:01:00.000Z" };
+        const laterProvider = { ...initialProvider, checkedAt: "2026-04-14T00:02:00.000Z" };
+        const changes = yield* PubSub.unbounded<ServerProvider>();
+        const instance = {
+          instanceId: claudeInstanceId,
+          driverKind: claudeDriver,
+          continuationIdentity: {
+            driverKind: claudeDriver,
+            continuationKey: "claude:instance:claude",
+          },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: claudeDriver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.succeed(initialProvider),
+            refresh: Effect.succeed(initialProvider),
+            streamChanges: Stream.fromPubSub(changes),
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (instanceId) =>
+              Effect.succeed(instanceId === claudeInstanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+              PubSub.subscribe(pubsub),
+            ),
+          },
+        );
+        const writeStarted = yield* Deferred.make<void>();
+        const releaseWrite = yield* Deferred.make<void>();
+        const gatedCachePath = yield* Ref.make<string | undefined>(undefined);
+        const layerGatedFileSystem = Layer.effect(
+          FileSystem.FileSystem,
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            return {
+              ...fileSystem,
+              rename: (from, to) =>
+                Ref.modify(gatedCachePath, (path) =>
+                  path === to ? [true, undefined] : [false, path],
+                ).pipe(
+                  Effect.flatMap((gated) =>
+                    gated
+                      ? Deferred.succeed(writeStarted, undefined).pipe(
+                          Effect.andThen(Deferred.await(releaseWrite)),
+                        )
+                      : Effect.void,
+                  ),
+                  Effect.andThen(fileSystem.rename(from, to)),
+                ),
+            } satisfies FileSystem.FileSystem;
+          }),
+        ).pipe(Layer.provide(NodeServices.layer));
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-update-state-race-",
+              }),
+            ),
+            Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
+            Layer.provideMerge(layerGatedFileSystem),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const config = yield* ServerConfig.ServerConfig;
+          const running = {
+            status: "running",
+            startedAt: "2026-04-14T00:00:30.000Z",
+            finishedAt: null,
+            message: "Verifying the installed version",
+            output: null,
+          } as const;
+          const unchanged = {
+            ...running,
+            status: "unchanged",
+            finishedAt: "2026-04-14T00:01:30.000Z",
+            message:
+              "Update command completed, but T3 Code still detects an outdated provider version.",
+          } as const;
+          yield* registry.setProviderMaintenanceActionState({
+            instanceId: claudeInstanceId,
+            action: "update",
+            state: running,
+          });
+          const streamed = yield* registry.streamChanges.pipe(
+            Stream.takeUntil((providers) =>
+              providers.some((provider) => provider.checkedAt === laterProvider.checkedAt),
+            ),
+            Stream.runCollect,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+
+          yield* Ref.set(
+            gatedCachePath,
+            yield* resolveProviderStatusCachePath({
+              cacheDir: config.providerStatusCacheDir,
+              instanceId: claudeInstanceId,
+            }),
+          );
+          yield* PubSub.publish(changes, verifyingProvider);
+          yield* Deferred.await(writeStarted);
+          yield* registry.setProviderMaintenanceActionState({
+            instanceId: claudeInstanceId,
+            action: "update",
+            state: unchanged,
+          });
+          yield* Deferred.succeed(releaseWrite, undefined);
+          // The snapshot stream is consumed in order, so this lands after the slow write publishes.
+          yield* PubSub.publish(changes, laterProvider);
+
+          const updateStateOf = (providers: ReadonlyArray<ServerProvider> | undefined) =>
+            providers?.find((provider) => provider.instanceId === claudeInstanceId)?.updateState;
+          const beforeLater = (yield* Fiber.join(streamed)).slice(0, -1);
+          assert.deepStrictEqual(updateStateOf(yield* registry.getProviders), unchanged);
+          assert.deepStrictEqual(
+            updateStateOf(beforeLater.at(-1)),
+            unchanged,
+            "the last streamed providers before the next snapshot should carry the terminal update state",
+          );
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
     it.effect(
       "persists authoritative OpenCode removals without resurrecting them on a failed live refresh",
       () =>
