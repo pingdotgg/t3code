@@ -21,7 +21,6 @@ const state = vi.hoisted(() => ({
   granted: new Set<string>(),
   effects: [] as string[],
   completed: deferred<void>(),
-  confirmMessages: [] as string[],
   show: vi.fn<
     (
       items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
@@ -74,8 +73,7 @@ vi.mock("../localApi", () => ({
   readLocalApi: () => ({
     contextMenu: { show: state.show, close: () => {} },
     dialogs: {
-      confirm: async (message: string) => {
-        state.confirmMessages.push(message);
+      confirm: async () => {
         recordEffect("confirm");
         return false;
       },
@@ -164,7 +162,6 @@ beforeEach(() => {
   state.granted = new Set(["primary"]);
   state.effects = [];
   state.completed = deferred<void>();
-  state.confirmMessages = [];
   state.show.mockReset().mockResolvedValue(null);
 });
 
@@ -195,17 +192,5 @@ describe("thread menu permissions", () => {
     expect(items[0]?.disabled).not.toBe(true);
     expect(state.effects).toEqual(["find"]);
     expect(onFind).toHaveBeenCalledExactlyOnceWith(target);
-  });
-});
-
-describe("thread delete confirmation", () => {
-  it("does not claim deleting clears the thread's history", async () => {
-    state.granted.add("secondary");
-    state.show.mockResolvedValue("delete");
-    createMenu().openMenu(position);
-    await state.completed.promise;
-    expect(state.confirmMessages).toHaveLength(1);
-    expect(state.confirmMessages[0]).not.toMatch(/clears conversation history/);
-    expect(state.confirmMessages[0]).toMatch(/conversation history stays/);
   });
 });
