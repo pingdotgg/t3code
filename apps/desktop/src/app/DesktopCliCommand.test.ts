@@ -201,6 +201,10 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       // A first launch leaves another home's command alone; only Install takes it over.
       yield* after.installOnFirstLaunch;
       expect(yield* fs.readLink(link!)).toBe(path.join(home, "old-t3", "bin", "t3"));
+      // On PATH, but it runs the other home's launcher, not this one.
+      process.env.PATH = path.dirname(link!);
+      expect((yield* after.state).onPath).toBe(false);
+      process.env.PATH = "";
       expect((yield* after.state).installedPath).toBe(link);
       // Behind another t3 the install fails, and the old link still works.
       const shadow = path.join(home, "shadow");

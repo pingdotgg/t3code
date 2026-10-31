@@ -106,10 +106,13 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   yield* fs
     .makeDirectory(binDir, { recursive: true })
     .pipe(Effect.mapError(failed(`Could not create ${binDir}.`)));
+  // An empty spot is created exclusively, so a file that appears after the check above is kept.
   if (windows) {
     yield* fs
-      .writeFileString(link, `@echo off\r\n"${executable}" %*`)
+      .writeFileString(link, `@echo off\r\n"${executable}" %*`, occupied ? {} : { flag: "wx" })
       .pipe(Effect.mapError(failed(`Could not write ${link}.`)));
+  } else if (!occupied) {
+    yield* fs.symlink(executable, link).pipe(Effect.mapError(failed(`Could not link ${link}.`)));
   } else {
     // Swap a temporary link into place so a running `t3` never sees the command missing.
     const staging = `${link}.${process.pid}.tmp`;
