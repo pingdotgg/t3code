@@ -459,7 +459,7 @@ function ProviderSettingsTextInput({
 }) {
   const [rejected, setRejected] = useState<string | null>(null);
   return (
-    <div className="flex w-full min-w-0 flex-col gap-1 @min-[32rem]/settings-row:w-56">
+    <div className="flex w-full min-w-0 flex-col gap-1 @min-[26rem]/settings-row:w-50">
       <DraftInput
         id={inputId}
         aria-describedby={descriptionId}
@@ -547,14 +547,14 @@ function ProviderSettingsFieldRow({
           value={value}
           inputId={inputId}
           size="sm"
-          className="w-full max-w-full @min-[32rem]/settings-row:w-56"
+          className="w-full max-w-full @min-[26rem]/settings-row:w-50"
           onChange={onChange}
         />
       ) : field.control === "textarea" ? (
         <Textarea
           id={inputId}
           aria-describedby={descriptionId}
-          className="w-full max-w-full @min-[32rem]/settings-row:w-[min(24rem,50cqw)]"
+          className="w-full max-w-full @min-[26rem]/settings-row:w-[min(24rem,50cqw)]"
           value={readProviderConfigString(value, field.key)}
           onChange={(event) =>
             onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
@@ -572,7 +572,7 @@ function ProviderSettingsFieldRow({
           onChange={onChange}
         />
       ) : field.secret ? (
-        <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+        <div className="flex w-full min-w-0 items-center gap-2 @min-[26rem]/settings-row:w-50">
           <SecretInput
             id={inputId}
             aria-describedby={descriptionId}
