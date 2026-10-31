@@ -75,7 +75,7 @@ describe("native device stream transport", () => {
       }
     }
     vi.stubGlobal("WebSocket", FakeSocket);
-    const fetch = vi.fn(() => Promise.resolve(new Response("frame")));
+    const fetch = vi.fn(() => Promise.resolve(Response.json({})));
     vi.stubGlobal("fetch", fetch);
     const events = {
       onStatus: vi.fn(),
@@ -154,6 +154,96 @@ describe("native device stream transport", () => {
       expect(vi.getTimerCount()).toBe(0);
     },
   );
+});
+
+describe("iOS keypad protocol", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("encodes keypad presses and releases as HID key packets", async () => {
+    const packets: Uint8Array[] = [];
+    let opened!: (socket: Socket) => void;
+    const connected = new Promise<Socket>((resolve) => {
+      opened = resolve;
+    });
+    class Socket {
+      static OPEN = 1;
+      readyState = 1;
+      binaryType = "";
+      onmessage: ((event: { data: ArrayBuffer }) => void) | null = null;
+      constructor() {
+        opened(this);
+      }
+      send(packet: Uint8Array) {
+        packets.push(packet);
+      }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", Socket);
+    vi.stubGlobal("fetch", async () => new Response("frame"));
+    const client = createDeviceStreamClient(
+      {
+        platform: "ios",
+        deviceId: "keypad-device",
+        preferMjpeg: true,
+        access: {
+          httpBase: "https://device.test",
+          wsBase: "wss://device.test",
+          credentials: false,
+          query: {},
+        },
+      },
+      { getContext: () => null } as unknown as HTMLCanvasElement,
+      {
+        onStatus() {},
+        onScreen() {},
+        onUnauthorized() {},
+        onMjpegFallback() {},
+        onInputConnected() {},
+      },
+    );
+    try {
+      client.start();
+      const socket = await connected;
+      socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+      const keys = [
+        ["NumpadDivide", 0x54],
+        ["NumpadMultiply", 0x55],
+        ["NumpadSubtract", 0x56],
+        ["NumpadAdd", 0x57],
+        ["NumpadEnter", 0x58],
+        ["Numpad1", 0x59],
+        ["Numpad2", 0x5a],
+        ["Numpad3", 0x5b],
+        ["Numpad4", 0x5c],
+        ["Numpad5", 0x5d],
+        ["Numpad6", 0x5e],
+        ["Numpad7", 0x5f],
+        ["Numpad8", 0x60],
+        ["Numpad9", 0x61],
+        ["Numpad0", 0x62],
+        ["NumpadDecimal", 0x63],
+        ["NumpadEqual", 0x67],
+        ["Digit1", 0x1e],
+        ["Enter", 0x28],
+      ] as const;
+      for (const [code] of keys) {
+        for (const phase of ["down", "up"] as const) {
+          client.sendKey({ code } as KeyboardEvent, phase);
+        }
+      }
+      const decoder = new TextDecoder();
+      expect(
+        packets.map((packet) => [packet[0], JSON.parse(decoder.decode(packet.subarray(1)))]),
+      ).toEqual(
+        keys.flatMap(([, usage]) => [
+          [0x06, { type: "down", usage }],
+          [0x06, { type: "up", usage }],
+        ]),
+      );
+    } finally {
+      client.stop();
+    }
+  });
 });
 
 describe("serve-emu frames", () => {
@@ -251,6 +341,7 @@ function recoveryFixture(
   const fetch = vi.fn((url: string, init: RequestInit) => {
     const signal = init.signal!;
     signals.push(signal);
+    if (url.includes("/api?")) return Promise.resolve(Response.json({}));
     if (!url.includes("stream.avcc")) return Promise.resolve(new Response("prime"));
     return Promise.resolve(
       new Response(
@@ -450,9 +541,11 @@ describe("shared device stream readiness and recovery", () => {
         }),
     );
     client.start();
+    await vi.advanceTimersByTimeAsync(0);
     sockets[0]!.onmessage?.({ data: sps });
     client.stop();
     client.start();
+    await vi.advanceTimersByTimeAsync(0);
     resolveSupport({ supported: true });
     await vi.advanceTimersByTimeAsync(0);
     expect(decoders).toHaveLength(0);
@@ -489,5 +582,138 @@ describe("shared device stream readiness and recovery", () => {
     expect(events.onStatus).not.toHaveBeenCalled();
     client.stop();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("Android WebRTC device streams", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function setup() {
+    vi.useFakeTimers();
+    const sockets: Socket[] = [];
+    class Socket {
+      static OPEN = 1;
+      readyState = 1;
+      binaryType = "";
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onclose: ((event: { code: number; reason: string }) => void) | null = null;
+      send = vi.fn();
+      close = vi.fn();
+      readonly url: string;
+      constructor(url: string) {
+        this.url = url;
+        sockets.push(this);
+      }
+    }
+    const videos: Video[] = [];
+    class Video {
+      muted = false;
+      playsInline = false;
+      style = { cssText: "" };
+      srcObject: unknown = null;
+      videoWidth = 400;
+      videoHeight = 800;
+      setAttribute = vi.fn();
+      remove = vi.fn();
+      play = vi.fn(async () => {});
+      callback: (() => void) | null = null;
+      requestVideoFrameCallback(callback: () => void) {
+        this.callback = callback;
+        return 0;
+      }
+      constructor() {
+        videos.push(this);
+      }
+    }
+    const peers: Peer[] = [];
+    class Peer {
+      iceGatheringState = "complete";
+      connectionState = "connected";
+      localDescription = { type: "offer", sdp: "offer-sdp" };
+      ontrack: ((event: { streams: unknown[]; track: unknown }) => void) | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      close = vi.fn();
+      createOffer = vi.fn(async () => this.localDescription);
+      setLocalDescription = vi.fn(async () => {});
+      setRemoteDescription = vi.fn(async () => {});
+      addTransceiver = vi.fn(() => ({ setCodecPreferences: vi.fn() }));
+      addEventListener = vi.fn();
+      removeEventListener = vi.fn();
+      constructor() {
+        peers.push(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", Socket);
+    vi.stubGlobal("RTCPeerConnection", Peer);
+    vi.stubGlobal("RTCRtpReceiver", { getCapabilities: () => ({ codecs: [] }) });
+    vi.stubGlobal("document", { createElement: () => new Video(), body: { append: vi.fn() } });
+    const fetch = vi.fn((url: string, _init?: RequestInit) =>
+      Promise.resolve(
+        url.includes("/api?")
+          ? Response.json({ serial: "emulator-5554", stream: { transport: "webrtc" } })
+          : Response.json({ type: "answer", sdp: "answer-sdp" }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const events = {
+      onStatus: vi.fn(),
+      onScreen: vi.fn(),
+      onUnauthorized: vi.fn(),
+      onMjpegFallback: vi.fn(),
+      onInputConnected: vi.fn(),
+    };
+    const present = vi.fn(() => true);
+    const client = createDeviceStreamClient(
+      {
+        platform: "android",
+        deviceId: "session-1",
+        access: {
+          httpBase: "https://test/api/device-hub",
+          wsBase: "wss://test/api/device-hub",
+          credentials: true,
+          query: { hostId: "eas" },
+        },
+      },
+      { present },
+      events,
+    );
+    return { client, events, fetch, peers, videos, sockets, present };
+  }
+
+  it("streams over WebRTC when serve-emu advertises it, with input that reconnects on its own", async () => {
+    const { client, events, fetch, peers, videos, sockets, present } = setup();
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "https://test/api/device-hub/vendor/serve-emu/api?device=session-1&hostId=eas",
+      "https://test/api/device-hub/vendor/serve-emu/webrtc/offer?device=session-1&hostId=eas",
+    ]);
+    expect(peers[0]?.setRemoteDescription).toHaveBeenCalledWith({
+      type: "answer",
+      sdp: "answer-sdp",
+    });
+    peers[0]?.ontrack?.({ streams: [{}], track: {} });
+    videos[0]?.callback?.();
+    expect(present).toHaveBeenCalledWith(videos[0], 400, 800);
+    expect(events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+
+    expect(sockets.map((socket) => socket.url)).toEqual([
+      "wss://test/api/device-hub/vendor/serve-emu/ws?device=session-1&video=0&hostId=eas",
+    ]);
+    sockets[0]!.onopen?.();
+    client.pressButton("back");
+    expect(sockets[0]!.send).toHaveBeenCalledWith(JSON.stringify({ type: "back" }));
+    events.onStatus.mockClear();
+    sockets[0]!.onclose?.({ code: 1001, reason: "going away" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sockets[1]?.url).toContain("video=0");
+    expect(peers).toHaveLength(1);
+    expect(peers[0]?.close).not.toHaveBeenCalled();
+    expect(events.onStatus).not.toHaveBeenCalled();
+    client.stop();
   });
 });
