@@ -275,6 +275,8 @@ export const layer = Layer.effectDiscard(
                   ),
                   Effect.forkScoped,
                 );
+              } else if (request.clearIfCurrent !== undefined) {
+                yield* request.clearIfCurrent();
               }
             }),
           ),
