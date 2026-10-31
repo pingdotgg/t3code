@@ -245,8 +245,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       {...navArea}
       role="navigation"
       aria-label="Settings sections"
+      data-settings-nav=""
       className={cn(
-        "settings-sidebar flex w-[231px] shrink-0 flex-col border-e text-foreground max-md:w-14",
+        "flex w-[231px] shrink-0 flex-col border-e text-foreground max-md:w-14",
         compactSearchOpen &&
           "max-md:absolute max-md:inset-y-0 max-md:start-0 max-md:z-10 max-md:w-full",
       )}
@@ -254,7 +255,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       <SidebarContent
         className="overflow-x-hidden"
         fixedHeader={
-          <SidebarGroup className="pb-3.5">
+          <div className={cn("px-3 pt-3 pb-3.5", !compactSearchOpen && "max-md:hidden")}>
             {/* Pen EV7oi: a search field with a trailing slash hint. */}
             <div className={compactSearchOpen ? undefined : "max-md:hidden"}>
               <InputGroup>
@@ -313,7 +314,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 )}
               </InputGroup>
             </div>
-          </SidebarGroup>
+          </div>
         }
       >
         <SidebarGroup>
