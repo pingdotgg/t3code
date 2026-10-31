@@ -45,6 +45,7 @@ it.effect.each([
         scope: undefined,
         providerThread: undefined,
         readyCheckpointOrdinals: [],
+        sideChat: false,
       }),
     getCheckpointContext: () =>
       Effect.succeed({

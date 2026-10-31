@@ -690,7 +690,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     );
     yield* enableAgain(inspection);
     return yield* result(installation);
-  }, Effect.uninterruptible);
+  }, Effect.uninterruptible, managed);
 
   const settleReplace = Effect.fn("PluginCatalog.settleReplace")(function* (
     input: PluginConsentInput & { readonly attemptId?: string },
@@ -714,10 +714,16 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       yield* reinspect(installation);
     }
     return "rolled-back" as const;
-  }, Effect.uninterruptible);
+  }, Effect.uninterruptible, managed);
 
-  const changeFiles = <A, E>(paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
-    claimFiles(paths).pipe(Effect.andThen(effect), Effect.uninterruptible);
+  const changeFiles: PluginCatalog["Service"]["changeFiles"] = Effect.fn("PluginCatalog.changeFiles")(
+    function* <A, E>(paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) {
+      yield* claimFiles(paths);
+      return yield* effect;
+    },
+    Effect.uninterruptible,
+    managed,
+  );
 
   const resume = Effect.fn("PluginCatalog.resume")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
@@ -910,9 +916,9 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     disable,
     remove,
     resume,
-    replace: (input, files) => managed(replace(input, files)),
-    settleReplace: (input, files) => managed(settleReplace(input, files)),
-    changeFiles: (paths, effect) => managed(changeFiles(paths, effect)),
+    replace,
+    settleReplace,
+    changeFiles,
     invoke,
   });
 });
