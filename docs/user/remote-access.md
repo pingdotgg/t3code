@@ -39,6 +39,19 @@ connection. Pull request diffs and provider settings keep working after the
 previous credential expires. A failed renewal affects that request; it does not
 disconnect an otherwise healthy conversation.
 
+### Scripts and agents
+
+`t3 up` asks nothing when you name a choice: `--connect`, `--lan`, or their
+`--no-` forms. Choices you do not name keep their settings, and `--yes` takes
+the defaults. Without a terminal:
+
+- T3 Connect sign-in prints a URL and a code. Approve it on any device.
+- A needed restart runs without asking, and stops running agent turns.
+- With nothing set up and no choice named, `t3 up` stops and names the flags.
+
+`t3 status --json` prints the settings. `t3 up --help` lists every flag with
+examples.
+
 ### More machines with T3 Chat
 
 Each T3 Connect account can link up to 3 machines. Phones and browsers do not

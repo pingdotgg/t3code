@@ -61,7 +61,9 @@ const jsonFlag = Flag.Boolean("json").pipe(
 const isCloudCliTokenManagerError = Schema.is(CliTokenManager.CloudCliTokenManagerError);
 
 export const headlessFlag = Flag.Boolean("headless").pipe(
-  Flag.withDescription("Authorize without a local browser using the OAuth device flow."),
+  Flag.withDescription(
+    "Sign in with a URL and code on any device. Automatic without a terminal or over SSH.",
+  ),
   Flag.withDefault(false),
 );
 
@@ -85,13 +87,10 @@ function formatDeviceAuthorizationPrompt(
 ): string {
   const minutes = Math.max(1, Math.round(Duration.toMinutes(prompt.expiresIn)));
   return [
-    "Headless authorization",
-    "Open this URL on a device with a browser:",
+    "Sign in to T3 Connect. Open on any device:",
     `  ${prompt.verificationUriComplete ?? prompt.verificationUri}`,
-    "",
-    `Confirm this code when asked: ${prompt.userCode}`,
-    "",
-    `Waiting for approval (expires in ${minutes} min). Press Ctrl+C to cancel.`,
+    `Code: ${prompt.userCode}`,
+    `Waiting for approval. Expires in ${minutes} min. Ctrl+C cancels.`,
   ].join("\n");
 }
 
@@ -99,20 +98,21 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   readonly headless: boolean;
 }) {
   const tokens = yield* CliTokenManager.CloudCliTokenManager;
-  const useOutOfBandOAuth = options.headless || (yield* headlessSessionConfig);
+  // Without a terminal, no key press can open a browser, so sign in with a code.
+  const useOutOfBandOAuth =
+    options.headless ||
+    (yield* headlessSessionConfig) ||
+    !(process.stdin.isTTY && process.stdout.isTTY);
   if (!useOutOfBandOAuth) {
     const authorization = yield* tokens.get;
     if (authorization._tag === "Authorized") {
       return authorization.token.identity ?? null;
     }
-    yield* Console.log("\nHeadless mode enabled. A new authorization link is ready below.");
   }
   const existing = yield* tokens.getExisting.pipe(
     Effect.catchTags({
       CloudCliCredentialRefreshError: () =>
-        Console.log(
-          "The stored T3 Connect credential could not be refreshed; signing in again.",
-        ).pipe(Effect.as(Option.none())),
+        Console.log("T3 Connect sign-in expired. Sign in again.").pipe(Effect.as(Option.none())),
     }),
   );
   if (Option.isSome(existing)) {
@@ -364,16 +364,14 @@ function formatAlertBox(text: string): string {
  * can reach it, so a broken tunnel fails setup instead of looking green.
  */
 export const waitForReachability = Effect.fn("cloud.cli.wait_for_reachability")(function* () {
-  yield* Console.log("\nChecking that other devices can reach this machine...");
+  yield* Console.log("Checking T3 Connect...");
   const deadline =
     (yield* Clock.currentTimeMillis) + Duration.toMillis(CLOUD_CLI_REACHABILITY_WAIT);
   let last: EnvironmentConnectReachability | null = null;
   while (true) {
     last = (yield* checkLiveReachability()) ?? last;
     if (last?.status === "reachable") {
-      yield* Console.log(
-        `✓ Other devices can reach this machine · ${formatConnectReachable(last)}`,
-      );
+      yield* Console.log("✓ T3 Connect is reachable.");
       return;
     }
     if ((yield* Clock.currentTimeMillis) >= deadline) break;
@@ -559,7 +557,7 @@ function formatRelayClientReady(version: string): string {
 const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(function* (options: {
   readonly headless: boolean;
   readonly publishOnly?: boolean;
-  /** Install the relay client without asking, for a user who already chose T3 Connect. */
+  /** For `t3 up`, where the user already chose T3 Connect: install it quietly, without asking. */
   readonly installRelayClient?: boolean;
 }) {
   const publishOnly = options.publishOnly ?? false;
@@ -568,21 +566,26 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
     const installed = yield* acquireRelayClientForLink(
       relayClient,
       options.installRelayClient === true ? () => Effect.succeed(true) : confirmRelayClientInstall,
-      reportRelayClientInstallProgress,
+      options.installRelayClient === true
+        ? (event) =>
+            event.type === "progress" && event.stage === "downloading"
+              ? Console.log("Installing the T3 Connect relay client...")
+              : Effect.void
+        : reportRelayClientInstallProgress,
     );
     if (Option.isNone(installed)) {
       yield* Console.log("T3 Connect setup cancelled. The relay client was not installed.");
       return null;
     }
-    yield* Console.log(formatRelayClientReady(installed.value.version));
+    if (options.installRelayClient !== true) {
+      yield* Console.log(formatRelayClientReady(installed.value.version));
+    }
   }
 
   const identity = yield* authorizeCli(options);
   yield* CliState.setCliDesiredCloudLink(true, publishOnly ? "publish_only" : "managed");
   if (yield* CliState.dropRevokedCloudLink) {
-    yield* Console.log(
-      "Removed the link T3 Connect no longer accepts. The next start links this environment again.",
-    );
+    yield* Console.log("Replacing the link T3 Connect revoked.");
   }
   if (publishOnly) {
     const secrets = yield* ServerSecretStore.ServerSecretStore;
