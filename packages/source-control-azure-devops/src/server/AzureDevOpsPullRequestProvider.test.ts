@@ -1,9 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
+  DIFF_SLICE_READ_BUDGET_MILLIS,
   LOCATION_CACHE_CAPACITY,
   make,
   MAX_DIFF_SPAWNS,
@@ -58,6 +60,7 @@ const readSlice = (input: {
   readonly refused?: ReadonlyArray<string>;
   readonly created?: ReadonlyArray<string>;
   readonly cursor?: string;
+  readonly millisPerRead?: number;
 }) =>
   Effect.gen(function* () {
     const reads: string[] = [];
@@ -87,6 +90,7 @@ const readSlice = (input: {
               const answersAfter = input.paths.length - input.paths.indexOf(item.path);
               for (let turn = 0; turn < answersAfter; turn += 1) yield* Effect.yieldNow;
               inFlight -= 1;
+              if (input.millisPerRead !== undefined) yield* TestClock.adjust(input.millisPerRead);
               if (refused.has(item.path)) {
                 return yield* new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
                   command: "az",
@@ -297,6 +301,24 @@ describe("what one diff slice spends", () => {
       expect(read.slice.patch.length).toBeGreaterThan(MAX_DIFF_SLICE_BYTES);
       expect(read.slice.nextCursor).toBe(`${ITERATION.id}:1`);
     }),
+  );
+
+  it.effect(
+    "stops starting reads once the slice has run long enough to risk the client giving up",
+    () =>
+      Effect.gen(function* () {
+        const paths = Array.from({ length: 12 }, (_, file) => `file-${file}.ts`);
+        // Two reads per file and four files a batch: the second batch crosses the budget.
+        const read = yield* readSlice({
+          paths,
+          lines: 2,
+          width: 4,
+          millisPerRead: DIFF_SLICE_READ_BUDGET_MILLIS / 15,
+        });
+
+        expect(patchedPaths(read.slice.patch)).toEqual(paths.slice(0, 8));
+        expect(read.slice.nextCursor).toBe(`${ITERATION.id}:8`);
+      }),
   );
 
   it.effect("carries on from where the last slice stopped", () =>
