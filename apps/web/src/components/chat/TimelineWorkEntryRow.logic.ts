@@ -80,7 +80,7 @@ export function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   };
 }
 
-export function workEntryRawCommand(
+function workEntryRawCommand(
   workEntry: Pick<TimelineWorkEntry, "command" | "rawCommand">,
 ): string | null {
   const rawCommand = workEntry.rawCommand?.trim();
