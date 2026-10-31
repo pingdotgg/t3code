@@ -280,7 +280,7 @@ export const make = Effect.gen(function* () {
       );
     }
     // An old link of ours stays until the new one exists, so a failure never leaves no t3.
-    const onPath = pathEntries(process.env.PATH, ":");
+    const onPath = pathEntries(process.env.PATH, ":").map((entry) => entry.replace(/\/+$/, ""));
     for (const directory of [
       ...candidates.filter((candidate) => onPath.includes(candidate)),
       ...candidates.filter((candidate) => !onPath.includes(candidate)),

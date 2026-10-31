@@ -16,7 +16,6 @@ import {
   launcherOwnsVersionsDir,
   pinnedRuntimeVersionsDir,
   generatedWindowsShimTarget,
-  windowsShimTarget,
 } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
@@ -51,7 +50,7 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
     const shimPath = yield* findWindowsShim(input.launchedAs);
     if (shimPath === undefined) return undefined;
     const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    const target = Option.isSome(contents) ? windowsShimTarget(contents.value) : undefined;
+    const target = Option.isSome(contents) ? generatedWindowsShimTarget(contents.value) : undefined;
     return target !== undefined && launcherOwnsVersionsDir(path, input.versionsDir, target)
       ? shimPath
       : undefined;

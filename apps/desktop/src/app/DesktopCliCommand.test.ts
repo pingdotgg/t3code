@@ -206,6 +206,10 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* after.uninstall;
       expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
       expect(yield* fs.exists(path.join(home, "bin", "t3"))).toBe(false);
+
+      // A folder already on PATH wins, even written with a trailing slash.
+      process.env.PATH = `${path.join(home, "bin")}/`;
+      expect((yield* after.install).installedPath).toBe(path.join(home, "bin", "t3"));
     }).pipe(Effect.scoped),
   );
 

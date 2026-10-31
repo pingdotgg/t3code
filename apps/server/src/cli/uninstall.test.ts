@@ -36,6 +36,21 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: copy, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));
 
+      // On Windows, only the shim exactly as written is ours; a user's wrapper stays.
+      const shimDir = path.join(root, "win-bin");
+      const shim = path.join(shimDir, "t3.cmd");
+      yield* fs.makeDirectory(shimDir);
+      const windowsOwner = (contents: string) =>
+        fs
+          .writeFileString(shim, contents)
+          .pipe(
+            Effect.andThen(findOwnedLauncher({ launchedAs: exe, versionsDir })),
+            Effect.provideService(HostProcess.Platform, "win32"),
+            Effect.provideService(HostProcess.Environment, { PATH: shimDir }),
+          );
+      assert.equal(yield* windowsOwner(`@echo off\r\n"${exe}" %*`), shim);
+      assert.isUndefined(yield* windowsOwner(`@echo off\r\nset FOO=1\r\n"${exe}" %*`));
+
       // npx can run another version than the installed one, so uninstall also reads the
       // recorded launchers: through a symlinked home, and dangling after a prune.
       const throughAlias = path.join(root, "bin/t3-alias");
