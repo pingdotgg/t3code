@@ -29,6 +29,20 @@ export interface SandboxExecResult {
   readonly stderr: string;
 }
 
+/** The provider's view of one machine, normalized; `starting` is transitional and never recorded. */
+export type SandboxProviderStatus =
+  | "running"
+  | "starting"
+  | "stopped"
+  | "error"
+  | "expired"
+  | "deleted";
+
+export interface SandboxUsage {
+  readonly dollars: number;
+  readonly since: string;
+}
+
 export interface SandboxProviderDriver {
   readonly info: Omit<SandboxProviderInfo, "configured" | "capabilities">;
   readonly defaultSize: string;
@@ -77,6 +91,22 @@ export interface SandboxProviderDriver {
     readonly sandboxId: string;
     readonly ttlMinutes?: number | undefined;
   }) => Effect.Effect<{ readonly publicUrl?: string }, SandboxProviderError, HttpClient.HttpClient>;
+  /**
+   * A machine the provider no longer has is `deleted`, not an error. Null for a provider state
+   * T3 does not track, so the record is left alone.
+   */
+  readonly status?: (input: {
+    readonly config: SandboxProviderConfig;
+    readonly sandboxId: string;
+  }) => Effect.Effect<SandboxProviderStatus | null, SandboxProviderError, HttpClient.HttpClient>;
+  /** This month's cost of every T3 sandbox on the account in one call, keyed by sandbox id. */
+  readonly usage?: (input: {
+    readonly config: SandboxProviderConfig;
+  }) => Effect.Effect<
+    ReadonlyMap<string, SandboxUsage>,
+    SandboxProviderError,
+    HttpClient.HttpClient
+  >;
 }
 
 const PROVIDER_ERROR_CODES: Record<string, SandboxProviderErrorCode> = {

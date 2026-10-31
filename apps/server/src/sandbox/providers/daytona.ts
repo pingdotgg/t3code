@@ -10,6 +10,7 @@ import {
   jsonBody,
   requestJson,
   type SandboxProviderDriver,
+  type SandboxProviderStatus,
 } from "../SandboxProvider.ts";
 
 const DAYTONA_API_BASE = "https://app.daytona.io/api";
@@ -50,6 +51,26 @@ const SIZE_RESOURCES: Record<string, { readonly cpu: number; readonly memory: nu
   "daytona-small": { cpu: 1, memory: 1 },
   "daytona-medium": { cpu: 2, memory: 4 },
   "daytona-large": { cpu: 4, memory: 8 },
+};
+
+// States missing here (building, resizing, snapshotting, forking, unknown) leave the record alone.
+const DAYTONA_STATUS: Record<string, SandboxProviderStatus> = {
+  started: "running",
+  creating: "starting",
+  restoring: "starting",
+  starting: "starting",
+  pulling_snapshot: "starting",
+  resuming: "starting",
+  stopped: "stopped",
+  stopping: "stopped",
+  archived: "stopped",
+  archiving: "stopped",
+  paused: "stopped",
+  pausing: "stopped",
+  error: "error",
+  build_failed: "error",
+  destroyed: "deleted",
+  destroying: "deleted",
 };
 
 const info = {
@@ -268,6 +289,14 @@ export const daytonaDriver: SandboxProviderDriver = {
     }).pipe(
       Effect.flatMap((sandbox) => waitUntilStarted(input.config.apiKey, sandbox.id)),
       Effect.map(() => ({})),
+    ),
+  status: (input) =>
+    getSandbox(input.config.apiKey, input.sandboxId).pipe(
+      Effect.map((sandbox) => DAYTONA_STATUS[sandbox.state] ?? null),
+      Effect.catchIf(
+        (error) => error.code === "not_found",
+        () => Effect.succeed("deleted" as const),
+      ),
     ),
   destroy: (input) =>
     requestJson({

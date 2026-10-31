@@ -9,6 +9,8 @@ import {
   jsonBody,
   requestJson,
   type SandboxProviderDriver,
+  type SandboxProviderStatus,
+  type SandboxUsage,
   shellQuote,
 } from "../SandboxProvider.ts";
 
@@ -17,6 +19,8 @@ const BOAT_BILLING_URL = "https://boat.dev/dashboard?tab=billing";
 // Trial accounts must auto-stop within two hours (`400 trial_auto_stop_required`).
 const TRIAL_MAX_TTL_MINUTES = 120;
 const MAX_TTL_MINUTES = 43200;
+// Tags every sandbox T3 creates, so one filtered list call can read all their costs.
+const ROLE_LABEL = { key: "t3.code/role", value: "environment" } as const;
 
 const BoatSandbox = Schema.Struct({
   sandbox: Schema.Struct({
@@ -46,8 +50,34 @@ const BoatLifecycle = Schema.Struct({
     id: Schema.String,
     state: Schema.String,
     error: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    dataExpiredAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   }),
 });
+
+const BoatCostList = Schema.Struct({
+  sandboxes: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      cost: Schema.optionalKey(
+        Schema.NullOr(Schema.Struct({ since: Schema.String, dollars: Schema.Number })),
+      ),
+    }),
+  ),
+});
+
+const BOAT_STATUS: Record<string, SandboxProviderStatus> = {
+  ready: "running",
+  idle: "running",
+  running: "running",
+  init: "starting",
+  provisioning: "starting",
+  provisioned: "starting",
+  cloning: "starting",
+  archiving: "starting",
+  archived: "stopped",
+  error: "error",
+  cancelled: "deleted",
+};
 
 const BoatStartWindow = Schema.NullOr(
   Schema.Struct({ limit: Schema.Number, used: Schema.Number, remaining: Schema.Number }),
@@ -212,6 +242,7 @@ export const boatDriver: SandboxProviderDriver = {
           // A paired environment is meant to outlive the setup session, so the provider's auto-stop
           // must never fire before T3's own lifetime limit (eight hours by default).
           ttlSeconds: (input.ttlMinutes ?? 480) * 60,
+          labels: { [ROLE_LABEL.key]: ROLE_LABEL.value },
           // `localhost` keeps the port reachable whether t3 binds 0.0.0.0 or the
           // background service's loopback default.
           hostedPorts: [{ port: 3773, public: true, localhost: true, title: "T3 Code" }],
@@ -354,6 +385,54 @@ export const boatDriver: SandboxProviderDriver = {
       detail: "Timed out waiting for the sandbox to resume.",
     });
   }),
+  status: (input) =>
+    requestJson({
+      provider: "boat",
+      stage: "start",
+      schema: BoatLifecycle,
+      request: authorize(
+        HttpClientRequest.get(`${BOAT_API_BASE}/sandboxes/${encodeURIComponent(input.sandboxId)}`),
+        input.config.apiKey,
+      ),
+    }).pipe(
+      Effect.map(({ sandbox }): SandboxProviderStatus | null =>
+        // Boat drops a stopped sandbox's disk 14 days after the stop; resume then fails.
+        sandbox.state === "archived" && sandbox.dataExpiredAt
+          ? "expired"
+          : (BOAT_STATUS[sandbox.state] ?? null),
+      ),
+      Effect.catchIf(
+        (error) => error.code === "not_found",
+        () => Effect.succeed("deleted" as const),
+      ),
+    ),
+  usage: (input) =>
+    requestJson({
+      provider: "boat",
+      stage: "config",
+      schema: BoatCostList,
+      request: authorize(
+        HttpClientRequest.get(`${BOAT_API_BASE}/sandboxes`).pipe(
+          HttpClientRequest.setUrlParams({
+            include: "cost",
+            label: `${ROLE_LABEL.key}=${ROLE_LABEL.value}`,
+            limit: "200",
+          }),
+        ),
+        input.config.apiKey,
+      ),
+    }).pipe(
+      Effect.map(
+        (listed) =>
+          new Map(
+            listed.sandboxes.flatMap((sandbox): Array<[string, SandboxUsage]> =>
+              sandbox.cost === undefined || sandbox.cost === null
+                ? []
+                : [[sandbox.id, { dollars: sandbox.cost.dollars, since: sandbox.cost.since }]],
+            ),
+          ),
+      ),
+    ),
   destroy: (input) => {
     const request = HttpClientRequest.delete(
       `${BOAT_API_BASE}/sandboxes/${encodeURIComponent(input.sandboxId)}`,

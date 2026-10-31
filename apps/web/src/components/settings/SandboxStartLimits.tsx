@@ -193,11 +193,13 @@ export function SandboxStartBlocked({
 export function SandboxStartConfirmation({
   warnings,
   confirmLabel,
+  destructive = false,
   onConfirm,
   onCancel,
 }: {
   readonly warnings: ReadonlyArray<string>;
   readonly confirmLabel: string;
+  readonly destructive?: boolean;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
 }) {
@@ -212,7 +214,7 @@ export function SandboxStartConfirmation({
         <Button size="xs" variant="ghost" onClick={onCancel}>
           Back
         </Button>
-        <Button size="xs" onClick={onConfirm}>
+        <Button size="xs" variant={destructive ? "destructive" : "default"} onClick={onConfirm}>
           {confirmLabel}
         </Button>
       </AlertAction>

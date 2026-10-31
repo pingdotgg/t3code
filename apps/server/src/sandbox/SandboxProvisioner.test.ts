@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect } from "vite-plus/test";
 
 import * as SandboxProvisioner from "./SandboxProvisioner.ts";
@@ -148,7 +148,45 @@ describe("boatDriver", () => {
       expect(JSON.parse(requests[0]!.body)).toMatchObject({
         hostedPorts: [{ port: 3773, public: true }],
         ttlSeconds: 480 * 60,
+        // The sweep reads every T3 sandbox's cost in one list call filtered by this label.
+        labels: { "t3.code/role": "environment" },
       });
+    }),
+  );
+
+  it.effect("maps Boat's sandbox states to the states T3 records", () =>
+    Effect.gen(function* () {
+      const cases = [
+        ...["ready", "idle", "running"].map((state) => ({ state, expected: "running" })),
+        ...["init", "provisioning", "provisioned", "cloning", "archiving"].map((state) => ({
+          state,
+          expected: "starting",
+        })),
+        { state: "archived", expected: "stopped" },
+        // Boat drops the disk 14 days after a stop; resume then fails.
+        { state: "archived", dataExpiredAt: "2026-10-01T00:00:00.000Z", expected: "expired" },
+        { state: "error", error: "echo boat_live_secret", expected: "error" },
+        { state: "cancelled", expected: "deleted" },
+        { status: 404, expected: "deleted" },
+        { state: "hibernating", expected: null },
+      ] as const;
+      for (const testCase of cases) {
+        const client = HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              "status" in testCase
+                ? Response.json({ ok: false, code: "not_found" }, { status: testCase.status })
+                : Response.json({ sandbox: { id: boatSandboxId, ...testCase } }),
+            ),
+          ),
+        );
+        const status = yield* boatDriver.status!({
+          config: { apiKey: "boat_test" },
+          sandboxId: boatSandboxId,
+        }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+        expect(status, JSON.stringify(testCase)).toBe(testCase.expected);
+      }
     }),
   );
 
@@ -274,6 +312,45 @@ describe("daytonaDriver", () => {
       expect(requests.map((request) => request.url)).toContain(
         "https://toolbox.example/toolbox/sandbox_1/process/execute",
       );
+    }),
+  );
+
+  it.effect("maps Daytona's sandbox states to the states T3 records", () =>
+    Effect.gen(function* () {
+      const cases = [
+        { state: "started", expected: "running" },
+        ...["creating", "restoring", "starting", "pulling_snapshot", "resuming"].map((state) => ({
+          state,
+          expected: "starting",
+        })),
+        ...["stopped", "stopping", "archived", "archiving", "paused", "pausing"].map((state) => ({
+          state,
+          expected: "stopped",
+        })),
+        { state: "error", expected: "error" },
+        { state: "build_failed", expected: "error" },
+        { state: "destroyed", expected: "deleted" },
+        { state: "destroying", expected: "deleted" },
+        { status: 404, expected: "deleted" },
+        { state: "snapshotting", expected: null },
+      ] as const;
+      for (const testCase of cases) {
+        const client = HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              "status" in testCase
+                ? Response.json({ message: "Sandbox not found" }, { status: testCase.status })
+                : Response.json({ id: "sandbox_1", state: testCase.state }),
+            ),
+          ),
+        );
+        const status = yield* daytonaDriver.status!({
+          config: { apiKey: "dtn_test" },
+          sandboxId: "sandbox_1",
+        }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+        expect(status, JSON.stringify(testCase)).toBe(testCase.expected);
+      }
     }),
   );
 });
@@ -783,12 +860,22 @@ describe("SandboxProvisioner lifecycle", () => {
       hardDeadlineAt: "1960-01-01T00:00:00.000Z",
       ttlMinutes: 480,
     };
-    const repository = memoryRepository([expired]);
+    // Within its lifetime, but the provider no longer keeps the stopped sandbox's disk.
+    const diskExpired: SandboxRecord = {
+      ...expired,
+      environmentId: EnvironmentId.make("22222222-2222-4222-8222-222222222222"),
+      state: "expired",
+      hardDeadlineAt: "2100-01-01T00:00:00.000Z",
+    };
+    const repository = memoryRepository([expired, diskExpired]);
     const requests: Array<string> = [];
     return Effect.gen(function* () {
-      const failure = yield* SandboxProvisioner.SandboxProvisioner.pipe(
+      const [failure, expiredFailure] = yield* SandboxProvisioner.SandboxProvisioner.pipe(
         Effect.flatMap((provisioner) =>
-          provisioner.resume({ environmentId: testEnvironmentId }).pipe(Effect.flip),
+          Effect.all([
+            provisioner.resume({ environmentId: testEnvironmentId }).pipe(Effect.flip),
+            provisioner.resume({ environmentId: diskExpired.environmentId }).pipe(Effect.flip),
+          ]),
         ),
         Effect.provide(
           provisionerLayer(
@@ -800,7 +887,14 @@ describe("SandboxProvisioner lifecycle", () => {
       );
 
       expect(failure.detail).toContain("8-hour limit");
+      expect(expiredFailure).toMatchObject({
+        stage: "start",
+        code: "snapshot_expired",
+        detail: "Boat no longer keeps this stopped sandbox's disk. Delete it and create a new one.",
+      });
       expect(repository.records.get(testEnvironmentId)?.state).toBe("stopped");
+      expect(repository.records.get(diskExpired.environmentId)?.state).toBe("expired");
+      // Neither spends a start nor reads the provider's limits.
       expect(requests).toEqual([]);
     });
   });
@@ -953,7 +1047,7 @@ describe("SandboxProvisioner lifecycle", () => {
     const requests: Array<string> = [];
     return Effect.gen(function* () {
       yield* SandboxProvisioner.SandboxProvisioner.pipe(
-        Effect.flatMap((provisioner) => provisioner.sweepDeadlines),
+        Effect.flatMap((provisioner) => provisioner.sweep),
         Effect.provide(
           provisionerLayer(
             { sandboxProviders: { boat: { apiKey: "boat_test" } } },
@@ -966,6 +1060,155 @@ describe("SandboxProvisioner lifecycle", () => {
       expect(repository.records.get(testEnvironmentId)?.state).toBe("stopped");
       expect(repository.records.get(errored.environmentId)?.state).toBe("stopped");
       expect(requests.filter((request) => request.endsWith("/stop"))).toHaveLength(2);
+      // One provider call per record per sweep: the deadline stop replaces the status check.
+      expect(requests).not.toContain(`GET https://boat.dev/api/v1/sandboxes/${boatSandboxId}`);
+    });
+  });
+
+  it.effect("syncs records with what the provider reports and fills their cost", () => {
+    const environmentId = (digit: string) =>
+      EnvironmentId.make(
+        `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`,
+      );
+    const base = {
+      provider: "boat",
+      label: "Synced sandbox",
+      size: "small",
+      createdAt: "1970-01-01T00:00:00.000Z",
+      updatedAt: "1970-01-01T00:00:00.000Z",
+      httpBaseUrl: "https://boat.example/t3",
+      hardDeadlineAt: "2100-01-01T00:00:00.000Z",
+      ttlMinutes: 480,
+    } as const;
+    const records = {
+      stoppedOutside: {
+        ...base,
+        environmentId: environmentId("1"),
+        sandboxId: "bx_stopped",
+        state: "running",
+      },
+      diskExpired: {
+        ...base,
+        environmentId: environmentId("2"),
+        sandboxId: "bx_expired",
+        state: "stopped",
+      },
+      unreachable: {
+        ...base,
+        environmentId: environmentId("3"),
+        sandboxId: "bx_unreach",
+        state: "running",
+      },
+      gone: { ...base, environmentId: environmentId("4"), sandboxId: "bx_gone", state: "stopped" },
+      // The machine runs but T3 did not start on it; "running" would hide that.
+      notServing: {
+        ...base,
+        environmentId: environmentId("5"),
+        sandboxId: "bx_errored",
+        state: "error",
+      },
+      resumedMeanwhile: {
+        ...base,
+        environmentId: environmentId("6"),
+        sandboxId: "bx_raced",
+        state: "running",
+      },
+    } satisfies Record<string, SandboxRecord>;
+    const repository = memoryRepository(Object.values(records));
+    const requests: Array<string> = [];
+    const respond = (request: HttpClientRequest.HttpClientRequest, body: unknown, status = 200) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body, { status })));
+    const client = HttpClient.make((request) => {
+      const query = UrlParams.toString(request.urlParams);
+      requests.push(`${request.method} ${request.url}${query === "" ? "" : `?${query}`}`);
+      const id = request.url.split("/").at(-1);
+      if (request.url.endsWith("/sandboxes")) {
+        return respond(request, {
+          sandboxes: [
+            {
+              id: "bx_stopped",
+              cost: { since: "1970-01-01T00:00:00.000Z", seconds: 60, dollars: 0.42 },
+            },
+            {
+              id: "bx_unreach",
+              cost: { since: "1970-01-01T00:00:00.000Z", seconds: 90, dollars: 1.5 },
+            },
+          ],
+        });
+      }
+      switch (id) {
+        case "bx_stopped":
+          return respond(request, { sandbox: { id, state: "archived", dataExpiredAt: null } });
+        case "bx_expired":
+          return respond(request, {
+            sandbox: { id, state: "archived", dataExpiredAt: "1970-01-01T00:00:00.000Z" },
+          });
+        case "bx_unreach":
+          return respond(request, { ok: false, code: "internal_error" }, 503);
+        case "bx_gone":
+          return respond(request, { ok: false, code: "not_found" }, 404);
+        case "bx_errored":
+          return respond(request, { sandbox: { id, state: "ready" } });
+        case "bx_raced":
+          // The provider auto-stopped it, and the user resumes it while this read is in flight.
+          repository.records.set(records.resumedMeanwhile.environmentId, {
+            ...records.resumedMeanwhile,
+            state: "running",
+            updatedAt: "1970-01-01T00:00:30.000Z",
+          });
+          return respond(request, { sandbox: { id, state: "archived" } });
+      }
+      return respond(request, { ok: true });
+    });
+    return Effect.gen(function* () {
+      yield* SandboxProvisioner.SandboxProvisioner.pipe(
+        Effect.flatMap((provisioner) =>
+          provisioner.sweep.pipe(
+            Effect.andThen(
+              provisioner.delete({
+                provider: "boat",
+                sandboxId: records.gone.sandboxId,
+                environmentId: records.gone.environmentId,
+              }),
+            ),
+          ),
+        ),
+        Effect.provide(
+          provisionerLayer(
+            { sandboxProviders: { boat: { apiKey: "boat_test" } } },
+            repository.layer,
+          ),
+        ),
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+
+      const stateOf = (record: SandboxRecord) =>
+        repository.records.get(record.environmentId)?.state;
+      expect(stateOf(records.stoppedOutside)).toBe("stopped");
+      expect(stateOf(records.diskExpired)).toBe("expired");
+      // An unreachable provider says nothing about the machine.
+      expect(stateOf(records.unreachable)).toBe("running");
+      expect(stateOf(records.notServing)).toBe("error");
+      expect(repository.records.get(records.resumedMeanwhile.environmentId)).toMatchObject({
+        state: "running",
+        updatedAt: "1970-01-01T00:00:30.000Z",
+      });
+      expect(repository.records.get(records.stoppedOutside.environmentId)).toMatchObject({
+        costDollars: 0.42,
+        costSince: "1970-01-01T00:00:00.000Z",
+      });
+      // Cost alone is not a lifecycle change.
+      expect(repository.records.get(records.unreachable.environmentId)).toMatchObject({
+        costDollars: 1.5,
+        updatedAt: "1970-01-01T00:00:00.000Z",
+      });
+      // The 404 record was marked deleted, so deleting it only drops the record.
+      expect(repository.records.has(records.gone.environmentId)).toBe(false);
+      expect(requests.filter((request) => request.startsWith("DELETE"))).toEqual([]);
+      expect(requests.filter((request) => request.includes("include=cost"))).toEqual([
+        "GET https://boat.dev/api/v1/sandboxes?include=cost&label=t3.code%2Frole%3Denvironment&limit=200",
+      ]);
+      expect(requests.filter((request) => /\/sandboxes\/bx_/.test(request))).toHaveLength(6);
     });
   });
 });

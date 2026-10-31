@@ -10,7 +10,7 @@ remote path. Nothing downstream knows the machine is a sandbox.
 
 [`SandboxProviderDriver`](../../apps/server/src/sandbox/SandboxProvider.ts) is the whole extension
 point: `create`, `execute`, `exposePort`, `destroy`, the optional `stop`/`resume` pair, `limits`,
-and `listEnvironments`, and the presentation metadata in `info`. Clients learn which optional
+`listEnvironments`, `status`, and `usage`, and the presentation metadata in `info`. Clients learn which optional
 methods exist from the `capabilities` the provisioner derives; they never branch on provider kind.
 [`providers/index.ts`](../../apps/server/src/sandbox/providers/index.ts) is the registry. Add one
 file and one array entry; settings, RPC, provisioning, and the Add environment UI read the driver's
@@ -62,6 +62,11 @@ one registry entry.
      `assessSandboxStart` before every create and resume, and it blocks only on what the provider
      says it would refuse; unknown or failed limits let the start through so the provider decides.
      A plan maximum for auto-stop (`maxTtlMinutes`) clamps the lifetime T3 records.
+   - `status` lets the sweep notice a machine stopped, expired, or deleted outside T3. A machine
+     the provider no longer has is `deleted`, not an error, and a provider state T3 does not track
+     returns `null` so the record is left alone.
+   - `usage` only if one request can return every T3 sandbox's cost; the sweep calls it once per
+     provider, never once per machine. Tag sandboxes at create so the provider can filter them.
 6. **Add a size default and the server port.** `defaultSize` must be one of the `info.sizes` ids,
    and `serverPort` is `3773` unless the provider reserves it.
 7. **Test it without the network.** Follow `SandboxProvisioner.test.ts`: `HttpClient.make`
@@ -89,11 +94,19 @@ size, credential environment, and the deadline.
 `ttlMinutes` defaults to 480 and is the sandbox's lifetime, not a window that each resume refreshes:
 stopping and resuming can never hand back another eight hours, or the limit would never bind.
 `hardDeadlineAt` is fixed at create time, resume refuses a sandbox that is already past it, and the
-server sweeps deadlines once a minute and calls the driver's `stop` when one passes. A failed stop
-is logged and retried on the next sweep. The provider's own TTL is only a backstop for when T3 is
+server sweeps records once a minute and calls the driver's `stop` when a deadline passes. A failed
+stop is logged and retried on the next sweep. The provider's own TTL is only a backstop for when T3 is
 offline at the deadline, and it must never destroy what T3's stop would keep. Boat's backstop
 stops the machine at the deadline. Daytona's TTL deletes the sandbox, disk included, so it is set
 24 hours past the deadline: a stopped Daytona sandbox keeps its disk for a day and is then gone.
+
+The same sweep makes the record match the provider, because T3 usually runs where webhooks can't
+reach it. Each record gets at most one provider call per sweep, with a few in flight at a time. An
+unreachable provider changes nothing: the record keeps its state rather than turning into an error,
+and an `error` record stays one while the provider reports the machine running, since that state
+means T3 is not answering on it. The sweep writes only when the record has not changed since it was
+read, so a user's stop or resume during a slow provider call wins. `expired` and `deleted` records
+stay listed until the user deletes them; deleting a `deleted` record skips the provider.
 
 `stop` and `resume` are optional on the driver. A provider without them still provisions and
 connects; the settings UI hides the controls and the RPC returns a configuration error instead of

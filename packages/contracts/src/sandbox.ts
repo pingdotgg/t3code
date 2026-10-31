@@ -154,11 +154,16 @@ export const SandboxDeleteInput = Schema.Struct({
 });
 export type SandboxDeleteInput = typeof SandboxDeleteInput.Type;
 
+/**
+ * `expired` is a stopped sandbox whose disk the provider no longer keeps; `deleted` is one the
+ * provider no longer knows. Both stay listed until the user removes them.
+ */
 export const SandboxLifecycleState = Schema.Literals([
   "provisioning",
   "running",
   "stopped",
   "error",
+  "expired",
   "deleted",
 ]);
 export type SandboxLifecycleState = typeof SandboxLifecycleState.Type;
@@ -178,6 +183,9 @@ export const SandboxRecord = Schema.Struct({
   hardDeadlineAt: Schema.NullOr(TrimmedString),
   ttlMinutes: Schema.Int,
   credentialEnvironment: Schema.optionalKey(TrimmedString),
+  /** Machine cost this calendar month at list price, when the provider reports it. */
+  costDollars: Schema.optionalKey(Schema.Number),
+  costSince: Schema.optionalKey(TrimmedString),
 });
 export type SandboxRecord = typeof SandboxRecord.Type;
 

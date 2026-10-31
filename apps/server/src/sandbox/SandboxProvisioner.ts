@@ -38,6 +38,8 @@ import {
   shellQuote,
   type SandboxProviderConfig,
   type SandboxProviderDriver,
+  type SandboxProviderStatus,
+  type SandboxUsage,
 } from "./SandboxProvider.ts";
 import { SANDBOX_PROVIDER_DRIVERS } from "./providers/index.ts";
 
@@ -110,6 +112,16 @@ const parsePairingToken = (output: string): string | null => {
   return match?.[1] ?? null;
 };
 
+// `starting` has no record state, and an `error` record means T3 is not serving on a machine the
+// provider reports running, so neither overwrites what the record says.
+const reconcileState = (
+  current: SandboxRecord["state"],
+  status: SandboxProviderStatus | null,
+): SandboxRecord["state"] =>
+  status === null || status === "starting" || (current === "error" && status === "running")
+    ? current
+    : status;
+
 const findDriver = (kind: SandboxProviderKind): SandboxProviderDriver => {
   const driver = SANDBOX_PROVIDER_DRIVERS.find((candidate) => candidate.info.kind === kind);
   if (driver === undefined) {
@@ -139,7 +151,8 @@ export class SandboxProvisioner extends Context.Service<
     readonly resume: (
       input: SandboxLifecycleInput,
     ) => Effect.Effect<SandboxResumeResult, SandboxProviderError>;
-    readonly sweepDeadlines: Effect.Effect<void>;
+    /** Stops sandboxes past their deadline and syncs every other record with its provider. */
+    readonly sweep: Effect.Effect<void>;
   }
 >()("t3/sandbox/SandboxProvisioner") {}
 
@@ -392,9 +405,18 @@ const make = Effect.gen(function* () {
   });
 
   const remove = Effect.fn("SandboxProvisioner.delete")(function* (input: SandboxDeleteInput) {
-    const driver = findDriver(input.provider);
-    const apiKey = yield* resolveApiKey(input.provider, undefined);
-    yield* onHttp(driver.destroy({ config: { apiKey }, sandboxId: input.sandboxId }));
+    const record = yield* records.get(input.environmentId).pipe(Effect.orDie);
+    if (Option.isNone(record) || record.value.state !== "deleted") {
+      const driver = findDriver(input.provider);
+      const apiKey = yield* resolveApiKey(input.provider, undefined);
+      yield* onHttp(driver.destroy({ config: { apiKey }, sandboxId: input.sandboxId })).pipe(
+        // Deleted from the provider's dashboard before the sweep noticed: the record still goes.
+        Effect.catchIf(
+          (error) => error.code === "not_found",
+          () => Effect.void,
+        ),
+      );
+    }
     yield* records.remove(input.environmentId).pipe(Effect.orDie);
   });
 
@@ -449,6 +471,17 @@ const make = Effect.gen(function* () {
   const resume = Effect.fn("SandboxProvisioner.resume")(function* (input: SandboxLifecycleInput) {
     const record = yield* readRecord(input.environmentId);
     const driver = findDriver(record.provider);
+    if (record.state === "expired" || record.state === "deleted") {
+      return yield* new SandboxProviderError({
+        provider: record.provider,
+        stage: "start",
+        code: record.state === "expired" ? "snapshot_expired" : "not_found",
+        detail:
+          record.state === "expired"
+            ? `${driver.info.label} no longer keeps this stopped sandbox's disk. Delete it and create a new one.`
+            : `${driver.info.label} no longer has this sandbox. Delete it and create a new one.`,
+      });
+    }
     if (driver.resume === undefined) {
       return yield* new SandboxProviderError({
         provider: record.provider,
@@ -527,26 +560,39 @@ const make = Effect.gen(function* () {
     return { sandbox: updated, httpBaseUrl: updated.httpBaseUrl } satisfies SandboxResumeResult;
   });
 
-  const sweepDeadlines = Effect.gen(function* () {
-    const now = yield* DateTime.now;
-    const nowMillis = DateTime.toEpochMillis(now);
-    const all = yield* records.list.pipe(Effect.orDie);
-    for (const record of all) {
-      // A resume that could not start T3 leaves the machine running (and billing) as `error`.
-      if (record.state !== "running" && record.state !== "error") continue;
-      if (record.hardDeadlineAt === null) continue;
-      if (DateTime.toEpochMillis(DateTime.makeUnsafe(record.hardDeadlineAt)) > nowMillis) continue;
-      const driver = findDriver(record.provider);
-      if (driver.stop === undefined) continue;
-      const apiKey = yield* resolveApiKey(record.provider, undefined).pipe(Effect.option);
-      if (Option.isNone(apiKey)) continue;
-      yield* onHttp(
-        driver.stop({ config: { apiKey: apiKey.value }, sandboxId: record.sandboxId }),
-      ).pipe(
-        Effect.tap(() =>
-          records
-            .put({ ...record, state: "stopped", updatedAt: DateTime.formatIso(now) })
-            .pipe(Effect.orDie),
+  // The sweep reads records, then waits on the provider; a user action in between wins.
+  const putIfUnchanged = Effect.fn("SandboxProvisioner.putIfUnchanged")(function* (
+    read: SandboxRecord,
+    next: SandboxRecord,
+  ) {
+    const current = yield* records.get(read.environmentId);
+    if (Option.isNone(current)) return;
+    if (current.value.updatedAt !== read.updatedAt || current.value.state !== read.state) return;
+    yield* records.put(next);
+  }, Effect.orDie);
+
+  const sweepRecord = Effect.fn("SandboxProvisioner.sweepRecord")(function* (
+    record: SandboxRecord,
+    config: SandboxProviderConfig,
+    cost: SandboxUsage | undefined,
+    now: DateTime.Utc,
+  ) {
+    const driver = findDriver(record.provider);
+    const withCost: SandboxRecord =
+      cost === undefined ? record : { ...record, costDollars: cost.dollars, costSince: cost.since };
+    const pastDeadline =
+      record.hardDeadlineAt !== null &&
+      DateTime.toEpochMillis(DateTime.makeUnsafe(record.hardDeadlineAt)) <=
+        DateTime.toEpochMillis(now);
+    // A resume that could not start T3 leaves the machine running (and billing) as `error`.
+    if (pastDeadline && (record.state === "running" || record.state === "error") && driver.stop) {
+      return yield* onHttp(driver.stop({ config, sandboxId: record.sandboxId })).pipe(
+        Effect.andThen(
+          putIfUnchanged(record, {
+            ...withCost,
+            state: "stopped",
+            updatedAt: DateTime.formatIso(now),
+          }),
         ),
         Effect.catch((cause) =>
           Effect.logWarning("sandbox deadline stop failed", {
@@ -557,6 +603,62 @@ const make = Effect.gen(function* () {
         ),
       );
     }
+    // An unreachable provider says nothing about the machine, so the record keeps its state.
+    const status =
+      driver.status === undefined
+        ? null
+        : yield* onHttp(driver.status({ config, sandboxId: record.sandboxId })).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("sandbox status check failed", {
+                environmentId: record.environmentId,
+                sandboxId: record.sandboxId,
+                cause,
+              }).pipe(Effect.as(null)),
+            ),
+          );
+    const state = reconcileState(record.state, status);
+    if (state !== record.state) {
+      yield* putIfUnchanged(record, { ...withCost, state, updatedAt: DateTime.formatIso(now) });
+    } else if (
+      withCost.costDollars !== record.costDollars ||
+      withCost.costSince !== record.costSince
+    ) {
+      // Cost alone is not a lifecycle change, so it keeps `updatedAt` and the list order.
+      yield* putIfUnchanged(record, withCost);
+    }
+  });
+
+  const sweep = Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const live = (yield* records.list.pipe(Effect.orDie)).filter(
+      (record) => record.state !== "deleted",
+    );
+    const configs = new Map<SandboxProviderKind, SandboxProviderConfig>();
+    const costs = new Map<SandboxProviderKind, ReadonlyMap<string, SandboxUsage>>();
+    for (const provider of new Set(live.map((record) => record.provider))) {
+      const apiKey = yield* resolveApiKey(provider, undefined).pipe(Effect.option);
+      if (Option.isNone(apiKey)) continue;
+      const config = { apiKey: apiKey.value };
+      configs.set(provider, config);
+      const driver = findDriver(provider);
+      if (driver.usage === undefined) continue;
+      yield* onHttp(driver.usage({ config })).pipe(
+        Effect.tap((usage) => Effect.sync(() => costs.set(provider, usage))),
+        Effect.catch((cause) =>
+          Effect.logWarning("sandbox usage read failed", { provider, cause }),
+        ),
+      );
+    }
+    yield* Effect.forEach(
+      live,
+      (record) => {
+        const config = configs.get(record.provider);
+        return config === undefined
+          ? Effect.void
+          : sweepRecord(record, config, costs.get(record.provider)?.get(record.sandboxId), now);
+      },
+      { concurrency: 4, discard: true },
+    );
   });
 
   return SandboxProvisioner.of({
@@ -568,7 +670,7 @@ const make = Effect.gen(function* () {
     list,
     stop,
     resume,
-    sweepDeadlines,
+    sweep,
   });
 });
 
@@ -578,7 +680,7 @@ export const layerSweep = Layer.effectDiscard(
   Effect.gen(function* () {
     const provisioner = yield* SandboxProvisioner;
     yield* forkParked(
-      provisioner.sweepDeadlines.pipe(
+      provisioner.sweep.pipe(
         Effect.catchCause((cause) => Effect.logWarning("sandbox sweep failed", { cause })),
         Effect.repeat(Schedule.spaced("1 minute")),
       ),

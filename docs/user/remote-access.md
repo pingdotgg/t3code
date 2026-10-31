@@ -16,6 +16,10 @@ Environments → Sandboxes**. A sandbox stops eight hours after it was created a
 after that; resuming does not reset the limit. Daytona deletes a sandbox, files included, a day
 after that limit, so copy out anything you need before then.
 
+That list follows the provider: a sandbox you stop or delete in the provider's dashboard shows up as
+stopped or deleted within a minute, and Boat's monthly cost appears next to each sandbox. Boat keeps
+a stopped sandbox's disk for 14 days; after that it shows as expired and can only be deleted.
+
 ## T3 Connect
 
 T3 Connect makes an environment available to your other devices without setting
