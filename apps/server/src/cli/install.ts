@@ -12,7 +12,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import packageJson from "../../package.json" with { type: "json" };
-import { launcherOwnsVersionsDir, windowsShimTarget } from "../cloud/pinnedRuntime.ts";
+import { generatedWindowsShimTarget, launcherOwnsVersionsDir } from "../cloud/pinnedRuntime.ts";
 import { detectCliRunner, resolveCliCommand, resolveEntryPath } from "./invocation.ts";
 
 export class CliInstallError extends Schema.TaggedError<CliInstallError>()("CliInstallError", {
@@ -72,14 +72,18 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
   const current = windows
-    ? yield* fs.readFileString(link).pipe(Effect.map(windowsShimTarget), Effect.option)
+    ? yield* fs.readFileString(link).pipe(Effect.map(generatedWindowsShimTarget), Effect.option)
     : yield* fs.readLink(link).pipe(
         Effect.flatMap((target) =>
           fs.realPath(link).pipe(Effect.orElseSucceed(() => path.resolve(binDir, target))),
         ),
         Effect.option,
       );
-  const occupied = Option.isSome(current) || (yield* fs.exists(link));
+  // A dangling symlink is occupied too: writing the shim would follow it.
+  const occupied =
+    Option.isSome(current) ||
+    (yield* fs.exists(link)) ||
+    Option.isSome(yield* fs.readLink(link).pipe(Effect.option));
   if (
     occupied &&
     !(
@@ -166,15 +170,7 @@ export const installCommand = Command.make("install").pipe(
 /** Saying no lasts until the next minor release: `0.2` covers `0.2.5` and `0.2.6-nightly.…`. */
 const minorRelease = (version: string) => version.split(".").slice(0, 2).join(".");
 
-const SKIPPED_ARGUMENTS = new Set([
-  "help",
-  "--help",
-  "-h",
-  "--version",
-  "-v",
-  "install",
-  "uninstall",
-]);
+const SKIPPED_ARGUMENTS = new Set(["help", "--help", "-h", "--version", "-v"]);
 
 /** Agents can run commands in a terminal that nobody answers; no answer counts as no. */
 const PROMPT_TIMEOUT = Duration.seconds(30);
@@ -236,6 +232,7 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
   if (!input.interactive || environment.CI || environment.SUDO_USER) return true;
   if (environment.T3CODE_USE_NPM === "1" || environment.TERM === "dumb") return true;
   if (input.args.some((arg) => SKIPPED_ARGUMENTS.has(arg))) return true;
+  if (input.args[0] === "install" || input.args[0] === "uninstall") return true;
   if (detectCliRunner(yield* resolveEntryPath) === null) return true;
   const runtime = yield* standaloneRuntime;
   if (Option.isNone(runtime)) return true;

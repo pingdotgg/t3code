@@ -11,6 +11,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 
 import { npmReleaseDatabaseMigration } from "@t3tools/shared/cliRelease";
@@ -386,6 +387,15 @@ fs.readFileSync = (file, ...rest) => {
           assert.equal(cannotStart.stdout.trim(), `stub connect launcher=${launcher}`, content);
           assert.equal(cannotStart.exitCode, 7);
         }
+        // Linux refuses to run a file open for writing, and Node throws that from spawn().
+        if (HostProcess.Platform.defaultValue() === "linux") {
+          yield* fs.writeFileString(installedExe, "#!/bin/sh\nexit 5\n");
+          const writing = NodeFS.openSync(installedExe, "r+");
+          const busy = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
+          NodeFS.closeSync(writing);
+          assert.equal(busy.stdout.trim(), `stub connect launcher=${launcher}`, busy.stderr);
+          yield* fs.writeFileString(installedExe, "#!/no/such/interpreter\n");
+        }
 
         // Signals stop that fallback while it downloads, instead of going to the dead child.
         yield* fs.remove(path.join(home, "runtime/versions", VERSION), { recursive: true });
@@ -466,6 +476,26 @@ fs.readFileSync = (file, ...rest) => {
         yield* fs.utimes(desktopShim, 1_800_000_000, 1_800_000_000);
         const desktop = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
         assert.equal(desktop.stdout.trim(), "desktop connect", desktop.stderr);
+
+        // An older macOS bundle moved into place keeps its executable's ctime; the bundle's changes.
+        const bundle = path.join(root, "T3 Code.app");
+        const restored = path.join(root, "restored.app");
+        yield* fs.makeDirectory(path.join(restored, "Contents/MacOS"), { recursive: true });
+        yield* fs.writeFileString(path.join(restored, "Contents/MacOS/T3 Code"), "");
+        yield* fs.chmod(path.join(restored, "Contents/MacOS/T3 Code"), 0o755);
+        yield* fs.writeFileString(
+          desktopShim,
+          `#!/bin/sh\n# T3 Code version: ${VERSION}\napp='${bundle}/Contents/MacOS/T3 Code'\necho "desktop $*"\n`,
+        );
+        // Before the move the shim names a missing app. This run also puts the move a clock tick later.
+        const noBundle = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
+        assert.equal(noBundle.stdout.trim(), `stub connect launcher=${launcher}`);
+        yield* fs.rename(restored, bundle);
+        const movedBundle = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
+        assert.equal(movedBundle.stdout.trim(), `stub connect launcher=${launcher}`);
+        yield* fs.utimes(desktopShim, 1_800_000_000, 1_800_000_000);
+        const refreshed = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
+        assert.equal(refreshed.stdout.trim(), "desktop connect", refreshed.stderr);
       }),
   );
 

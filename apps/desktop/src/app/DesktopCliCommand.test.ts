@@ -220,6 +220,17 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
       expect(yield* fs.readFileString(theirs)).toBe("#!/bin/sh\n");
 
+      // Its folder is already on PATH behind theirs; adding it again would change which t3 runs.
+      yield* fs.makeDirectory(path.join(home, ".local", "bin"), { recursive: true });
+      yield* fs.symlink(
+        path.join(home, ".t3", "bin", "t3"),
+        path.join(home, ".local", "bin", "t3"),
+      );
+      const behind = yield* command.state;
+      expect(behind.installedPath).toBe(path.join(home, ".local", "bin", "t3"));
+      expect(behind.pathSetup).toBeUndefined();
+      yield* fs.remove(path.join(home, ".local", "bin", "t3"));
+
       // A first-launch install that failed is not retried behind the user's back.
       yield* fs.remove(theirs);
       yield* command.installOnFirstLaunch;

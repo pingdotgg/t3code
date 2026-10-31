@@ -12,7 +12,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { pathSetup } from "@t3tools/shared/shell";
+import { pathSetup, readUserLoginShell } from "@t3tools/shared/shell";
 
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -190,7 +190,8 @@ export const make = Effect.gen(function* () {
     const setup = pathSetup({
       directory: path.dirname(installedPath),
       home: environment.homeDirectory,
-      shell: process.env.SHELL,
+      // A Finder or desktop launch may not set SHELL.
+      shell: process.env.SHELL || readUserLoginShell(),
       platform: environment.platform,
     });
     return setup && { ...setup, path: path.join(environment.homeDirectory, setup.file.slice(2)) };
@@ -213,7 +214,14 @@ export const make = Effect.gen(function* () {
     const onPath = windows
       ? Option.isSome(installed)
       : Option.isSome(first) && (yield* runsOurLauncher(first.value));
-    const setup = onPath || Option.isNone(installed) ? undefined : startupLine(installed.value);
+    // Only a folder missing from PATH; prepending one that is there behind another t3 would
+    // change which t3 runs.
+    const setup =
+      onPath ||
+      Option.isNone(installed) ||
+      pathEntries(process.env.PATH, ":").includes(path.dirname(installed.value))
+        ? undefined
+        : startupLine(installed.value);
     return {
       supported: true,
       installedPath: Option.getOrNull(installed),

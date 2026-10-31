@@ -156,7 +156,8 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
   const command = yield* resolveCliCommand(subcommand);
   if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
   const onPath = yield* resolveCommandPath("t3");
-  if (onPath !== null) {
+  // A runner puts its own cache's `.bin` on PATH; that `t3` is gone in the user's next shell.
+  if (onPath !== null && detectCliRunner(onPath) === null) {
     const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
     const fs = yield* FileSystem.FileSystem;
     const real = (file: string) => fs.realPath(file).pipe(Effect.orElseSucceed(() => null));

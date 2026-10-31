@@ -210,7 +210,13 @@ function newestInstalled(home) {
         for (const file of [app, shim]) fs.accessSync(file, fs.constants.X_OK);
         // The app refreshes the shim each launch. A replaced app gets a new ctime (even when
         // its mtime is kept), so a version line older than the app may name the wrong version.
-        if (fs.statSync(app).ctimeMs <= info.ctimeMs) {
+        // A macOS bundle moved into place keeps its executable's ctime; only the bundle's changes.
+        const bundle = /^(.*\.app)\/Contents\/MacOS\//.exec(app)?.[1];
+        const changed = Math.max(
+          fs.statSync(app).ctimeMs,
+          bundle ? fs.statSync(bundle).ctimeMs : 0,
+        );
+        if (changed <= info.ctimeMs) {
           found.push({ version: desktop, command: shim });
         }
       }
@@ -266,10 +272,17 @@ async function runNpm(home, ipc) {
 
 /** `fallback` runs instead when the executable cannot start at all. */
 function run(executable, env, ipc, fallback) {
-  const child = spawn(executable, process.argv.slice(2), {
-    stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
-    env,
-  });
+  let child;
+  try {
+    child = spawn(executable, process.argv.slice(2), {
+      stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
+      env,
+    });
+  } catch (error) {
+    // Node throws some spawn errors (ETXTBSY) instead of emitting them.
+    if (fallback) return fallback();
+    throw error;
+  }
   let done = false;
   const finish = (exit) => {
     if (done) return;

@@ -15,6 +15,7 @@ import * as BootService from "../cloud/bootService.ts";
 import {
   launcherOwnsVersionsDir,
   pinnedRuntimeVersionsDir,
+  generatedWindowsShimTarget,
   windowsShimTarget,
 } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
@@ -86,7 +87,7 @@ export const findRecordedLaunchers = Effect.fn("cli.uninstall.find_recorded_laun
       platform === "win32"
         ? [
             yield* fs.readFileString(launcher).pipe(
-              Effect.map(windowsShimTarget),
+              Effect.map(generatedWindowsShimTarget),
               Effect.orElseSucceed(() => undefined),
             ),
           ]

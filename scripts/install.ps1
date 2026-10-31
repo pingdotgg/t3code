@@ -220,9 +220,9 @@ $shim = Join-Path $binDir "t3.cmd"
 if (Test-Path -LiteralPath $shim) {
   $existingTarget = ""
   # The shim is UTF-8 without a BOM; Windows PowerShell 5.1 reads files as ANSI by default.
-  foreach ($line in [System.IO.File]::ReadAllLines($shim, [System.Text.Encoding]::UTF8)) {
-    if ($line -match '^"([^"]+)"') { $existingTarget = $Matches[1]; break }
-  }
+  # Only a shim exactly as written here counts; a user's wrapper that also runs t3.exe does not.
+  $existing = [System.IO.File]::ReadAllText($shim, [System.Text.Encoding]::UTF8)
+  if ($existing -match '^@echo off\r?\n"([^"]+)" %\*\s*$') { $existingTarget = $Matches[1] }
   # Full paths, so a target like versions\..\other cannot pass as ours.
   $ownedPrefix = [System.IO.Path]::GetFullPath($versionsDir).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
   if ($existingTarget) { $existingTarget = [System.IO.Path]::GetFullPath($existingTarget) }

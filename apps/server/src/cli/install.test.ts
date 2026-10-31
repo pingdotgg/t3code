@@ -87,6 +87,18 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       const foreignShim = yield* windows(installCli()).pipe(Effect.flip);
       assert.include(foreignShim.message, "Another t3 is already at");
       assert.equal(yield* fs.readFileString(shim), desktopShim);
+      // A user's wrapper that also runs a managed t3.exe is still theirs.
+      const wrapper = `@echo off\r\nset FOO=1\r\n"${path.join(runtimeDir, "versions/0.0.1/t3.exe")}" %*`;
+      yield* fs.writeFileString(shim, wrapper);
+      yield* windows(installCli()).pipe(Effect.flip);
+      assert.equal(yield* fs.readFileString(shim), wrapper);
+      // A dangling symlink is not free; writing through it would land outside the bin folder.
+      const elsewhere = path.join(root, "elsewhere.cmd");
+      yield* fs.remove(shim);
+      yield* fs.symlink(elsewhere, shim);
+      yield* windows(installCli()).pipe(Effect.flip);
+      assert.isFalse(yield* fs.exists(elsewhere));
+      yield* fs.remove(shim);
       yield* fs.writeFileString(
         shim,
         `@echo off\r\n"${path.join(runtimeDir, "versions/0.0.1/t3.exe")}" %*`,
@@ -160,7 +172,9 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.isFalse(yield* fs.exists(path.join(runtimeDir, "install-prompt-declined")));
       asked = 0;
 
-      yield* offer(false);
+      // `service install` is not `t3 install`; it still leaves the command unlinked.
+      yield* offer(false, { args: ["service", "install"] });
+      assert.equal(asked, 1);
       yield* offer(false);
       assert.equal(asked, 1);
       assert.isFalse(yield* fs.exists(link));
