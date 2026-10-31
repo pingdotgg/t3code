@@ -210,6 +210,26 @@ export function AddEnvironmentDialog({
         return;
       }
 
+      if (desktopBridge) {
+        const session = savedBackendSessionRef.current;
+        setIsAddingSavedBackend(true);
+        onErrorChange(null);
+        try {
+          const resolved = await desktopBridge.resolveSshHost(target.alias);
+          if (session !== savedBackendSessionRef.current) return;
+          target = {
+            ...resolved,
+            username: target.username ?? resolved.username,
+            port: target.port ?? resolved.port,
+          };
+        } catch (error) {
+          if (session === savedBackendSessionRef.current)
+            onErrorChange(formatDesktopSshConnectionError(error));
+          return;
+        } finally {
+          setIsAddingSavedBackend(false);
+        }
+      }
       await connectSavedBackendSshTarget(target);
       return;
     }
@@ -374,6 +394,8 @@ export function AddEnvironmentDialog({
         )}
         disabled={isAddingSavedBackend}
         onClick={() => {
+          onErrorChange(null);
+          setSavedBackendSshErrorTarget(undefined);
           setSavedBackendMode(input.mode);
         }}
       >

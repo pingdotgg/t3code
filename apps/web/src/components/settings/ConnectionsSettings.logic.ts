@@ -16,7 +16,6 @@ import {
   AuthTerminalReadScope,
   type DesktopBridge,
   type DesktopServerExposureState,
-  type DesktopSshEnvironmentTarget,
   type DesktopUpdateState,
   type DesktopWslState,
 } from "@t3tools/contracts";
