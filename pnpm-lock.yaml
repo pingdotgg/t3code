@@ -1323,6 +1323,9 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      sharp:
+        specifier: 0.35.4
+        version: 0.35.4(@types/node@24.12.4)
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.5

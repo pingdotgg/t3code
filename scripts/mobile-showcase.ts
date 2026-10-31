@@ -27,7 +27,10 @@ import {
   SHOWCASE_ENVIRONMENTS,
   SHOWCASE_PROJECTS,
   SHOWCASE_THREADS,
+  type ShowcaseLiveThreadId,
   seedShowcaseEnvironment,
+  startShowcaseLiveThreads,
+  writeShowcaseProviderSettings,
 } from "./mobile-showcase-environment.ts";
 
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
@@ -39,7 +42,7 @@ const DEV_CLIENT_LAUNCH_FLAGS = "disableOnboarding=1&disableFab=1&disableAutoLau
 const IOS_READY_FILENAME = "T3ShowcaseReadyScene";
 const SERVER_HOST = "0.0.0.0";
 const IOS_SIMULATOR_ARCH = NodeProcess.arch === "arm64" ? "arm64" : "x86_64";
-const IOS_APP_PATH = NodePath.join(
+export const IOS_APP_PATH = NodePath.join(
   MOBILE_ROOT,
   ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/T3Code.app",
 );
@@ -644,13 +647,19 @@ export interface ShowcaseEnvironment {
   readonly environmentId: string;
   readonly label: string;
   readonly port: number;
+  /** Server thread ids of the live threads this environment runs, when started with them. */
+  readonly liveThreadIds: ReadonlyMap<ShowcaseLiveThreadId, string>;
 }
 
-/** Boot one seeded fixture server per showcase environment; `track` receives every spawned server. */
+/**
+ * Boot one seeded fixture server per showcase environment; `track` receives every spawned server.
+ * `liveThreads` swaps Codex for the scripted provider and starts SHOWCASE_LIVE_THREADS on it.
+ */
 export async function startShowcaseEnvironments(
   rootDir: string,
   track: (server: NodeChildProcess.ChildProcess) => void,
   environments: ReadonlyArray<(typeof SHOWCASE_ENVIRONMENTS)[number]> = SHOWCASE_ENVIRONMENTS,
+  options: { readonly liveThreads?: boolean } = {},
 ): Promise<ShowcaseEnvironment[]> {
   const started: ShowcaseEnvironment[] = [];
   for (const environment of environments) {
@@ -664,6 +673,7 @@ export async function startShowcaseEnvironments(
     await NodeFSP.mkdir(workspaceRoot, { recursive: true });
     const shellPath = await createShowcaseShell(baseDir);
     const labelProbeDirectory = await createShowcaseLabelProbe(baseDir, environment.label);
+    if (options.liveThreads) await writeShowcaseProviderSettings(baseDir);
     const server = startShowcaseServer(
       baseDir,
       workspaceRoot,
@@ -691,7 +701,14 @@ export async function startShowcaseEnvironments(
       NodePath.join(baseDir, "userdata", "environment-id"),
       `${environment.label} environment id`,
     );
-    started.push({ baseDir, environmentId, label: environment.label, port });
+    const liveThreadIds = options.liveThreads
+      ? await startShowcaseLiveThreads({
+          baseDir,
+          projectIds: environment.projectIds,
+          repoRoot: REPO_ROOT,
+        })
+      : new Map<ShowcaseLiveThreadId, string>();
+    started.push({ baseDir, environmentId, label: environment.label, port, liveThreadIds });
   }
   return started;
 }
@@ -730,18 +747,18 @@ export function encodeAndroidPairingUrls(pairingUrls: ReadonlyArray<string>): st
   return `json-uri:${encodeURIComponent(JSON.stringify(pairingUrls))}`;
 }
 
-function startMetro(config: ShowcaseConfig): NodeChildProcess.ChildProcess {
-  return spawnProcess(
-    "pnpm",
-    ["exec", "expo", "start", "--dev-client", "--port", String(config.metroPort)],
-    {
-      cwd: MOBILE_ROOT,
-      env: {
-        ...MOBILE_BUILD_ENV,
-        EXPO_PUBLIC_SHOWCASE: "1",
-      },
+/** Metro for the capture build; `showcase` turns on the in-app capture coordinator. */
+export function startShowcaseMetro(
+  port: number,
+  options: { readonly showcase: boolean },
+): NodeChildProcess.ChildProcess {
+  return spawnProcess("pnpm", ["exec", "expo", "start", "--dev-client", "--port", String(port)], {
+    cwd: MOBILE_ROOT,
+    env: {
+      ...MOBILE_BUILD_ENV,
+      ...(options.showcase ? { EXPO_PUBLIC_SHOWCASE: "1" } : {}),
     },
-  );
+  });
 }
 
 async function warmMetroBundle(
@@ -753,7 +770,7 @@ async function warmMetroBundle(
   await runCommand("curl", ["--fail", "--silent", "--show-error", "--output", "/dev/null", url]);
 }
 
-async function buildIos(): Promise<string> {
+export async function buildIos(): Promise<string> {
   const derivedData = NodePath.join(MOBILE_ROOT, ".showcase/ios-derived-data");
   await runCommand("pnpm", ["exec", "expo", "prebuild", "--clean", "--platform", "ios"], {
     cwd: MOBILE_ROOT,
@@ -868,7 +885,7 @@ async function iosSimulatorDataPath(udid: string): Promise<string> {
 }
 
 // Apple Intelligence posts persistent first-boot banners; mark readiness and clear queued CoreFollowUp notices.
-async function suppressIosSystemFollowUps(udid: string): Promise<void> {
+export async function suppressIosSystemFollowUps(udid: string): Promise<void> {
   const dataPath = await iosSimulatorDataPath(udid);
   const preferences = NodePath.join(dataPath, "Library/Preferences");
   await NodeFSP.mkdir(preferences, { recursive: true });
@@ -890,7 +907,10 @@ async function suppressIosSystemFollowUps(udid: string): Promise<void> {
   });
 }
 
-async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: string): Promise<void> {
+export async function normalizeIosSimulator(
+  appearance: ShowcaseAppearance,
+  udid: string,
+): Promise<void> {
   await runCommand("xcrun", ["simctl", "ui", udid, "appearance", appearance]);
   // Disable always-on dimming so lock-screen wake can distinguish off from fully lit.
   await runCommand("xcrun", [
@@ -923,7 +943,7 @@ async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: strin
 }
 
 // iPadOS 26 windowing forces fullscreen apps into portrait, defeating capture-build rotation.
-async function ensureIosFullScreenAppsMode(udid: string): Promise<void> {
+export async function ensureIosFullScreenAppsMode(udid: string): Promise<void> {
   const current = await commandOutput("xcrun", [
     "simctl",
     "spawn",
@@ -1567,7 +1587,7 @@ async function main(): Promise<void> {
     );
 
     if (!options.skipMetro) {
-      metro = startMetro(showcaseConfig);
+      metro = startShowcaseMetro(showcaseConfig.metroPort, { showcase: true });
       await waitForPort(showcaseConfig.metroPort, "Metro");
       await Promise.all([
         hasIos ? warmMetroBundle("ios", metroHost, showcaseConfig) : Promise.resolve(),
