@@ -1078,6 +1078,19 @@ const make = Effect.gen(function* () {
             );
             if (removed) return;
           }
+          // The timer can win the race against a revocation published in the same instant.
+          const [originalNow, currentNow] = yield* Effect.all([
+            readRow(sessionId),
+            readRow(current.sessionId),
+          ]);
+          if (
+            Option.isNone(originalNow) ||
+            originalNow.value.revokedAt !== null ||
+            Option.isNone(currentNow) ||
+            currentNow.value.revokedAt !== null
+          ) {
+            return;
+          }
           const successorId =
             proofKeyThumbprint === undefined
               ? undefined
