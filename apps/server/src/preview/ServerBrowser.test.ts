@@ -724,13 +724,13 @@ it.live.each(["load", "none"] as const)(
             scope,
             tabId,
             operation: "navigate",
-            input: { url: "http://localhost:5173/next", readiness, timeoutMs: 5_000 },
+            input: { url: "http://localhost:5173/next", readiness, timeoutMs: 200 },
           })
           .pipe(Effect.exit, Effect.forkScoped);
         yield* Effect.promise(() => renderer.gotoStarted.promise);
         for (const timeOut of renderer.stalledGotos.splice(0)) {
           timeOut(
-            Object.assign(new Error("page.goto: Timeout 5000ms exceeded."), {
+            Object.assign(new Error("page.goto: Timeout 200ms exceeded."), {
               name: "TimeoutError",
             }),
           );
@@ -753,6 +753,12 @@ it.live.each(["load", "none"] as const)(
 
         expect(status.url).toBe("http://localhost:5173/next");
         expect(navigated).toMatchObject({ _tag: "Success" });
+        // Waiting on the busy script spends the navigation's own budget.
+        const [, gotoOptions] = contexts[0]!.page.goto.mock.calls.at(-1)! as [
+          string,
+          { timeout: number },
+        ];
+        expect(gotoOptions.timeout).toBeLessThan(200);
         expect(waited).toMatchObject({ _tag: "Success" });
       }),
     ).pipe(Effect.provide(layer)),
