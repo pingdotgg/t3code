@@ -40,6 +40,8 @@ describe("summarizeT3ToolCalls", () => {
     expect(summarizeT3ToolCalls("unlink-pr", [batch, completed({ number: 3 })]).label).toBe(
       "Unlinked 3 pull requests",
     );
+    const uncounted = completed({ states: ["merged"] }, { isError: false });
+    expect(summarizeT3ToolCalls("unlink-pr", [uncounted]).label).toBe("Unlinked pull requests");
   });
 
   it("excludes failed and unfinished sends even if the provider reports completed", () => {
