@@ -70,7 +70,7 @@ const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 export function AddEnvironmentDialog({
   open,
   routeTarget,
-  pairAgainHost,
+  pairAgainHost = null,
   error,
   savedEnvironments,
   onOpenChange,
@@ -79,7 +79,7 @@ export function AddEnvironmentDialog({
   readonly open: boolean;
   readonly routeTarget: EnvironmentPresentation | null;
   /** With routeTarget: the saved address whose pairing that machine refused. */
-  readonly pairAgainHost: string | null;
+  readonly pairAgainHost?: string | null;
   readonly error: string | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
   readonly onOpenChange: (open: boolean) => void;
