@@ -96,6 +96,68 @@ describe("AcpClientTerminals", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live(
+    "answers wait_for_exit when a command exits while a background child holds its output",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawned = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+        const orphanStillHoldsOutput = yield* Deferred.make<void>();
+        let stdout = "";
+        const terminals = yield* makeAcpClientTerminals({
+          defaultCwd: process.cwd(),
+          shellCommands: true,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+            ...spawner,
+            spawn: (command) =>
+              spawner.spawn(command).pipe(
+                Effect.tap((child) => Deferred.succeed(spawned, child)),
+                Effect.map((child) => ({
+                  ...child,
+                  stdout: child.stdout.pipe(
+                    Stream.tap((chunk) => {
+                      stdout += Buffer.from(chunk).toString("utf8");
+                      return stdout.includes("orphan-still-holds-output")
+                        ? Deferred.succeed(orphanStillHoldsOutput, undefined)
+                        : Effect.void;
+                    }),
+                  ),
+                })),
+              ),
+          }),
+        );
+        yield* Effect.addFinalizer(() => terminals.disposeAll);
+        // Reap only the orphan this test started, by the PID the shell printed.
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            const orphanPid = Number(stdout.split("\n")[0]);
+            if (Number.isInteger(orphanPid) && orphanPid > 0) {
+              try {
+                process.kill(orphanPid, "SIGKILL");
+              } catch {}
+            }
+          }),
+        );
+        const terminal = yield* terminals.create({
+          sessionId: "devin",
+          command:
+            '"$T3_TEST_NODE" -e \'setTimeout(() => console.log("orphan-still-holds-output"), 2000)\' & echo "$!"',
+          env: [{ name: "T3_TEST_NODE", value: process.execPath }],
+        });
+        const child = yield* Deferred.await(spawned);
+
+        const outcome = yield* Effect.raceFirst(
+          terminals.waitForExit({ sessionId: "devin", ...terminal }),
+          Deferred.await(orphanStillHoldsOutput).pipe(
+            Effect.as("no answer while the background child holds stdout/stderr"),
+          ),
+        );
+        expect(yield* child.isRunning).toBe(false);
+        expect(outcome).toEqual({ exitCode: 0, signal: null });
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("truncates buffered output from the beginning at the byte limit", () =>
     withTerminals((terminals) =>
       Effect.gen(function* () {
