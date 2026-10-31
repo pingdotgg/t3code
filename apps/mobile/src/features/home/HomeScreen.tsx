@@ -9,6 +9,7 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -376,7 +377,11 @@ export function HomeScreen(props: HomeScreenProps) {
   })();
 
   const v2ProjectScopeKey = props.selectedProjectKey;
-  const v2ScopedProjectGroup = findHomeProjectScope(projectScopes, v2ProjectScopeKey);
+  // An archived project's filter reads as all projects, matching the filter menu.
+  const v2ScopedProjectGroup = findHomeProjectScope(
+    pickableProjectGroups(projectScopes),
+    v2ProjectScopeKey,
+  );
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,
@@ -711,7 +716,10 @@ export function HomeScreen(props: HomeScreenProps) {
         <ThreadListFilters
           gutter={primaryColumn ? 8 : 0}
           environments={props.environments}
-          projects={projectScopes.map((scope) => ({ key: scope.key, label: scope.title }))}
+          projects={pickableProjectGroups(projectScopes).map((scope) => ({
+            key: scope.key,
+            label: scope.title,
+          }))}
           selectedEnvironmentId={props.selectedEnvironmentId}
           selectedProjectKey={props.selectedProjectKey}
           onEnvironmentChange={props.onEnvironmentChange}

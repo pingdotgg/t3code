@@ -46,6 +46,22 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Pin and archive projects
+
+Pinned projects come first in the project pickers: the project picker on a new thread, the
+new-thread list, the command palette, the sidebar project filter, and mobile. In the boring sidebar, pinned projects get the top
+folders, even with no active threads. Pin or unpin a project from its row in any of those lists,
+or press the thread pin shortcut (`mod+shift+p` by default) on the highlighted row. **Pin
+project** in the command palette and **Settings → Projects** work too. A list keeps its order
+while it is open, so a new pin moves up the next time you open it.
+
+Archive a project you are done with in **Settings → Projects**. It leaves the project pickers.
+Its threads, settings, and files stay as they are, and archived projects still show in the
+Settings project list, marked **Archived**. Choose one there and select **Unarchive** to bring it
+back. On mobile, both are in **Settings → Projects → Organize**.
+
+A project on several machines must have every machine connected to pin or archive it.
+
 ## Worktree branch names
 
 In **Settings → Worktrees → Worktree branch naming**, choose a static prefix,

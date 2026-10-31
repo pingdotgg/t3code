@@ -6,6 +6,7 @@ import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
   deriveLogicalProjectKeyFromSettings,
+  pickableProjectGroups,
   derivePhysicalProjectKey,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
@@ -376,6 +377,31 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
+  });
+});
+
+describe("project pins and archives", () => {
+  const at = "2026-07-02T00:00:00.000Z";
+  const remote = EnvironmentId.make("remote");
+  const group = (...projects: EnvironmentProject[]) =>
+    buildProjectGroups({ projects, settings: settings("repository") })[0]!;
+
+  it("keeps a project visible while its machines disagree", () => {
+    const local = makeProject("local", "/work/t3code");
+    const other = makeProject("remote", "/work/t3code", { environmentId: remote });
+    const partial = group({ ...local, pinnedAt: at, archivedAt: at }, other);
+    expect(partial).toMatchObject({ pinned: true, archived: false });
+    expect(group({ ...local, archivedAt: at }, { ...other, archivedAt: at }).archived).toBe(true);
+  });
+
+  it("offers pinned projects first and leaves archived ones out", () => {
+    const pickable = pickableProjectGroups([
+      { key: "a", pinned: false, archived: false },
+      { key: "b", pinned: true, archived: true },
+      { key: "c", pinned: true, archived: false },
+      { key: "d", pinned: false, archived: true },
+    ]);
+    expect(pickable.map((entry) => entry.key)).toEqual(["c", "a"]);
   });
 });
 
