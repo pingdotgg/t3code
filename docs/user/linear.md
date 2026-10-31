@@ -34,7 +34,7 @@ state. A pipeline keeps one comment up to date as its steps finish.
 
 ## On mobile
 
-The mobile app has a Linear tab. Browse teams, projects, milestones and issues, open an issue, and start a chat or run a pipeline from it. Connecting Linear and editing mappings stay on the computer (Settings → Integrations → Linear); the phone picks up the connection automatically.
+The mobile app has a Linear tab. Browse teams, projects, milestones and issues, open an issue, and start a chat or run a pipeline from it. Connecting Linear and editing mappings stay on the computer (Settings → Integrations → Linear); the phone picks up the connection automatically. Comments posted for a launch from the phone link to the hosted web app (app.t3.codes), because the phone has no web address of its own.
 
 ## Things to know
 
