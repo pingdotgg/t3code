@@ -1,12 +1,24 @@
-import { memo, useEffect, useState, type ReactNode } from "react";
+import { memo, Suspense, use, type ReactNode } from "react";
 
 import {
   createComposerImageThumbnail,
   readComposerImageThumbnail,
 } from "../../lib/imageCompression";
 
-/** Keep full-resolution image decoding out of composer rerenders. */
-export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
+export const ComposerImageThumbnail = memo(function ComposerImageThumbnail(props: {
+  file: File;
+  alt: string;
+  className: string;
+  fallback: ReactNode;
+}) {
+  return (
+    <Suspense fallback={props.fallback}>
+      <ThumbnailImage {...props} />
+    </Suspense>
+  );
+});
+
+function ThumbnailImage({
   file,
   alt,
   className,
@@ -17,16 +29,8 @@ export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
   className: string;
   fallback: ReactNode;
 }) {
-  const [preview, setPreview] = useState<{ file: File; src: string | null } | null>(null);
-  useEffect(() => {
-    let active = true;
-    void createComposerImageThumbnail(file).then((src) => {
-      if (active) setPreview({ file, src });
-    });
-    return () => {
-      active = false;
-    };
-  }, [file]);
-  const src = preview?.file === file ? preview.src : (readComposerImageThumbnail(file) ?? null);
+  // A settled thumbnail paints synchronously instead of suspending for a tick.
+  const settled = readComposerImageThumbnail(file);
+  const src = settled === undefined ? use(createComposerImageThumbnail(file)) : settled;
   return src ? <img src={src} alt={alt} className={className} /> : fallback;
-});
+}

@@ -1,15 +1,16 @@
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import { useAtomMount, useAtomSubscribe } from "@effect/atom-react";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { useEffect, useRef, useState } from "react";
 
+import { environmentCatalog } from "~/connection/catalog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [directories, setDirectories] = useState(new Map<string, readonly ProjectEntry[]>());
   const [errors, setErrors] = useState(new Map<string, string>());
-  // The root starts counted as loading because the mount effect requests it.
   const [pending, setPending] = useState(1);
   const [loadingDirectories, setLoadingDirectories] = useState<ReadonlySet<string>>(
     () => new Set([""]),
@@ -21,7 +22,6 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const running = useRef(0);
   const waiting = useRef<Array<() => void>>([]);
 
-  // Callers count the request as pending first; the mount load is counted by the initial state.
   const startRequest = (directoryPath: string, refresh: boolean): Promise<void> => {
     loaded.current.add(directoryPath);
     requested.current.add(directoryPath);
@@ -29,7 +29,6 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     const request = (async () => {
       if (running.current >= 4) await new Promise<void>((resolve) => waiting.current.push(resolve));
       else running.current++;
-      // executeAtomQuery settles instead of throwing, so the slot is always released.
       const result = active.current
         ? await executeAtomQuery(appAtomRegistry, atom, {
             refresh: true,
@@ -95,6 +94,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     return startRequest(directoryPath, refresh);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the root directory read on mount and marks the hook inactive so late reads are ignored
   useEffect(() => {
     active.current = true;
     if (!requests.current.has("") && !loaded.current.has("")) void startRequest("", false);
@@ -102,6 +102,15 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
       active.current = false;
     };
   }, [startRequest]);
+
+  // A folder read fails at once while its environment is unreachable; read it again once a new
+  // session is up rather than leaving the error until someone retries by hand.
+  const sessionGeneration = environmentCatalog.sessionGenerationAtom(environmentId);
+  // A listener alone does not compute the atom, so nothing would follow the connection.
+  useAtomMount(sessionGeneration);
+  useAtomSubscribe(sessionGeneration, () => {
+    for (const path of errors.keys()) void load(path);
+  });
 
   const entries: ProjectEntry[] = [];
   const visit = (path: string) => {
