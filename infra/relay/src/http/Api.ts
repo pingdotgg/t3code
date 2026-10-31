@@ -74,6 +74,7 @@ import * as AgentActivityPublisher from "../agentActivity/AgentActivityPublisher
 import * as EnvironmentConnector from "../environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
+import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
@@ -825,6 +826,7 @@ export const layerClientApi = HttpApiBuilder.group(
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
     const devices = yield* Devices.Devices;
     const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
+    const tunnelLimits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
     return handlers
       .handle(
         "listEnvironments",
@@ -996,12 +998,20 @@ export const layerClientApi = HttpApiBuilder.group(
         "getT3ChatLink",
         Effect.fn("relay.api.client.getT3ChatLink")(function* () {
           yield* appendRelayCredentialResponseHeaders;
-          if (!t3Chat.available) return { available: false, link: null };
           const { userId } = yield* RelayClientPrincipal;
-          const link = yield* t3Chat
-            .getLink({ userId })
-            .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")));
-          return { available: true, link };
+          const link = t3Chat.available
+            ? yield* t3Chat
+                .getLink({ userId })
+                .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")))
+            : null;
+          const maxTunnelsOverride = yield* tunnelLimits
+            .getOverride({ userId })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+          return {
+            available: t3Chat.available,
+            link,
+            ...(maxTunnelsOverride === null ? {} : { maxTunnelsOverride }),
+          };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(

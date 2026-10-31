@@ -34,6 +34,8 @@ export interface RelayDiscoveredEnvironment {
 
 export interface RelayEnvironmentDiscoveryState {
   readonly environments: ReadonlyMap<string, RelayDiscoveredEnvironment>;
+  // Only a loaded account list distinguishes a missing registration from an unknown one.
+  readonly listed: boolean;
   readonly refreshing: boolean;
   readonly offline: boolean;
   readonly error: Option.Option<ConnectionAttemptError>;
@@ -49,6 +51,7 @@ export class RelayEnvironmentDiscovery extends Context.Service<
 
 export const EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE: RelayEnvironmentDiscoveryState = {
   environments: new Map(),
+  listed: false,
   refreshing: false,
   offline: false,
   error: Option.none(),
@@ -70,6 +73,17 @@ function withoutStatuses(
       },
     ]),
   );
+}
+
+export type RelayEnvironmentRegistration = "registered" | "unregistered" | "unknown";
+
+export function relayEnvironmentRegistration(
+  state: RelayEnvironmentDiscoveryState,
+  environmentId: string,
+): RelayEnvironmentRegistration {
+  if (!state.listed) return "unknown";
+  if (state.environments.has(environmentId)) return "registered";
+  return state.listed ? "unregistered" : "unknown";
 }
 
 function validateStatus(
@@ -244,6 +258,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       yield* SubscriptionRef.update(state, (current) => ({
         ...current,
         environments: withoutStatuses(current.environments, "checking"),
+        listed: false,
         refreshing: true,
         offline: false,
         error: Option.none(),
@@ -303,6 +318,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       yield* SubscriptionRef.update(state, (current) => ({
         ...current,
         environments: next,
+        listed: true,
       }));
 
       yield* Effect.forEach(

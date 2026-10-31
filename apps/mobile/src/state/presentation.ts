@@ -1,11 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
-import { createEnvironmentPresentationAtoms } from "@t3tools/client-runtime/state/presentation";
+import {
+  createEnvironmentPresentationAtoms,
+  createEnvironmentSummaryAtoms,
+} from "@t3tools/client-runtime/state/presentation";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
-import { serverEnvironment } from "./server";
+import { environmentServerConfigsAtom, serverEnvironment } from "./server";
+import { createThreadListEnvironmentsAtom } from "./thread-list-environments";
 import { relayEnvironmentDiscovery } from "./relay";
 
 export const environmentPresentations = createEnvironmentPresentationAtoms({
@@ -14,6 +18,16 @@ export const environmentPresentations = createEnvironmentPresentationAtoms({
   serverConfigValueAtom: serverEnvironment.configValueAtom,
   relayDiscoveryValueAtom: relayEnvironmentDiscovery.stateValueAtom,
 });
+
+export const { connectedEnvironmentIdsAtom } = createEnvironmentSummaryAtoms({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  presentationAtom: environmentPresentations.presentationAtom,
+});
+
+export const threadListEnvironmentsAtom = createThreadListEnvironmentsAtom(
+  environmentServerConfigsAtom,
+  connectedEnvironmentIdsAtom,
+);
 
 const EMPTY_ENVIRONMENT_PRESENTATION_ATOM = Atom.make<EnvironmentPresentation | null>(null).pipe(
   Atom.withLabel("mobile-environment-presentation:empty"),
