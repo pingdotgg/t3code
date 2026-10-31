@@ -82,7 +82,7 @@ export function getProviderStatusMessage(status: ServerProvider): string {
     ? "No models are available for this provider."
     : status.status === "error"
       ? `${providerName} provider is unavailable.`
-      : `${providerName} provider has limited availability.`;
+      : `T3 Code encountered a problem with ${providerName}.`;
 }
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
@@ -102,7 +102,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
   const incompatible = getIncompatibleVersion(status);
   const title = isUnauthenticated
-    ? `${providerName} is unauthenticated`
+    ? `Sign in to ${providerName}`
     : incompatible
       ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
       : `${providerName} provider status`;

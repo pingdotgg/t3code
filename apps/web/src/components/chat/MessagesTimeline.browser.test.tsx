@@ -1418,7 +1418,11 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     ui({ pendingApprovals: [{ ...approvals[0]!, responseCapability: "not_resumable" }] }),
   );
   await expect
-    .element(screen.getByText("Provider process is gone. Interrupt or restart the run to respond."))
+    .element(
+      screen.getByText(
+        "The agent process has stopped, so you can no longer answer this approval request. Interrupt or restart the turn to continue.",
+      ),
+    )
     .toBeVisible();
   await vi.waitFor(() => expect(screen.buttons("Approve")).toHaveLength(0));
   await screen.rerender(
