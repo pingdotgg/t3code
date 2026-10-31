@@ -1,49 +1,26 @@
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps, Ref } from "react";
+import { MenuSeparator } from "../ui/menu";
 
-import { cn } from "../../lib/utils";
-
+/** Untitled groups use the same inset and hairline as a MenuPopup. */
 export function ThreadDetailsSection({
-  headingId,
   title,
-  actions,
-  separated = true,
-  showHeading = true,
   children,
+  contentRef,
   ...props
 }: Omit<ComponentProps<"section">, "className" | "style" | "title" | "aria-labelledby"> & {
-  headingId: string;
   title: string;
-  actions?: ReactNode;
-  separated?: boolean;
-  showHeading?: boolean;
+  contentRef?: Ref<HTMLDivElement>;
 }) {
   return (
     <section
       {...props}
-      aria-labelledby={showHeading ? headingId : undefined}
-      aria-label={showHeading ? undefined : title}
-      // A row can still render nothing (a fresh draft quiets Git actions), so an empty section
-      // collapses, and a divider only follows a section that has content.
-      className={cn(
-        "px-2 pt-2 pb-2.5 has-[>div:last-child:empty]:hidden",
-        separated && "border-border/65 [section:not(:has(>div:last-child:empty))~&]:border-t",
-      )}
+      aria-label={title}
+      className="px-1 first:pt-1 last:pb-1 has-[>div:last-child:empty]:hidden [&>[data-slot=menu-separator]]:hidden [section:not(:has(>div:last-child:empty))~&>[data-slot=menu-separator]]:block"
     >
-      <div
-        className={cn(
-          "mb-1 flex min-h-8 min-w-0 items-center justify-between gap-2 px-2.5",
-          !showHeading && "hidden",
-        )}
-      >
-        <h3
-          id={headingId}
-          className="min-w-0 truncate text-2xs font-medium text-muted-foreground select-none"
-        >
-          {title}
-        </h3>
-        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
+      <MenuSeparator />
+      <div ref={contentRef} className="flex flex-col">
+        {children}
       </div>
-      {children}
     </section>
   );
 }

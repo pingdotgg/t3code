@@ -361,10 +361,11 @@ export function useComposerMenuItems({
           isDraft: pullRequest.isDraft,
         },
         label: `#${pullRequest.number}`,
-        description:
+        description: pullRequest.title,
+        metadata:
           pullRequest.repository.trim().toLowerCase() === pullRequestRepository.trim().toLowerCase()
-            ? pullRequest.title
-            : `${pullRequest.repository} · ${pullRequest.title}`,
+            ? undefined
+            : pullRequest.repository,
       }));
     }
     return [];

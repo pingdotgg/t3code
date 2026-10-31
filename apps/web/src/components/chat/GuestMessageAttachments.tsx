@@ -2,14 +2,14 @@ import type { ChatAttachment } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 
 import { useTheme } from "~/hooks/useTheme";
-import { cn } from "~/lib/utils";
+import { InlineButton } from "../ui/button";
 import { type ChatFileAttachment, isFileAttachment, isImageAttachment } from "../../types";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
 const IMAGE_FRAME =
   "aspect-[4/3] overflow-hidden rounded-lg border border-border/80 bg-background/70";
-const FILE_ROW = "flex min-w-0 items-center gap-2 py-1 text-sm";
+const FILE_ROW = "flex min-w-0 items-center gap-2 py-1 text-body";
 
 /**
  * A guest message's files, drawn like a sent message's: image thumbnails, then file rows. The
@@ -54,7 +54,7 @@ export function GuestMessageAttachments(props: {
                     />
                   </button>
                 ) : (
-                  <div className="flex size-full items-center justify-center px-2 text-center text-2xs text-muted-foreground/70">
+                  <div className="flex size-full items-center justify-center px-2 text-center text-caption text-muted-foreground/70">
                     {image.name}
                   </div>
                 )}
@@ -65,33 +65,32 @@ export function GuestMessageAttachments(props: {
       ) : null}
       {files.map((file) => {
         const identity = (
-          <>
+          <span className="flex min-w-0 items-center gap-2">
             <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
             <span className="min-w-0 truncate">{file.name}</span>
-            <span className="shrink-0 text-xs text-muted-foreground">
+            <span className="shrink-0 text-meta text-muted-foreground">
               {formatAttachmentSize(file.sizeBytes)}
             </span>
-          </>
+          </span>
         );
         return props.fileHref ? (
-          <a
+          <InlineButton
             key={file.id}
-            href={props.fileHref(file)}
-            download={file.name}
-            className={cn(FILE_ROW, "hover:underline")}
+            className="min-w-0"
+            render={<a href={props.fileHref(file)} download={file.name} />}
           >
             {identity}
-          </a>
+          </InlineButton>
         ) : props.onOpenFile ? (
-          <button
+          <InlineButton
             key={file.id}
             type="button"
             aria-label={`Preview ${file.name}`}
             onClick={() => props.onOpenFile?.(file)}
-            className={cn(FILE_ROW, "cursor-pointer hover:underline")}
+            className="min-w-0"
           >
             {identity}
-          </button>
+          </InlineButton>
         ) : (
           <div key={file.id} className={FILE_ROW}>
             {identity}

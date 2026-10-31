@@ -40,7 +40,7 @@ export function PullRequestCompactFilterMenu<Value extends string>({
         title={iconOnly ? `${label}: ${current.label}` : undefined}
         render={
           outlined ? (
-            <Button variant="outline" size={iconOnly ? "icon" : "default"} />
+            <Button variant="secondary" size={iconOnly ? "icon" : "default"} />
           ) : (
             <Button variant="ghost-muted" size="sm" />
           )
@@ -57,7 +57,7 @@ export function PullRequestCompactFilterMenu<Value extends string>({
         ) : (
           <>
             <span className="truncate">{current.label}</span>
-            <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground/70" />
+            <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-dim-foreground" />
           </>
         )}
       </MenuTrigger>

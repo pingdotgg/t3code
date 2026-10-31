@@ -12,6 +12,7 @@ import {
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { COMMAND_PALETTE_META_ICON_CLASS, CommandPaletteMetaDot } from "./ThreadCommandSubtitle";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export interface CommandPaletteProjectLocation {
   readonly kind: "local" | "remote";
@@ -58,7 +59,18 @@ export function buildProjectSearchItems(input: ProjectItemsInput) {
         locationByEnvironmentId: input.locationByEnvironmentId,
       });
       return members.length > 1 ? (
-        <span className="truncate">{metadata.environmentLabels.join(" · ")}</span>
+        <Tooltip>
+          <TooltipTrigger render={<span tabIndex={0} />}>
+            {metadata.environmentLabels.length} machines
+          </TooltipTrigger>
+          <TooltipPopup>
+            {metadata.environmentLabels.map((label) => (
+              <span className="block" key={label}>
+                {label}
+              </span>
+            ))}
+          </TooltipPopup>
+        </Tooltip>
       ) : (
         <ProjectLocationDescription
           location={input.locationByEnvironmentId.get(project.environmentId)}
@@ -107,14 +119,14 @@ function ProjectLocationDescription(props: {
 }) {
   const location = props.location ?? UNKNOWN_PROJECT_LOCATION;
   return (
-    <span className="flex min-w-0 items-center gap-1">
-      {props.current ? (
-        <>
-          <span className="shrink-0">Current</span>
-          <CommandPaletteMetaDot />
-        </>
-      ) : null}
+    <span className="flex min-w-0 flex-col gap-0.5">
       <span className="inline-flex min-w-0 items-center gap-1">
+        {props.current ? (
+          <>
+            <span className="shrink-0">Current</span>
+            <CommandPaletteMetaDot />
+          </>
+        ) : null}
         {location.kind === "remote" ? (
           <EnvironmentMachineIcon
             aria-hidden
@@ -124,8 +136,7 @@ function ProjectLocationDescription(props: {
         ) : null}
         <span className="truncate">{location.label}</span>
       </span>
-      <CommandPaletteMetaDot />
-      <span className="min-w-0 flex-1 truncate">{props.workspaceRoot}</span>
+      <span className="min-w-0 truncate">{props.workspaceRoot}</span>
     </span>
   );
 }

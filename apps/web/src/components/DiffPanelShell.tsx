@@ -14,7 +14,7 @@ function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
     mode === "embedded" ? "px-2" : "px-4",
     shouldUseDragRegion
       ? "drag-region h-[var(--workspace-topbar-height)] border-b border-border wco:pr-(--workspace-native-controls-inset)"
-      : "flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent",
+      : "flex h-10 min-h-10 shrink-0 items-center border-b border-border bg-background in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent",
   );
 }
 
@@ -99,9 +99,9 @@ export function DiffPanelLoadingState(props: { label: string }) {
     >
       <DiffFileHeaderSkeleton titleWidth="medium" />
       <div className="flex h-6 items-center gap-2 px-2 pr-3">
-        <div className="h-px flex-1 bg-border/40" />
+        <div className="h-px flex-1 bg-border" />
         <Skeleton shape="pill" className="h-2.5 w-24" />
-        <div className="h-px flex-1 bg-border/40" />
+        <div className="h-px flex-1 bg-border" />
       </div>
       <div className="space-y-2 px-3 py-2">
         <DiffCodeLineSkeleton width="medium" />
