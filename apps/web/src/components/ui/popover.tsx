@@ -1,5 +1,3 @@
-"use client";
-
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
 import { cn } from "~/lib/utils";
@@ -16,8 +14,6 @@ function PopoverTrigger({ className, children, ...props }: PopoverPrimitive.Trig
   );
 }
 
-// Popovers hold prose and forms, so a width is fixed rather than a minimum,
-// and every width is capped to the viewport.
 const popoverPopupWidthClassName = {
   auto: "",
   sm: "w-64",
@@ -25,12 +21,9 @@ const popoverPopupWidthClassName = {
   lg: "w-96",
 } as const;
 
-// The inset around the content. "compact" suits dense content (a list, a code excerpt, a
-// row of reactions); "none" is for content that draws its own frame edge to edge.
 const popoverViewportPaddingClassName = {
   default: "py-4 [--viewport-inline-padding:--spacing(4)]",
   compact: "py-2 [--viewport-inline-padding:--spacing(3)]",
-  // Rounded to the popup so edge-to-edge content clips to its corners.
   none: "rounded-[calc(var(--radius-lg)-1px)] py-0 [--viewport-inline-padding:0px]",
 } as const;
 
@@ -48,6 +41,7 @@ function PopoverPopup({
   tooltipStyle = false,
   keepMounted = false,
   anchor,
+  touchBackdrop = false,
   ...props
 }: PopoverPrimitive.Popup.Props & {
   padding?: keyof typeof popoverViewportPaddingClassName;
@@ -61,21 +55,30 @@ function PopoverPopup({
   keepMounted?: PopoverPrimitive.Portal.Props["keepMounted"];
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
   width?: keyof typeof popoverPopupWidthClassName;
+  touchBackdrop?: boolean;
 }) {
-  // Viewport rekeys its children when the active trigger clears on close. Persistent
-  // single-trigger forms need a stable container to retain drafts and submit guards.
+  // Viewport rekeys on close; persistent single-trigger forms need stable containers for drafts and submit
+  // guards.
   const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
   return (
     <PopoverPrimitive.Portal keepMounted={keepMounted}>
+      {touchBackdrop ? (
+        // On touch, the backdrop consumes outside taps so closing cannot also activate the control beneath.
+        <PopoverPrimitive.Backdrop
+          className="fixed inset-0 z-[130] hidden pointer-coarse:block"
+          data-slot="popover-backdrop"
+        />
+      ) : null}
       <PopoverPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
         collisionAvoidance={collisionAvoidance}
+        collisionPadding={variant === "panel" ? 0 : undefined}
         className={cn(
           "h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none",
           variant === "panel"
-            ? "z-(--z-sheet) w-[min(var(--thread-details-panel-width),var(--anchor-width))] transition-none"
+            ? "z-(--z-sheet) w-[min(calc(var(--thread-details-panel-width)+--spacing(4)),calc(var(--anchor-width)---spacing(2)))] transition-[top] duration-150 ease-out data-instant:transition-[top] motion-reduce:transition-none motion-reduce:data-instant:transition-none"
             : "z-[130]",
         )}
         data-slot="popover-positioner"
@@ -84,7 +87,7 @@ function PopoverPopup({
       >
         <PopoverPrimitive.Popup
           className={cn(
-            "relative flex h-(--popup-height,auto) w-(--popup-width,auto) origin-(--transform-origin) rounded-lg text-popover-foreground outline-none transition-[width,height,scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] has-data-[slot=calendar]:rounded-xl has-data-[slot=calendar]:before:rounded-[calc(var(--radius-xl)-1px)] data-starting-style:scale-98 data-starting-style:opacity-0 dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            "relative flex h-(--popup-height,auto) w-(--popup-width,auto) origin-(--transform-origin) rounded-lg text-popover-foreground outline-none transition-[width,height,scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] has-data-[slot=calendar]:rounded-xl has-data-[slot=calendar]:before:rounded-[calc(var(--radius-xl)-1px)] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0 dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
             variant !== "panel" && "dropdown-glass",
             tooltipStyle &&
               "w-fit text-balance rounded-md text-xs shadow-md/5 before:rounded-[calc(var(--radius-md)-1px)]",

@@ -1,13 +1,13 @@
-// @effect-diagnostics nodeBuiltinImport:off - pre-ready Electron setup reads settings and prepares the Linux desktop entry synchronously before app services are available.
+// @effect-diagnostics nodeBuiltinImport:off - pre-ready Electron setup reads settings, prepares the Linux desktop entry, and asks Hyprland for its version synchronously before app services are available.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as Electron from "electron";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
@@ -31,14 +31,15 @@ function readCommandLineSwitchValue(
   return value.length > 0 ? value : null;
 }
 
-export const resolveEarlyLinuxElectronOptionsFromProcess =
-  (): DesktopEarlyElectronStartup.EarlyLinuxElectronOptions =>
-    DesktopEarlyElectronStartup.resolveEarlyLinuxElectronOptions({
-      env: process.env,
-      homeDirectory: NodeOS.homedir(),
-      joinPath: NodePath.posix.join,
-      readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
-    });
+export const resolveEarlyLinuxElectronOptionsFromProcess = (
+  homeDirectory: string,
+): DesktopEarlyElectronStartup.EarlyLinuxElectronOptions =>
+  DesktopEarlyElectronStartup.resolveEarlyLinuxElectronOptions({
+    env: process.env,
+    homeDirectory,
+    joinPath: NodePath.posix.join,
+    readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+  });
 
 export class DesktopPreReadyElectronOptions extends Context.Service<
   DesktopPreReadyElectronOptions,
@@ -48,23 +49,36 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
     const linuxPasswordStoreCommandLine =
       platform === "linux"
         ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
         : null;
-    const linux = platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess() : null;
+    const linux =
+      platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess(homeDirectory) : null;
 
     if (linux !== null) {
+      DesktopEarlyElectronStartup.restoreEarlyLinuxDeviceScaleFactor({
+        env: process.env,
+        homeDirectory,
+        joinPath: NodePath.posix.join,
+        commandLine: Electron.app.commandLine,
+        readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+        writeFileString: (path, value) => {
+          NodeFS.mkdirSync(NodePath.posix.dirname(path), { recursive: true });
+          NodeFS.writeFileSync(path, value, "utf8");
+        },
+      });
       // The portal also requires a valid desktop entry. An AppImage update may
       // have removed the executable referenced by the previous launch's entry.
       try {
         const applicationsDir = NodePath.posix.join(
           process.env.XDG_DATA_HOME?.trim() ||
-            NodePath.posix.join(NodeOS.homedir(), ".local", "share"),
+            NodePath.posix.join(homeDirectory, ".local", "share"),
           "applications",
         );
         NodeFS.mkdirSync(applicationsDir, { recursive: true });
@@ -86,9 +100,7 @@ export const make = Effect.gen(function* () {
               ),
               iconPath,
             );
-          } catch {
-            // Icon installation is optional; registration retries after readiness.
-          }
+          } catch {}
         }
         NodeFS.writeFileSync(
           NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName),
@@ -97,21 +109,38 @@ export const make = Effect.gen(function* () {
               isDevelopment: linux.isDevelopment,
               appVersion: Electron.app.getVersion(),
             }).displayName,
-            execTarget: process.env.APPIMAGE?.trim() || process.execPath,
+            execTarget:
+              process.env.T3CODE_DESKTOP_LAUNCHER_PATH?.trim() ||
+              process.env.APPIMAGE?.trim() ||
+              process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
           }),
           "utf8",
         );
-      } catch {
-        // The URL handler retries with the full environment and logs failures.
-      }
-      // Chromium caches its portal registration during startup. Set the identity
-      // before any asynchronous work can initialize it with Electron's default.
+      } catch {}
+      // Chromium caches portal identity; set it before any asynchronous initialization.
       Electron.app.setDesktopName(linux.linuxDesktopEntryName);
       Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
         Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
+      }
+      // Chromium keeps only the last --disable-features value, so pass the merged list.
+      const disableFeatures = DesktopEarlyElectronStartup.resolveLinuxDisableFeaturesSwitch({
+        env: process.env,
+        ozonePlatform: readCommandLineSwitchValue(Electron.app.commandLine, "ozone-platform"),
+        enableFeatures: readCommandLineSwitchValue(Electron.app.commandLine, "enable-features"),
+        disableFeatures: readCommandLineSwitchValue(Electron.app.commandLine, "disable-features"),
+        readHyprctlVersionJson: () =>
+          NodeChildProcess.execFileSync("hyprctl", ["version", "-j"], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+            timeout: 1000,
+            maxBuffer: 64 * 1024,
+          }),
+      });
+      if (disableFeatures !== null) {
+        Electron.app.commandLine.appendSwitch("disable-features", disableFeatures);
       }
     }
 
@@ -119,8 +148,7 @@ export const make = Effect.gen(function* () {
   });
 }).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
 
-// Keep Electron's strict pre-ready setup isolated so later runtime layers cannot
-// observe app readiness before scheme privileges and command-line switches exist.
+// Complete scheme privileges and switches before later layers can observe app readiness.
 export const layer = Layer.mergeAll(
   ElectronProtocol.layerSchemePrivileges,
   Layer.effect(DesktopPreReadyElectronOptions, make),

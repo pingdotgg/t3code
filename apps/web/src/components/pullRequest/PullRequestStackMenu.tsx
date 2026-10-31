@@ -22,12 +22,15 @@ import {
   DialogFooter,
 } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
+import type { ChangeRequestTerminology } from "~/sourceControlPresentation";
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
 import { PullRequestStackHeader } from "./PullRequestStackHeader";
 import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestStackMenu({
+  hostLabel,
+  terminology,
   stack,
   reference,
   environmentId,
@@ -39,6 +42,8 @@ export function PullRequestStackMenu({
   notice,
   onRetry,
 }: {
+  hostLabel: string;
+  terminology: ChangeRequestTerminology;
   notice?: string | null;
   onRetry?: (() => void) | undefined;
   stack: PullRequestStack;
@@ -87,6 +92,11 @@ export function PullRequestStackMenu({
       layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
     );
     setPending(true);
+    setConfirmation(null);
+    const toastId = toastManager.add({
+      type: "loading",
+      title: action === "merge" ? "Merging stack..." : "Rebasing stack...",
+    });
     const result = await runAction({
       environmentId,
       input: {
@@ -99,21 +109,20 @@ export function PullRequestStackMenu({
       },
     });
     setPending(false);
-    setConfirmation(null);
     onActed();
     if (result._tag === "Failure") {
-      toastManager.add({
+      toastManager.update(toastId, {
         type: "error",
-        title: "Stack operation did not complete",
+        title: action === "merge" ? "Could not merge the stack" : "Could not rebase the stack",
         description: String(squashAtomCommandFailure(result)),
       });
     } else {
-      toastManager.add({
+      toastManager.update(toastId, {
         type: "success",
         title: action === "merge" ? "Stack merge request completed" : "Stack rebased",
         description:
           action === "merge"
-            ? "GitHub merged the stack or added it to its merge queue."
+            ? `${hostLabel} merged the stack or added it to its merge queue.`
             : undefined,
       });
     }
@@ -209,26 +218,26 @@ export function PullRequestStackMenu({
           />
           <TooltipPopup>
             Merge stack through #{reference.number} into {stack.base} ({mergeLayers.length}{" "}
-            {mergeLayers.length === 1 ? "pull request" : "pull requests"})
+            {mergeLayers.length === 1 ? terminology.singular : terminology.plural})
           </TooltipPopup>
         </Tooltip>
       ) : null}
       <Dialog
         open={confirmation !== null}
         onOpenChange={(value) => {
-          if (!value && !pending) setConfirmation(null);
+          if (!value) setConfirmation(null);
         }}
       >
-        <DialogPopup className="max-w-md" showCloseButton={!pending}>
+        <DialogPopup className="max-w-md">
           <DialogHeader>
             <DialogTitle>
               {confirmation === "merge"
-                ? `Merge ${mergeLayers.length} pull requests?`
-                : `Rebase ${unmerged.length} pull requests?`}
+                ? `Merge ${mergeLayers.length} ${mergeLayers.length === 1 ? terminology.singular : terminology.plural}?`
+                : `Rebase ${unmerged.length} ${unmerged.length === 1 ? terminology.singular : terminology.plural}?`}
             </DialogTitle>
             <DialogDescription>
               {confirmation === "merge"
-                ? `Merge #${reference.number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. GitHub checks their rules before merging or queueing them and rebases the remaining stack after merging.`
+                ? `Merge #${reference.number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. ${hostLabel} checks their rules before merging or queueing them and rebases the remaining stack after merging.`
                 : `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`}
             </DialogDescription>
           </DialogHeader>
@@ -245,11 +254,11 @@ export function PullRequestStackMenu({
             </ul>
           </DialogPanel>
           <DialogFooter>
-            <Button variant="outline" disabled={pending} onClick={() => setConfirmation(null)}>
+            <Button variant="outline" onClick={() => setConfirmation(null)}>
               Cancel
             </Button>
-            <Button disabled={pending} onClick={() => void run()}>
-              {pending ? "Working…" : confirmation === "merge" ? "Merge stack" : "Rebase stack"}
+            <Button onClick={() => void run()}>
+              {confirmation === "merge" ? "Merge stack" : "Rebase stack"}
             </Button>
           </DialogFooter>
         </DialogPopup>

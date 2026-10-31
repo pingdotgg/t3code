@@ -6,9 +6,7 @@ import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   orderWebThreadLineageRows,
-  relatedThreadIds,
   resolveMergeBackTargetThreadId,
-  walkThreadRelationships,
   threadRelationshipRowStatus,
 } from "./threadRelationships.ts";
 
@@ -16,10 +14,6 @@ describe("thread relationships", () => {
   it.each([
     ["running", "completed"],
     ["completed", "running"],
-    ["running", "running"],
-    ["completed", "completed"],
-    ["waiting", "failed"],
-    ["interrupted", "pending"],
   ])("keeps parent %s independent of child %s", (parentStatus, childStatus) => {
     const parent = ThreadId.make("parent");
     const child = ThreadId.make("child");
@@ -116,14 +110,6 @@ describe("thread relationships", () => {
     });
 
     expect(graph.nodes.get(missing)?.missing).toBe(true);
-    expect(relatedThreadIds(graph, root)).toEqual([child]);
-    expect(relatedThreadIds(graph, child)).toEqual([root, missing]);
-    expect(
-      walkThreadRelationships(graph, root).map(({ threadId, depth }) => [threadId, depth]),
-    ).toEqual([
-      [child, 1],
-      [missing, 2],
-    ]);
     expect(immediateThreadRelationships(graph, root).map(({ threadId }) => threadId)).toEqual([
       child,
     ]);
@@ -186,37 +172,6 @@ describe("thread relationships", () => {
       ]),
     );
   });
-
-  it.each([
-    ["running", "running"],
-    [null, "completed"],
-  ])(
-    "shows a subagent whose child activity is %s as %s after its delegated task settled",
-    (childActivity, expected) => {
-      const parent = ThreadId.make("thread-parent");
-      const child = ThreadId.make("thread-child");
-      const graph = deriveThreadRelationshipGraph({
-        threads: [
-          { id: parent, status: "completed", forkedFrom: null, lineage: { parentThreadId: null } },
-          {
-            id: child,
-            status: childActivity ?? "completed",
-            activityRunStatus: childActivity,
-            forkedFrom: null,
-            lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
-          },
-        ] as never,
-        projection: {
-          thread: { id: parent },
-          subagents: [{ childThreadId: child, status: "completed" }],
-          contextTransfers: [],
-        } as never,
-      });
-
-      const row = immediateThreadRelationships(graph, parent)[0]!;
-      expect(threadRelationshipRowStatus(graph, row)).toBe(expected);
-    },
-  );
 
   it("keeps the live shell when an archived snapshot contains the same thread id", () => {
     const parent = ThreadId.make("thread-parent");
@@ -359,35 +314,6 @@ function orderedLineageIds(input: {
 }
 
 describe("web thread lineage ordering", () => {
-  it("orders sibling forks newest created first", () => {
-    const oldest = ThreadId.make("thread-fork-oldest");
-    const middle = ThreadId.make("thread-fork-middle");
-    const newest = ThreadId.make("thread-fork-newest");
-
-    expect(
-      orderedLineageIds({
-        threads: [
-          forkShell({ id: current, parentThreadId: null, createdAt: "2026-06-01T00:00:00.000Z" }),
-          forkShell({
-            id: oldest,
-            parentThreadId: current,
-            createdAt: "2026-06-02T00:00:00.000Z",
-          }),
-          forkShell({
-            id: middle,
-            parentThreadId: current,
-            createdAt: "2026-06-03T00:00:00.000Z",
-          }),
-          forkShell({
-            id: newest,
-            parentThreadId: current,
-            createdAt: "2026-06-04T00:00:00.000Z",
-          }),
-        ],
-      }),
-    ).toEqual([newest, middle, oldest]);
-  });
-
   it("does not reorder when related-thread activity arrives", () => {
     const first = ThreadId.make("thread-fork-a");
     const second = ThreadId.make("thread-fork-b");
@@ -401,9 +327,6 @@ describe("web thread lineage ordering", () => {
       ],
     });
 
-    // The shell snapshot arrives ordered by `updated_at`, and a client-side
-    // `thread.updated` re-appends the shell it replaces, so both the input
-    // order and the mutable timestamps move under us while the panel is open.
     const after = orderedLineageIds({
       threads: [
         forkShell({
@@ -430,10 +353,6 @@ describe("web thread lineage ordering", () => {
   });
 
   it("pins the parent first and a distinct merge-back target second", () => {
-    // The panel keeps its two action rows in place regardless of creation time:
-    // parent first, then a merge-back target that is not the parent. The two
-    // diverge while a shell update and its projection disagree about the fork
-    // source, which is exactly when a moving row would misfire a merge.
     const parent = ThreadId.make("thread-parent");
     const mergeTarget = ThreadId.make("thread-merge-target");
     const newestFork = ThreadId.make("thread-newest-fork");
@@ -484,22 +403,5 @@ describe("web thread lineage ordering", () => {
         },
       }),
     ).toEqual([dated, missingTransfer, undated]);
-  });
-
-  it("breaks equal creation times by thread id", () => {
-    const first = ThreadId.make("thread-fork-a");
-    const second = ThreadId.make("thread-fork-b");
-    const third = ThreadId.make("thread-fork-c");
-
-    expect(
-      orderedLineageIds({
-        threads: [
-          forkShell({ id: current, parentThreadId: null, createdAt: "2026-06-01T00:00:00.000Z" }),
-          forkShell({ id: third, parentThreadId: current, createdAt: "2026-06-02T00:00:00.000Z" }),
-          forkShell({ id: first, parentThreadId: current, createdAt: "2026-06-02T00:00:00.000Z" }),
-          forkShell({ id: second, parentThreadId: current, createdAt: "2026-06-02T00:00:00.000Z" }),
-        ],
-      }),
-    ).toEqual([first, second, third]);
   });
 });

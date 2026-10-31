@@ -1,7 +1,10 @@
 import type { AssistantCitation } from "@t3tools/contracts";
-import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import {
+  assistantCitationLabel,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { PencilIcon, QuoteIcon } from "lucide-react";
+import { ArrowUpRightIcon, PencilIcon, QuoteIcon } from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
@@ -17,13 +20,17 @@ import {
   assistantCitationHash,
   assistantCitationNavigation,
 } from "../../lib/assistantCitationNavigation";
+import { cn } from "~/lib/utils";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { ContextChipPopover } from "../contextChipParts";
+import { Button } from "../ui/button";
+import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { observeResize } from "~/lib/observeResize";
 
 export function AssistantCitationChip({
   citation,
@@ -39,7 +46,7 @@ export function AssistantCitationChip({
     onCancel?: () => void;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
-    /** Returns focus to the host editor when the popover closes instead of to the pencil trigger. */
+    onDraftChange?: (comment: string) => void;
     onRestoreFocus?: () => void;
   };
 }) {
@@ -52,6 +59,7 @@ export function AssistantCitationChip({
   const commentOpen = commentEditor?.open ?? false;
   const sourceAnchor = commentEditor?.sourceAnchor;
   const activeSourceAnchor = sourceAnchor === unavailableSourceAnchor ? undefined : sourceAnchor;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the uncommitted comment draft held in a ref once the parent closes the comment editor
   useEffect(() => {
     if (!commentOpen) draftCommentRef.current = null;
   }, [commentOpen]);
@@ -69,10 +77,10 @@ export function AssistantCitationChip({
     if (settleDraftOnClose("none")) {
       commentEditor?.onOpenChange(false);
     } else {
-      // Keep the draft mounted, positioned at the composer trigger instead of a detached range.
       setUnavailableSourceAnchor(sourceAnchor);
     }
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the cited DOM source while the comment editor is open and reacts when it disappears
   useEffect(() => {
     if (!commentOpen || sourceAnchor === unavailableSourceAnchor) return;
     const anchor = sourceAnchor ?? findAssistantCitationSourceAnchor(document, citation);
@@ -83,19 +91,24 @@ export function AssistantCitationChip({
       onUnavailable: onSourceUnavailable,
     });
   }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
-  // A multi-line selection's bounding box spans the full message width; anchor
-  // the bubble to the selection's last line, where the pointer released.
   const popupAnchor = activeSourceAnchor
     ? {
         contextElement: activeSourceAnchor.source,
         getBoundingClientRect: () => {
           const rects = activeSourceAnchor.range.getClientRects();
-          return rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+          const rect =
+            rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+          // Code blocks and tables scroll sideways inside the message, so the cited
+          // text can end in their hidden overflow. Base UI only shifts the popup while
+          // it still touches the anchor, so clamp the anchor to the message's width.
+          const bounds = activeSourceAnchor.source.getBoundingClientRect();
+          const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
+          const right = Math.max(Math.min(rect.right, bounds.right), left);
+          return new DOMRect(left, rect.top, right - left, rect.height);
         },
       }
     : undefined;
-  const preview = (citation.comment?.trim() || citation.text).replace(/\s+/g, " ");
-  const label = preview.length > 64 ? `${preview.slice(0, 64)}…` : preview;
+  const label = assistantCitationLabel(citation);
   const sourceLinkProps = {
     to: "/$environmentId/$threadId" as const,
     params: { environmentId: citation.environmentId, threadId: citation.threadId },
@@ -113,23 +126,34 @@ export function AssistantCitationChip({
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-foreground"
+      className="inline-flex min-w-0 items-center gap-[0.2em] self-baseline text-inherit no-underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm"
       aria-label={`View cited assistant text: ${label}`}
     >
       <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
     </Link>
   );
-  const chatSourceLink = (
-    <Link
-      {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-(--context-chip-accent)/17 focus-visible:outline-2 focus-visible:outline-foreground"
-      aria-label={`View cited assistant text: ${label}`}
-    >
-      <QuoteIcon aria-hidden="true" />
-      <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
-    </Link>
-  );
+  if (!composer) {
+    return (
+      <ContextChipPopover
+        kind="citation"
+        icon={<QuoteIcon />}
+        label={label}
+        accessibleLabel={`Quoted assistant text: ${label}`}
+        copyMarkdown={serializeAssistantCitation(citation)}
+      >
+        <div className="flex max-h-[calc(var(--available-height)_-_1rem_-_2px)] flex-col items-start gap-3 p-1 text-sm">
+          <AssistantCitationQuote citation={citation} />
+          <PopoverClose
+            render={<Button variant="outline" size="sm" render={<Link {...sourceLinkProps} />} />}
+          >
+            <ArrowUpRightIcon aria-hidden="true" />
+            Go to source
+          </PopoverClose>
+        </div>
+      </ContextChipPopover>
+    );
+  }
   return (
     <ContextChip
       kind="citation"
@@ -137,14 +161,7 @@ export function AssistantCitationChip({
       data-assistant-citation-chip="true"
       data-markdown-copy={serializeAssistantCitation(citation)}
     >
-      {composer ? (
-        composerSourceLink
-      ) : (
-        <Tooltip>
-          <TooltipTrigger render={chatSourceLink} />
-          <TooltipPopup side="top">View source</TooltipPopup>
-        </Tooltip>
-      )}
+      {composerSourceLink}
       {commentEditor ? (
         <Popover
           open={commentEditor.open}
@@ -176,7 +193,6 @@ export function AssistantCitationChip({
               finalFocus={
                 commentEditor.onRestoreFocus
                   ? () => {
-                      // Leave focus alone when the user closed the popover by moving to another control.
                       const activeElement = document.activeElement;
                       if (
                         activeElement === document.body ||
@@ -200,6 +216,7 @@ export function AssistantCitationChip({
                 inputRef={commentInputRef}
                 onDraftChange={(comment) => {
                   draftCommentRef.current = comment;
+                  commentEditor.onDraftChange?.(comment);
                 }}
                 onSubmit={(comment) => {
                   if (!commentEditor.onSave(comment)) return false;
@@ -228,5 +245,33 @@ export function AssistantCitationChip({
         </Popover>
       ) : null}
     </ContextChip>
+  );
+}
+
+function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
+  const [fade, setFade] = useState({ top: false, bottom: false });
+  const updateFade = (element: HTMLElement) => {
+    const top = element.scrollTop > 1;
+    const bottom = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
+    setFade((current) =>
+      current.top === top && current.bottom === bottom ? current : { top, bottom },
+    );
+  };
+  const observeFade = (element: HTMLDivElement | null) =>
+    element ? observeResize(element, () => updateFade(element)) : undefined;
+  return (
+    <div
+      ref={observeFade}
+      onScroll={(event) => updateFade(event.currentTarget)}
+      className={cn(
+        "max-h-64 min-h-0 space-y-3 self-stretch overflow-y-auto whitespace-pre-wrap wrap-break-word",
+        getVirtualizedScrollFadeClassName(fade),
+      )}
+    >
+      <blockquote className="border-l-2 border-border pl-3 text-muted-foreground">
+        {citation.text}
+      </blockquote>
+      {citation.comment ? <p>{citation.comment}</p> : null}
+    </div>
   );
 }

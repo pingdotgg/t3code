@@ -1,11 +1,71 @@
 import { describe, expect, it } from "vite-plus/test";
+import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 
 import {
-  canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
-  filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
+  resolveFilesystemReadAccess,
 } from "./filesystem.ts";
+
+const SPLIT_SCOPES_SERVER = { serverUpdateScope: "environment:maintain" } as const;
+
+describe("filesystem read access", () => {
+  it("waits for the initial catalog before declaring a missing environment disconnected", () => {
+    expect(
+      resolveFilesystemReadAccess({
+        isCatalogReady: false,
+        connection: null,
+        session: null,
+        sessionError: null,
+      }),
+    ).toEqual({ canReadFiles: false, isPending: true, error: null });
+  });
+
+  it.each([false, true])(
+    "preserves a cached file grant offline with catalog ready=%s",
+    (isCatalogReady) => {
+      const input = {
+        isCatalogReady,
+        connection: { phase: "offline", error: null },
+        session: { authenticated: true, scopes: [AuthFilesystemReadScope] },
+        sessionError: null,
+      } as const;
+      expect(resolveFilesystemReadAccess(input)).toEqual({
+        canReadFiles: true,
+        isPending: false,
+        error: null,
+      });
+      expect(
+        resolveFilesystemReadAccess({ ...input, sessionError: "The session has expired." }),
+      ).toEqual({ canReadFiles: false, isPending: false, error: "The session has expired." });
+    },
+  );
+
+  it.each([
+    { authenticated: true, scopes: [AuthOrchestrationReadScope], auth: SPLIT_SCOPES_SERVER },
+    { authenticated: false, scopes: [AuthFilesystemReadScope], auth: SPLIT_SCOPES_SERVER },
+  ] as const)("does not infer file access from an ungranted session", (session) => {
+    expect(
+      resolveFilesystemReadAccess({
+        isCatalogReady: true,
+        connection: { phase: "connected", error: null },
+        session,
+        sessionError: null,
+      }),
+    ).toEqual({ canReadFiles: false, isPending: false, error: null });
+  });
+
+  it("falls back to the orchestration grant on a server that predates filesystem:read", () => {
+    expect(
+      resolveFilesystemReadAccess({
+        isCatalogReady: true,
+        connection: { phase: "connected", error: null },
+        session: { authenticated: true, scopes: [AuthOrchestrationReadScope], auth: {} },
+        sessionError: null,
+      }),
+    ).toEqual({ canReadFiles: true, isPending: false, error: null });
+  });
+});
 
 describe("filesystem browse model", () => {
   it("derives the browse target and navigation state", () => {
@@ -18,22 +78,6 @@ describe("filesystem browse model", () => {
     });
     expect(getFilesystemBrowsePath("C:\\Users\\test", "MacIntel").isBrowsing).toBe(false);
     expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
-  });
-
-  it("filters names, hidden directories, and exact matches consistently", () => {
-    const entries = [
-      { name: ".config", fullPath: "/Users/test/.config" },
-      { name: "Code", fullPath: "/Users/test/Code" },
-      { name: "codething", fullPath: "/Users/test/codething" },
-    ];
-
-    expect(filterFilesystemBrowseEntries(entries, "co")).toEqual({
-      visibleEntries: entries.slice(1, 3),
-      exactEntry: null,
-    });
-    expect(filterFilesystemBrowseEntries(entries, "").visibleEntries).toEqual(entries.slice(1));
-    expect(filterFilesystemBrowseEntries(entries, ".").visibleEntries).toEqual(entries.slice(0, 1));
-    expect(filterFilesystemBrowseEntries(entries, "Code").exactEntry).toEqual(entries[1]);
   });
 });
 
@@ -59,12 +103,5 @@ describe("browse navigation", () => {
 
     await expect(invalidatedRun).resolves.toBe(false);
     expect(commits).toEqual(["second"]);
-  });
-
-  it("only preloads connected environments", () => {
-    expect(canPreloadBrowsePath("connected")).toBe(true);
-    expect(canPreloadBrowsePath("offline")).toBe(false);
-    expect(canPreloadBrowsePath("reconnecting")).toBe(false);
-    expect(canPreloadBrowsePath(null)).toBe(false);
   });
 });

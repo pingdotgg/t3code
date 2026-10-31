@@ -17,30 +17,36 @@ private final class FilePreviewController: QLPreviewController {
   }
 }
 
-/// Quick Look owns image and document controls, zooming, and source-view transitions.
 final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   QLPreviewControllerDelegate, UIAdaptivePresentationControllerDelegate {
   let identifier: String
   private var controller: UIViewController?
   private let completion: (Error?) -> Void
   private weak var sources: T3PresentationSources?
-  private let sourceIdentifier: String
-  private let item = FilePreviewItem()
+  private let sourceIdentifiers: [String]
+  private var items: [FilePreviewItem] = []
   private var loading: Task<Void, Never>?
   private var dismissRequested = false
   private var finished = false
 
-  init(identifier: String, sources: T3PresentationSources, sourceIdentifier: String, completion: @escaping (Error?) -> Void) {
+  init(identifier: String, sources: T3PresentationSources, sourceIdentifiers: [String],
+       completion: @escaping (Error?) -> Void) {
     self.identifier = identifier
     self.sources = sources
-    self.sourceIdentifier = sourceIdentifier
+    self.sourceIdentifiers = sourceIdentifiers
     self.completion = completion
     super.init()
   }
 
   func present(url: URL, title: String, from presenter: UIViewController) {
+    present(urls: [url], titles: [title], selectedIndex: 0, from: presenter)
+  }
+
+  func present(urls: [URL], titles: [String], selectedIndex: Int, from presenter: UIViewController) {
     loading = Task { @MainActor [self] in
       do {
+        for (index, url) in urls.enumerated() {
+        let title = titles[index]
         let file = try await Self.prepareFile(url: url, title: title)
         guard !finished, !Task.isCancelled else {
           try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
@@ -56,11 +62,15 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
             userInfo: [NSLocalizedDescriptionKey: "This file type cannot be previewed on this device."]
           )
         }
+        let item = FilePreviewItem()
         item.previewItemURL = file
         item.previewItemTitle = title
+        items.append(item)
+        }
         let preview = FilePreviewController()
         preview.delegate = self
         preview.dataSource = self
+        preview.currentPreviewItemIndex = selectedIndex
         preview.onAppear = { [weak self] in self?.resumePendingDismissal() }
         controller = preview
         presenter.present(preview, animated: !UIAccessibility.isReduceMotionEnabled) { [self] in
@@ -91,20 +101,27 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     }
   }
 
-  func numberOfPreviewItems(in controller: QLPreviewController) -> Int { item.previewItemURL == nil ? 0 : 1 }
+  func numberOfPreviewItems(in controller: QLPreviewController) -> Int { items.count }
 
   func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
-    item
+    items[index]
+  }
+
+  private func sourceView(for item: QLPreviewItem) -> UIView? {
+    guard !UIAccessibility.isReduceMotionEnabled,
+      let index = items.firstIndex(where: { $0 === item }),
+      sourceIdentifiers.indices.contains(index)
+    else { return nil }
+    return sources?.view(for: sourceIdentifiers[index])
   }
 
   func previewController(_ controller: QLPreviewController, transitionViewFor item: QLPreviewItem) -> UIView? {
-    guard !UIAccessibility.isReduceMotionEnabled else { return nil }
-    return sources?.view(for: sourceIdentifier)
+    sourceView(for: item)
   }
 
   func previewController(_ controller: QLPreviewController, frameFor item: QLPreviewItem,
                          inSourceView view: AutoreleasingUnsafeMutablePointer<UIView?>) -> CGRect {
-    guard !UIAccessibility.isReduceMotionEnabled, let source = sources?.view(for: sourceIdentifier) else { return .zero }
+    guard let source = sourceView(for: item) else { return .zero }
     view.pointee = source
     return source.bounds
   }
@@ -118,10 +135,12 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     finished = true
     loading?.cancel()
     loading = nil
-    if let file = item.previewItemURL {
-      try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+    for item in items {
+      if let file = item.previewItemURL {
+        try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+      }
     }
-    item.previewItemURL = nil
+    items.removeAll()
     DispatchQueue.main.async { [completion] in completion(error) }
   }
 
@@ -147,9 +166,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
         try FileManager.default.moveItem(at: temporaryFile, to: download)
       }
       try Task.checkCancellation()
-      // Pictures and PDFs are identified by content so a misnamed file still opens correctly.
-      // Anything else keeps its own extension: Quick Look decides from that whether it can
-      // render the document (Office, iWork, RTF and more) and refuses before we present.
+      // Detect images and PDFs by content; preserve other extensions so Quick Look can decide support.
       let filename = URL(fileURLWithPath: title).lastPathComponent as NSString
       let originalExtension = filename.pathExtension
       var type: UTType?

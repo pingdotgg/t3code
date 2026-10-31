@@ -1,23 +1,33 @@
+import * as Dialog from "../../components/ui/Dialog";
 import type {
   EnvironmentId,
   ProjectId,
   ProviderInteractionMode,
   ServerProvider,
   ThreadId,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
+import {
+  type ComposerEnvironmentCandidate,
+  matchComposerEnvironmentItems,
+  matchComposerThreadItems,
+} from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
+const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
+const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
-import { Alert } from "react-native";
-import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
-import { pullRequestComposerContext, threadComposerContext } from "../../lib/composerContext";
+import {
+  formatComposerContextReference,
+  threadContextRecord,
+} from "@t3tools/shared/composerContextReferences";
+import { environmentComposerContext, pullRequestComposerContext } from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
   getComposerDraftSnapshot,
-  readComposerDraftSelection,
   setComposerDraftContext,
+  useComposerDraftSelection,
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -32,27 +42,60 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
+  createProviderWorkspaceSnapshotRefreshAtomFamily,
   dedupeProviderSkillsByName,
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
   isProviderSkillUserInvocable,
-  hasCompleteProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAtomRefresh } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import { useEffect, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
-import { useComposerPathSearch, useComposerPullRequestSearch } from "../../state/queries";
+import {
+  useComposerPathSearch,
+  useComposerPullRequestSearch,
+  useThreadSearch,
+} from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
-const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
+const providerWorkspaceSnapshotRefresh = createProviderWorkspaceSnapshotRefreshAtomFamily({
+  providers: serverEnvironment.providersValueAtom,
+  refreshProviders: serverEnvironment.refreshProviders,
+});
+
+const idleWorkspaceSnapshotRefreshAtom: Atom.Atom<unknown> = Atom.make<void>(undefined).pipe(
+  Atom.withLabel("mobile:provider-workspace-snapshot-refresh:idle"),
+);
 
 function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
   return { start: draftMessage.length, end: draftMessage.length };
+}
+
+/**
+ * A caret placed by an insertion (chips, pasted context) wins while the draft
+ * still has the text it was placed in. Otherwise the composer's own caret is
+ * clamped to the draft, and a caret from another owner starts at the end.
+ */
+export function resolveComposerMenuSelection(input: {
+  readonly draftMessage: string;
+  readonly ownerKey: string | null;
+  readonly inserted: ComposerEditorSelection | null;
+  readonly local: {
+    readonly ownerKey: string | null;
+    readonly start: number;
+    readonly end: number;
+  };
+}): ComposerEditorSelection {
+  if (input.inserted) return input.inserted;
+  if (input.local.ownerKey !== input.ownerKey) return composerSelectionAtEnd(input.draftMessage);
+  const length = input.draftMessage.length;
+  return { start: Math.min(input.local.start, length), end: Math.min(input.local.end, length) };
 }
 
 export function buildComposerSlashCommandItems(input: {
@@ -60,7 +103,6 @@ export function buildComposerSlashCommandItems(input: {
   readonly atMessageStart: boolean;
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
-  /** Whether T3 itself offers /usage-limits for the selected provider. */
   readonly offersUsageLimits?: boolean;
   readonly allowInteractionMode: boolean;
   readonly selectedProviderStatus: Pick<
@@ -104,8 +146,6 @@ export function buildComposerSlashCommandItems(input: {
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
-    // T3's own limits command is answered by the thread composer; New Task has
-    // nowhere to show it. A provider's same-named command is left alone.
     if (command.name === USAGE_LIMITS_COMMAND.name && input.offersUsageLimits && !input.hasThread) {
       continue;
     }
@@ -165,16 +205,18 @@ export function resolveComposerCommandSelection(input: {
   };
 }
 
-/** Shared autocomplete for thread composers and unsent new-task drafts. */
 export function useComposerCommandMenu({
   draftMessage,
   ownerKey,
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
+  environments = EMPTY_ENVIRONMENTS,
+  linkedEnvironments = NO_LINKED_ENVIRONMENTS,
   currentThreadId = null,
   projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
+  threadPullRequests,
   selectedProviderStatus,
   hasThread,
   hasCompactableConversation,
@@ -187,170 +229,93 @@ export function useComposerCommandMenu({
   readonly draftMessage: string;
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
-  /** Candidates for `@` thread suggestions; the caller reads them from the entity store. */
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
-  /** Left out of `@` thread suggestions: a thread is never context for itself. */
+  readonly environments?: ReadonlyArray<ComposerEnvironmentCandidate>;
+  /** The machines `environmentId` links to, by name, whose threads the picker also offers. */
+  readonly linkedEnvironments?: ReadonlyMap<EnvironmentId, string>;
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
+  readonly threadPullRequests?: ReadonlyArray<ThreadPullRequestLink>;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly hasThread: boolean;
   readonly hasCompactableConversation: boolean;
-  /** Whether T3 itself offers /usage-limits for the selected provider. */
   readonly offersUsageLimits?: boolean;
   readonly enabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
-  /** Picking /usage-limits is the action itself; the draft keeps nothing of it. */
   readonly onUsageLimits?: () => void;
 }) {
-  const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
-  const previousOwnerKeyRef = useRef(ownerKey);
-  const onSelectionChange = useCallback((nextSelection: ComposerEditorSelection) => {
-    setSelection(nextSelection);
-  }, []);
-  useEffect(() => {
-    // An insert (attachment, terminal capture, review comment) rewrites the draft and records
-    // the caret that belongs after the new chip. Clamping alone would keep the old offset,
-    // which sits before it.
-    const inserted = ownerKey ? readComposerDraftSelection(ownerKey, draftMessage) : null;
-    if (inserted) {
-      setSelection((current) =>
-        current.start === inserted.start && current.end === inserted.end ? current : inserted,
-      );
-      return;
-    }
-    const end = draftMessage.length;
-    setSelection((current) => {
-      const start = Math.min(current.start, end);
-      const selectionEnd = Math.min(current.end, end);
-      if (start === current.start && selectionEnd === current.end) {
-        return current;
-      }
-      return { start, end: selectionEnd };
-    });
-  }, [draftMessage, ownerKey]);
-  useEffect(() => {
-    if (previousOwnerKeyRef.current === ownerKey) return;
-    previousOwnerKeyRef.current = ownerKey;
-    setSelection(composerSelectionAtEnd(draftMessage));
-  }, [draftMessage, ownerKey]);
-
-  const skills = useMemo(
-    () =>
-      selectedProviderStatus ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd) : [],
-    [projectCwd, selectedProviderStatus],
-  );
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
-  const selectedProviderInstanceId = selectedProviderStatus?.instanceId;
-  const hasWorkspaceSnapshot = hasCompleteProviderWorkspaceSnapshot(
-    selectedProviderStatus,
-    projectCwd,
-  );
-  const workspaceRefreshKeyRef = useRef<string | null>(null);
-  const [workspaceRefreshRetry, setWorkspaceRefreshRetry] = useState<{
-    key: string;
-    notBefore: number;
-  } | null>(null);
-  const workspaceRefreshScopeKey =
-    environmentId && projectCwd && selectedProviderInstanceId
-      ? `${environmentId}:${selectedProviderInstanceId}:${projectCwd}`
-      : null;
-  const workspaceSlashCommandsPending =
-    selectedProviderStatus?.workspaceSnapshots?.some(
-      (snapshot) => snapshot.cwd === projectCwd && snapshot.slashCommandsPending === true,
-    ) ?? false;
-  useEffect(() => {
-    if (
-      !workspaceSlashCommandsPending ||
-      !workspaceRefreshRetry ||
-      workspaceRefreshRetry.key !== workspaceRefreshScopeKey
-    )
-      return;
-    const timeout = setTimeout(
-      () => {
-        setWorkspaceRefreshRetry((current) => (current === workspaceRefreshRetry ? null : current));
-      },
-      Math.max(0, workspaceRefreshRetry.notBefore - Date.now()),
-    );
-    return () => clearTimeout(timeout);
-  }, [workspaceRefreshRetry, workspaceRefreshScopeKey, workspaceSlashCommandsPending]);
-  const hadWorkspaceSnapshotRef = useRef(false);
-  useEffect(() => {
-    if (hadWorkspaceSnapshotRef.current && !hasWorkspaceSnapshot) {
-      workspaceRefreshKeyRef.current = null;
-      setWorkspaceRefreshRetry(null);
-    }
-    hadWorkspaceSnapshotRef.current = hasWorkspaceSnapshot;
-  }, [hasWorkspaceSnapshot]);
-  useEffect(() => {
-    if (!environmentId || !projectCwd || !selectedProviderInstanceId) return;
-    const key = `${environmentId}:${selectedProviderInstanceId}:${projectCwd}`;
-    if (workspaceRefreshKeyRef.current === key) return;
-    if (hasWorkspaceSnapshot) {
-      workspaceRefreshKeyRef.current = key;
-      setWorkspaceRefreshRetry(null);
-      return;
-    }
-    const retry = workspaceRefreshRetry;
-    if (retry?.key === key && Date.now() < retry.notBefore) return;
-    workspaceRefreshKeyRef.current = key;
-    const retryLater = () => {
-      if (workspaceRefreshKeyRef.current !== key) return;
-      workspaceRefreshKeyRef.current = null;
-      setWorkspaceRefreshRetry({
-        key,
-        notBefore: Date.now() + WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
-      });
-    };
-    void refreshProviders({
-      environmentId,
-      input: { instanceId: selectedProviderInstanceId, cwd: projectCwd },
-    }).then((result) => {
-      const refreshed =
-        result._tag === "Success" &&
-        hasCompleteProviderWorkspaceSnapshot(
-          result.value.providers.find(
-            (provider) => provider.instanceId === selectedProviderInstanceId,
-          ),
-          projectCwd,
-        );
-      if (!refreshed && workspaceRefreshKeyRef.current === key) {
-        retryLater();
-      }
-    }, retryLater);
-  }, [
+  const [localSelection, setLocalSelection] = useState(() => ({
+    ownerKey,
+    ...composerSelectionAtEnd(draftMessage),
+  }));
+  // Thread mentions rank by recency as of when the composer mounted.
+  const [now] = useState(() => Date.now());
+  const insertedSelection = useComposerDraftSelection(ownerKey, draftMessage);
+  const selection = resolveComposerMenuSelection({
     draftMessage,
-    environmentId,
-    hasWorkspaceSnapshot,
-    projectCwd,
-    refreshProviders,
-    selectedProviderInstanceId,
-    workspaceRefreshRetry,
-  ]);
+    ownerKey,
+    inserted: insertedSelection,
+    local: localSelection,
+  });
+  const setSelection = (next: ComposerEditorSelection) =>
+    setLocalSelection({ ownerKey, start: next.start, end: next.end });
 
-  const trigger = useMemo(() => {
+  const skills = selectedProviderStatus
+    ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd)
+    : [];
+  const selectedProviderInstanceId = selectedProviderStatus?.instanceId;
+  const refreshWorkspaceSnapshot = useAtomRefresh(
+    environmentId && projectCwd && selectedProviderInstanceId
+      ? providerWorkspaceSnapshotRefresh({
+          environmentId,
+          instanceId: selectedProviderInstanceId,
+          cwd: projectCwd,
+        })
+      : idleWorkspaceSnapshotRefreshAtom,
+  );
+  // Every draft change rechecks a stale snapshot, including drafts written by
+  // another surface (a prompt link) that never move the editor selection.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the provider workspace snapshot atom whenever the draft text changes from any surface
+  useEffect(() => {
+    refreshWorkspaceSnapshot();
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Draft changes are the recheck signal.
+    draftMessage,
+    refreshWorkspaceSnapshot,
+  ]);
+  const onSelectionChange = (nextSelection: ComposerEditorSelection) => {
+    setSelection(nextSelection);
+  };
+
+  const trigger = (() => {
     if (!enabled || selection.start !== selection.end) {
       return null;
     }
     return detectComposerTrigger(draftMessage, selection.end);
-  }, [draftMessage, enabled, selection]);
+  })();
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,
     query: trigger?.kind === "path" ? trigger.query : null,
   });
+  // Mounts older settled threads matching the mention, which shells may leave out.
+  useThreadSearch(
+    trigger?.kind === "path" && environmentId ? [environmentId] : [],
+    trigger?.kind === "path" ? trigger.query : "",
+    { titlesOnly: true },
+  );
   const pullRequestSearch = useComposerPullRequestSearch({
     environmentId,
     projectId: pullRequestProjectId,
     repository: pullRequestRepository,
+    threadPullRequests,
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
 
-  const items = useMemo<ComposerCommandItem[]>(() => {
+  const items = ((): ComposerCommandItem[] => {
     if (!trigger) return [];
 
     if (trigger.kind === "pull-request") {
@@ -367,7 +332,11 @@ export function useComposerCommandMenu({
           isDraft: entry.isDraft,
         },
         label: `#${entry.number}`,
-        description: `${entry.isDraft ? "Draft" : entry.state} · ${entry.title}`,
+        description: `${entry.isDraft ? "Draft" : entry.state} · ${
+          entry.repository.toLowerCase() === pullRequestRepository?.toLowerCase()
+            ? ""
+            : `${entry.repository} · `
+        }${entry.title}`,
       }));
     }
 
@@ -493,12 +462,18 @@ export function useComposerCommandMenu({
         ? matchComposerThreadItems({
             shells: threadShells,
             environmentId,
+            linkedEnvironments,
             excludeThreadId: currentThreadId,
             query: trigger.query,
+            now,
           })
+        : [];
+      const environmentItems = environmentId
+        ? matchComposerEnvironmentItems({ environments, environmentId, query: trigger.query })
         : [];
       return [
         ...threadItems,
+        ...environmentItems,
         ...pathSearch.entries.map((entry) => {
           const parts = entry.path.split("/");
           return {
@@ -514,132 +489,125 @@ export function useComposerCommandMenu({
     }
 
     return [];
-  }, [
-    currentThreadId,
-    environmentId,
-    threadShells,
-    hasThread,
-    hasCompactableConversation,
-    onUpdateInteractionMode,
-    pathSearch.entries,
-    pullRequestSearch.entries,
-    projectCwd,
-    selectedProviderStatus,
-    skills,
-    trigger,
-    offersUsageLimits,
-  ]);
+  })();
 
-  const onSelect = useCallback(
-    (item: ComposerCommandItem) => {
-      if (!trigger) return;
-      if (item.type === "thread") {
-        if (!ownerKey || trigger.kind !== "path") return;
-        const shell = threadShells.find(
-          (candidate) =>
-            candidate.environmentId === item.thread.environmentId &&
-            candidate.id === item.thread.threadId,
-        );
-        if (!shell) return;
-        const record = threadComposerContext(item.thread, shell.title);
-        const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
-        const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
-        if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
-          Alert.alert(
-            "Too many context items",
-            "Remove some context from the draft and try again.",
-          );
-          return;
-        }
-        const result = replaceTextRange(
-          draftMessage,
-          trigger.rangeStart,
-          trigger.rangeEnd,
-          `${formatComposerContextReference(record)} `,
-        );
-        onChangeDraftMessage(result.text);
-        if (!alreadyAttached) {
-          const draft = getComposerDraftSnapshot(ownerKey);
-          setComposerDraftContext(ownerKey, {
-            version: 1,
-            records: [...(draft.context?.records ?? []), record],
-          });
-        }
-        setSelection({ start: result.cursor, end: result.cursor });
+  const onSelect = (item: ComposerCommandItem) => {
+    if (!trigger) return;
+    if (item.type === "environment") {
+      if (!ownerKey || trigger.kind !== "path") return;
+      const record = environmentComposerContext(item.environmentId, item.label);
+      const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+      const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+      if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
+        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
         return;
       }
-      if (item.type === "pull-request") {
-        if (
-          !ownerKey ||
-          trigger.kind !== "pull-request" ||
-          !items.some((candidate) => candidate.id === item.id)
-        )
-          return;
-        const record = pullRequestComposerContext(item.pullRequest, uuidv4());
-        if (
-          (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
-          COMPOSER_CONTEXT_MAX_RECORDS
-        ) {
-          Alert.alert(
-            "Too many context items",
-            "Remove some context from the draft and try again.",
-          );
-          return;
-        }
-        const result = replaceTextRange(
-          draftMessage,
-          trigger.rangeStart,
-          trigger.rangeEnd,
-          `${formatComposerContextReference(record)} `,
-        );
-        onChangeDraftMessage(result.text);
+      const result = replaceTextRange(
+        draftMessage,
+        trigger.rangeStart,
+        trigger.rangeEnd,
+        `${formatComposerContextReference(record)} `,
+      );
+      onChangeDraftMessage(result.text);
+      if (!alreadyAttached) {
         const draft = getComposerDraftSnapshot(ownerKey);
         setComposerDraftContext(ownerKey, {
           version: 1,
           records: [...(draft.context?.records ?? []), record],
         });
-        setSelection({ start: result.cursor, end: result.cursor });
+      }
+      setSelection({ start: result.cursor, end: result.cursor });
+      return;
+    }
+    if (item.type === "thread") {
+      if (!ownerKey || trigger.kind !== "path") return;
+      const shell = threadShells.find(
+        (candidate) =>
+          candidate.environmentId === item.thread.environmentId &&
+          candidate.id === item.thread.threadId,
+      );
+      if (!shell) return;
+      const record = threadContextRecord(item.thread, shell.title);
+      const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+      const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+      if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
+        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
         return;
       }
-
-      if (
-        item.type === "provider-slash-command" &&
-        item.command.name === USAGE_LIMITS_COMMAND.name &&
-        onUsageLimits
-      ) {
-        const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
-        setSelection({ start: cleared.cursor, end: cleared.cursor });
-        onChangeDraftMessage(cleared.text);
-        onUsageLimits();
-        return;
-      }
-
-      const result = resolveComposerCommandSelection({
+      const result = replaceTextRange(
         draftMessage,
-        trigger,
-        item,
-        allowInteractionMode:
-          onUpdateInteractionMode !== undefined &&
-          selectedProviderStatus?.showInteractionModeToggle !== false,
+        trigger.rangeStart,
+        trigger.rangeEnd,
+        `${formatComposerContextReference(record)} `,
+      );
+      onChangeDraftMessage(result.text);
+      if (!alreadyAttached) {
+        const draft = getComposerDraftSnapshot(ownerKey);
+        setComposerDraftContext(ownerKey, {
+          version: 1,
+          records: [...(draft.context?.records ?? []), record],
+        });
+      }
+      setSelection({ start: result.cursor, end: result.cursor });
+      return;
+    }
+    if (item.type === "pull-request") {
+      if (
+        !ownerKey ||
+        trigger.kind !== "pull-request" ||
+        !items.some((candidate) => candidate.id === item.id)
+      )
+        return;
+      const record = pullRequestComposerContext(item.pullRequest, uuidv4());
+      if (
+        (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
+        COMPOSER_CONTEXT_MAX_RECORDS
+      ) {
+        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+        return;
+      }
+      const result = replaceTextRange(
+        draftMessage,
+        trigger.rangeStart,
+        trigger.rangeEnd,
+        `${formatComposerContextReference(record)} `,
+      );
+      onChangeDraftMessage(result.text);
+      const draft = getComposerDraftSnapshot(ownerKey);
+      setComposerDraftContext(ownerKey, {
+        version: 1,
+        records: [...(draft.context?.records ?? []), record],
       });
       setSelection({ start: result.cursor, end: result.cursor });
-      onChangeDraftMessage(result.text);
-      if (result.interactionMode !== null) {
-        onUpdateInteractionMode?.(result.interactionMode);
-      }
-    },
-    [
+      return;
+    }
+
+    if (
+      item.type === "provider-slash-command" &&
+      item.command.name === USAGE_LIMITS_COMMAND.name &&
+      onUsageLimits
+    ) {
+      const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+      setSelection({ start: cleared.cursor, end: cleared.cursor });
+      onChangeDraftMessage(cleared.text);
+      onUsageLimits();
+      return;
+    }
+
+    const result = resolveComposerCommandSelection({
       draftMessage,
-      ownerKey,
-      items,
-      onChangeDraftMessage,
-      onUpdateInteractionMode,
-      onUsageLimits,
-      selectedProviderStatus?.showInteractionModeToggle,
-      threadShells,
       trigger,
-    ],
-  );
+      item,
+      allowInteractionMode:
+        onUpdateInteractionMode !== undefined &&
+        selectedProviderStatus?.showInteractionModeToggle !== false,
+    });
+    setSelection({ start: result.cursor, end: result.cursor });
+    onChangeDraftMessage(result.text);
+    if (result.interactionMode !== null) {
+      onUpdateInteractionMode?.(result.interactionMode);
+    }
+  };
 
   return {
     selection,

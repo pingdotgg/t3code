@@ -1,139 +1,63 @@
-import { MaterialListRow } from "../../../components/MaterialListRow";
-import { useNavigation } from "@react-navigation/native";
-import type { ComponentProps } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { useNavigation, useRoute } from "@react-navigation/native";
+import { use, type ComponentProps } from "react";
+import { Platform } from "react-native";
 
-import { SymbolView } from "../../../components/AppSymbol";
-import { AppText as Text } from "../../../components/AppText";
-import type { SettingsLegalDocumentTarget, SettingsSheetTarget } from "./settings-sheet-targets";
+import { ListRow } from "../../../components/ui/ListRow";
+import { ListRowLayout } from "../../../components/ui/ListRowLayout";
+import { RowPressable } from "../../../components/ui/RowPressable";
 import { cn } from "../../../lib/cn";
-
-type SymbolName = ComponentProps<typeof SymbolView>["name"];
+import type { SettingsLegalDocumentTarget, SettingsPageTarget } from "./settings-page-targets";
+import { SettingsSidebarContext } from "./SettingsSection";
+import { openSettings } from "../settings-navigation";
 
 export function SettingsRow(props: {
   readonly disabled?: boolean;
-  readonly icon: SymbolName;
+  readonly icon: ComponentProps<typeof ListRow>["icon"];
   readonly label: string;
   readonly value?: string;
   readonly valuePosition?: "below" | "trailing";
-  readonly target?: SettingsSheetTarget;
+  readonly target?: SettingsPageTarget;
   readonly fullScreenTarget?: SettingsLegalDocumentTarget;
   readonly onPress?: () => void;
 }) {
   const navigation = useNavigation();
-  if (Platform.OS === "android") {
+  const sidebar = use(SettingsSidebarContext);
+  // The Settings list opens pages in place of the detail column; a page's own rows push below.
+  const inList = ["Home", "Settings"].includes(useRoute().name);
+  const valueBelow =
+    props.valuePosition === "below" ||
+    (props.valuePosition === undefined && Platform.OS === "android");
+  const content = {
+    icon: props.icon,
+    label: props.label,
+    description: valueBelow ? props.value : undefined,
+    detail: valueBelow ? undefined : props.value,
+    disabled: props.disabled,
+  };
+  const onPress = () => {
+    if (props.target) {
+      if (inList) openSettings(navigation, props.target);
+      else navigation.navigate(props.target);
+    } else if (props.fullScreenTarget) {
+      navigation.navigate(props.fullScreenTarget);
+    } else {
+      props.onPress?.();
+    }
+  };
+  if (sidebar) {
+    const selected = props.target !== undefined && props.target === sidebar.selected;
     return (
-      <MaterialListRow
-        className="bg-grouped-card"
-        title={props.label}
-        subtitle={props.valuePosition === "trailing" ? undefined : props.value}
+      <RowPressable
+        accessibilityRole="button"
         accessibilityLabel={[props.label, props.value].filter(Boolean).join(", ")}
-        trailing={
-          props.valuePosition === "trailing" && props.value ? (
-            <View className="flex-row items-center gap-3">
-              <Text className="text-sm text-foreground-muted">{props.value}</Text>
-              <SymbolView name="chevron.right" size={16} tintColorClassName="accent-chevron" />
-            </View>
-          ) : undefined
-        }
+        accessibilityState={{ disabled: Boolean(props.disabled), selected }}
         disabled={props.disabled}
-        leading={
-          <SymbolView
-            name={props.icon}
-            size={24}
-            tintColorClassName="accent-icon"
-            type="monochrome"
-            weight="regular"
-          />
-        }
-        onPress={() => {
-          if (props.target)
-            navigation.navigate("SettingsSheet", {
-              screen: "SettingsContent",
-              params: { screen: props.target },
-            });
-          else if (props.fullScreenTarget) navigation.navigate(props.fullScreenTarget);
-          else props.onPress?.();
-        }}
-      />
-    );
-  }
-  const content = (
-    <View className={cn("flex-row items-center gap-4 p-4", props.disabled && "opacity-[0.45]")}>
-      <SymbolView
-        name={props.icon}
-        size={22}
-        tintColorClassName="accent-icon"
-        type="monochrome"
-        weight="regular"
-      />
-      <>
-        <Text className="shrink-0 text-lg text-foreground" numberOfLines={1}>
-          {props.label}
-        </Text>
-        <View className="min-w-0 flex-1 items-end">
-          {props.value ? (
-            <Text
-              className="max-w-[180px] text-right text-base text-foreground-muted"
-              ellipsizeMode="middle"
-              numberOfLines={1}
-            >
-              {props.value}
-            </Text>
-          ) : null}
-        </View>
-      </>
-      <SymbolView
-        name="chevron.right"
-        size={16}
-        tintColorClassName="accent-chevron"
-        type="monochrome"
-        weight="semibold"
-      />
-    </View>
-  );
-
-  const target = props.target;
-  if (target) {
-    return (
-      <Pressable
-        accessibilityLabel={props.label}
-        accessibilityRole="button"
-        disabled={props.disabled}
-        onPress={() =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: target },
-          })
-        }
+        onPress={onPress}
+        className={cn("rounded-2xl", selected && "bg-subtle-strong")}
       >
-        {content}
-      </Pressable>
+        <ListRowLayout {...content} />
+      </RowPressable>
     );
   }
-
-  const fullScreenTarget = props.fullScreenTarget;
-  if (fullScreenTarget) {
-    return (
-      <Pressable
-        accessibilityLabel={props.label}
-        accessibilityRole="button"
-        disabled={props.disabled}
-        onPress={() => navigation.navigate(fullScreenTarget)}
-      >
-        {content}
-      </Pressable>
-    );
-  }
-
-  return (
-    <Pressable
-      accessibilityLabel={props.label}
-      accessibilityRole="button"
-      disabled={props.disabled}
-      onPress={props.onPress}
-    >
-      {content}
-    </Pressable>
-  );
+  return <ListRow {...content} onPress={onPress} />;
 }

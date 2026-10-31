@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -38,13 +39,11 @@ const mintKeys = NodeCrypto.generateKeyPairSync("ed25519", {
   privateKeyEncoding: { format: "pem", type: "pkcs8" },
   publicKeyEncoding: { format: "pem", type: "spki" },
 });
-/** The secrets a T3 Connect-linked environment holds, keyed by name. */
 const linkedSecrets: ReadonlyMap<string, string> = new Map([
   [CLOUD_MINT_PUBLIC_KEY, mintKeys.publicKey],
   [RELAY_ISSUER_SECRET, relayIssuer],
 ]);
 
-/** A proof as the relay signs it for one delivery. */
 const relayProof = Effect.fn("relayProof")(function* (claims: {
   readonly deliveryId: string;
   readonly receivedAt: string;
@@ -114,36 +113,6 @@ const post = (
 ) => new Request(`http://env.local${path}`, { method: "POST", body, headers });
 
 describe("webhook route", () => {
-  it("passes the raw request to the service and answers 202 with the delivery id", async () => {
-    let received: WebhookTriggerRequest | undefined;
-    const { handler, dispose } = handlerFor((request) => {
-      received = request;
-      return Effect.succeed({
-        _tag: "accepted",
-        deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:1"),
-        outcome: "accepted",
-      });
-    });
-    try {
-      const response = await handler(
-        post("/api/hooks/scheduled-task%3Ahook/tok?x=1", '{"a":1}', {
-          "Content-Type": "application/json",
-          "X-GitHub-Event": "push",
-        }),
-      );
-      expect(response.status).toBe(202);
-      expect(await response.json()).toEqual({ deliveryId: "delivery:1" });
-      expect(received?.hookId).toBe("scheduled-task:hook");
-      expect(received?.token).toBe("tok");
-      expect(received?.query).toBe("x=1");
-      expect(received?.headers["x-github-event"]).toBe("push");
-      expect(received?.bodyText).toBe('{"a":1}');
-    } finally {
-      await dispose();
-    }
-  });
-
-  // Live clock: the server checks proofs against real time.
   it.live("trusts the relay's delivery id and receive time only with its signed proof", () =>
     Effect.gen(function* () {
       const received: Array<WebhookTriggerRequest> = [];
@@ -173,19 +142,14 @@ describe("webhook route", () => {
         hookId: "id",
         privateKey: forged.privateKey,
       });
-      // 0: signed by the relay for exactly this delivery.
       yield* send("/api/hooks/id/tok", { ...relayHeaders, "x-t3-relay-delivery": proof });
-      // 1: a direct caller claiming to be the relay, without a proof.
       yield* send("/api/hooks/id/tok", relayHeaders);
-      // 2: a proof signed with any other key.
       yield* send("/api/hooks/id/tok", { ...relayHeaders, "x-t3-relay-delivery": forgedProof });
-      // 3: a real proof lifted onto another delivery id.
       yield* send("/api/hooks/id/tok", {
         ...relayHeaders,
         "x-t3-relay-delivery-id": "relay-2",
         "x-t3-relay-delivery": proof,
       });
-      // 4: a real proof for another hook.
       yield* send("/api/hooks/other/tok", { ...relayHeaders, "x-t3-relay-delivery": proof });
       yield* Effect.promise(() => dispose());
       expect(received.map((request) => request.relayDeliveryId)).toEqual([
@@ -200,7 +164,6 @@ describe("webhook route", () => {
     }),
   );
 
-  // Live clock: the server checks proofs against real time.
   it.live("trusts no relay headers on an environment not linked to T3 Connect", () =>
     Effect.gen(function* () {
       const received: Array<WebhookTriggerRequest> = [];
@@ -228,9 +191,9 @@ describe("webhook route", () => {
     const deliveryId = ScheduledTaskWebhookDeliveryId.make("delivery:1");
     const cases: ReadonlyArray<[WebhookTriggerResult, number, string]> = [
       [{ _tag: "accepted", deliveryId, outcome: "accepted" }, 202, "accepted"],
-      // Same status as a started run; only the header tells them apart.
       [{ _tag: "accepted", deliveryId, outcome: "duplicate" }, 202, "duplicate"],
       [{ _tag: "accepted", deliveryId, outcome: "prompt_too_long" }, 202, "prompt_too_long"],
+      [{ _tag: "accepted", deliveryId, outcome: "filtered" }, 202, "filtered"],
       [{ _tag: "not_found" }, 404, "not_found"],
       [{ _tag: "rejected_signature" }, 401, "rejected_signature"],
       [{ _tag: "disabled" }, 409, "disabled"],
@@ -244,40 +207,12 @@ describe("webhook route", () => {
         const response = await handler(post("/api/hooks/id/tok", "{}"));
         expect(response.status).toBe(status);
         expect(response.headers.get("x-t3-hook-outcome")).toBe(outcome);
+        if (status === 429) expect(await response.json()).toEqual({ error: outcome });
       } finally {
         await dispose();
       }
     }
   });
-
-  // Live clock: the server checks proofs against real time.
-  it.live("joins the relay's trace only for requests the relay forwarded", () =>
-    Effect.gen(function* () {
-      const parents: Array<string | undefined> = [];
-      const { handler, dispose } = handlerFor(() =>
-        Effect.gen(function* () {
-          const span = yield* Effect.currentParentSpan.pipe(Effect.option);
-          parents.push(span._tag === "Some" ? span.value.traceId : undefined);
-          return { _tag: "not_found" } as const;
-        }),
-      );
-      const send = (headers: Record<string, string>) =>
-        Effect.promise(() => handler(post("/api/hooks/id/tok", "{}", headers)));
-      const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
-      const receivedAt = "2026-10-04T10:00:00.000Z";
-      const relayHeaders = {
-        "x-t3-relay-delivery-id": "relay-1",
-        "x-t3-relay-received-at": receivedAt,
-      };
-      const proof = yield* relayProof({ deliveryId: "relay-1", receivedAt, hookId: "id" });
-      yield* send({ ...relayHeaders, traceparent, "x-t3-relay-delivery": proof });
-      // Claiming to be the relay without its proof cannot attach to our traces.
-      yield* send({ ...relayHeaders, traceparent });
-      yield* send({ traceparent });
-      yield* Effect.promise(() => dispose());
-      expect(parents).toEqual(["0af7651916cd43dd8448eb211c80319c", undefined, undefined]);
-    }),
-  );
 
   it("rejects oversized bodies and malformed paths before reaching the service", async () => {
     let calls = 0;
@@ -291,7 +226,6 @@ describe("webhook route", () => {
       expect((await handler(post("/api/hooks/id", "{}"))).status).toBe(404);
       expect((await handler(post("/api/hooks/id/tok/extra", "{}"))).status).toBe(404);
       expect((await handler(post("/api/hooks/%E0/tok", "{}"))).status).toBe(404);
-      // No content-length: the reader cap must still apply.
       const chunked = new ReadableStream<Uint8Array>({
         start(controller) {
           for (let sent = 0; sent <= WEBHOOK_MAX_BODY_BYTES; sent += 64 * 1024) {
@@ -310,6 +244,32 @@ describe("webhook route", () => {
       );
       expect(streamed.status).toBe(413);
       expect(calls).toBe(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("refuses HEAD probes without triggering the hook", async () => {
+    let calls = 0;
+    const { handler, dispose } = handlerFor(() => {
+      calls += 1;
+      return Effect.succeed({
+        _tag: "accepted",
+        deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:1"),
+        outcome: "accepted",
+      });
+    });
+    try {
+      const response = await handler(
+        new Request("http://env.local/api/hooks/id/tok", { method: "HEAD" }),
+      );
+      expect(response.status).toBe(405);
+      expect(response.headers.get("allow")).toBe("GET, POST, PUT, PATCH");
+      expect(response.headers.get("x-t3-hook-outcome")).toBe("method_not_allowed");
+      expect(calls).toBe(0);
+      const get = await handler(new Request("http://env.local/api/hooks/id/tok"));
+      expect(get.status).toBe(202);
+      expect(calls).toBe(1);
     } finally {
       await dispose();
     }

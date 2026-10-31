@@ -1,14 +1,18 @@
 import {
+  type AuthMcpClientAccess,
   type EnvironmentId,
   McpCapabilityUnavailableError,
   OrchestratorMcpFailure,
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
+  type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
 const ALL_MCP_CAPABILITIES = [
   "preview",
@@ -19,43 +23,127 @@ const ALL_MCP_CAPABILITIES = [
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
-/** A provider session T3 Code launched for one thread. */
 export interface McpThreadCaller {
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
+  /** A delegated child task; its parent owns the work it hands back. */
+  readonly subagent?: boolean;
 }
 
-/** An agent T3 Code did not launch, signed in through MCP OAuth. */
 export interface McpClientCaller {
   readonly sessionId: string;
   readonly label: string;
-  readonly runtimeModeCeiling: RuntimeMode;
+  readonly access: AuthMcpClientAccess;
+  /**
+   * Another T3 Code environment's peer link. What it starts here carries its
+   * session as `linkOrigin`, and it changes only that work (`linkOrigin.ts`).
+   */
+  readonly linked?: boolean | undefined;
+  /**
+   * Narrower modes the client asked for on this request (`T3-Mode-Limit`):
+   * another environment passing on the limits of the agent it calls for.
+   */
+  readonly narrowedTo?: ClientModes | undefined;
+  /** The origin an outside client reached; its thread links open the web app there. */
+  readonly webOrigin?: string | undefined;
 }
 
 /**
- * Who is calling and what they may do. Tool parameters choose the target
- * (thread, project); the caller sets the limits. A thread caller's omitted
- * target falls back to its own thread; a client caller has no own thread, so
- * tools that act as the caller (delegate_task, preview, worktree handoff)
- * need `thread`.
+ * `T3-Mode-Limit: <runtimeMode>/<interactionMode>` lets an OAuth client cap
+ * a request below what it was approved with: another environment passes on
+ * the limits of the agent it calls for. It can only narrow (see
+ * `clientModeCeiling`), so a client gains nothing by sending a broad one.
  */
+export const MODE_LIMIT_HEADER = "t3-mode-limit";
+
+export interface ClientModes {
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+}
+
+const runtimeModeRank: Record<RuntimeMode, number> = {
+  "approval-required": 0,
+  "auto-accept-edits": 1,
+  auto: 2,
+  "full-access": 3,
+};
+const interactionModeRank: Record<ProviderInteractionMode, number> = { plan: 0, default: 1 };
+
+/**
+ * The modes a client caller's writes are capped at: what it was approved
+ * with, narrowed by what it asked for on this request. A read-only client
+ * never reaches a write (`McpToolAccess` refuses it first), so it maps to the
+ * lowest runtime mode rather than to nothing.
+ */
+export const clientModeCeiling = (client: McpClientCaller | undefined): ClientModes => {
+  const approved: ClientModes = {
+    runtimeMode:
+      client === undefined || client.access === "read-only" ? "approval-required" : client.access,
+    interactionMode: "default",
+  };
+  const asked = client?.narrowedTo;
+  if (asked === undefined) return approved;
+  return {
+    runtimeMode:
+      runtimeModeRank[asked.runtimeMode] < runtimeModeRank[approved.runtimeMode]
+        ? asked.runtimeMode
+        : approved.runtimeMode,
+    interactionMode:
+      interactionModeRank[asked.interactionMode] < interactionModeRank[approved.interactionMode]
+        ? asked.interactionMode
+        : approved.interactionMode,
+  };
+};
+
+/** Thread callers default to their own thread; client callers need thread for tools that act as the caller. */
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
   readonly capabilities: ReadonlySet<McpCapability>;
   readonly issuedAt: number;
-  /** Namespaces idempotency keys so two callers reusing a clientRequestId cannot collide. */
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
   readonly client: McpClientCaller | undefined;
+  /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
+  readonly linkedEnvironments?: boolean;
 }
+
+/**
+ * T3 Code renders `t3-thread://` links as thread chips. Other MCP clients cannot open them, so
+ * they get a web URL on the origin they reached instead.
+ */
+export const threadLinkFor = (
+  scope: Pick<McpInvocationScope, "environmentId" | "client">,
+  threadId: ThreadId,
+): string => {
+  const origin = scope.client?.webOrigin;
+  return origin === undefined
+    ? formatThreadLink({ environmentId: scope.environmentId, threadId })
+    : `${origin}/${encodeURIComponent(scope.environmentId)}/${encodeURIComponent(threadId)}`;
+};
 
 export class McpInvocationContext extends Context.Service<
   McpInvocationContext,
   McpInvocationScope
 >()("t3/mcp/McpInvocationContext") {}
 
-/** The error a missing capability surfaces as; preview keeps its own so the broker can route it. */
+/**
+ * `McpSchema.EnabledWhen` for tools a delegated child must not see or call.
+ * EnabledWhen only receives the MCP client profile, so read the T3 caller from the request fiber.
+ */
+export const hiddenFromSubagents = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.thread?.subagent !== true;
+};
+
+/** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */
+export const hiddenWhileLinksOff = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.linkedEnvironments !== false;
+};
+
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"
   ? PreviewAutomationUnavailableError
   : McpCapabilityUnavailableError;
@@ -85,17 +173,11 @@ export const requireMcpCapability = <const C extends McpCapability>(
   McpInvocationContext.pipe(
     Effect.filterOrFail(
       (invocation) => invocation.capabilities.has(capability),
-      // The conditional type narrows what the literal argument decided at runtime.
       (invocation) => missingCapability(invocation, capability) as McpCapabilityError<C>,
     ),
     Effect.withSpan("mcp.requireCapability"),
   );
 
-/**
- * Preview tabs and device sessions belong to the calling thread, so their
- * capabilities are only ever granted to thread callers. A scope that carries
- * one without a thread is refused the same way as a missing capability.
- */
 export const requireThreadMcpCapability = <const C extends "preview" | "device">(
   capability: C,
 ): Effect.Effect<McpThreadInvocationScope, McpCapabilityError<C>, McpInvocationContext> =>
@@ -114,7 +196,6 @@ const threadCallerRequired = (operation: string) =>
     message: `${operation} acts as the calling T3 thread, so it needs an agent running inside T3 Code. This MCP client signed in from outside a thread.`,
   });
 
-/** A scope with a thread caller, for tools whose whole surface acts as the caller. */
 export type McpThreadInvocationScope = McpInvocationScope & { readonly thread: McpThreadCaller };
 
 export const requireThreadScope = (scope: McpInvocationScope, operation: string) =>

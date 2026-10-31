@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from "three";
 
-/** Shortest rotation vector. q and -q represent the same orientation. */
-export function rotationVector(rotation: Quaternion) {
+/** q and -q represent the same orientation. */
+function rotationVector(rotation: Quaternion) {
   const q = rotation.clone().normalize();
   if (q.w < 0) q.set(-q.x, -q.y, -q.z, -q.w);
   const length = Math.hypot(q.x, q.y, q.z);
@@ -16,21 +16,17 @@ function fromVector(vector: Vector3) {
     : new Quaternion().setFromAxisAngle(vector.clone().divideScalar(angle), angle);
 }
 
-// Recovered from Bitrig 0.25's rotation dynamics: point gain, drag force limit,
-// velocity limits, release prediction/blend, and the 0.5 / 0.78 release spring.
 const gain = 0.006;
 const response = 0.5;
 const damping = 0.78;
 const frequency = (2 * Math.PI) / response;
 const decay = frequency * damping;
 const stepSeconds = 1 / 120;
-// Fast releases combine exponential friction with a critically damped correction.
 const flickThreshold = 4.5;
 const flickLimit = 22;
 const spinDecay = 1.1;
 const settleFrequency = 2;
 
-/** A moving spring target follows cumulative camera-space gestures; release latches the nearest useful view. */
 export function createDeviceMotion(options: { choose: (rotation: Quaternion) => Quaternion }) {
   const rotation = new Quaternion();
   const target = new Quaternion();
@@ -61,7 +57,6 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
   };
   const release = (now: number) => {
     if (!drag) return;
-    // A pause before lifting a pointer should not resurrect an old flick.
     if (now - lastInput > 100) gestureVelocity.set(0, 0, 0);
     const prediction = target
       .clone()
@@ -71,8 +66,6 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
     const rest = drag.rest;
     drag = null;
     if (moved && velocity.length() >= flickThreshold) {
-      // Choose where the free spin would finish, then correct toward that view
-      // throughout the coast rather than handing off to a spring at low speed.
       const projected = rotation
         .clone()
         .premultiply(fromVector(velocity.clone().multiplyScalar(1 / spinDecay)));
@@ -155,8 +148,7 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
       q.premultiply(fromVector(speed.clone().multiplyScalar(dt))).normalize();
     };
     // Fixed ticks make release independent of display refresh rate. The final
-    // partial tick interpolates the next tick without committing it. This also
-    // keeps displayed angular speed bounded between tick boundaries.
+    // partial tick interpolates the next tick without committing it.
     for (; spring.steps < steps; spring.steps++)
       integrate(spring.rotation, spring.velocity, stepSeconds);
     rotation.copy(spring.rotation);
@@ -210,8 +202,6 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
     },
     dragActive(active: boolean, now: number) {
       if (active) {
-        // A pointer takes over at the displayed pose, even if a wheel gesture
-        // was paused with its target still ahead of the spring.
         if (drag || spin) {
           advance(now);
           drag = null;
@@ -223,7 +213,6 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
         release(now);
       }
     },
-    /** Deltas are CSS pixels, independent of panel size and event partitioning. */
     orbit(x: number, y: number, now: number) {
       if (held || ![x, y, now].every(Number.isFinite) || (!x && !y)) return;
       advance(now);
@@ -243,7 +232,6 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
       else gestureVelocity.set(0, 0, 0);
       lastInput = now;
     },
-    /** Captured device touches and hinge edits freeze projection, independently of orbit dragging. */
     hold(active: boolean, now: number) {
       if (held === active) return;
       if (active) {

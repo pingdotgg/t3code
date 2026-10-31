@@ -13,10 +13,7 @@ import { HttpClient } from "effect/http";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import {
-  makeEnvironmentHttpApiUrlBuilder,
-  type RemoteEnvironmentRequestError,
-} from "../rpc/http.ts";
+import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 
 const DEFAULT_PULL_REQUEST_DIFF_TIMEOUT_MS = 60_000;
@@ -54,7 +51,7 @@ export const fetchEnvironmentPullRequestDiff = Effect.fn(
     ...input,
     group: "pullRequests",
     method: "POST",
-    url: (httpBaseUrl) => makeEnvironmentHttpApiUrlBuilder(httpBaseUrl).pullRequests.diff(),
+    url: (urls) => urls.diff(),
     timeoutMs: input.timeoutMs ?? DEFAULT_PULL_REQUEST_DIFF_TIMEOUT_MS,
     request: ({ client, headers }) => client.diff({ payload: input.diff, headers }),
   }).pipe(
@@ -89,14 +86,19 @@ export const layer: Layer.Layer<PullRequestDiffLoader, never, HttpClient.HttpCli
     const remoteAuthorization = yield* Effect.serviceOption(
       RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
     );
+    // The HTTP fetch owns the load span.
     return PullRequestDiffLoader.of({
-      load: (prepared, input) =>
-        fetchEnvironmentPullRequestDiff({
-          prepared,
-          diff: input,
-          signer,
-          remoteAuthorization,
-        }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+      load: Effect.fnUntraced(
+        function* (prepared, input) {
+          return yield* fetchEnvironmentPullRequestDiff({
+            prepared,
+            diff: input,
+            signer,
+            remoteAuthorization,
+          });
+        },
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      ),
     });
   }),
 );

@@ -6,27 +6,19 @@ import { BaseSequencer, type TestSpecification } from "vite-plus/test/node";
 
 import shardWeights from "./shardWeights.json" with { type: "json" };
 
-// What a file costs beyond its recorded test time: CI spends about 0.2s per
-// server test file on imports and setup, which the recorded times leave out.
-const FILE_OVERHEAD_SECONDS = 0.25;
+// Use the recorded median for new files.
+const UNRECORDED_FILE_SECONDS = 0.6;
 
 const recordedSeconds: Readonly<Record<string, number>> = shardWeights;
 
-/**
- * Splits server test files across `--shard` runs by recorded duration. Vitest's
- * default split hashes file paths into equal-count shards, which can put the
- * slowest files on one runner. Here the longest file goes to the lightest shard
- * first. Every shard derives the same split from the same file list, so each
- * file still runs in exactly one shard. Files without a recorded time count as
- * fast files. Record fresh times with `node scripts/update-test-shard-weights.ts`.
- */
+// Include import time (~1/3 of CI shards) in weights; derive identical splits so each file runs once.
 export class WeightedShardSequencer extends BaseSequencer {
   override async shard(files: TestSpecification[]) {
     const { index, count } = this.ctx.config.shard ?? { index: 1, count: 1 };
     const weighted = files
       .map((spec) => {
         const key = NodePath.relative(this.ctx.config.root, spec.moduleId).replaceAll("\\", "/");
-        return { spec, key, seconds: (recordedSeconds[key] ?? 0) + FILE_OVERHEAD_SECONDS };
+        return { spec, key, seconds: recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS };
       })
       .toSorted((a, b) => b.seconds - a.seconds || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 

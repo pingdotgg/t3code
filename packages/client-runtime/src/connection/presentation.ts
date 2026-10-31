@@ -2,7 +2,8 @@ import type { ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
-import type { SupervisorConnectionState } from "./model.ts";
+import type { ConnectionTarget, SupervisorConnectionState } from "./model.ts";
+import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -19,10 +20,17 @@ export interface EnvironmentConnectionPresentation {
   readonly traceId: string | null;
 }
 
+/**
+ * Provider statuses are pushed every few minutes with fresh `checkedAt` stamps, and every root
+ * coordinator reads environment presentations. Leaving them out keeps a presentation stable
+ * across those pushes; provider readers subscribe to the server's providers atom instead.
+ */
+export type EnvironmentServerConfig = Omit<ServerConfig, "providers">;
+
 export interface EnvironmentPresentation {
   readonly entry: ConnectionCatalogEntry;
   readonly connection: EnvironmentConnectionPresentation;
-  readonly serverConfig: ServerConfig | null;
+  readonly serverConfig: EnvironmentServerConfig | null;
 }
 
 export function presentConnectionState(
@@ -86,10 +94,42 @@ export function connectionStatusTitle(connection: EnvironmentConnectionPresentat
   return connectionStatusText({ ...connection, error: null });
 }
 
-export function presentEnvironmentConnection(
-  state: SupervisorConnectionState,
-): EnvironmentConnectionPresentation {
-  return presentConnectionState(state);
+/**
+ * SSH connections ride a local forward that disappears with the client, so they have no stable
+ * address.
+ */
+export function environmentMcpUrl(input: {
+  readonly entry: ConnectionCatalogEntry;
+  readonly relayHttpBaseUrl?: string | undefined;
+  readonly connectedTarget?: ConnectionTarget | null | undefined;
+}): string | null {
+  const connectedRouteId = input.connectedTarget ? connectionRouteId(input.connectedTarget) : null;
+  const routes = connectionRoutes(input.entry);
+  const connectedRoute = routes.find(
+    (route) => connectionRouteId(route.target) === connectedRouteId,
+  );
+  for (const route of connectedRoute ? [connectedRoute, ...routes] : routes) {
+    const httpBaseUrl =
+      route.target._tag === "RelayConnectionTarget"
+        ? (input.relayHttpBaseUrl ?? null)
+        : routeHttpBaseUrl(route);
+    const mcpUrl = httpBaseUrl === null ? null : mcpUrlFromBase(httpBaseUrl);
+    if (mcpUrl !== null) return mcpUrl;
+  }
+  return null;
+}
+
+function mcpUrlFromBase(httpBaseUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(httpBaseUrl);
+  } catch {
+    return null;
+  }
+  url.pathname = "/mcp";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 export function connectionCatalogDisplayUrl(entry: ConnectionCatalogEntry): string | null {

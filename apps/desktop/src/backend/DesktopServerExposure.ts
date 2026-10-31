@@ -10,6 +10,7 @@ import {
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
 import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -70,6 +71,10 @@ const isUsableLanIpv4Address = (address: string): boolean =>
   !address.startsWith("169.254.") &&
   !isTailscaleIpv4Address(address);
 
+// Private bridges and VM adapters are fallbacks; host bridges can carry the real LAN address.
+const HOST_ONLY_INTERFACE =
+  /^(bridge\d|utun|ipsec|ppp|tun|tap|wg|docker|br-|veth|virbr|vmnet|vboxnet|VirtualBox|VMware)/;
+
 const isHttpsEndpointUrl = (value: string): boolean => {
   try {
     return new URL(value).protocol === "https:";
@@ -87,18 +92,17 @@ const resolveLanAdvertisedHost = (
     return normalizedExplicitHost;
   }
 
-  for (const interfaceAddresses of Object.values(networkInterfaces)) {
-    if (!interfaceAddresses) continue;
-
-    for (const address of interfaceAddresses) {
-      if (address.internal) continue;
-      if (address.family !== "IPv4") continue;
-      if (!isUsableLanIpv4Address(address.address)) continue;
-      return address.address;
-    }
-  }
-
-  return null;
+  const lanAddresses = Object.entries(networkInterfaces).flatMap(([name, addresses]) =>
+    (addresses ?? [])
+      .filter(
+        (address) =>
+          !address.internal && address.family === "IPv4" && isUsableLanIpv4Address(address.address),
+      )
+      .map((address) => ({ name, address: address.address })),
+  );
+  const preferred =
+    lanAddresses.find(({ name }) => !HOST_ONLY_INTERFACE.test(name)) ?? lanAddresses[0];
+  return preferred?.address ?? null;
 };
 
 const resolveDesktopServerExposure = (input: {
@@ -198,9 +202,7 @@ const resolveDesktopCoreAdvertisedEndpoints = (
             : "User-configured endpoint for this desktop backend.",
         }),
       );
-    } catch {
-      // Ignore malformed user-configured endpoints without dropping valid endpoints.
-    }
+    } catch {}
   }
 
   return endpoints;
@@ -407,12 +409,55 @@ function resolveRuntimeState(input: {
   };
 }
 
+// A network-accessible backend binds every interface, so a new Wi-Fi network
+// or DHCP lease changes only the address worth advertising, not the binding.
+const withCurrentAdvertisedHost = (
+  state: RuntimeState,
+  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+  advertisedHostOverride: Option.Option<string>,
+): RuntimeState => {
+  if (state.mode !== "network-accessible") {
+    return state;
+  }
+  const override = Option.getOrUndefined(advertisedHostOverride);
+  const exposure = resolveDesktopServerExposure({
+    mode: state.mode,
+    port: state.port,
+    networkInterfaces,
+    ...(override ? { advertisedHostOverride: override } : {}),
+  });
+  return {
+    ...state,
+    endpointUrl: Option.fromNullishOr(exposure.endpointUrl),
+    advertisedHost: Option.fromNullishOr(exposure.advertisedHost),
+  };
+};
+
+const tailscaleIpv4AddressKey = (
+  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+): string =>
+  [
+    ...new Set(
+      Object.values(networkInterfaces)
+        .flatMap((addresses) => addresses ?? [])
+        .filter(
+          (address) =>
+            !address.internal &&
+            address.family === "IPv4" &&
+            isTailscaleIpv4Address(address.address),
+        )
+        .map((address) => address.address),
+    ),
+  ]
+    .toSorted()
+    .join(",");
+
 const requiresBackendRelaunch = (previous: RuntimeState, next: RuntimeState): boolean =>
   previous.port !== next.port ||
   previous.bindHost !== next.bindHost ||
   previous.localHttpUrl !== next.localHttpUrl;
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const networkInterfaces = yield* DesktopNetworkInterfaces.DesktopNetworkInterfaces;
@@ -420,26 +465,34 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const stateRef = yield* Ref.make(initialRuntimeState());
-  // Each change reads the runtime state, persists settings, then writes the
-  // state back. Run them one at a time so a change never writes over another
-  // with values it read before that change persisted.
+  // Serialize read-persist-write changes so stale runtime state cannot overwrite another update.
   const changePermit = yield* Semaphore.make(1);
 
-  // Cache the `tailscale status` spawn for the TTL. On macOS, the Mac App
-  // Store Tailscale CLI lives inside Tailscale's sandbox container, so each
-  // spawn re-triggers the "Other apps" TCC prompt.
-  const cachedReadMagicDnsName = yield* Effect.cachedWithTTL(
-    readTailscaleStatus.pipe(
-      Effect.map((status) => status.magicDnsName),
-      Effect.orElseSucceed(() => null),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-    ),
-    TAILSCALE_STATUS_CACHE_TTL,
-  );
+  // Key status by interface addresses so network changes bypass stale DNS and
+  // identity. Cache unchanged addresses to avoid repeated macOS TCC prompts.
+  const tailscaleStatusCache = yield* Cache.make({
+    capacity: 1,
+    timeToLive: TAILSCALE_STATUS_CACHE_TTL,
+    lookup: (_addresses: string) =>
+      readTailscaleStatus.pipe(
+        Effect.orElseSucceed(() => null),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+      ),
+  });
 
   const readNetworkInterfaces = networkInterfaces.read;
 
-  const getState = Ref.get(stateRef).pipe(Effect.map(toContractState));
+  const readCurrentState = (currentNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces) =>
+    Ref.get(stateRef).pipe(
+      Effect.map((state) =>
+        withCurrentAdvertisedHost(state, currentNetworkInterfaces, config.desktopLanHostOverride),
+      ),
+    );
+
+  const getState = readNetworkInterfaces.pipe(
+    Effect.flatMap(readCurrentState),
+    Effect.map(toContractState),
+  );
   const backendConfig = Ref.get(stateRef).pipe(Effect.map(toBackendConfig));
 
   const configureFromSettings = Effect.fn("desktop.serverExposure.configureFromSettings")(
@@ -536,17 +589,15 @@ export const make = Effect.gen(function* () {
   );
 
   const getAdvertisedEndpoints = Effect.gen(function* () {
-    const state = yield* Ref.get(stateRef);
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
+    const state = yield* readCurrentState(currentNetworkInterfaces);
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
       exposure: toResolvedExposure(state),
       customHttpsEndpointUrls: config.desktopHttpsEndpointUrls,
     });
 
-    // Don't spawn the Tailscale CLI when the user hasn't opted into any
-    // network exposure. The spawn itself triggers a macOS "Other apps"
-    // TCC prompt on Mac App Store Tailscale builds.
+    // Spawning Mac App Store Tailscale can prompt for TCC access even when exposure is disabled.
     if (state.mode !== "network-accessible" && !state.tailscaleServeEnabled) {
       return coreEndpoints;
     }
@@ -556,7 +607,10 @@ export const make = Effect.gen(function* () {
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
       networkInterfaces: currentNetworkInterfaces,
-      readMagicDnsName: cachedReadMagicDnsName,
+      readStatus: Cache.get(
+        tailscaleStatusCache,
+        tailscaleIpv4AddressKey(currentNetworkInterfaces),
+      ),
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       Effect.provideService(HttpClient.HttpClient, httpClient),

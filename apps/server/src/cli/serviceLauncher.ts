@@ -3,16 +3,7 @@ import { Command } from "effect/cli";
 
 import { main as runServiceLauncher } from "../serviceLauncher.ts";
 
-/**
- * Hosts the service launcher inside the CLI executable. The service manager
- * runs `t3 __service-launcher` and the launcher spawns the server from the
- * same executable, so the machine needs no Node to run either.
- *
- * The launcher owns SIGTERM handling and the process lifetime: it must finish
- * stopping its child before the process exits, so it runs detached from the
- * CLI's fiber rather than under `runMain`, whose signal handler would
- * interrupt the fiber and exit while the child is still being terminated.
- */
+/** The launcher must stop its child before exiting; `runMain` would interrupt that shutdown. */
 export const serviceLauncherCommand = Command.make("__service-launcher").pipe(
   Command.unlisted,
   Command.withHandler(() =>

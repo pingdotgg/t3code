@@ -22,6 +22,16 @@ export function usagePriceForm(model = "", price?: UsageModelPriceOverride): Usa
   };
 }
 
+/** Allow decimal/exponent edits and all deletions, including temporarily invalid values; saving validates
+ * the result. */
+export function isUsagePriceEdit(previous: string, next: string): boolean {
+  if (/^\s*(?:\d*\.?\d*|(?:\d+\.?\d*|\.\d+)e[+-]?\d*)\s*$/i.test(next)) return true;
+  if (next.length >= previous.length) return false;
+  let start = 0;
+  while (start < next.length && next[start] === previous[start]) start++;
+  return next.slice(start) === previous.slice(previous.length - (next.length - start));
+}
+
 /** Blank cache prices use the input rate; explicit zero means free. */
 export function parseUsagePriceForm(
   form: UsagePriceForm,

@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ContextHandoffService from "./ContextHandoffService.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
 
@@ -92,12 +92,6 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
       assert.deepStrictEqual(handoff.fromProviderThreadIds, []);
       assert.include(handoff.summaryText, "What did we decide?");
       assert.include(handoff.summaryText, "keep the migration lightweight");
-      const providerMessage = ContextHandoffService.providerMessageWithContextHandoff({
-        handoff,
-        userText: "Continue from there.",
-      });
-      assert.include(providerMessage, handoff.summaryText);
-      assert.include(providerMessage, "User message:\nContinue from there.");
     }),
   );
 

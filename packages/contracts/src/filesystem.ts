@@ -1,7 +1,30 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const FILESYSTEM_PATH_MAX_LENGTH = 512;
+
+export const FILESYSTEM_METADATA_BATCH_LIMIT = 64;
+
+export const FilesystemGetMetadataInput = Schema.Struct({
+  // Absolute host paths, including ~/; clients must anchor relative paths.
+  paths: Schema.Array(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(FILESYSTEM_METADATA_BATCH_LIMIT)),
+});
+export type FilesystemGetMetadataInput = typeof FilesystemGetMetadataInput.Type;
+
+export const FilesystemEntryMetadata = Schema.Struct({
+  kind: Schema.Literals(["file", "directory", "other"]),
+  byteLength: Schema.optionalKey(NonNegativeInt),
+  mimeType: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type FilesystemEntryMetadata = typeof FilesystemEntryMetadata.Type;
+
+// Entries follow request order; null means missing, unreadable, or unsupported.
+export const FilesystemGetMetadataResult = Schema.Struct({
+  entries: Schema.Array(Schema.NullOr(FilesystemEntryMetadata)),
+});
+export type FilesystemGetMetadataResult = typeof FilesystemGetMetadataResult.Type;
 
 export const FilesystemBrowseInput = Schema.Struct({
   partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
@@ -45,8 +68,6 @@ export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseEr
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
-  // Structured diagnostics stay optional for rolling compatibility with legacy message-only
-  // payloads, while new call sites must provide the request context and failure classification.
   // @effect-diagnostics-next-line overriddenSchemaConstructor:off
   constructor(props: {
     readonly partialPath: string;

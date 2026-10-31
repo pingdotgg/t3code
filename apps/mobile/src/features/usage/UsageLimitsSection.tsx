@@ -1,50 +1,51 @@
-import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  ProviderConsumeResetCreditOutcome,
-  ProviderConsumeResetCreditInput,
-  ServerProvider,
-  ServerProviderResetCredits,
-  ServerProviderUsageWindow,
-  UsageProviderKind,
+import * as Dialog from "../../components/ui/Dialog";
+import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type ProviderConsumeResetCreditOutcome,
+  type ProviderConsumeResetCreditInput,
+  type ServerProvider,
+  type ServerProviderResetCredits,
+  type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import {
-  elapsedShare,
   formatDuration,
   formatResetsIn,
   limitsNotice,
   paceOf,
+  paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
-import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
-import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
-import { Alert, Linking, Pressable, View } from "react-native";
+import { type ReactNode, useContext, useRef, useState } from "react";
+import { Atom } from "effect/reactivity";
+import { Linking, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useProviderColors } from "./usageProviders";
+import { useNowMinuteMs } from "../../lib/clock";
+import {
+  environmentIdsKey,
+  limitsAutoRefreshSetAtom,
+  limitsRefreshFailuresAtom,
+  refreshEnvironmentLimits,
+} from "./usageLimitsRefresh";
+import { usageProviderKind, useProviderColors } from "./usageProviders";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
 type Driver = ServerProvider["driver"];
 
-/** The series colour the usage chart uses for this driver, so the two views read as one. */
 function useBarColor(driver: Driver): string | null {
   const colors = useProviderColors();
-  const kind: UsageProviderKind | null =
-    driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : null;
+  const kind = usageProviderKind(driver);
   return kind ? colors[kind] : null;
 }
 
-/**
- * One window as a bar spanning its whole duration: the fill is quota left,
- * the hairline is how much of the window is left, so even spending keeps the
- * fill on the line. Pace sits under the left edge, the countdown under the
- * right, so a row reads in one glance.
- */
 function WindowRow(props: {
   readonly window: ServerProviderUsageWindow;
   readonly color: string | null;
@@ -52,10 +53,35 @@ function WindowRow(props: {
 }) {
   const { window, now } = props;
   const remaining = remainingPercent(window);
-  const elapsed = elapsedShare(window, now);
-  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
+  const timeLeft = paceRemainingPercent(window, now);
   const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
+  const [barWidth, setBarWidth] = useState(0);
+  const tickX =
+    timeLeft === null || barWidth < 6
+      ? null
+      : Math.min(Math.max((barWidth * timeLeft) / 100, 3), barWidth - 3);
+  const bar = (
+    <View
+      className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle"
+      style={barWidth > 0 ? { width: barWidth } : undefined}
+    >
+      <View
+        className={
+          remaining <= 10
+            ? "h-full rounded-full bg-red-500"
+            : remaining <= 30
+              ? "h-full rounded-full bg-amber-500"
+              : "h-full rounded-full bg-foreground"
+        }
+        style={[
+          { flex: remaining },
+          remaining > 30 && props.color ? { backgroundColor: props.color } : null,
+        ]}
+      />
+      <View style={{ flex: 100 - remaining }} />
+    </View>
+  );
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
@@ -64,27 +90,35 @@ function WindowRow(props: {
           {remaining}% left
         </Text>
       </View>
-      <View className="h-3 justify-center">
-        <View className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle">
+      <View
+        className="h-3 justify-center"
+        onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
+      >
+        {tickX === null ? (
+          bar
+        ) : (
+          <View className="h-1.5">
+            {/* Clip the same full-width bar so neither fill proportions nor corner radii change. */}
+            {(
+              [
+                [0, tickX - 3],
+                [tickX + 3, barWidth],
+              ] as const
+            ).map(([start, end]) => (
+              <View
+                key={start}
+                className="absolute top-0 bottom-0 overflow-hidden"
+                style={{ left: start, width: end - start }}
+              >
+                <View style={{ marginLeft: -start }}>{bar}</View>
+              </View>
+            ))}
+          </View>
+        )}
+        {tickX !== null ? (
           <View
-            className={
-              remaining <= 10
-                ? "h-full rounded-full bg-red-500"
-                : remaining <= 30
-                  ? "h-full rounded-full bg-amber-500"
-                  : "h-full rounded-full bg-foreground"
-            }
-            style={[
-              { flex: remaining },
-              remaining > 30 && props.color ? { backgroundColor: props.color } : null,
-            ]}
-          />
-          <View style={{ flex: 100 - remaining }} />
-        </View>
-        {timeLeft !== null ? (
-          <View
-            className="absolute top-0 bottom-0 w-px bg-foreground"
-            style={{ left: `${timeLeft}%`, opacity: 0.6 }}
+            className="absolute top-px bottom-px w-0.5 rounded-full bg-foreground"
+            style={{ left: tickX - 1 }}
           />
         ) : null}
       </View>
@@ -121,7 +155,6 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
   );
 }
 
-/** One account: icon, name and plan on a single line, then its windows. */
 export function AccountLimits(props: {
   readonly driver: Driver;
   readonly label: string;
@@ -130,9 +163,7 @@ export function AccountLimits(props: {
   readonly limits: ServerProvider["usageLimits"];
   readonly now: number;
   readonly first: boolean;
-  /** Tighter padding for the composer card. */
   readonly dense?: boolean;
-  /** Sits at the end of the heading row, such as a close control. */
   readonly trailing?: ReactNode;
   readonly footer?: ReactNode;
 }) {
@@ -193,20 +224,15 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
-/**
- * Banked reset credits with a confirmed redeem action. Redeeming spends a
- * credit the provider granted the user, so it goes through the native
- * confirm alert rather than firing on a bare tap.
- */
 export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
-  /** A smaller pill for the composer card. */
   readonly dense?: boolean;
 }) {
   const { environmentId, input, credits, now, dense = false } = props;
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
@@ -225,6 +251,7 @@ export function ResetCredits(props: {
         }`;
 
   const redeem = async () => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input });
@@ -241,7 +268,8 @@ export function ResetCredits(props: {
   };
 
   const confirm = () => {
-    Alert.alert(
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    Dialog.alert(
       "Use a reset credit?",
       "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
       [
@@ -257,13 +285,13 @@ export function ResetCredits(props: {
       {credits.availableCount > 0 ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: busy }}
-          disabled={busy}
+          accessibilityState={{ disabled: busy || !canManageProviders }}
+          disabled={busy || !canManageProviders}
           onPress={confirm}
           className={
             dense
-              ? "rounded-full bg-subtle-strong px-2.5 py-1"
-              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5"
+              ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
+              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
           }
         >
           <Text
@@ -277,99 +305,64 @@ export function ResetCredits(props: {
           </Text>
         </Pressable>
       ) : null}
+      {!canManageProviders ? (
+        <Text className="text-xs text-foreground-tertiary">
+          This connection cannot manage provider accounts.
+        </Text>
+      ) : null}
       {status ? <Text className="text-sm text-foreground">{status}</Text> : null}
     </View>
   );
 }
 
-/**
- * Re-probes every provider (and usage-limit source) on each connected
- * environment; the fresh snapshots then arrive over the config stream.
- * Countdowns and pace anchor to `now` rather than ticking, so a refresh also
- * re-anchors the clock: quota and elapsed time move together, or not at all.
- * Environments whose probe failed are named, since their rows keep showing
- * the previous quota with nothing else to say so.
- */
+const IDLE_ATOM = Atom.make(undefined);
+
 export function useRefreshLimits(
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
   active = false,
 ) {
+  const registry = useContext(RegistryContext);
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
-  const [now, setNow] = useState(() => Date.now());
+  const now = useNowMinuteMs();
   const [refreshing, setRefreshing] = useState(false);
   const refreshingRef = useRef(false);
-  const [failedEnvironments, setFailedEnvironments] = useState<
-    readonly { environmentId: EnvironmentId; label: string }[]
-  >([]);
-  const refresh = async (automatic = false, afterPending = false) => {
-    const connected = [...presentations].filter(
-      ([environmentId, presentation]) =>
-        presentation.connection.phase === "connected" &&
-        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
+  const selected = [...presentations].filter(
+    ([environmentId]) =>
+      selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId),
+  );
+  const connectedIds = selected
+    .filter(([, presentation]) => presentation.connection.phase === "connected")
+    .map(([environmentId]) => environmentId);
+  const connectedKey = environmentIdsKey(connectedIds);
+  useAtomMount(active && connectedKey !== "" ? limitsAutoRefreshSetAtom(connectedKey) : IDLE_ATOM);
+  const failedIds = new Set(
+    useAtomValue(limitsRefreshFailuresAtom(environmentIdsKey(selected.map(([id]) => id)))),
+  );
+  const failedLabels = selected
+    .filter(([environmentId]) => failedIds.has(environmentId))
+    .map(([, presentation]) => presentation.entry.target.label);
+
+  const refresh = (afterPending: boolean) =>
+    Promise.all(
+      connectedIds.map((environmentId) =>
+        refreshEnvironmentLimits(registry, environmentId, { afterPending }),
+      ),
     );
-    try {
-      await Promise.all(
-        connected.map(async ([environmentId, presentation]) => {
-          const result = await refreshUsageLimits(
-            environmentId,
-            () => refreshProviders({ environmentId, input: {} }),
-            automatic,
-            afterPending,
-          );
-          if (result === undefined) return;
-          setFailedEnvironments((previous) => [
-            ...previous.filter((failed) => failed.environmentId !== environmentId),
-            ...(result._tag === "Failure"
-              ? [{ environmentId, label: presentation.entry.target.label }]
-              : []),
-          ]);
-        }),
-      );
-    } finally {
-      setNow(Date.now());
-    }
-  };
-  // Always toggles `refreshing`, even with nothing to probe: Android's
-  // RefreshControl keeps its spinner up until it sees true then false.
+  // Android RefreshControl needs a true-to-false cycle to stop, even with nothing to probe.
   const refreshManually = async () => {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setRefreshing(true);
-    try {
-      await refresh();
-    } finally {
+    await refresh(false).finally(() => {
       refreshingRef.current = false;
       setRefreshing(false);
-    }
+    });
   };
-  const connectedLimitsEnvironments = [...presentations]
-    .filter(
-      ([environmentId, presentation]) =>
-        presentation.connection.phase === "connected" &&
-        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
-    )
-    .map(([environmentId]) => environmentId)
-    .sort()
-    .join(",");
-  const autoRefreshLimits = useEffectEvent(() => refresh(true));
-  useEffect(() => {
-    if (active && connectedLimitsEnvironments) void autoRefreshLimits();
-  }, [active, connectedLimitsEnvironments]);
-
-  const failedLabels = failedEnvironments
-    .filter(
-      ({ environmentId }) =>
-        selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId),
-    )
-    .map(({ label }) => label);
   return {
     now,
     refreshing,
     failedLabels,
     refresh: refreshManually,
-    refreshAfterEnable: () => refresh(false, true),
+    refreshAfterEnable: () => refresh(true),
   };
 }

@@ -1,47 +1,57 @@
 import type {
   EditorId,
   EnvironmentId,
+  ProjectId,
   ProjectScript,
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
-import { AlertTriangleIcon, XIcon } from "lucide-react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
-import {
-  shouldShowEnvironmentIndicator,
-  type EnvMode,
-  type EnvironmentOption,
-} from "../BranchToolbar.logic";
+import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
-import { BranchToolbarEnvironmentSelector } from "../BranchToolbarEnvironmentSelector";
-import GitActionsControl from "../GitActionsControl";
+import BaseGitActionsControl from "../GitActionsControl";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import { Button } from "../ui/button";
-import type { ComponentProps } from "react";
+import { memo, useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { ThreadServersPanel } from "./ThreadServersPanel";
+import {
+  ThreadDetailsContext,
+  ThreadDetailsUsage,
+  type ThreadDetailsUsageInput,
+} from "./ThreadDetailsUsage";
+import { ThreadDetailsItemsMenuItems } from "./ThreadDetailsItemsMenu";
+import { resolveThreadDetailsVisibility, THREAD_DETAILS_ITEMS } from "./threadDetailsItems";
+import { useClientSettings } from "../../hooks/useSettings";
+import { cn } from "../../lib/utils";
+import { SlidersHorizontalIcon } from "lucide-react";
+import { ThreadDetailsControl } from "./ThreadDetailsControl";
+import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
+} from "./threadDetailsPanelStyles";
+import { Menu, MenuPopup } from "../ui/menu";
 
-interface VersionMismatchIssue {
-  readonly clientVersion: string;
-  readonly serverVersion: string;
-  readonly serverLabel: string;
-}
+const GitActionsControl = memo(BaseGitActionsControl);
 
-export interface ThreadDetailsPanelProps extends Pick<
+interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
-  "anchor" | "handle" | "onPresentationChange"
+  "anchor" | "handle"
 > {
   forceNewWorktree?: boolean;
   environmentId: EnvironmentId;
   threadId: ThreadId;
+  projectId: ProjectId;
+  worktreePath: string | null;
+  isServerThread: boolean;
   draftId?: DraftId;
   activeProjectName: string | undefined;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
@@ -49,15 +59,15 @@ export interface ThreadDetailsPanelProps extends Pick<
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   showOpenInPicker: boolean;
+  openInShortcutEnabled: boolean;
   gitCwd: string | null;
   isGitRepo: boolean;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
-  onEnvironmentChange: (environmentId: EnvironmentId) => void;
+  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   onEnvModeChange: (mode: EnvMode) => void;
-  /** The thread's env mode as ChatView resolves it. */
   envMode: EnvMode;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
@@ -66,8 +76,6 @@ export interface ThreadDetailsPanelProps extends Pick<
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
-  versionMismatch: VersionMismatchIssue | null;
-  onDismissVersionMismatch: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -75,25 +83,24 @@ export interface ThreadDetailsPanelProps extends Pick<
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  usage: ThreadDetailsUsageInput;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
+  const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
-    props.activeProjectScripts ? props.gitCwd : null,
+    props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
   );
-  // Same rule as the composer strip: a lone remote machine still gets a row,
-  // shown as a static label because there is nothing to pick.
-  const canPickEnvironment = props.availableEnvironments.length > 1;
-  const showEnvironment = shouldShowEnvironmentIndicator({
-    activeEnvironment:
-      props.availableEnvironments.find((env) => env.environmentId === props.environmentId) ?? null,
-    canPickEnvironment,
-  });
+  const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
     threadId: props.threadId,
+    projectId: props.projectId,
+    worktreePath: props.worktreePath,
+    isServerThread: props.isServerThread,
     ...(props.draftId ? { draftId: props.draftId } : {}),
     onEnvModeChange: props.onEnvModeChange,
     startFromOrigin: props.startFromOrigin,
@@ -118,122 +125,185 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
       anchor={props.anchor}
       handle={props.handle}
-      onPresentationChange={props.onPresentationChange}
+      contentKey={THREAD_DETAILS_ITEMS.filter((item) => visible[item.id])
+        .map((item) => item.id)
+        .join(",")}
+      onContextMenu={(event) => {
+        // Popups the card opens bubble here through React; they, fields, links, and selected text
+        // keep their own menus.
+        const target = event.target;
+        const selection = window.getSelection();
+        if (
+          !(target instanceof Element) ||
+          !event.currentTarget.contains(target) ||
+          target.closest("input, textarea, [contenteditable], a[href]") ||
+          (selection &&
+            !selection.isCollapsed &&
+            (event.currentTarget.contains(selection.anchorNode) ||
+              event.currentTarget.contains(selection.focusNode)))
+        )
+          return;
+        event.preventDefault();
+        setMenuPosition({ x: event.clientX, y: event.clientY });
+      }}
     >
-      {(density) => (
-        <>
-          <ThreadDetailsSection
-            headingId="thread-details-workspace-heading"
-            title="Workspace"
-            separated={false}
-            showHeading={false}
-          >
-            {props.versionMismatch ? (
-              <div className="mx-1 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
-                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium">Client and server versions differ</p>
-                  <p className="mt-1 text-2xs leading-relaxed text-muted-foreground">
-                    Client {props.versionMismatch.clientVersion} ·{" "}
-                    {props.versionMismatch.serverLabel} {props.versionMismatch.serverVersion}
-                  </p>
-                </div>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Dismiss version mismatch warning"
-                  onClick={props.onDismissVersionMismatch}
+      {(density) => {
+        // Section flags follow the rows that will render, so no empty section steals the divider rule.
+        const show = {
+          environment: density === "full" && visible.environment,
+          openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
+          scripts: visible.scripts && props.activeProjectScripts !== undefined,
+          branch: props.gitCwd !== null && props.isGitRepo && visible.branch,
+          git:
+            props.gitCwd !== null &&
+            props.activeProjectName !== undefined &&
+            (visible.gitActions || (visible.changes && props.isGitRepo)),
+        };
+        return (
+          <>
+            <div className="group/details-items">
+              {show.environment || show.openIn || show.scripts ? (
+                <ThreadDetailsSection
+                  headingId="thread-details-workspace-heading"
+                  title="Workspace"
+                  separated={false}
+                  showHeading={false}
                 >
-                  <XIcon className="size-3.5" />
-                </Button>
+                  <div className="flex flex-col">
+                    {show.environment ? (
+                      <BranchToolbar
+                        layout="panel"
+                        panelSection="workspace"
+                        availableEnvironments={props.availableEnvironments}
+                        {...(props.onEnvironmentChange
+                          ? { onEnvironmentChange: props.onEnvironmentChange }
+                          : {})}
+                        autoEnvironmentLabel={props.autoEnvironmentLabel}
+                        onAutoEnvironment={props.onAutoEnvironment}
+                        {...branchToolbarProps}
+                      />
+                    ) : null}
+
+                    {show.openIn ? (
+                      <OpenInPicker
+                        keybindings={props.keybindings}
+                        environmentId={props.environmentId}
+                        availableEditors={props.availableEditors}
+                        openInCwd={props.gitCwd}
+                        enableShortcut={props.openInShortcutEnabled}
+                        displayMode="panel"
+                      />
+                    ) : null}
+
+                    {show.scripts && props.activeProjectScripts ? (
+                      <ProjectScriptsControl
+                        environmentId={props.environmentId}
+                        displayMode="panel"
+                        scripts={props.activeProjectScripts}
+                        fileScripts={fileScripts}
+                        preferredScriptId={props.preferredScriptId}
+                        onRunScript={props.onRunProjectScript}
+                        onAddScript={props.onAddProjectScript}
+                        onUpdateScript={props.onUpdateProjectScript}
+                        onDeleteScript={props.onDeleteProjectScript}
+                      />
+                    ) : null}
+                  </div>
+                </ThreadDetailsSection>
+              ) : null}
+
+              {props.gitCwd && (show.branch || show.git) ? (
+                <ThreadDetailsSection
+                  headingId="thread-details-version-control-heading"
+                  title="Version Control"
+                  showHeading={false}
+                  separated={density === "full"}
+                >
+                  <div className="flex flex-col">
+                    {show.branch ? (
+                      <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
+                    ) : null}
+                    {show.git ? (
+                      <GitActionsControl
+                        compact={density !== "full"}
+                        showActions={visible.gitActions}
+                        showChanges={visible.changes}
+                        gitCwd={props.gitCwd}
+                        activeThreadRef={activeThreadRef}
+                        {...(props.draftId ? { draftId: props.draftId } : {})}
+                        {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                      />
+                    ) : null}
+                  </div>
+                </ThreadDetailsSection>
+              ) : null}
+
+              {density === "full" && !props.draftId && visible.servers ? (
+                <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />
+              ) : null}
+
+              {density === "full" && !props.draftId && visible.automations ? (
+                <ThreadAutomationsPanel
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                />
+              ) : null}
+
+              {density === "full" && !props.draftId && visible.lineage ? (
+                <ThreadRelationshipsPanel
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                />
+              ) : null}
+
+              {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+
+              {visible.context && props.usage.contextWindow ? (
+                <ThreadDetailsContext usage={props.usage.contextWindow} />
+              ) : null}
+
+              {/* Shown only when no section above has content, so an emptied card can be refilled. */}
+              <div className="p-2 group-has-[>section>:last-child:not(:empty)]/details-items:hidden">
+                <ThreadDetailsControl
+                  size="xs"
+                  variant="ghost"
+                  part="row"
+                  panel
+                  onClick={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setMenuPosition({ x: rect.left, y: rect.bottom });
+                  }}
+                >
+                  <SlidersHorizontalIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+                  <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                    Choose what to show
+                  </span>
+                </ThreadDetailsControl>
               </div>
-            ) : null}
-
-            <div className="flex flex-col">
-              {density === "full" && showEnvironment ? (
-                <BranchToolbarEnvironmentSelector
-                  displayMode="panel"
-                  autoEnvironmentLabel={props.autoEnvironmentLabel}
-                  onAutoEnvironment={props.onAutoEnvironment}
-                  envLocked={props.envLocked}
-                  environmentId={props.environmentId}
-                  availableEnvironments={props.availableEnvironments}
-                  {...(canPickEnvironment
-                    ? { onEnvironmentChange: props.onEnvironmentChange }
-                    : {})}
-                />
-              ) : null}
-
-              {density === "full" ? (
-                <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
-              ) : null}
-
-              {density !== "essential" && props.showOpenInPicker ? (
-                <OpenInPicker
-                  environmentId={props.environmentId}
-                  keybindings={props.keybindings}
-                  availableEditors={props.availableEditors}
-                  openInCwd={props.gitCwd}
-                  displayMode="panel"
-                />
-              ) : null}
-
-              {props.activeProjectScripts ? (
-                <ProjectScriptsControl
-                  displayMode="panel"
-                  scripts={props.activeProjectScripts}
-                  fileScripts={fileScripts}
-                  keybindings={props.keybindings}
-                  preferredScriptId={props.preferredScriptId}
-                  onRunScript={props.onRunProjectScript}
-                  onAddScript={props.onAddProjectScript}
-                  onUpdateScript={props.onUpdateProjectScript}
-                  onDeleteScript={props.onDeleteProjectScript}
-                />
-              ) : null}
             </div>
-          </ThreadDetailsSection>
 
-          {props.gitCwd ? (
-            <ThreadDetailsSection
-              headingId="thread-details-version-control-heading"
-              title="Version Control"
-              showHeading={false}
-              separated={density === "full"}
+            <Menu
+              open={menuPosition !== null}
+              onOpenChange={(open) => !open && setMenuPosition(null)}
             >
-              <div className="flex flex-col">
-                {props.isGitRepo ? (
-                  <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
-                ) : null}
-                {props.activeProjectName ? (
-                  <GitActionsControl
-                    displayMode="panel"
-                    compact={density !== "full"}
-                    gitCwd={props.gitCwd}
-                    activeThreadRef={{
-                      environmentId: props.environmentId,
-                      threadId: props.threadId,
-                    }}
-                    {...(props.draftId ? { draftId: props.draftId } : {})}
-                    {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
-                  />
-                ) : null}
-              </div>
-            </ThreadDetailsSection>
-          ) : null}
-
-          {density === "full" && !props.draftId ? (
-            <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
-          ) : null}
-
-          {density === "full" && !props.draftId ? (
-            <ThreadRelationshipsPanel
-              environmentId={props.environmentId}
-              threadId={props.threadId}
-            />
-          ) : null}
-        </>
-      )}
+              <MenuPopup
+                anchor={
+                  menuPosition
+                    ? {
+                        getBoundingClientRect: () =>
+                          new DOMRect(menuPosition.x, menuPosition.y, 0, 0),
+                      }
+                    : undefined
+                }
+                align="start"
+                side="bottom"
+              >
+                <ThreadDetailsItemsMenuItems />
+              </MenuPopup>
+            </Menu>
+          </>
+        );
+      }}
     </ThreadDetailsCard>
   );
 }

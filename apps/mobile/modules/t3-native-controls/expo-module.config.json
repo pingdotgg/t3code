@@ -1,12 +1,18 @@
 {
   "platforms": ["apple", "android"],
   "apple": {
-    "modules": ["T3NativeControlsModule", "T3KeyboardCommandsModule"]
+    "modules": ["T3NativeControlsModule", "T3KeyboardCommandsModule"],
+    "appDelegateSubscribers": [
+      "T3WorkspaceOrientationSubscriber",
+      "T3MenuDismissTouchGateSubscriber"
+    ]
   },
   "android": {
     "modules": [
       "expo.modules.t3nativecontrols.T3NativeControlsModule",
-      "expo.modules.t3nativecontrols.T3KeyboardCommandsModule"
+      "expo.modules.t3nativecontrols.T3WorkspaceNavigationModule",
+      "expo.modules.t3nativecontrols.T3KeyboardCommandsModule",
+      "expo.modules.t3nativecontrols.T3FoldPostureModule"
     ]
   }
 }

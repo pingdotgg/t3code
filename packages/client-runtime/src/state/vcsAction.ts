@@ -19,13 +19,14 @@ import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as Persistence from "../platform/persistence.ts";
-import { runStream } from "../rpc/client.ts";
+import { runStreamGuarded, RpcPermissionGuard } from "../rpc/client.ts";
 import {
   createRuntimeCommand,
   runStreamInEnvironment,
   type AtomCommand,
   type AtomCommandResult,
 } from "./runtime.ts";
+import { createCommandPermissions } from "./commandPermissions.ts";
 import { vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
 
@@ -78,7 +79,6 @@ export interface RunVcsStackedActionInput {
   readonly commitMessage?: string;
   readonly featureBranch?: boolean;
   readonly filePaths?: ReadonlyArray<string>;
-  /** The thread the action runs beside; the server links a pull request it creates to it. */
   readonly threadId?: ThreadId;
   readonly projectId?: ProjectId;
   readonly onProgress?: (event: GitActionProgressEvent) => void;
@@ -180,7 +180,7 @@ const EMPTY_VCS_ACTION_ATOM = Atom.make(EMPTY_VCS_ACTION_STATE).pipe(
   Atom.withLabel("vcs-action:null"),
 );
 
-export function getVcsActionTargetKey(target: VcsActionTarget): string | null {
+function getVcsActionTargetKey(target: VcsActionTarget): string | null {
   if (target.environmentId === null || target.cwd === null) {
     return null;
   }
@@ -444,15 +444,16 @@ export function createVcsActionManager<R, E>(
       label: `vcs-action:run-stacked:${commandKey}`,
       scheduler: vcsCommandScheduler,
       concurrency: { mode: "serial", key: () => commandKey },
-      execute: (input: RunVcsStackedActionInput, registry) => {
+      execute: Effect.fn("VcsAction.runStackedAction")(function* (
+        input: RunVcsStackedActionInput,
+        registry,
+      ) {
         if (target === null) {
-          return Effect.fail(
-            new VcsActionUnavailableError({
-              operation: "run_change_request",
-              environmentId: requestedTarget.environmentId,
-              cwd: requestedTarget.cwd,
-            }),
-          );
+          return yield* new VcsActionUnavailableError({
+            operation: "run_change_request",
+            environmentId: requestedTarget.environmentId,
+            cwd: requestedTarget.cwd,
+          });
         }
         const transportActionId = createVcsActionTransportId(target, input.actionId);
         registry.set(
@@ -480,10 +481,10 @@ export function createVcsActionManager<R, E>(
             registry.set(stateAtom, EMPTY_VCS_ACTION_STATE);
           }
         });
-        return consumeVcsActionProgress(
+        return yield* consumeVcsActionProgress(
           runStreamInEnvironment(
             target.environmentId,
-            runStream(WS_METHODS.gitRunStackedAction, rpcInput),
+            runStreamGuarded(WS_METHODS.gitRunStackedAction, rpcInput),
           ),
           {
             target,
@@ -500,13 +501,15 @@ export function createVcsActionManager<R, E>(
                 if (input.onProgress !== undefined) {
                   try {
                     input.onProgress(event);
-                  } catch {
-                    // Presentation callbacks must not fail the source-control operation.
-                  }
+                  } catch {}
                 }
               }),
           },
         ).pipe(
+          Effect.provideService(RpcPermissionGuard, {
+            authorize: (id, method, payload) =>
+              createCommandPermissions(runtime, method).authorize(registry, id, payload),
+          }),
           Effect.ensuring(invalidateCachedVcsRefs(registry, target)),
           Effect.tap(() => clearOwnedState),
           Effect.tapError((error) =>
@@ -522,7 +525,7 @@ export function createVcsActionManager<R, E>(
           ),
           Effect.onInterrupt(() => clearOwnedState),
         );
-      },
+      }),
     });
     runStackedActionCommands.set(commandKey, command);
     return command;

@@ -15,7 +15,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
 import * as Hex from "effect/encoding/Hex";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 
@@ -24,11 +24,9 @@ const COMMAND_TIMEOUT = "5 seconds";
 const RESOLUTION_CACHE_TTL = Duration.hours(1);
 const RESOLUTION_CACHE_MAX_ENTRIES = 256;
 
-/** Resolves and caches macOS application icons without exposing host paths to clients. */
 export class NativeAppIconResolver extends Context.Service<
   NativeAppIconResolver,
   {
-    /** Returns a cached PNG path for the application, or `null` when no icon is available. */
     readonly resolve: (app: ToolActivityNativeAppReference) => Effect.Effect<string | null>;
   }
 >()("t3/assets/NativeAppIconResolver") {}
@@ -190,7 +188,7 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   yield* fileSystem.makeDirectory(cacheDirectory, { recursive: true });
   const temporaryPath = path.join(
     cacheDirectory,
-    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}.png`,
+    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}.png`,
   );
   yield* commandOutput("/usr/bin/sips", [
     "-z",
@@ -211,10 +209,10 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   return yield* existingFile(cachePath);
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
   const resolutionSemaphore = yield* Semaphore.make(2);
   const resolutionCache: Cache.Cache<
     string,

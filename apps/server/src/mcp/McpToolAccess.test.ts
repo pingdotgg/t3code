@@ -1,0 +1,468 @@
+import { expect, it } from "@effect/vitest";
+import {
+  EnvironmentId,
+  OrchestratorMcpEnvironmentTarget,
+  OrchestratorMcpFailure,
+  ProviderInstanceId,
+  ProviderInteractionMode,
+  RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as McpHttpServer from "./McpHttpServer.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpToolAccess from "./McpToolAccess.ts";
+import { liveThreadShell } from "./McpToolAccess.testkit.ts";
+
+const supervisedThreadId = ThreadId.make("thread:supervised");
+const planThreadId = ThreadId.make("thread:plan");
+const fullAccessThreadId = ThreadId.make("thread:full-access");
+const endedThreadId = ThreadId.make("thread:ended");
+const backgroundThreadId = ThreadId.make("thread:background");
+const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
+const archivedThreadId = ThreadId.make("thread:archived-background");
+const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
+
+const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => ({
+  ...liveThreadShell(threadId, { activeRunId: null }),
+  pendingBackgroundTasks: [
+    { taskId: "task:background", kind: "subagent" as const, providerInstanceId },
+  ],
+});
+
+const shells = new Map([
+  [supervisedThreadId, liveThreadShell(supervisedThreadId, { runtimeMode: "approval-required" })],
+  [
+    planThreadId,
+    liveThreadShell(planThreadId, { runtimeMode: "approval-required", interactionMode: "plan" }),
+  ],
+  [fullAccessThreadId, liveThreadShell(fullAccessThreadId)],
+  [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
+  [backgroundThreadId, backgroundShell(backgroundThreadId, ProviderInstanceId.make("codex"))],
+  [oldProviderThreadId, backgroundShell(oldProviderThreadId, ProviderInstanceId.make("claude"))],
+  [
+    archivedThreadId,
+    {
+      ...backgroundShell(archivedThreadId, ProviderInstanceId.make("codex")),
+      archivedAt: liveThreadShell(archivedThreadId).updatedAt,
+    },
+  ],
+  [
+    unknownOwnerThreadId,
+    {
+      ...liveThreadShell(unknownOwnerThreadId, { activeRunId: null }),
+      pendingBackgroundTasks: [{ taskId: "task:unknown", kind: "subagent" as const }],
+    },
+  ],
+]);
+
+const threadCaller = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
+  environmentId: EnvironmentId.make("environment"),
+  requestNamespace: `provider:${threadId}`,
+  thread: {
+    threadId,
+    providerSessionId: `provider:${threadId}`,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
+  capabilities: new Set(["orchestration"]),
+  issuedAt: 0,
+});
+
+const clientCaller = (
+  access: McpInvocationContext.McpClientCaller["access"],
+): McpInvocationContext.McpInvocationScope => ({
+  environmentId: EnvironmentId.make("environment"),
+  requestNamespace: "client:session",
+  thread: undefined,
+  client: { sessionId: "session", label: "Claude Code", access },
+  capabilities: new Set(["orchestration"]),
+  issuedAt: 0,
+});
+
+const mcpClient = McpSchema.McpServerClient.of({
+  clientId: 1,
+  protocolVersion: "2025-06-18",
+  clientCapabilities: {},
+  clientInfo: { name: "mcp-test", version: "1" },
+  initializePayload: {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "mcp-test", version: "1" },
+  },
+  getClient: Effect.die("unused"),
+});
+
+const probe = {
+  success: Schema.Struct({ ran: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagement.ThreadManagementService,
+  ],
+};
+const ProbeToolkit = Toolkit.make(
+  Tool.make("reads", probe),
+  Tool.make("reads_as_caller", probe),
+  Tool.make("acts_as_caller", probe),
+  Tool.make("writes", probe),
+  Tool.make("writes_with_capability", probe),
+  Tool.make("writes_threads", {
+    ...probe,
+    parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  }),
+  Tool.make("starts_threads", {
+    ...probe,
+    parameters: Schema.Struct({
+      runtimeMode: Schema.optional(RuntimeMode),
+      interactionMode: Schema.optional(ProviderInteractionMode),
+    }),
+  }),
+  Tool.make("writes_environment", probe),
+);
+const ran = Effect.succeed({ ran: "ran" });
+const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
+  reads: McpToolAccess.reads(() => ran),
+  reads_as_caller: McpToolAccess.readsAsCaller(() => ran),
+  acts_as_caller: McpToolAccess.actsAsCaller(() => ran),
+  writes: McpToolAccess.writes(() => ran),
+  writes_with_capability: McpToolAccess.writesWithCapability(() => ran),
+  writes_threads: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    () => ran,
+  ),
+  starts_threads: McpToolAccess.startsThreads(
+    (input) => input,
+    (_, modes) => Effect.succeed({ ran: `${modes.runtimeMode}/${modes.interactionMode}` }),
+    "stamped",
+  ),
+  writes_environment: McpToolAccess.writesEnvironment(() => ran),
+};
+const layerProbeHandlers = McpToolAccess.toLayer(ProbeToolkit, probeHandlers);
+
+const unchecked = () => ran;
+
+// `@ts-expect-error` fails the build if one ever compiles. Never called.
+export const refusedAtCompileTime = () => {
+  McpToolAccess.toLayer(ProbeToolkit, {
+    ...probeHandlers,
+    // @ts-expect-error a handler that skips its declaration
+    reads: unchecked,
+  });
+  McpToolAccess.toLayer(ProbeToolkit, {
+    ...probeHandlers,
+    // @ts-expect-error a declaration's fields copied onto an unchecked handler
+    reads: Object.assign(
+      unchecked,
+      McpToolAccess.reads(() => ran),
+    ),
+  });
+  // @ts-expect-error a declaration built outside McpToolAccess
+  McpToolAccess.Declaration.make(unchecked);
+  // @ts-expect-error a declaration constructed directly
+  new McpToolAccess.Declaration(unchecked); // oxlint-disable-line eslint/no-new -- This type-contract test checks direct construction.
+  // @ts-expect-error a handlers layer built outside McpToolAccess
+  McpToolAccess.HandlersLayer.make(Layer.empty);
+  // @effect-diagnostics-next-line anyUnknownInErrorContext:off
+  McpHttpServer.toolkitRegistration(
+    ProbeToolkit,
+    // @ts-expect-error a handlers layer that skipped `McpToolAccess.toLayer`
+    ProbeToolkit.toLayer({
+      reads: unchecked,
+      reads_as_caller: unchecked,
+      acts_as_caller: unchecked,
+      writes: unchecked,
+      writes_with_capability: unchecked,
+      writes_threads: unchecked,
+      starts_threads: unchecked,
+      writes_environment: unchecked,
+    }),
+  );
+};
+
+const probeServer = (threads: Layer.Layer<ThreadManagement.ThreadManagementService>) =>
+  McpHttpServer.toolkitRegistration(ProbeToolkit, layerProbeHandlers).pipe(
+    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(threads),
+  );
+
+const decodeOutcome = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Union([Schema.Struct({ ran: Schema.String }), Schema.Struct({ code: Schema.String })]),
+  ),
+);
+
+const call = (
+  tool: string,
+  scope: McpInvocationContext.McpInvocationScope,
+  args: Record<string, unknown> = {},
+) =>
+  McpServer.McpServer.pipe(
+    Effect.flatMap((server) => server.callTool({ name: tool, arguments: args })),
+    Effect.flatMap(({ content }) =>
+      decodeOutcome(content.map((part) => (part.type === "text" ? part.text : "")).join("")),
+    ),
+    Effect.map((outcome) => ("code" in outcome ? outcome.code : outcome.ran)),
+    Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+    Effect.provideService(McpSchema.McpServerClient, mcpClient),
+  );
+
+const supervised = threadCaller(supervisedThreadId);
+const plan = threadCaller(planThreadId);
+const fullAccess = threadCaller(fullAccessThreadId);
+const ended = threadCaller(endedThreadId);
+const background = threadCaller(backgroundThreadId);
+const oldProviderBackground = threadCaller(oldProviderThreadId);
+const archivedBackground = threadCaller(archivedThreadId);
+const unknownOwnerBackground = threadCaller(unknownOwnerThreadId);
+const mismatchedProvider = {
+  ...background,
+  thread: { ...background.thread!, providerInstanceId: ProviderInstanceId.make("claude") },
+};
+const supervisedClient = clientCaller("approval-required");
+const fullAccessClient = clientCaller("full-access");
+const readOnlyClient = clientCaller("read-only");
+const linkedClient: McpInvocationContext.McpInvocationScope = {
+  ...supervisedClient,
+  client: { ...supervisedClient.client!, linked: true },
+};
+// A full-access link's agents can do anything this environment's user can.
+const fullAccessLinkedClient: McpInvocationContext.McpInvocationScope = {
+  ...fullAccessClient,
+  client: { ...fullAccessClient.client!, linked: true },
+};
+const previewOnly = { ...fullAccess, capabilities: new Set(["preview"] as const) };
+
+it.effect.each([
+  ["reads", ended, {}, "ran"],
+  ["reads", supervisedClient, {}, "ran"],
+  ["reads", readOnlyClient, {}, "ran"],
+
+  ["writes", readOnlyClient, {}, "capability_denied"],
+  ["writes_threads", readOnlyClient, { threadId: supervisedThreadId }, "capability_denied"],
+  ["starts_threads", readOnlyClient, {}, "capability_denied"],
+  ["writes_environment", readOnlyClient, {}, "capability_denied"],
+
+  ["reads_as_caller", ended, {}, "ran"],
+  ["reads_as_caller", fullAccessClient, {}, "thread_credential_required"],
+  ["acts_as_caller", supervised, {}, "ran"],
+  ["acts_as_caller", ended, {}, "parent_not_active"],
+  ["acts_as_caller", background, {}, "ran"],
+  ["acts_as_caller", oldProviderBackground, {}, "parent_not_active"],
+  ["acts_as_caller", mismatchedProvider, {}, "parent_not_active"],
+  ["acts_as_caller", archivedBackground, {}, "parent_not_active"],
+  ["acts_as_caller", unknownOwnerBackground, {}, "parent_not_active"],
+  ["acts_as_caller", fullAccessClient, {}, "thread_credential_required"],
+
+  ["writes", supervised, {}, "ran"],
+  ["writes", ended, {}, "parent_not_active"],
+  ["writes", background, {}, "ran"],
+  ["writes", oldProviderBackground, {}, "parent_not_active"],
+  ["writes", supervisedClient, {}, "ran"],
+  ["writes", previewOnly, {}, "capability_denied"],
+  ["writes_environment", previewOnly, {}, "capability_denied"],
+
+  ["writes_with_capability", previewOnly, {}, "ran"],
+  ["writes_with_capability", readOnlyClient, {}, "capability_denied"],
+  ["writes_with_capability", ended, {}, "parent_not_active"],
+  ["writes", linkedClient, {}, "capability_denied"],
+  ["writes_with_capability", linkedClient, {}, "capability_denied"],
+  ["writes", fullAccessLinkedClient, {}, "ran"],
+  ["writes_with_capability", fullAccessLinkedClient, {}, "ran"],
+
+  ["writes_threads", supervised, {}, "ran"],
+  ["writes_threads", supervised, { threadId: planThreadId }, "ran"],
+  [
+    "writes_threads",
+    supervised,
+    { threadId: fullAccessThreadId },
+    "runtime_mode_escalation_denied",
+  ],
+  ["writes_threads", plan, { threadId: supervisedThreadId }, "interaction_mode_escalation_denied"],
+  ["writes_threads", fullAccess, { threadId: supervisedThreadId }, "ran"],
+  ["writes_threads", ended, { threadId: supervisedThreadId }, "parent_not_active"],
+  ["writes_threads", supervisedClient, { threadId: supervisedThreadId }, "ran"],
+  [
+    "writes_threads",
+    supervisedClient,
+    { threadId: fullAccessThreadId },
+    "runtime_mode_escalation_denied",
+  ],
+  ["writes_threads", supervised, { threadId: "thread:missing" }, "ran"],
+
+  ["starts_threads", supervised, {}, "approval-required/default"],
+  ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],
+  ["starts_threads", plan, {}, "approval-required/plan"],
+  ["starts_threads", plan, { interactionMode: "default" }, "interaction_mode_escalation_denied"],
+  ["starts_threads", fullAccess, { runtimeMode: "auto", interactionMode: "plan" }, "auto/plan"],
+  ["starts_threads", ended, {}, "parent_not_active"],
+  ["starts_threads", supervisedClient, {}, "approval-required/default"],
+  ["starts_threads", supervisedClient, { runtimeMode: "auto" }, "runtime_mode_escalation_denied"],
+  ["starts_threads", fullAccessClient, { runtimeMode: "full-access" }, "full-access/default"],
+
+  ["writes_environment", fullAccess, {}, "ran"],
+  ["writes_environment", supervised, {}, "capability_denied"],
+  ["writes_environment", plan, {}, "capability_denied"],
+  ["writes_environment", fullAccessClient, {}, "ran"],
+  ["writes_environment", supervisedClient, {}, "capability_denied"],
+] as const)("%s from %o with %o: %s", ([tool, scope, args, expected]) =>
+  call(tool, scope, args).pipe(
+    Effect.map((outcome) => expect(outcome).toBe(expected)),
+    Effect.provide(
+      probeServer(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
+        }),
+      ),
+    ),
+  ),
+);
+
+it("refuses a declaration or handlers layer that only wears another's fields", () => {
+  const copiedDeclaration = Object.assign(
+    unchecked,
+    McpToolAccess.reads(() => ran),
+  );
+  expect(() =>
+    McpToolAccess.toLayer(ProbeToolkit, {
+      ...probeHandlers,
+      // @ts-expect-error a declaration's fields copied onto an unchecked handler
+      reads: copiedDeclaration,
+    }),
+  ).toThrow(TypeError);
+  const copiedLayer = Object.assign(Layer.empty, layerProbeHandlers);
+  expect(() => McpToolAccess.HandlersLayer.layer(copiedLayer)).toThrow(TypeError);
+});
+
+it.effect("refuses a change when the calling thread cannot be read", () =>
+  call("writes", supervised).pipe(
+    Effect.map((outcome) => expect(outcome).toBe("orchestration_error")),
+    Effect.provide(
+      probeServer(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (threadId) =>
+            Effect.fail(new OrchestratorProjectionError({ threadId, cause: "unreadable" })),
+        }),
+      ),
+    ),
+  ),
+);
+
+const box = EnvironmentId.make("environment-box");
+const here = EnvironmentId.make("environment");
+const linkedProbe = {
+  ...probe,
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: Schema.optional(ThreadId),
+    runtimeMode: Schema.optional(RuntimeMode),
+    interactionMode: Schema.optional(ProviderInteractionMode),
+  }),
+};
+const LinkedProbeToolkit = Toolkit.make(
+  Tool.make("reads", linkedProbe),
+  Tool.make("writes", linkedProbe),
+  Tool.make("writes_with_capability", linkedProbe),
+  Tool.make("writes_threads", linkedProbe),
+  Tool.make("starts_threads", linkedProbe),
+  Tool.make("writes_environment", linkedProbe),
+);
+/** Runs here, and tells whether `environmentId` reached the handler. */
+const ranHere = <P extends object>(params: P) =>
+  Effect.succeed({ ran: "environmentId" in params ? "saw environmentId" : "here" });
+
+const linkedProbeServer = McpHttpServer.toolkitRegistration(
+  LinkedProbeToolkit,
+  McpToolAccess.toLayer(LinkedProbeToolkit, {
+    reads: McpToolAccess.reads(ranHere),
+    writes: McpToolAccess.writes(ranHere),
+    writes_with_capability: McpToolAccess.writesWithCapability(ranHere),
+    writes_threads: McpToolAccess.writesThreads((input) => [input.threadId], ranHere),
+    starts_threads: McpToolAccess.startsThreads((input) => input, ranHere, "stamped"),
+    writes_environment: McpToolAccess.writesEnvironment(ranHere),
+  }),
+).pipe(
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
+    }),
+  ),
+  // Stands in for the linked environment, answering with where the call went.
+  Layer.provide(
+    Layer.mock(PeerForwarding.PeerForwarding)({
+      call: (_scope, tool, environmentId) =>
+        Effect.succeed({ ran: `${tool.name} in ${environmentId}` } as never),
+    }),
+  ),
+);
+
+it.effect.each([
+  ["reads", supervised, { environmentId: box }, "reads in environment-box"],
+  ["reads", supervised, { environmentId: here }, "here"],
+  ["reads", supervised, {}, "here"],
+
+  // The caller is checked here before anything goes.
+  ["writes", readOnlyClient, { environmentId: box }, "capability_denied"],
+  ["writes", ended, { environmentId: box }, "parent_not_active"],
+  ["writes", supervised, { environmentId: box }, "writes in environment-box"],
+  ["writes_with_capability", readOnlyClient, { environmentId: box }, "capability_denied"],
+  [
+    "starts_threads",
+    plan,
+    { environmentId: box, interactionMode: "default" },
+    "interaction_mode_escalation_denied",
+  ],
+  ["starts_threads", plan, { environmentId: box }, "starts_threads in environment-box"],
+  ["writes_environment", supervised, { environmentId: box }, "capability_denied"],
+  [
+    "writes_environment",
+    fullAccess,
+    { environmentId: box },
+    "writes_environment in environment-box",
+  ],
+  ["writes_environment", fullAccess, { environmentId: here }, "here"],
+
+  // A thread id names a thread where the call runs, and is checked there.
+  [
+    "writes_threads",
+    supervised,
+    { environmentId: box, threadId: fullAccessThreadId },
+    "writes_threads in environment-box",
+  ],
+  [
+    "writes_threads",
+    supervised,
+    { environmentId: here, threadId: fullAccessThreadId },
+    "runtime_mode_escalation_denied",
+  ],
+] as const)("a linked %s from %o with %o: %s", ([tool, scope, args, expected]) =>
+  call(tool, scope, args).pipe(
+    Effect.map((outcome) => expect(outcome).toBe(expected)),
+    Effect.provide(linkedProbeServer),
+  ),
+);
+
+it.effect("refuses a linked environment to a tool that acts as its calling thread", () =>
+  Effect.gen(function* () {
+    const CallerToolkit = Toolkit.make(Tool.make("acts_as_caller", linkedProbe));
+    const built = yield* Layer.build(
+      McpToolAccess.HandlersLayer.layer(
+        McpToolAccess.toLayer(CallerToolkit, {
+          acts_as_caller: McpToolAccess.actsAsCaller(ranHere),
+        }),
+      ),
+    ).pipe(Effect.scoped, Effect.exit);
+    expect(Exit.isFailure(built) && Cause.hasDies(built.cause)).toBe(true);
+  }),
+);

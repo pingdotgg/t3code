@@ -14,6 +14,7 @@ import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
+  makeEnvironmentHttpApiUrlBuilder,
   RemoteEnvironmentAuthFetchError,
   RemoteEnvironmentAuthTimeoutError,
   type RemoteEnvironmentRequestError,
@@ -36,12 +37,8 @@ export function withOrchestrationProtocolHeader(
 }
 
 /**
- * Primary/local environments with no bearer or DPoP credential authenticate the
- * browser via a session cookie. A cross-origin `fetch` does not send cookies by
- * default, so those requests must opt into credentialed mode; bearer/DPoP
- * connections carry their credential in a header and need no cookies. Applied
- * per-request via `FetchHttpClient.RequestInit`, which the fetch client reads
- * from the fiber context at request time.
+ * Cookie-authenticated environments need credentialed mode for cross-origin fetches; bearer/DPoP uses headers.
+ * `FetchHttpClient` reads `RequestInit` from the fiber context per request.
  */
 const withEnvironmentCredentials = <A, E, R>(
   authorization: PreparedHttpAuthorization | null,
@@ -51,24 +48,13 @@ const withEnvironmentCredentials = <A, E, R>(
     ? request.pipe(Effect.provideService(FetchHttpClient.RequestInit, { credentials: "include" }))
     : request;
 
-/**
- * Build request-bound headers from the current environment credential:
- * - primary/local connections carry no credential,
- * - bearer connections send a static `Bearer` token,
- * - relay connections send a `DPoP` access token with a freshly signed proof
- *   bound to this request's method and URL.
- *
- * The DPoP signer is passed in (not resolved from context) and is only required
- * for relay/DPoP connections, so bearer/primary connections work even when no
- * signer is available.
- */
-const buildEnvironmentAuthHeaders = (
-  authorization: PreparedHttpAuthorization | null,
-  method: HttpMethod.HttpMethod,
-  url: string,
-  signer: Option.Option<ManagedRelayDpopSigner["Service"]>,
-): Effect.Effect<EnvironmentHttpAuthHeaders, RemoteEnvironmentAuthFetchError> =>
-  Effect.gen(function* () {
+const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironmentAuthHeaders")(
+  function* (
+    authorization: PreparedHttpAuthorization | null,
+    method: HttpMethod.HttpMethod,
+    url: string,
+    signer: Option.Option<ManagedRelayDpopSigner["Service"]>,
+  ): Effect.fn.Return<EnvironmentHttpAuthHeaders, RemoteEnvironmentAuthFetchError> {
     if (authorization === null) {
       return {};
     }
@@ -93,13 +79,10 @@ const buildEnvironmentAuthHeaders = (
         ),
       );
     return { authorization: `DPoP ${authorization.accessToken}`, dpop: proof };
-  });
+  },
+);
 
 /**
- * Resolve relay credentials at request time without replacing the live socket.
- * A rejected credential gets one refresh and retry, with a new request-bound
- * proof. Cookie and bearer requests keep their existing authentication behavior.
- *
  * A DPoP request is T3 Connect work, so its span starts an exported trace that
  * the environment continues; its local caller's span would leave that trace
  * without a root.
@@ -131,7 +114,12 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly method: HttpMethod.HttpMethod;
-  readonly url: (httpBaseUrl: string) => string;
+  /**
+   * The URL to sign, from the group's contract URL builder. It encodes path
+   * params exactly like the request client, so the DPoP proof matches the
+   * URL actually sent.
+   */
+  readonly url: (urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[Group]) => string;
   readonly timeoutMs: number;
   readonly group: Group;
   readonly request: (input: {
@@ -146,6 +134,8 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   Effect.Services<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>> | R
 > {
   let httpBaseUrl = input.prepared.httpBaseUrl;
+  const requestUrlFor = (baseUrl: string) =>
+    input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group]);
   return yield* Effect.gen(function* () {
     let rejectedAccessToken: string | undefined;
     for (;;) {
@@ -179,7 +169,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         authorization = current.httpAuthorization;
       }
 
-      const requestUrl = input.url(httpBaseUrl);
+      const requestUrl = requestUrlFor(httpBaseUrl);
       const client = yield* makeEnvironmentHttpApiGroupClient(httpBaseUrl, input.group);
       const headers = yield* buildEnvironmentAuthHeaders(
         authorization,
@@ -225,7 +215,9 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
     Effect.timeoutOrElse({
       duration: input.timeoutMs,
       orElse: () =>
-        Effect.fail(new RemoteEnvironmentAuthTimeoutError(input.url(httpBaseUrl), input.timeoutMs)),
+        Effect.fail(
+          new RemoteEnvironmentAuthTimeoutError(requestUrlFor(httpBaseUrl), input.timeoutMs),
+        ),
     }),
   );
 });

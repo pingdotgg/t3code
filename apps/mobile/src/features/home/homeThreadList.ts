@@ -50,6 +50,7 @@ export function buildHomeProjectScopes(input: {
   );
   return buildProjectGroups({
     projects,
+    groupScratchProjects: true,
     settings: {
       sidebarProjectGroupingMode: input.projectGroupingMode,
       sidebarProjectGroupingOverrides: {},
@@ -63,6 +64,24 @@ export function buildHomeProjectScopes(input: {
       projectRefs: group.memberProjectRefs,
     };
   });
+}
+
+export function findHomeProjectScope(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  key: string | null,
+): HomeProjectScope | null {
+  if (key === null) {
+    return null;
+  }
+  return (
+    scopes.find((scope) => scope.key === key) ??
+    scopes.find((scope) =>
+      scope.projectRefs.some(
+        (projectRef) => scopedProjectKey(projectRef.environmentId, projectRef.projectId) === key,
+      ),
+    ) ??
+    null
+  );
 }
 
 export function sortHomeProjectScopes(input: {

@@ -15,10 +15,6 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 
-/** Shared DesktopUpdates test harness: a fully stubbed updater layer whose
-    electron-updater events are driven by hand via `emit`. Used by
-    DesktopUpdates.test.ts and DesktopRemoteUpdates.test.ts. */
-
 export const flushCallbacks = Effect.yieldNow;
 
 export interface UpdatesHarnessOptions {
@@ -33,10 +29,17 @@ export interface UpdatesHarnessOptions {
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
+  readonly backendDesiredRunning?: boolean;
+  readonly backendInstances?: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>;
   readonly env?: Record<string, string | undefined>;
   readonly platform?: NodeJS.Platform;
-  /** Contents of the resources/package-type marker a Linux package ships. */
   readonly packageType?: string | undefined;
+  readonly installRecord?: string | undefined;
+  readonly appVersion?: string;
+  /** Starts from in-memory settings with this track saved, as after a restart. */
+  readonly savedChannel?: DesktopAppSettings.DesktopSettings["updateChannel"];
+  /** Adds a WSL backend beside the primary, as on a Windows host with WSL enabled. */
+  readonly wslBackend?: boolean;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
@@ -44,6 +47,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let quitAndInstallCount = 0;
   let downloadCount = 0;
   let allowDowngrade = false;
+  const checkAllowedDowngrade: boolean[] = [];
   let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
@@ -88,6 +92,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     setDisableDifferentialDownload: () => options.setDisableDifferentialDownload ?? Effect.void,
     checkForUpdates: Effect.sync(() => {
       checkCount += 1;
+      checkAllowedDowngrade.push(allowDowngrade);
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
     downloadUpdate: Effect.sync(() => {
       downloadCount += 1;
@@ -128,31 +133,48 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
+  let backendDesiredRunning = options.backendDesiredRunning ?? true;
   const stubBackendInstance: DesktopBackendPool.DesktopBackendInstance = {
     id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
     label: Effect.succeed("Windows"),
     start: Effect.sync(() => {
+      backendDesiredRunning = true;
       installSteps.push("startBackend");
     }).pipe(Effect.andThen(options.startBackend ?? Effect.void)),
-    stop: () => options.stopBackend ?? Effect.void,
+    stop: () =>
+      Effect.sync(() => {
+        backendDesiredRunning = false;
+      }).pipe(Effect.andThen(options.stopBackend ?? Effect.void)),
     currentConfig: Effect.succeedNone,
-    snapshot: Effect.succeed({
-      desiredRunning: false,
+    snapshot: Effect.sync(() => ({
+      desiredRunning: backendDesiredRunning,
       ready: false,
       activePid: Option.none(),
       restartAttempt: 0,
       restartScheduled: false,
-    }),
+    })),
     waitForReady: () => Effect.succeed(true),
   };
-  const layerBackend = DesktopBackendPool.layerTest([stubBackendInstance]);
+  const layerBackend = DesktopBackendPool.layerTest(
+    options.backendInstances ??
+      (options.wslBackend
+        ? [
+            stubBackendInstance,
+            {
+              ...stubBackendInstance,
+              id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
+              label: Effect.succeed("Ubuntu"),
+            },
+          ]
+        : [stubBackendInstance]),
+  );
 
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: `/tmp/t3-desktop-updates-home-${process.pid}`,
     platform: options.platform ?? "darwin",
     processArch: "x64",
-    appVersion: "1.2.3",
+    appVersion: options.appVersion ?? "1.2.3",
     appPath: "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
@@ -173,10 +195,13 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   let testSettings: DesktopAppSettings.DesktopSettings = {
     ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+    ...(options.savedChannel === undefined
+      ? {}
+      : { updateChannel: options.savedChannel, updateChannelConfiguredByUser: true }),
   };
   const setUpdateChannelError = options.setUpdateChannelError;
   const layerSettings =
-    setUpdateChannelError || options.beforeSetUpdateChannel
+    setUpdateChannelError || options.beforeSetUpdateChannel || options.savedChannel
       ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
           get: Effect.sync(() => testSettings),
           load: Effect.sync(() => testSettings),
@@ -208,12 +233,18 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
       : DesktopAppSettings.layer;
 
-  // Tracks the restart markers installs leave, so installs stay free of real
-  // disk I/O that would outrun the tests' settle loops.
   const updateRestartMarkers = new Set<string>();
+  const installRecords = new Map<string, string>();
+  let previousInstallRecord = options.installRecord;
+  const isInstallRecord = (path: string) =>
+    path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
   const layerFileSystem = FileSystem.layerNoop({
-    readFileString: (path) =>
-      path === "/missing/resources/package-type" && options.packageType !== undefined
+    readFileString: (path) => {
+      const installRecord = isInstallRecord(path)
+        ? (installRecords.get(path) ?? previousInstallRecord)
+        : undefined;
+      if (installRecord !== undefined) return Effect.succeed(installRecord);
+      return path === "/missing/resources/package-type" && options.packageType !== undefined
         ? Effect.succeed(options.packageType)
         : Effect.fail(
             PlatformError.systemError({
@@ -222,15 +253,19 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
               _tag: "NotFound",
               pathOrDescriptor: path,
             }),
-          ),
+          );
+    },
     makeDirectory: () => Effect.void,
-    writeFileString: (path) =>
+    writeFileString: (path, data) =>
       Effect.sync(() => {
-        updateRestartMarkers.add(path);
+        if (isInstallRecord(path)) installRecords.set(path, data);
+        else updateRestartMarkers.add(path);
       }),
     remove: (path) =>
       Effect.sync(() => {
         updateRestartMarkers.delete(path);
+        installRecords.delete(path);
+        if (isInstallRecord(path)) previousInstallRecord = undefined;
       }),
   });
 
@@ -259,9 +294,14 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
     updateRestartMarkers,
+    installRecords,
+    previousInstallRecord: () => previousInstallRecord,
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,
+    /** Whether each feed check could offer an older release, and the flag now. */
+    checkAllowedDowngrade,
+    allowDowngrade: () => allowDowngrade,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,

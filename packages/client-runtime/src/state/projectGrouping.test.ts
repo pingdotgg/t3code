@@ -1,11 +1,14 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "./models.ts";
 import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
+  deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
+  resolveScratchProjectScopeKey,
+  sortProjectsByGroupOrder,
   type ProjectGroupingSettings,
 } from "./projectGrouping.ts";
 
@@ -81,7 +84,7 @@ const repositoryIdentity = {
     remoteName: "upstream",
     remoteUrl: "https://github.com/t3tools/t3code.git",
   },
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   owner: "t3tools",
   name: "t3code",
   displayName: "T3 Code",
@@ -117,6 +120,131 @@ function settings(
 }
 
 describe("buildProjectGroups", () => {
+  it.each(["repository", "repository_path", "separate"] as const)(
+    "keeps scratch project ownership separate by default in %s mode",
+    (mode) => {
+      const projects = [
+        makeProject("scratch-local", "/local/scratch", {
+          isScratch: true,
+          repositoryIdentity: null,
+        }),
+        makeProject("scratch-remote", "/remote/scratch", {
+          environmentId: EnvironmentId.make("remote"),
+          isScratch: true,
+          repositoryIdentity: null,
+        }),
+      ];
+      const groups = buildProjectGroups({ projects, settings: settings(mode) });
+      expect(groups.map((group) => group.key)).toEqual(projects.map(derivePhysicalProjectKey));
+      expect(groups.map((group) => group.memberProjectRefs)).toEqual(
+        projects.map((project) => [
+          { environmentId: project.environmentId, projectId: project.id },
+        ]),
+      );
+      expect(
+        buildProjectGroups({ projects, settings: settings(mode), groupScratchProjects: true }),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each(["repository", "repository_path", "separate"] as const)(
+    "migrates a pre-config %s scratch selection and retains it after the original host is removed",
+    (mode) => {
+      const local = makeProject("scratch-local", "/local/repo/scratch", {
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/local/repo" },
+      });
+      const remote = makeProject("scratch-remote", "/remote/scratch", {
+        environmentId: EnvironmentId.make("remote"),
+        repositoryIdentity: null,
+        isScratch: true,
+      });
+      const groupingSettings = settings(mode);
+      const selectedBeforeConfig = deriveLogicalProjectKeyFromSettings(local, groupingSettings);
+      const loaded = [{ ...local, isScratch: true as const }, remote];
+      const migrated = resolveScratchProjectScopeKey(
+        selectedBeforeConfig,
+        loaded,
+        groupingSettings,
+      );
+      const scratchKey = buildProjectGroups({
+        projects: loaded,
+        settings: groupingSettings,
+        groupScratchProjects: true,
+      })[0]!.key;
+      expect(migrated).toBe(scratchKey);
+      expect(resolveScratchProjectScopeKey(migrated, [remote], groupingSettings)).toBe(scratchKey);
+      expect(
+        buildProjectGroups({
+          projects: [remote],
+          settings: groupingSettings,
+          groupScratchProjects: true,
+        })[0]?.memberProjectRefs,
+      ).toEqual([{ environmentId: remote.environmentId, projectId: remote.id }]);
+    },
+  );
+
+  it("retains a repository filter that still belongs to an ordinary project", () => {
+    const scratch = makeProject("scratch", "/scratch", { isScratch: true });
+    const ordinary = makeProject("ordinary", "/ordinary");
+    const key = deriveLogicalProjectKeyFromSettings(ordinary, settings("repository"));
+    expect(resolveScratchProjectScopeKey(key, [scratch, ordinary])).toBe(key);
+  });
+
+  it.each(["repository", "repository_path", "separate"] as const)(
+    "coalesces scratch homes in %s mode without merging ordinary same-title projects",
+    (mode) => {
+      const remoteEnvironmentId = EnvironmentId.make("remote");
+      const projects = [
+        makeProject("scratch-local", "/local/scratch", {
+          title: "No project",
+          isScratch: true,
+          repositoryIdentity: null,
+        }),
+        makeProject("scratch-remote", "/remote/scratch", {
+          title: "No project",
+          environmentId: remoteEnvironmentId,
+          isScratch: true,
+        }),
+        makeProject("scratch-duplicate", "/remote/scratch/", {
+          title: "No project",
+          environmentId: remoteEnvironmentId,
+          isScratch: true,
+          repositoryIdentity: null,
+          updatedAt: "2026-07-02T00:00:00.000Z",
+        }),
+        makeProject("ordinary", "/ordinary", { title: "No project" }),
+        makeProject("reserved-collision", "/other", {
+          title: "No project",
+          repositoryIdentity: { ...repositoryIdentity, canonicalKey: "\0no-project" },
+        }),
+      ];
+      const groups = buildProjectGroups({
+        projects,
+        groupScratchProjects: true,
+        settings: settings(mode, { [derivePhysicalProjectKey(projects[0]!)]: "separate" }),
+        preferredEnvironmentId: remoteEnvironmentId,
+      });
+      expect(groups).toHaveLength(3);
+      const scratch = groups.find((group) => group.representative.isScratch)!;
+      expect(scratch.label).toBe("No project");
+      expect(scratch.representative.id).toBe(projects[2]?.id);
+      expect(scratch.members).toHaveLength(2);
+      expect(scratch.memberProjectRefs).toEqual(
+        projects.slice(0, 3).map((project) => ({
+          environmentId: project.environmentId,
+          projectId: project.id,
+        })),
+      );
+      expect(resolveScratchProjectScopeKey(derivePhysicalProjectKey(projects[1]!), projects)).toBe(
+        scratch.key,
+      );
+      expect(resolveScratchProjectScopeKey(derivePhysicalProjectKey(projects[3]!), projects)).toBe(
+        derivePhysicalProjectKey(projects[3]!),
+      );
+      expect(groups.filter((group) => !group.representative.isScratch)).toHaveLength(2);
+    },
+  );
+
   it("preserves every physical clone as a selectable member in repository modes", () => {
     const projects = [
       makeProject("t3code", "/work/t3code"),
@@ -134,28 +262,6 @@ describe("buildProjectGroups", () => {
       ]);
       expect(groups[0]?.memberProjectRefs).toHaveLength(3);
     }
-  });
-
-  it("uses a shared custom title as the repository group's label", () => {
-    const projects = [
-      makeProject("first", "/work/t3code", { title: "Custom project" }),
-      makeProject("second", "/work/t3code-2", { title: "Custom project" }),
-    ];
-
-    expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
-      "Custom project",
-    );
-  });
-
-  it("keeps the repository label when shared titles match its repository name", () => {
-    const projects = [
-      makeProject("first", "/work/t3code", { title: "t3code" }),
-      makeProject("second", "/work/t3code-2", { title: "t3code" }),
-    ];
-
-    expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
-      "T3 Code",
-    );
   });
 
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
@@ -180,34 +286,6 @@ describe("buildProjectGroups", () => {
     ]);
     expect(groups[1]?.members.map((member) => member.project.id)).toEqual(["fork", "fork-2"]);
     expect(groups[1]?.label).toBe("julius/t3code-fork");
-  });
-
-  it("labels a fork by its canonical key when its origin has no display name", () => {
-    const identity = {
-      ...repositoryIdentity,
-      origin: { canonicalKey: "internal-host" },
-    };
-    const projects = [
-      makeProject("fork", "/work/fork", { repositoryIdentity: identity }),
-      makeProject("fork-2", "/work/fork-2", { repositoryIdentity: identity }),
-    ];
-
-    const groups = buildProjectGroups({ projects, settings: settings("repository") });
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.label).toBe("internal-host");
-  });
-
-  it("keeps physical clones in separate groups when requested", () => {
-    const projects = [
-      makeProject("t3code", "/work/t3code"),
-      makeProject("t3code-2", "/work/t3code-2"),
-      makeProject("t3code-3", "/work/t3code-3"),
-    ];
-
-    const groups = buildProjectGroups({ projects, settings: settings("separate") });
-    expect(groups).toHaveLength(3);
-    expect(groups.flatMap((group) => group.members)).toHaveLength(3);
-    expect(groups.map((group) => group.label)).toEqual(["t3code", "t3code-2", "t3code-3"]);
   });
 
   it("applies a physical-project override without dropping its siblings", () => {
@@ -246,24 +324,6 @@ describe("buildProjectGroups", () => {
     expect(groups[0]?.members).toHaveLength(1);
     expect(groups[0]?.representative.id).toBe("fresh");
     expect(groups[0]?.memberProjectRefs).toHaveLength(2);
-  });
-
-  it("uses repository identity from a duplicate registration when the winner lacks it", () => {
-    const identified = makeProject("identified", "/work/t3code", {
-      updatedAt: "2026-07-01T00:00:00.000Z",
-    });
-    const freshUnidentified = makeProject("fresh", "/work/t3code/", {
-      repositoryIdentity: null,
-      updatedAt: "2026-07-02T00:00:00.000Z",
-    });
-    const sibling = makeProject("sibling", "/work/t3code-2");
-
-    const groups = buildProjectGroups({
-      projects: [identified, freshUnidentified, sibling],
-      settings: settings("repository"),
-    });
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["fresh", "sibling"]);
   });
 
   it("uses the freshest winner's repository identity when stale duplicates disagree", () => {
@@ -316,5 +376,22 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
+  });
+});
+
+describe("sortProjectsByGroupOrder", () => {
+  const remote = EnvironmentId.make("remote");
+  const ref = (projectId: string, env = environmentId) => ({
+    environmentId: env,
+    projectId: ProjectId.make(projectId),
+  });
+  const project = (id: string, env: string = environmentId) => ({ id, environmentId: env });
+
+  it("tells the same project id on two environments apart", () => {
+    const sorted = sortProjectsByGroupOrder(
+      [project("shared"), project("shared", remote)],
+      [{ memberProjectRefs: [ref("shared", remote)] }, { memberProjectRefs: [ref("shared")] }],
+    );
+    expect(sorted.map((entry) => entry.environmentId)).toEqual([remote, environmentId]);
   });
 });

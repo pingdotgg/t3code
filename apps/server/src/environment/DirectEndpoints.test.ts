@@ -63,8 +63,28 @@ const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
       internal: false,
       cidr: "100.101.102.103/32",
     },
+    {
+      address: "fd7a:115c:a1e0::1",
+      netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+      family: "IPv6",
+      mac: "00:00:00:00:00:00",
+      internal: false,
+      cidr: "fd7a:115c:a1e0::1/128",
+      scopeid: 0,
+    },
   ],
 };
+
+const vpnInterface = (address: string) => [
+  {
+    address,
+    netmask: "255.255.255.255",
+    family: "IPv4" as const,
+    mac: "00:00:00:00:00:00",
+    internal: false,
+    cidr: `${address}/32`,
+  },
+];
 
 const virtualInterface = (address: string) => [
   {
@@ -78,15 +98,6 @@ const virtualInterface = (address: string) => [
 ];
 
 describe("resolveBoundEndpoints", () => {
-  it("lists nothing for a loopback-only server", () => {
-    expect(resolveBoundEndpoints({ host: undefined, port: 3773, interfaces: INTERFACES })).toEqual(
-      [],
-    );
-    expect(
-      resolveBoundEndpoints({ host: "127.0.0.1", port: 3773, interfaces: INTERFACES }),
-    ).toEqual([]);
-  });
-
   it("lists every external IPv4 address for a wildcard bind, tagging the tailnet one", () => {
     expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces: INTERFACES })).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
@@ -111,10 +122,19 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
-  it("lists only the bound address for a specific bind", () => {
-    expect(
-      resolveBoundEndpoints({ host: "100.101.102.103", port: 3773, interfaces: INTERFACES }),
-    ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
+  it("tags only addresses on Tailscale's interface as tailnet, not other VPNs in its range", () => {
+    const interfaces = {
+      en0: INTERFACES.en0,
+      tailscale0: vpnInterface("100.70.1.2"),
+      CloudflareWARP: vpnInterface("100.96.0.1"),
+      utun7: vpnInterface("100.85.0.1"),
+    };
+    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.70.1.2:3773/" },
+      { kind: "lan", httpBaseUrl: "http://100.96.0.1:3773/" },
+      { kind: "lan", httpBaseUrl: "http://100.85.0.1:3773/" },
+    ]);
   });
 
   it("never reports a host name, which can resolve to another machine per client", () => {
@@ -128,13 +148,29 @@ describe("resolveBoundEndpoints", () => {
       resolveBoundEndpoints({ host: "203.0.113.20", port: 3773, interfaces: INTERFACES }),
     ).toEqual([]);
   });
+
+  it("reports only the tailnet address on a cloud VM, whose private network no client shares", () => {
+    expect(
+      resolveBoundEndpoints({
+        host: "0.0.0.0",
+        port: 3773,
+        interfaces: INTERFACES,
+        onCloudVm: true,
+      }),
+    ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
+  });
+
+  it("never reports an IPv4-mapped host, which can name the client's own loopback", () => {
+    expect(
+      resolveBoundEndpoints({ host: "::ffff:127.0.0.1", port: 3773, interfaces: INTERFACES }),
+    ).toEqual([]);
+  });
 });
 
 const TAILSCALE_STATUS_JSON = JSON.stringify({
   Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2"] },
 });
 
-/** `tailscale status --json` reporting a MagicDNS name. */
 const layerTailscaleUp = Layer.succeed(
   ChildProcessSpawner.ChildProcessSpawner,
   ChildProcessSpawner.make(() =>
@@ -156,7 +192,6 @@ const layerTailscaleUp = Layer.succeed(
   ),
 );
 
-/** Answers the Serve probe with `status`. */
 const layerServeProbe = (status: number) =>
   Layer.succeed(
     HttpClient.HttpClient,
@@ -165,7 +200,6 @@ const layerServeProbe = (status: number) =>
     ),
   );
 
-/** A loopback-only server with Tailscale Serve on, so only the Serve name can be listed. */
 const layerServeConfig = Layer.effect(
   ServerConfig.ServerConfig,
   Effect.map(ServerConfig.ServerConfig, (config) => ({

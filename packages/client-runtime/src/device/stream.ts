@@ -1,24 +1,5 @@
 // @effect-diagnostics globalFetch:off globalTimers:off - This browser and WebView transport runs without an Effect runtime.
-/* oxlint-disable unicorn/prefer-add-event-listener -- Each client owns its sockets and their handlers. */
 
-/**
- * Framework-free client for expo-device-hub's per-device streams, reached
- * through the T3 proxy. One class handles both platforms because the hub
- * vendors two servers with different wire formats:
- *
- * - iOS (serve-sim): video is an HTTP `stream.avcc` body of length-prefixed
- *   envelopes (`u32be length, u8 tag, payload`; tag 1 avcC description,
- *   2 keyframe, 3 delta, 4 JPEG seed) decoded with WebCodecs; input goes over
- *   `helper/ws?device=<udid>` as `[tag][json]` packets. When WebCodecs is
- *   unavailable (plain-http remote origins) the MJPEG endpoint is used as an
- *   `<img>` source instead.
- * - Android (serve-emu): one WebSocket at `ws?device=<serial>&frame-meta=1`
- *   carries H.264 access units prefixed with a 16-byte "SEMU" header
- *   (magic, version, key flag, pts) and accepts JSON gestures upstream.
- *
- * The decoder only runs while frames arrive and the viewer is attached; a
- * hidden panel calls `stop()` so an idle device costs nothing on the GPU.
- */
 import {
   createDuoControl,
   type DuoCommand,
@@ -28,6 +9,7 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
+import { simulatorAvcConfig } from "./avcConfig.ts";
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
 import type { DevicePlatform } from "@t3tools/contracts";
 
@@ -55,6 +37,7 @@ const screenConfigSchema = Schema.Struct({
     "landscape_left",
     "landscape_right",
   ]),
+  inputUnavailable: Schema.optionalKey(Schema.Boolean),
   screenId: Schema.optionalKey(Schema.Number),
   supportsHingeAngle: Schema.optionalKey(Schema.Boolean),
   supportsPhysicalOrientation: Schema.optionalKey(Schema.Boolean),
@@ -74,6 +57,33 @@ const controlReplySchema = Schema.Struct({
 });
 const decodeScreenConfig = Schema.decodeUnknownOption(screenConfigSchema);
 const decodeControlReply = Schema.decodeUnknownOption(controlReplySchema);
+const iceServerSchema = Schema.Struct({
+  urls: Schema.Union([Schema.String, Schema.Array(Schema.String)]),
+  username: Schema.optionalKey(Schema.String),
+  credential: Schema.optionalKey(Schema.String),
+});
+const webRtcSettingsSchema = Schema.Struct({
+  transport: Schema.Literal("webrtc"),
+  iceServers: Schema.optionalKey(Schema.Array(iceServerSchema)),
+  iceTransportPolicy: Schema.optionalKey(Schema.Literals(["all", "relay"])),
+});
+// serve-sim reports its stream settings as `streamSettings` (EAS) or `stream`.
+const serveSimApiSchema = Schema.Struct({
+  streamSettings: Schema.optionalKey(Schema.Unknown),
+  stream: Schema.optionalKey(Schema.Unknown),
+});
+const decodeServeSimApi = Schema.decodeUnknownOption(serveSimApiSchema);
+const decodeWebRtcSettings = Schema.decodeUnknownOption(webRtcSettingsSchema);
+type WebRtcSettings = typeof webRtcSettingsSchema.Type;
+const decodeTransportLocked = Schema.decodeUnknownOption(
+  Schema.Struct({
+    error: Schema.Literal("stream_transport_locked"),
+    transport: Schema.Literal("webrtc"),
+  }),
+);
+const decodeWebRtcAnswer = Schema.decodeUnknownOption(
+  Schema.Struct({ type: Schema.Literal("answer"), sdp: Schema.String }),
+);
 
 export interface DuoPanelSinks {
   readonly cover: DeviceFrameSink;
@@ -84,11 +94,9 @@ export interface DuoPanelSinks {
 
 export interface DeviceStreamEvents {
   readonly onDuoControl?: (state: DuoControlState) => void;
-  /** A fixed panel cannot be decoded; the owner should return to the active flat feed. */
   readonly onDuoUnavailable?: (detail?: string) => void;
   readonly onStatus: (status: DeviceStreamStatus, detail?: string) => void;
   readonly onScreen: (screen: DeviceScreenSize) => void;
-  /** The proxy rejected the credential; the owner should refresh access and reconnect. */
   readonly onUnauthorized: () => void;
   /**
    * H.264 cannot be decoded here (no WebCodecs, or the simulator's profile is
@@ -96,7 +104,11 @@ export interface DeviceStreamEvents {
    * and attach it with `setMjpegImage` so the client can observe real frames.
    */
   readonly onMjpegFallback: (url: string) => void;
-  /** Whether touches and keys can currently reach the device. */
+  /**
+   * The stream moved from MJPEG back to painting the canvas, because the
+   * device serves WebRTC only; the owner should show the canvas again.
+   */
+  readonly onCanvasVideo?: () => void;
   readonly onInputConnected: (connected: boolean, detail?: string) => void;
 }
 
@@ -106,38 +118,70 @@ export interface DeviceStreamTarget {
   readonly access: DeviceHubAccess;
   /** Native iOS WebViews can use MJPEG without cross-origin fetch or secure-context support. */
   readonly preferMjpeg?: boolean;
-  /** Internal fixed-panel feeds share their parent's input session. */
   readonly panelId?: 1 | 3;
   readonly videoOnly?: boolean;
+  /** The host speaks only serve-sim's AVCC stream and input socket, on both platforms (Simlock). */
+  readonly serveSimOnly?: boolean;
 }
 
 export type DeviceHardwareButton = "home" | "back" | "recents" | "power" | "appSwitcher";
 
 const RETRY_DELAY_MS = 1_000;
 const FIRST_FRAME_TIMEOUT_MS = 15_000;
+// A WebRTC feed that shows no frame for this long is reconnected; checked
+// every WEBRTC_STALL_CHECK_MS, so a transient `disconnected` peer that
+// recovers is left alone.
+const WEBRTC_STALL_TIMEOUT_MS = FIRST_FRAME_TIMEOUT_MS;
+const WEBRTC_STALL_CHECK_MS = 5_000;
+const TRANSPORT_PROBE_TIMEOUT_MS = 5_000;
+// Offers carry every candidate: serve-sim does not accept trickled ICE.
+const ICE_GATHERING_TIMEOUT_MS = 2_000;
+// A gathering cut short without a reflexive or relay candidate is retried
+// with twice the deadline, up to this; then the offer goes as gathered. The
+// whole sequence stays inside the first-frame deadline, which retries do
+// not extend.
+const ICE_GATHERING_MAX_TIMEOUT_MS = 4_000;
 const MJPEG_FRAME_CHECK_MS = 250;
 const FRAME_DURATION_US = 16_667;
 const SEMU_MAGIC = 0x53454d55;
 const SEMU_HEADER_BYTES = 16;
 const SEMU_FLAG_KEY = 1;
 const SOFT_DECODE_QUEUE = 8;
+// expo-device-hub 0.15.3 serve-emu input.js MAX_TEXT_BYTES limits packets to 300 UTF-8 bytes.
+const ANDROID_MAX_TEXT_BYTES = 300;
+// The pinned hub queue depth is 128; the client does not read queue rejections.
+const ANDROID_MAX_TEXT_CHUNKS = 64;
 
-// serve-sim binary WS message tags (browser -> helper).
 const IOS_MSG_TOUCH = 0x03;
 const IOS_MSG_BUTTON = 0x04;
 const IOS_MSG_KEY = 0x06;
 const IOS_MSG_ORIENTATION = 0x07;
-const IOS_MSG_HARDWARE_KEYBOARD = 0x0d;
-// helper -> browser.
 const IOS_TAG_SCREEN_CONFIG = 0x82;
+const IOS_TAG_INPUT_ADMITTED = 0x83;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+
+/** serve-sim requires a v4 UUID; `crypto.randomUUID` is missing over plain-HTTP LAN origins. */
+function webRtcSessionId(): string {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 const isWebCodecsSupported = (): boolean =>
   typeof globalThis !== "undefined" &&
   "VideoDecoder" in globalThis &&
   "EncodedVideoChunk" in globalThis;
+
+function utf8ByteLength(codePoint: number): number {
+  if (codePoint <= 0x7f) return 1;
+  if (codePoint <= 0x7ff) return 2;
+  if (codePoint <= 0xffff) return 3;
+  return 4;
+}
 
 function taggedJson(tag: number, payload: unknown): Uint8Array<ArrayBuffer> {
   const json = encoder.encode(JSON.stringify(payload));
@@ -147,14 +191,12 @@ function taggedJson(tag: number, payload: unknown): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-/** Build the WebCodecs `avc1.PPCCLL` string from an avcC record or an SPS NAL. */
 export function avcCodecString(bytes: Uint8Array): string {
   if (bytes.length < 4) return "avc1.42E01E";
   const hex = (byte: number) => byte.toString(16).padStart(2, "0");
   return `avc1.${hex(bytes[1]!)}${hex(bytes[2]!)}${hex(bytes[3]!)}`;
 }
 
-/** Split serve-emu's SEMU-framed message into metadata and the Annex-B payload. */
 export function parseSemuPacket(raw: ArrayBuffer): {
   readonly data: Uint8Array;
   readonly isKey: boolean | null;
@@ -184,7 +226,6 @@ const isVideoSessionMessage = (text: string) => {
   }
 };
 
-/** Walk an Annex-B access unit for its keyframe flag and SPS bytes. */
 export function scanAccessUnit(buf: Uint8Array): { isKey: boolean; sps: Uint8Array | null } {
   let isKey = false;
   let sps: Uint8Array | null = null;
@@ -220,7 +261,6 @@ const AVCC_TAGS: Record<number, AvccChunk["type"] | undefined> = {
   4: "seed",
 };
 
-/** Turns a fragmented AVCC byte stream into complete envelopes. */
 export class AvccDemuxer {
   private buffer = new Uint8Array(64 * 1024);
   private length = 0;
@@ -266,20 +306,19 @@ export interface DeviceStreamClient {
   readonly start: () => void;
   readonly stop: () => void;
   /**
-   * Own the displayed MJPEG image's source and frame/error observation.
    * `stop()` detaches it; attach a fresh image for each restart.
    */
   readonly setMjpegImage: (image: HTMLImageElement | null) => void;
   /** Normalized 0..1 coordinates in the displayed frame. */
   readonly sendTouch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
   readonly sendKey: (event: KeyboardEvent, phase: "down" | "up") => void;
+  /** Android only: iOS input is HID key codes, which cannot carry arbitrary text. */
+  readonly sendText: (text: string) => void;
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
   readonly setOrientation: (orientation: DeviceScreenSize["orientation"]) => void;
   readonly controlDuo: (command: DuoCommand) => void;
-  /** Switch between one active feed and two fixed-panel feeds without replacing HID. */
   readonly setDuoPanels: (panels: DuoPanelSinks | null) => void;
-  /** Model UVs already map to the hardware framebuffer. */
   readonly sendRawTouch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
 }
 
@@ -351,12 +390,16 @@ export function createDeviceStreamClient(
 ): DeviceStreamClient {
   const { access, platform, deviceId } = target;
   const sink = "present" in output ? output : createCanvasFrameSink(output);
-  const vendor = platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
+  // Android normally streams over serve-emu's socket; a serve-sim-only host serves it like iOS.
+  const serveSimOnly = target.serveSimOnly === true;
+  const avcc = platform === "ios" || serveSimOnly;
+  const vendor = avcc ? "/vendor/serve-sim" : "/vendor/serve-emu";
   const device = encodeURIComponent(deviceId);
   const httpUrl = (path: string) =>
     withDeviceHubQuery(`${access.httpBase}${vendor}${path}`, access);
   const wsUrl = (path: string) => withDeviceHubQuery(`${access.wsBase}${vendor}${path}`, access);
-  const useWebCodecs = isWebCodecsSupported() && !(platform === "ios" && target.preferMjpeg);
+  const useWebCodecs =
+    isWebCodecsSupported() && !(platform === "ios" && target.preferMjpeg && !serveSimOnly);
 
   let stopped = true;
   let socket: WebSocket | null = null;
@@ -364,6 +407,9 @@ export function createDeviceStreamClient(
   const retryTimers = new Map<"video" | "input", ReturnType<typeof setTimeout>>();
   let primeController: AbortController | null = null;
   let videoDecoder: VideoDecoder | null = null;
+  let decodedVideoGeneration: number | null = null;
+  let iosInputAdmitted = false;
+  let iosInputUnavailable = false;
   let timestamp = 0;
   let awaitingKeyframe = true;
   let screen: DeviceScreenSize | null = null;
@@ -381,9 +427,18 @@ export function createDeviceStreamClient(
   let panelSinks: DuoPanelSinks | null = null;
   let rotationCursor: DeviceScreenSize["orientation"] | null = null;
   let pendingOrientation: { requestId: number } | null = null;
+  let iceGatheringDeadlineMs = ICE_GATHERING_TIMEOUT_MS;
+  let peer: { connection: RTCPeerConnection; sessionId: string; video: HTMLVideoElement } | null =
+    null;
   const duoControl = createDuoControl({
     send(request) {
-      if (socket?.readyState !== WebSocket.OPEN || !screen?.supportsHingeAngle) return false;
+      if (
+        !iosInputAdmitted ||
+        iosInputUnavailable ||
+        socket?.readyState !== WebSocket.OPEN ||
+        !screen?.supportsHingeAngle
+      )
+        return false;
       if (request.command.control === "physical" && !screen.supportsPhysicalOrientation)
         return false;
       try {
@@ -457,12 +512,16 @@ export function createDeviceStreamClient(
       timer = null;
       if (image.naturalWidth > 0 && image.naturalHeight > 0) frameReceived();
       else {
-        // Multipart images may not emit load until the response ends. Stop checking after the first frame.
+        // Multipart images may not emit load until the response ends.
         timer = setTimeout(check, MJPEG_FRAME_CHECK_MS);
       }
     };
     const error = () => {
-      if (!released) fail("Could not receive the device stream. Reconnect to try again.");
+      if (released) return;
+      const failure = "Could not receive the device stream. Reconnect to try again.";
+      // An <img> cannot read the 409 that a WebRTC-only serve-sim answers with.
+      if (typeof RTCPeerConnection === "undefined") fail(failure);
+      else void switchToWebRtc(failure, false);
     };
     image.addEventListener("load", check);
     image.addEventListener("error", error);
@@ -498,7 +557,7 @@ export function createDeviceStreamClient(
 
   const paint = (source: CanvasImageSource, width: number, height: number) => {
     if (stopped) return;
-    if (platform === "android" && (screen?.width !== width || screen.height !== height)) {
+    if (!avcc && (screen?.width !== width || screen.height !== height)) {
       screen = { width, height, orientation: width > height ? "landscape_left" : "portrait" };
       events.onScreen(screen);
     }
@@ -513,15 +572,17 @@ export function createDeviceStreamClient(
     decoderEpoch++;
     try {
       videoDecoder?.close();
-    } catch {
-      // Already closed.
-    }
+    } catch {}
     videoDecoder = null;
     awaitingKeyframe = true;
   };
 
   const recoverDecoder = () => {
-    if (platform === "ios") fallBackToMjpeg();
+    if (serveSimOnly) {
+      // A new AVCC request starts a fresh capture with a keyframe; there is no MJPEG.
+      closeDecoder();
+      controller?.abort();
+    } else if (platform === "ios") fallBackToMjpeg();
     else {
       closeDecoder();
       connecting("Video decoder restarted.");
@@ -534,21 +595,16 @@ export function createDeviceStreamClient(
     const decoder = new VideoDecoder({
       output: (frame) => {
         try {
-          if (
-            videoDecoder === decoder &&
-            (platform !== "ios" || feedGeneration === videoGeneration)
-          )
+          if (videoDecoder === decoder && (!avcc || feedGeneration === videoGeneration)) {
+            decodedVideoGeneration = feedGeneration;
             paint(frame, frame.displayWidth, frame.displayHeight);
+          }
         } finally {
           frame.close();
         }
       },
       error: () => {
-        if (
-          stopped ||
-          videoDecoder !== decoder ||
-          (platform === "ios" && feedGeneration !== videoGeneration)
-        )
+        if (stopped || videoDecoder !== decoder || (avcc && feedGeneration !== videoGeneration))
           return;
         recoverDecoder();
       },
@@ -556,7 +612,6 @@ export function createDeviceStreamClient(
     return decoder;
   };
 
-  /** iOS can fall back to MJPEG when the stream's H.264 profile is unsupported. */
   const configureDecoder = async (
     config: VideoDecoderConfig,
     isCurrent = () => !stopped,
@@ -586,7 +641,14 @@ export function createDeviceStreamClient(
       awaitingKeyframe = false;
     }
     if (videoDecoder.decodeQueueSize > SOFT_DECODE_QUEUE) {
-      recoverDecoder();
+      if (!avcc) {
+        recoverDecoder();
+        return;
+      }
+      // Native IDRs are spaced by frame count, so an idle simulator may take
+      // minutes to produce one. A new AVCC subscription forces a fresh IDR.
+      controller?.abort();
+      closeDecoder();
       return;
     }
     try {
@@ -626,7 +688,6 @@ export function createDeviceStreamClient(
     events.onUnauthorized();
   };
 
-  // iOS video: fetch the AVCC body and demux into the decoder.
   const readIosVideo = async () => {
     const lifecycle = generation;
     const feedGeneration = ++videoGeneration;
@@ -649,6 +710,15 @@ export function createDeviceStreamClient(
         return;
       }
       if (response.status === 401 || response.status === 403) return handleUnauthorized();
+      if (response.status === 409 && !target.panelId) {
+        const locked = decodeTransportLocked(await response.json().catch(() => null));
+        if (Option.isSome(locked)) {
+          if (!isCurrent()) return;
+          controller = null;
+          void switchToWebRtc("This browser cannot play this device's WebRTC stream.", true);
+          return;
+        }
+      }
       if (target.panelId && [400, 404, 405, 410].includes(response.status)) {
         await response.body?.cancel();
         setStatus("error", "This Device Hub does not provide fixed Duo display feeds.");
@@ -659,7 +729,9 @@ export function createDeviceStreamClient(
       for (;;) {
         // An AVCC body can stay open after its helper stops producing frames.
         const timer = setTimeout(() => {
-          if (isCurrent()) fail("Device stream stopped receiving video. Reconnect to try again.");
+          if (!isCurrent()) return;
+          retryDetail = "Device stream stopped receiving video. Reconnecting…";
+          videoController.abort();
         }, FIRST_FRAME_TIMEOUT_MS);
         videoReadTimer = timer;
         let result: ReadableStreamReadResult<Uint8Array>;
@@ -673,12 +745,14 @@ export function createDeviceStreamClient(
         if (!isCurrent()) return;
         if (done) break;
         for (const chunk of demuxer.push(value)) {
+          if (videoController.signal.aborted) break;
           switch (chunk.type) {
             case "seed":
               void createImageBitmap(new Blob([chunk.payload as BlobPart], { type: "image/jpeg" }))
                 .then((bitmap) => {
                   try {
-                    if (isCurrent()) paint(bitmap, bitmap.width, bitmap.height);
+                    if (isCurrent() && decodedVideoGeneration !== feedGeneration)
+                      paint(bitmap, bitmap.width, bitmap.height);
                   } finally {
                     bitmap.close();
                   }
@@ -688,14 +762,22 @@ export function createDeviceStreamClient(
             case "description": {
               awaitingKeyframe = true;
               const configured = await configureDecoder(
-                { codec: avcCodecString(chunk.payload), description: chunk.payload },
+                {
+                  codec: avcCodecString(chunk.payload),
+                  description: simulatorAvcConfig(chunk.payload),
+                },
                 isCurrent,
               );
               if (!isCurrent()) return;
               if (!configured) {
                 await reader.cancel().catch(() => {});
                 if (!isCurrent()) return;
-                if (target.videoOnly)
+                if (serveSimOnly)
+                  setStatus(
+                    "error",
+                    `This browser cannot decode this device's ${avcCodecString(chunk.payload)} stream.`,
+                  );
+                else if (target.videoOnly)
                   setStatus(
                     "error",
                     `This browser cannot decode the Duo panel's ${avcCodecString(chunk.payload)} stream.`,
@@ -714,7 +796,9 @@ export function createDeviceStreamClient(
       }
     } catch (cause) {
       if (!isCurrent()) return;
-      retryDetail = (cause as Error).message;
+      retryDetail ??= videoController.signal.aborted
+        ? "Video decoder fell behind. Reconnecting…"
+        : (cause as Error).message;
     }
     if (isCurrent()) {
       controller = null;
@@ -743,12 +827,219 @@ export function createDeviceStreamClient(
       if (response.status === 401 || response.status === 403) return handleUnauthorized();
       await response.body?.getReader().read();
     } catch {
-      // A failed prime just means the socket may take a retry to come up.
     } finally {
       clearTimeout(timeout);
       controller.abort();
       if (primeController === controller) primeController = null;
     }
+  };
+
+  /**
+   * serve-sim can be locked to WebRTC (EAS Simulator always is), and then
+   * refuses AVCC and MJPEG; serve-emu advertises WebRTC the same way. An
+   * unreadable answer keeps the default path.
+   */
+  const probeWebRtc = async (): Promise<WebRtcSettings | null> => {
+    const probe = new AbortController();
+    const timeout = setTimeout(() => probe.abort(), TRANSPORT_PROBE_TIMEOUT_MS);
+    try {
+      const response = await fetch(httpUrl(`/api?device=${device}`), {
+        signal: probe.signal,
+        credentials: access.credentials ? "include" : "same-origin",
+      });
+      if (!response.ok) return null;
+      const api = decodeServeSimApi(await response.json());
+      if (Option.isNone(api)) return null;
+      const settings = decodeWebRtcSettings(api.value.streamSettings ?? api.value.stream);
+      return Option.isSome(settings) ? settings.value : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  const webRtcUrl = (action: "offer" | "close") =>
+    httpUrl(avcc ? `/helper/${device}/webrtc/${action}` : `/webrtc/${action}?device=${device}`);
+
+  const closePeer = () => {
+    const current = peer;
+    if (!current) return;
+    peer = null;
+    current.connection.close();
+    current.video.srcObject = null;
+    current.video.remove();
+    // Releases the capture session; best effort because the page may be unloading.
+    void fetch(webRtcUrl("close"), {
+      method: "POST",
+      keepalive: true,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: current.sessionId }),
+      credentials: access.credentials ? "include" : "same-origin",
+    }).catch(() => {});
+  };
+
+  const readWebRtc = async (settings: WebRtcSettings) => {
+    const lifecycle = generation;
+    const feedGeneration = ++videoGeneration;
+    closePeer();
+    const connection = new RTCPeerConnection({
+      ...(settings.iceServers
+        ? {
+            iceServers: settings.iceServers.map((server) => ({
+              ...server,
+              urls: typeof server.urls === "string" ? server.urls : [...server.urls],
+            })),
+          }
+        : {}),
+      iceTransportPolicy: settings.iceTransportPolicy ?? "all",
+    });
+    // Frames only reach requestVideoFrameCallback from a video that is in the
+    // document; it stays invisible because the sink paints them.
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute("aria-hidden", "true");
+    video.style.cssText =
+      "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:0;top:0";
+    document.body.append(video);
+    const current = { connection, sessionId: webRtcSessionId(), video };
+    peer = current;
+    const isCurrent = () =>
+      !stopped &&
+      generation === lifecycle &&
+      videoGeneration === feedGeneration &&
+      peer === current;
+    // After the first frame nothing else bounds a feed that stops: the peer
+    // can sit `disconnected` with the last frame on the canvas. A long gap
+    // between frames reconnects through the same path as a failed connection.
+    let checksWithoutFrame = 0;
+    let watchdog: ReturnType<typeof setInterval> | null = null;
+    const clearWatchdog = () => {
+      if (watchdog !== null) clearInterval(watchdog);
+      watchdog = null;
+    };
+    const retry = (detail: string) => {
+      clearWatchdog();
+      if (!isCurrent()) return;
+      closePeer();
+      connecting(detail);
+      scheduleRetry("video", () => void readWebRtc(settings));
+    };
+    const presentFrame = () => {
+      if (!isCurrent()) {
+        clearWatchdog();
+        return;
+      }
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        paint(video, video.videoWidth, video.videoHeight);
+        checksWithoutFrame = 0;
+        watchdog ??= setInterval(() => {
+          if (!isCurrent()) return clearWatchdog();
+          checksWithoutFrame++;
+          if (checksWithoutFrame * WEBRTC_STALL_CHECK_MS >= WEBRTC_STALL_TIMEOUT_MS) {
+            retry("Device stream stalled. Reconnecting…");
+          }
+        }, WEBRTC_STALL_CHECK_MS);
+      }
+      video.requestVideoFrameCallback(presentFrame);
+    };
+    const transceiver = connection.addTransceiver("video", { direction: "recvonly" });
+    const codecs = RTCRtpReceiver.getCapabilities("video")?.codecs ?? [];
+    if (codecs.length > 0) {
+      // serve-sim encodes H.264; other codecs stay as fallbacks it may refuse.
+      transceiver.setCodecPreferences([
+        ...codecs.filter((codec) => codec.mimeType.toLowerCase() === "video/h264"),
+        ...codecs.filter((codec) => codec.mimeType.toLowerCase() !== "video/h264"),
+      ]);
+    }
+    connection.ontrack = (event) => {
+      if (!isCurrent()) return;
+      iceGatheringDeadlineMs = ICE_GATHERING_TIMEOUT_MS;
+      video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
+      void video.play().catch(() => {});
+      video.requestVideoFrameCallback(presentFrame);
+    };
+    connection.onconnectionstatechange = () => {
+      if (connection.connectionState === "failed")
+        retry("Device stream connection failed. Reconnecting…");
+    };
+    try {
+      await connection.setLocalDescription(await connection.createOffer());
+      const gathered = await new Promise<boolean>((resolve) => {
+        if (connection.iceGatheringState === "complete") return resolve(true);
+        const timer = setTimeout(() => done(false), iceGatheringDeadlineMs);
+        function done(complete: boolean) {
+          clearTimeout(timer);
+          connection.removeEventListener("icegatheringstatechange", changed);
+          resolve(complete);
+        }
+        function changed() {
+          if (connection.iceGatheringState === "complete") done(true);
+        }
+        connection.addEventListener("icegatheringstatechange", changed);
+      });
+      if (!isCurrent()) return;
+      // serve-sim takes all candidates in the offer; later candidates never trickle.
+      // Cloud simulators need a reflexive or relay candidate, so retry incomplete offers with
+      // longer deadlines up to the bound, then send what was gathered.
+      const sdp = connection.localDescription?.sdp ?? "";
+      if (
+        !gathered &&
+        !/^a=candidate:.* typ (?:srflx|relay)\b/m.test(sdp) &&
+        iceGatheringDeadlineMs < ICE_GATHERING_MAX_TIMEOUT_MS
+      ) {
+        iceGatheringDeadlineMs = Math.min(iceGatheringDeadlineMs * 2, ICE_GATHERING_MAX_TIMEOUT_MS);
+        return retry("Device stream found no network candidates yet. Retrying…");
+      }
+      const response = await fetch(webRtcUrl("offer"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "offer",
+          sdp: connection.localDescription?.sdp,
+          sessionId: current.sessionId,
+          codec: "h264",
+        }),
+        credentials: access.credentials ? "include" : "same-origin",
+      });
+      if (!isCurrent()) {
+        await response.body?.cancel();
+        return;
+      }
+      if (response.status === 401 || response.status === 403) return handleUnauthorized();
+      // 409: another viewer is still negotiating with this simulator.
+      if (!response.ok) return retry(`Device stream offer failed (${response.status}). Retrying…`);
+      const answer = decodeWebRtcAnswer(await response.json());
+      if (!isCurrent()) return;
+      if (Option.isNone(answer))
+        return retry("Device stream returned an invalid answer. Retrying…");
+      await connection.setRemoteDescription(answer.value);
+    } catch (cause) {
+      retry((cause as Error).message);
+    }
+  };
+
+  /**
+   * Called once AVCC or MJPEG was refused. `locked` means serve-sim already
+   * said it streams WebRTC only, so a missing /api answer still switches.
+   */
+  const switchToWebRtc = async (failure: string, locked: boolean) => {
+    const session = generation;
+    if (typeof RTCPeerConnection === "undefined") return fail(failure);
+    const settings = (await probeWebRtc()) ?? (locked ? { transport: "webrtc" as const } : null);
+    if (stopped || generation !== session) return;
+    if (!settings) return fail(failure);
+    if (mjpeg) {
+      mjpeg = false;
+      releaseImage?.();
+      releaseImage = null;
+      events.onCanvasVideo?.();
+    }
+    // MJPEG may have shown frames already: say the stream is connecting again
+    // rather than leave a blank canvas until the first WebRTC frame.
+    connecting("Switching to WebRTC.");
+    void readWebRtc(settings);
   };
 
   const startDuoVideo = (panels: DuoPanelSinks) => {
@@ -787,25 +1078,26 @@ export function createDeviceStreamClient(
     for (const panel of panelClients) panel.start();
   };
 
-  // iOS input socket; also carries the screen config the helper pushes.
   const connectIosInput = async () => {
     if (stopped) return;
     const session = generation;
-    await primeIosHelper(session);
+    if (!serveSimOnly) await primeIosHelper(session);
     if (stopped || generation !== session) return;
     const ws = new WebSocket(wsUrl(`/helper/ws?device=${device}`));
     ws.binaryType = "arraybuffer";
     socket = ws;
-    ws.onopen = () => {
-      if (stopped || socket !== ws) return;
-      ws.send(taggedJson(IOS_MSG_HARDWARE_KEYBOARD, { enabled: false }));
-      events.onInputConnected(true);
-    };
+    iosInputAdmitted = false;
+    iosInputUnavailable = false;
     ws.onmessage = (event) => {
       if (stopped || socket !== ws) return;
       if (!(event.data instanceof ArrayBuffer)) return;
       const bytes = new Uint8Array(event.data);
       if (socket !== ws || stopped || bytes.length < 1) return;
+      if (bytes[0] === IOS_TAG_INPUT_ADMITTED) {
+        iosInputAdmitted = true;
+        events.onInputConnected(!iosInputUnavailable);
+        return;
+      }
       try {
         const payload: unknown = JSON.parse(decoder.decode(bytes.subarray(1)));
         if (bytes[0] === 0x90) {
@@ -814,6 +1106,11 @@ export function createDeviceStreamClient(
         } else if (bytes[0] === IOS_TAG_SCREEN_CONFIG) {
           const config = decodeScreenConfig(payload);
           if (Option.isSome(config)) {
+            iosInputUnavailable = config.value.inputUnavailable === true;
+            events.onInputConnected(
+              iosInputAdmitted && !iosInputUnavailable,
+              iosInputUnavailable ? "Simulator input is unavailable" : undefined,
+            );
             const previous = screen;
             screen = config.value;
             if (screen.hingePose && screen.hingePose !== previous?.hingePose)
@@ -842,13 +1139,12 @@ export function createDeviceStreamClient(
             }
           }
         }
-      } catch {
-        // Ignore malformed config frames.
-      }
+      } catch {}
     };
     ws.onclose = (event) => {
       if (socket !== ws) return;
       socket = null;
+      iosInputAdmitted = false;
       duoControl.clear();
       rotationCursor = null;
       if (stopped) return;
@@ -868,19 +1164,21 @@ export function createDeviceStreamClient(
     ws.onerror = () => ws.close();
   };
 
-  // Android: one socket for video and input.
-  const connectAndroid = () => {
+  /** `inputOnly` keeps a socket for input beside a WebRTC feed, so its reconnects leave video alone. */
+  const connectAndroid = (inputOnly = false) => {
     if (stopped) return;
-    const ws = new WebSocket(wsUrl(`/ws?device=${device}&frame-meta=1`));
+    const ws = new WebSocket(
+      wsUrl(`/ws?device=${device}&${inputOnly ? "video=0" : "frame-meta=1"}`),
+    );
     ws.binaryType = "arraybuffer";
     socket = ws;
     ws.onopen = () => {
       if (stopped || socket !== ws) return;
-      connecting();
+      if (!inputOnly) connecting();
       events.onInputConnected(true);
     };
     ws.onmessage = (event) => {
-      if (stopped || socket !== ws) return;
+      if (stopped || socket !== ws || inputOnly) return;
       if (typeof event.data === "string") {
         // The encoder restarts at a new size when the device rotates; the
         // next keyframe carries a fresh SPS, so the decoder is rebuilt from it.
@@ -932,11 +1230,27 @@ export function createDeviceStreamClient(
         (event.code === 1006 && access.query.wsTicket)
       )
         return handleUnauthorized();
-      configuring = false;
-      connecting(event.reason || undefined);
-      scheduleRetry("input", connectAndroid);
+      if (!inputOnly) {
+        configuring = false;
+        connecting(event.reason || undefined);
+      }
+      // A full socket re-probes, so one failed /api read does not pin SEMU on a WebRTC host.
+      scheduleRetry("input", () => (inputOnly ? connectAndroid(true) : void startAndroid()));
     };
     ws.onerror = () => ws.close();
+  };
+
+  const startAndroid = async () => {
+    const session = generation;
+    const settings = await probeWebRtc();
+    if (stopped || generation !== session) return;
+    if (settings) {
+      if (typeof RTCPeerConnection === "undefined")
+        return fail("This browser cannot receive the device's WebRTC stream.");
+      if (!target.videoOnly) connectAndroid(true);
+      void readWebRtc(settings);
+    } else if (useWebCodecs) connectAndroid();
+    else fail("This browser cannot decode the Android stream (WebCodecs unavailable).");
   };
 
   const start = () => {
@@ -944,16 +1258,18 @@ export function createDeviceStreamClient(
     stopped = false;
     generation++;
     configuring = false;
+    iosInputAdmitted = false;
+    iosInputUnavailable = false;
     connecting();
-    if (platform === "ios") {
+    if (serveSimOnly) {
+      if (!target.videoOnly) void connectIosInput();
+      if (useWebCodecs) void readIosVideo();
+      else fail("This browser cannot decode this device's stream (WebCodecs unavailable).");
+    } else if (platform === "ios") {
       if (!target.videoOnly) void connectIosInput();
       if (useWebCodecs) void readIosVideo();
       else fallBackToMjpeg();
-    } else if (useWebCodecs) {
-      connectAndroid();
-    } else {
-      fail("This browser cannot decode the Android stream (WebCodecs unavailable).");
-    }
+    } else void startAndroid();
   };
 
   const stop = () => {
@@ -979,6 +1295,7 @@ export function createDeviceStreamClient(
     primeController = null;
     controller?.abort();
     controller = null;
+    closePeer();
     const discarded = socket;
     socket = null;
     discarded?.close();
@@ -986,7 +1303,12 @@ export function createDeviceStreamClient(
   };
 
   const send = (payload: Uint8Array<ArrayBuffer> | string) => {
-    if (!stopped && socket?.readyState === WebSocket.OPEN) socket.send(payload);
+    if (
+      !stopped &&
+      (!avcc || (iosInputAdmitted && !iosInputUnavailable)) &&
+      socket?.readyState === WebSocket.OPEN
+    )
+      socket.send(payload);
   };
 
   const rawPoint = (x: number, y: number) => {
@@ -1020,6 +1342,7 @@ export function createDeviceStreamClient(
       videoGeneration++;
       controller?.abort();
       controller = null;
+      closePeer();
       closeDecoder();
       const retry = retryTimers.get("video");
       if (retry) clearTimeout(retry);
@@ -1033,7 +1356,7 @@ export function createDeviceStreamClient(
       startDuoVideo(panels);
     },
     sendTouch: (phase, x, y) => {
-      if (platform === "ios") {
+      if (avcc) {
         send(taggedJson(IOS_MSG_TOUCH, { type: phase, ...rawPoint(x, y) }));
         return;
       }
@@ -1041,7 +1364,7 @@ export function createDeviceStreamClient(
       send(JSON.stringify({ type: "touch", action, x, y }));
     },
     sendKey: (event, phase) => {
-      if (platform === "ios") {
+      if (avcc) {
         const usage = hidUsageForCode(event.code);
         if (usage !== null) send(taggedJson(IOS_MSG_KEY, { type: phase, usage }));
         return;
@@ -1054,16 +1377,36 @@ export function createDeviceStreamClient(
         send(JSON.stringify({ type: "text", text: event.key }));
       }
     },
+    sendText: (text) => {
+      if (avcc) return;
+      let chunk = "";
+      let chunkBytes = 0;
+      let sentChunks = 0;
+      for (const character of text) {
+        const characterBytes = utf8ByteLength(character.codePointAt(0)!);
+        if (chunkBytes + characterBytes > ANDROID_MAX_TEXT_BYTES) {
+          send(JSON.stringify({ type: "text", text: chunk }));
+          if (++sentChunks >= ANDROID_MAX_TEXT_CHUNKS) return;
+          chunk = "";
+          chunkBytes = 0;
+        }
+        chunk += character;
+        chunkBytes += characterBytes;
+      }
+      if (chunk.length > 0) send(JSON.stringify({ type: "text", text: chunk }));
+    },
     pressButton: (button) => {
-      if (platform === "ios") {
+      if (avcc) {
         const name =
           button === "home"
             ? "home"
-            : button === "appSwitcher"
+            : button === "appSwitcher" || button === "recents"
               ? "app_switcher"
               : button === "power"
                 ? "lock"
-                : null;
+                : button === "back" && platform === "android"
+                  ? "back"
+                  : null;
         if (name) send(taggedJson(IOS_MSG_BUTTON, { button: name }));
         return;
       }

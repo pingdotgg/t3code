@@ -12,12 +12,7 @@ type SlashSearchItem = Extract<
   { type: "slash-command" | "provider-slash-command" | "skill" }
 >;
 
-/**
- * A provider expands a slash command only when it opens the whole message;
- * anywhere else it reaches the agent as literal text, so it is not offered
- * there. Built-ins apply locally on selection and skills insert a `$` mention
- * the server dispatches from any position, so both stay available.
- */
+/** Providers expand slash commands only at the message start. */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,
   isAtPromptStart: boolean,

@@ -2,6 +2,8 @@ import type { FileDiffMetadata, SelectedLineRange, SelectionSide } from "@pierre
 import { PullRequestContextMetadata, type PullRequestReviewPosition } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { isLineInFileDiff } from "./components/pullRequest/pullRequestDiff.logic";
+
 const ReviewCommentSelectionSchema = Schema.Struct({
   start: Schema.Number,
   side: Schema.Literals(["additions", "deletions"]),
@@ -331,7 +333,6 @@ function findDiffReviewLineIndex(
     : findOnSide(selectedSide === "left" ? "right" : "left");
 }
 
-/** Resolve the host-facing coordinates of a line selected in the diff viewer. */
 export function resolveDiffReviewPosition(
   fileDiff: FileDiffMetadata,
   lineNumber: number,
@@ -345,13 +346,25 @@ export function resolveDiffReviewPosition(
   })[0];
   if (line === undefined) return null;
 
+  // An explicit selection must not resolve to a same-numbered line on the other side.
+  if (
+    (side === "additions" && line.newLineNumber !== lineNumber) ||
+    (side === "deletions" && line.oldLineNumber !== lineNumber)
+  ) {
+    return null;
+  }
+
   switch (line.change) {
     case "add":
       return line.newLineNumber === null ? null : { kind: "added", newLine: line.newLineNumber };
     case "delete":
       return line.oldLineNumber === null ? null : { kind: "deleted", oldLine: line.oldLineNumber };
     case "context":
-      return line.oldLineNumber === null || line.newLineNumber === null
+      // An expanded file also shows the gaps between hunks, and GitHub rejects a whole review
+      // over one comment anchored there.
+      return line.oldLineNumber === null ||
+        line.newLineNumber === null ||
+        !isLineInFileDiff(fileDiff, "right", line.newLineNumber)
         ? null
         : {
             kind: "context",
@@ -360,6 +373,46 @@ export function resolveDiffReviewPosition(
             side: side === "deletions" ? "left" : "right",
           };
   }
+}
+
+function reviewHunkIndex(fileDiff: FileDiffMetadata, position: PullRequestReviewPosition): number {
+  const [side, line] =
+    position.kind === "deleted"
+      ? (["left", position.oldLine] as const)
+      : (["right", position.newLine] as const);
+  return fileDiff.hunks.findIndex((hunk) =>
+    side === "left"
+      ? line >= hunk.deletionStart && line < hunk.deletionStart + hunk.deletionCount
+      : line >= hunk.additionStart && line < hunk.additionStart + hunk.additionCount,
+  );
+}
+
+/**
+ * Where a review comment on `range` is anchored. With `ranged`, a selection inside one hunk
+ * keeps its first line, in diff order, as `startPosition`, because hosts refuse a range that
+ * crosses hunks. Otherwise the comment sits on the line the selection ended on.
+ */
+export function resolveDiffReviewAnchor(
+  fileDiff: FileDiffMetadata,
+  range: SelectedLineRange,
+  ranged: boolean,
+): {
+  readonly position: PullRequestReviewPosition;
+  readonly startPosition?: PullRequestReviewPosition;
+} | null {
+  const endSide = range.endSide ?? range.side;
+  const last = resolveDiffReviewPosition(fileDiff, range.end, endSide);
+  if (last === null) return null;
+  const first = ranged ? resolveDiffReviewPosition(fileDiff, range.start, range.side) : null;
+  if (first === null) return { position: last };
+  const startIndex = findDiffReviewLineIndex(fileDiff, range.start, range.side);
+  const endIndex = findDiffReviewLineIndex(fileDiff, range.end, endSide);
+  if (startIndex === endIndex) return { position: last };
+  const [start, end] = startIndex < endIndex ? [first, last] : [last, first];
+  const hunk = reviewHunkIndex(fileDiff, end);
+  return hunk >= 0 && reviewHunkIndex(fileDiff, start) === hunk
+    ? { position: end, startPosition: start }
+    : { position: last };
 }
 
 function getDiffRange(

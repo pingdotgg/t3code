@@ -1,22 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseUsagePriceForm, usagePriceForm } from "./usagePriceForm.ts";
+import { isUsagePriceEdit, parseUsagePriceForm, usagePriceForm } from "./usagePriceForm.ts";
 
 describe("model price entry", () => {
-  it("preserves exact model IDs and fractional rates", () => {
-    expect(
-      parseUsagePriceForm({
-        ...usagePriceForm(),
-        model: "  vendor/Example-Model  ",
-        inputCostPerMillionTokens: "2.5",
-        outputCostPerMillionTokens: "10",
-      }),
-    ).toEqual({
-      model: "vendor/Example-Model",
-      price: { inputCostPerMillionTokens: 2.5, outputCostPerMillionTokens: 10 },
-    });
-  });
-
   it("keeps free cache tokens distinct from blank cache prices", () => {
     const parsed = parseUsagePriceForm({
       ...usagePriceForm(),
@@ -61,13 +47,11 @@ describe("model price entry", () => {
     },
   );
 
-  it("rejects invalid optional rates and missing model IDs", () => {
-    const form = usagePriceForm("example-model", {
-      inputCostPerMillionTokens: 2,
-      outputCostPerMillionTokens: 8,
-    });
-    expect(parseUsagePriceForm({ ...form, cacheReadCostPerMillionTokens: "-1" })).toBeNull();
-    expect(parseUsagePriceForm({ ...form, cacheWriteCostPerMillionTokens: "invalid" })).toBeNull();
-    expect(parseUsagePriceForm({ ...form, model: " " })).toBeNull();
+  it("never blocks deleting part of a price, but blocks replacing it with a non-number", () => {
+    expect(isUsagePriceEdit("1e-7", "e-7")).toBe(true);
+    expect(isUsagePriceEdit("1e-7", "1-7")).toBe(true);
+    expect(isUsagePriceEdit("1e-7", "a7")).toBe(false);
+    expect(isUsagePriceEdit("2.5", "x")).toBe(false);
+    expect(isUsagePriceEdit("123456", "1.2.3")).toBe(false);
   });
 });

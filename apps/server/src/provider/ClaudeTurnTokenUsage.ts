@@ -1,5 +1,5 @@
 import type { SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { ProviderRuntimeTurnStatus, TurnTokenUsage } from "@t3tools/contracts";
+import type { RuntimeTurnState, TurnTokenUsage } from "@t3tools/contracts";
 
 function finiteNonNegativeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
@@ -7,12 +7,60 @@ function finiteNonNegativeInteger(value: unknown): number | undefined {
     : undefined;
 }
 
+const BILLED_USAGE_FIELDS = [
+  "input_tokens",
+  "cache_read_input_tokens",
+  "cache_creation_input_tokens",
+  "output_tokens",
+] as const;
+
+function addKnownCount(finalCount: unknown, earlierCounts: ReadonlyArray<unknown>): unknown {
+  const known = finiteNonNegativeInteger(finalCount);
+  if (known === undefined) return finalCount;
+  return earlierCounts.reduce<number>(
+    (sum, count) => sum + (finiteNonNegativeInteger(count) ?? 0),
+    known,
+  );
+}
+
+// Steering aborts the current segment; each SDK result reports only that segment's usage.
+function withEarlierSegmentUsage(
+  usage: Record<string, unknown>,
+  earlierSegmentUsage: ReadonlyArray<unknown>,
+): Record<string, unknown> {
+  if (earlierSegmentUsage.length === 0) return usage;
+  const segments = earlierSegmentUsage.map((segment) => (segment ?? {}) as Record<string, unknown>);
+  const total = { ...usage };
+  for (const field of BILLED_USAGE_FIELDS) {
+    total[field] = addKnownCount(
+      usage[field],
+      segments.map((segment) => segment[field]),
+    );
+  }
+  const outputDetails = usage.output_tokens_details as Record<string, unknown> | undefined;
+  if (outputDetails != null) {
+    total.output_tokens_details = {
+      ...outputDetails,
+      thinking_tokens: addKnownCount(
+        outputDetails.thinking_tokens,
+        segments.map(
+          (segment) =>
+            (segment.output_tokens_details as Record<string, unknown> | undefined)?.thinking_tokens,
+        ),
+      ),
+    };
+  }
+  return total;
+}
+
 export function normalizeClaudeTurnTokenUsage(
   result: { readonly subtype: SDKResultMessage["subtype"]; readonly usage?: unknown } | undefined,
   hasSubagents: boolean,
-  terminalStatus: ProviderRuntimeTurnStatus,
+  terminalStatus: RuntimeTurnState,
+  earlierSegmentUsage: ReadonlyArray<unknown> = [],
 ): TurnTokenUsage {
-  const usage = result?.usage as Record<string, unknown> | undefined;
+  const finalUsage = result?.usage as Record<string, unknown> | undefined;
+  const usage = finalUsage && withEarlierSegmentUsage(finalUsage, earlierSegmentUsage);
   if (!usage) {
     return {
       usageStatus: "unavailable",

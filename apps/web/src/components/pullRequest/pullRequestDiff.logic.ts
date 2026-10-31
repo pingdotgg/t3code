@@ -1,14 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { PullRequestDiffSide } from "@t3tools/contracts";
 
-/**
- * Whether a conversation's line is really in this file's hunks.
- *
- * A thread naming a file is not the same as a thread the diff can show: its line may have moved
- * out of the change, or sit in a hunk the host withheld. Pinning it anyway would put the remark
- * against whatever code now occupies that line number, and silently dropping it would lose the
- * conversation, so the answer decides which of the two lists it belongs in.
- */
+/** Only rendered hunks can anchor comments; list others off-diff. */
 export function isLineInFileDiff(
   file: FileDiffMetadata,
   side: PullRequestDiffSide,
@@ -21,18 +14,9 @@ export function isLineInFileDiff(
   );
 }
 
-/** What the toolbar last asked of every file at once, null being the reader asking nothing yet. */
 export type DiffFoldOverride = "expanded" | "folded" | null;
 
-/**
- * Whether a file is drawn folded.
- *
- * A diff arrives a slice at a time, so the reader's own choices are kept as the difference from
- * what the toolbar last said rather than as the set of folded files: a file that has not loaded
- * yet cannot be in a set, and would otherwise land expanded moments after the reader folded
- * everything. The caller supplies the saved default until the toolbar overrides it; individual
- * files can still be toggled independently.
- */
+/** Keep fold choices relative to the toolbar so later pages inherit Fold all. */
 export function isFileDiffCollapsed(
   fileKey: string,
   foldOverride: DiffFoldOverride,
@@ -42,13 +26,6 @@ export function isFileDiffCollapsed(
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
 }
 
-/**
- * The reader's fold choices after a file was ticked off, or put back.
- *
- * Clearing a file puts it away and un-clearing brings it back, so the tick moves the fold as if
- * the reader had pressed the chevron themselves, which keeps folding a difference from what the
- * toolbar last asked, and so keeps "collapse all" from ticking anything off.
- */
 export function toggleFileDiffFoldForViewed(
   fileKey: string,
   viewed: boolean,
@@ -61,4 +38,16 @@ export function toggleFileDiffFoldForViewed(
   if (next.has(fileKey)) next.delete(fileKey);
   else next.add(fileKey);
   return next;
+}
+
+export function getFileViewedRange<T extends { readonly fileKey: string }>(
+  files: ReadonlyArray<T>,
+  fileKey: string,
+  anchorFileKey: string | null,
+): ReadonlyArray<T> {
+  const index = files.findIndex((file) => file.fileKey === fileKey);
+  if (index === -1) return [];
+  const anchorIndex = files.findIndex((file) => file.fileKey === anchorFileKey);
+  if (anchorIndex === -1) return files.slice(index, index + 1);
+  return files.slice(Math.min(index, anchorIndex), Math.max(index, anchorIndex) + 1);
 }

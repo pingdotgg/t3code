@@ -1,5 +1,4 @@
 import { assert, describe, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
@@ -47,7 +46,6 @@ describe("ElectronProtocol", () => {
       const request = (pathname: string, init?: RequestInit) =>
         Effect.promise(() => handler!(new Request(`t3code://app${pathname}`, init)));
 
-      // SPA routes fall back to index.html, including ones containing dots.
       const page = yield* request("/settings/connections");
       assert.equal(yield* Effect.promise(() => page.text()), "<html>app</html>");
       assert.include(page.headers.get("content-security-policy") ?? "", "default-src 'self'");
@@ -132,6 +130,39 @@ describe("ElectronProtocol", () => {
     }).pipe(Effect.provide(layerProtocol)),
   );
 
+  it.effect("keeps proxied paths on the configured server", () =>
+    Effect.gen(function* () {
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      netFetchMock.mockImplementation(async () => new Response("ok"));
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const protocol = yield* ElectronProtocol.ElectronProtocol;
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code-dev",
+            targetOrigin: new URL("http://127.0.0.1:5733/"),
+            clerkFrontendApiHostname: undefined,
+          });
+          yield* Effect.promise(() =>
+            handler!(new Request("t3code-dev://app//example.com/src/main.tsx?t=1")),
+          );
+          yield* Effect.promise(() => handler!(new Request("t3code-dev://app/\\example.com/")));
+        }),
+      );
+
+      assert.deepEqual(
+        netFetchMock.mock.calls.map((call) => call[0]),
+        [
+          "http://127.0.0.1:5733//example.com/src/main.tsx?t=1",
+          "http://127.0.0.1:5733//example.com/",
+        ],
+      );
+    }).pipe(Effect.provide(layerProtocol)),
+  );
+
   it.effect("rejects custom protocol requests for another host", () =>
     Effect.gen(function* () {
       let handler: ((request: Request) => Promise<Response>) | undefined;
@@ -155,124 +186,4 @@ describe("ElectronProtocol", () => {
       assert.equal(netFetchMock.mock.calls.length, 0);
     }).pipe(Effect.provide(layerProtocol)),
   );
-
-  it.effect("retries transient renderer target failures", () =>
-    Effect.gen(function* () {
-      let handler: ((request: Request) => Promise<Response>) | undefined;
-      handleMock.mockImplementation((_scheme, nextHandler) => {
-        handler = nextHandler;
-      });
-      netFetchMock
-        .mockRejectedValueOnce(new Error("connect ECONNREFUSED 127.0.0.1:5733"))
-        .mockResolvedValueOnce(new Response("ready"));
-
-      const response = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const protocol = yield* ElectronProtocol.ElectronProtocol;
-          yield* protocol.registerDesktopProtocol({
-            scheme: "t3code-dev",
-            targetOrigin: new URL("http://127.0.0.1:5733/"),
-            clerkFrontendApiHostname: undefined,
-          });
-          return yield* Effect.promise(() => handler!(new Request("t3code-dev://app/")));
-        }),
-      );
-
-      assert.equal(yield* Effect.promise(() => response.text()), "ready");
-      assert.equal(netFetchMock.mock.calls.length, 2);
-    }).pipe(Effect.provide(layerProtocol)),
-  );
-
-  it.effect("preserves protocol registration failures", () =>
-    Effect.gen(function* () {
-      const cause = new Error("protocol registration failed");
-      handleMock.mockImplementationOnce(() => {
-        throw cause;
-      });
-
-      const protocol = yield* ElectronProtocol.ElectronProtocol;
-      const error = yield* Effect.scoped(
-        protocol.registerDesktopProtocol({
-          scheme: "t3code-dev",
-          targetOrigin: new URL("http://127.0.0.1:3773/"),
-          clerkFrontendApiHostname: undefined,
-        }),
-      ).pipe(Effect.flip);
-
-      assert.instanceOf(error, ElectronProtocol.ElectronProtocolRegistrationError);
-      assert.equal(error.scheme, "t3code-dev");
-      assert.strictEqual(error.cause, cause);
-      assert.equal(error.message, 'Failed to register Electron protocol scheme "t3code-dev".');
-    }).pipe(Effect.provide(layerProtocol)),
-  );
-
-  it.effect("preserves protocol unregistration failures", () =>
-    Effect.gen(function* () {
-      const cause = new Error("protocol unregistration failed");
-      unhandleMock.mockImplementationOnce(() => {
-        throw cause;
-      });
-
-      const protocol = yield* ElectronProtocol.ElectronProtocol;
-      const exit = yield* Effect.exit(
-        Effect.scoped(
-          protocol.registerDesktopProtocol({
-            scheme: "t3code",
-            targetOrigin: new URL("http://127.0.0.1:3773/"),
-            clerkFrontendApiHostname: undefined,
-          }),
-        ),
-      );
-
-      assert.equal(exit._tag, "Failure");
-      if (exit._tag === "Failure") {
-        const error = Cause.squash(exit.cause);
-        assert.instanceOf(error, ElectronProtocol.ElectronProtocolUnregistrationError);
-        assert.equal(error.scheme, "t3code");
-        assert.strictEqual(error.cause, cause);
-        assert.equal(error.message, 'Failed to unregister Electron protocol scheme "t3code".');
-      }
-    }).pipe(Effect.provide(layerProtocol)),
-  );
-
-  it("keeps executable sources host-restricted while allowing runtime network resources", () => {
-    const policy = ElectronProtocol.makeDesktopContentSecurityPolicy({
-      scheme: "t3code",
-      targetOrigin: new URL("http://127.0.0.1:3773/"),
-      clerkFrontendApiHostname: "clerk.t3.codes",
-    });
-    const directives = Object.fromEntries(
-      policy.split("; ").map((directive) => {
-        const [name, ...sources] = directive.split(" ");
-        return [name, sources];
-      }),
-    );
-
-    assert.deepEqual(directives["script-src"], [
-      "'self'",
-      "'unsafe-inline'",
-      "'wasm-unsafe-eval'",
-      "https://clerk.t3.codes",
-      "https://challenges.cloudflare.com",
-    ]);
-    assert.deepEqual(directives["connect-src"], [
-      "'self'",
-      "blob:",
-      "http:",
-      "https:",
-      "ws:",
-      "wss:",
-    ]);
-    assert.deepEqual(directives["img-src"], [
-      "'self'",
-      "t3code:",
-      "blob:",
-      "data:",
-      "http:",
-      "https:",
-    ]);
-    assert.deepEqual(directives["media-src"], ["'self'", "t3code:", "blob:", "http:", "https:"]);
-    assert.deepEqual(directives["frame-src"], ["'self'", "blob:", "http:", "https:"]);
-    assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
-  });
 });

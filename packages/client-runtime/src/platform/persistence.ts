@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { ConnectionRegistration } from "../connection/catalog.ts";
+import type { DeferredShellSnapshot } from "../state/shellPullRequests.ts";
 import type { ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
 
 export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPersistenceError>()(
@@ -45,7 +46,6 @@ export class ConnectionTargetStore extends Context.Service<
   ConnectionTargetStore,
   {
     readonly list: Effect.Effect<ReadonlyArray<ConnectionTarget>, ConnectionPersistenceError>;
-    /** Saved environments the user switched off. See `ConnectionRegistrationStore.setEnabled`. */
     readonly listDisabled: Effect.Effect<ReadonlyArray<EnvironmentId>, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/ConnectionTargetStore") {}
@@ -54,19 +54,19 @@ export class ConnectionRegistrationStore extends Context.Service<
   ConnectionRegistrationStore,
   {
     /**
-     * Saves one route's records and sets the environment's full route list,
-     * preferred first. Records of routes missing from `routes` are dropped.
+     * Records of routes missing from `routes` are dropped.
      */
     readonly register: (
       registration: ConnectionRegistration,
       routes: ReadonlyArray<PersistedConnectionTarget>,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
-    /** Reorders or drops routes without adding one. `routes` must not be empty. */
+    /**
+     * `routes` must not be empty.
+     */
     readonly setRoutes: (
       environmentId: EnvironmentId,
       routes: ReadonlyArray<PersistedConnectionTarget>,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
-    /** Forgets the environment and every route it had. */
     readonly remove: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
@@ -82,7 +82,7 @@ export class EnvironmentCacheStore extends Context.Service<
   {
     readonly loadShell: (
       environmentId: EnvironmentId,
-    ) => Effect.Effect<Option.Option<OrchestrationV2ShellSnapshot>, ConnectionPersistenceError>;
+    ) => Effect.Effect<Option.Option<DeferredShellSnapshot>, ConnectionPersistenceError>;
     readonly saveShell: (
       environmentId: EnvironmentId,
       snapshot: OrchestrationV2ShellSnapshot,
@@ -102,10 +102,6 @@ export class EnvironmentCacheStore extends Context.Service<
       environmentId: EnvironmentId,
       threadId: ThreadId,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
-    /**
-     * The last complete server configuration. This deliberately includes provider
-     * metadata so offline task creation can still offer the models a user last saw.
-     */
     readonly loadServerConfig: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<Option.Option<ServerConfig>, ConnectionPersistenceError>;
@@ -114,8 +110,8 @@ export class EnvironmentCacheStore extends Context.Service<
       config: ServerConfig,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     /**
-     * The unfiltered branch list for a workspace. Query-specific lists are not
-     * cached because they are incomplete and unsafe to present as a full picker.
+     * Query-specific lists are not cached because they are incomplete and unsafe
+     * to present as a full picker.
      */
     readonly loadVcsRefs: (
       environmentId: EnvironmentId,
@@ -131,9 +127,8 @@ export class EnvironmentCacheStore extends Context.Service<
       cwd: string,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     /**
-     * Removes every persisted branch-list snapshot for an environment. Git ref
-     * mutations are repository-wide, and linked worktrees may have cached the
-     * same refs under different working-directory keys.
+     * Git ref mutations are repository-wide, and linked worktrees may have
+     * cached the same refs under different working-directory keys.
      */
     readonly clearVcsRefs: (
       environmentId: EnvironmentId,

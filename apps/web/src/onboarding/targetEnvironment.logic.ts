@@ -13,7 +13,6 @@ export function isOnboardingRelayEnvironment(
   return hasRelayRoute(environment.entry);
 }
 
-/** Keep a directly paired machine pinned while its initial connection completes. */
 export function resolveOnboardingTargetEnvironment<TEnvironment extends OnboardingEnvironment>({
   mode,
   environments,
@@ -46,4 +45,27 @@ export function resolveOnboardingTargetEnvironment<TEnvironment extends Onboardi
   }
 
   return mode === "local" ? null : (connectedRelayEnvironments[0] ?? null);
+}
+
+/** Waits only for first connection attempts; offline, failing, or unsupported computers cannot block setup. */
+export function resolveOnboardingSetup(
+  environments: ReadonlyArray<Pick<OnboardingEnvironment, "environmentId" | "connection">>,
+  selectedIds: ReadonlySet<EnvironmentId>,
+): {
+  readonly ready: boolean;
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly skippedIds: ReadonlyArray<EnvironmentId>;
+} {
+  const selected = environments.filter((environment) => selectedIds.has(environment.environmentId));
+  const idsInPhase = (keep: (phase: string) => boolean) =>
+    selected
+      .filter((environment) => keep(environment.connection.phase))
+      .map((environment) => environment.environmentId);
+  const environmentIds = idsInPhase((phase) => phase === "connected");
+  const settling = selected.some((environment) => environment.connection.phase === "connecting");
+  return {
+    ready: environmentIds.length > 0 && !settling,
+    environmentIds,
+    skippedIds: idsInPhase((phase) => phase !== "connected" && phase !== "connecting"),
+  };
 }

@@ -33,69 +33,37 @@ const variantColors: Record<ComposerBannerVariant, string> = {
     "[--chat-composer-attached-outline:color-mix(in_srgb,var(--warning)_28%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--warning)_8%,transparent)]",
 };
 
-/** Shared glass and attachment seam, also used by the command menu without banner row padding. */
+/**
+ * An attached surface tucks its bottom under the card below it. A detached one is a whole card
+ * of its own, for a notice that sits apart from the composer.
+ */
 function Surface({
-  placement = "attached",
   variant = "default",
+  detached = false,
   className,
   ...props
 }: ComponentProps<"div"> & {
-  placement?: "attached" | "floating";
   variant?: ComposerBannerVariant;
+  detached?: boolean;
 }) {
   return (
     <div
-      data-composer-banner-surface={placement}
+      data-composer-banner-surface={detached ? "detached" : "attached"}
       data-variant={variant}
       className={cn(
         surfaceColors,
         "relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent]",
         variantColors[variant],
-        // The mask cut-off (1rem) bleeds one pixel past the seam (1rem + 1px): Chromium
-        // drops the last device-pixel row of a filtered backdrop when the cut-off lands
-        // off the device-pixel grid, and the composer's surface starts exactly there.
-        // The composer's own glass covers the extra row, so the overlap never shows.
-        placement === "attached"
-          ? "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4"
-          : "[--chat-composer-attachment-overlap:0px] before:rounded-2xl",
+        detached
+          ? "[--chat-composer-attachment-overlap:0px] before:rounded-2xl"
+          : // Bleed the mask 1px past the seam to cover Chromium's fractional-pixel backdrop loss.
+            "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4",
         "before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline)",
         "before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
         "before:shadow-composer dark:before:shadow-composer-dark",
-        "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above",
+        !detached &&
+          "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above",
         "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface)",
-        className,
-      )}
-      {...props}
-    />
-  );
-}
-
-// A peeking notice uses the first hidden notice's severity, never the attached row's.
-const peekBorder: Record<ComposerBannerVariant, string> = {
-  default: "border-(--chat-composer-attached-outline)",
-  error: "border-destructive/24",
-  info: "border-(--chat-composer-attached-outline)",
-  success: "border-(--chat-composer-attached-outline)",
-  warning: "border-warning/24",
-};
-
-function Peek({
-  className,
-  variant = "default",
-  ...props
-}: ComponentProps<"button"> & { variant?: ComposerBannerVariant }) {
-  return (
-    <button
-      type="button"
-      data-slot="composer-banner-peek"
-      className={cn(
-        surfaceColors,
-        neutralOutline,
-        "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-2xl border border-b-0 shadow-md",
-        "bg-(--chat-composer-attached-surface)/(--glass-opacity) backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturation)",
-        "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:bg-(--chat-composer-attached-surface)",
-        "transition-opacity duration-150 ease-out focus-visible:outline-2 focus-visible:outline-ring",
-        peekBorder[variant],
         className,
       )}
       {...props}
@@ -109,7 +77,6 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
       data-slot="composer-banner-attachment"
       className={cn(
         "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
-        // Adjacent attachments share their outline, including notices outside the form.
         "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
         "[&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
         className,
@@ -131,7 +98,6 @@ function Dock({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/** Attachments share a column while neighboring tabs keep their own surface. */
 function Column({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
@@ -148,14 +114,11 @@ function Column({ className, ...props }: ComponentProps<"div">) {
 function Root({
   className,
   density = "default",
-  placement = "attached",
   variant = "default",
   width = "fill",
   ...props
-}: ComponentProps<"div"> & {
+}: ComponentProps<typeof Surface> & {
   density?: "default" | "comfortable" | "spacious";
-  placement?: "attached" | "floating";
-  variant?: ComposerBannerVariant;
   width?: "fill" | "content";
 }) {
   return (
@@ -165,10 +128,16 @@ function Root({
         density === "comfortable" && "[--composer-banner-padding-block:--spacing(1.25)]",
         density === "spacious" && "px-3 [--composer-banner-padding-block:--spacing(3)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
+        // A corner button nests inside the banner's radius only when the padding
+        // is tight; spacious padding already leaves the default radius concentric.
+        density !== "spacious" && [
+          "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl",
+          "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-xl",
+          "[&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl",
+        ],
         className,
       )}
       data-slot="composer-banner"
-      placement={placement}
       data-composer-banner-width={width}
       variant={variant}
       {...props}
@@ -176,24 +145,21 @@ function Root({
   );
 }
 
-/** The same row can be a status, a list item, or an entire disclosure button. */
 function Row({
   className,
   render,
   layout = "inline",
   ...props
 }: useRender.ComponentProps<"div"> & {
-  layout?: "inline" | "wrap-actions" | "wrap-actions-narrow" | "approval";
+  layout?: "inline" | "wrap-actions" | "approval";
 }) {
   const rowProps = {
     className: cn(
       "group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start",
       "not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)]",
-      "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-md [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
+      "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-xl [&:is(button)]:hover:bg-foreground/5 [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
       layout === "wrap-actions" &&
-        "@max-[400px]:*:data-[slot=composer-banner-content]:min-h-(--composer-banner-icon-column)",
-      layout === "wrap-actions-narrow" &&
-        "@max-[320px]:*:data-[slot=composer-banner-content]:min-h-(--composer-banner-icon-column)",
+        "flex flex-wrap *:data-[slot=composer-banner-content]:max-w-[calc(100%-var(--composer-banner-icon-column)-var(--spacing))] *:data-[slot=composer-banner-content]:grow",
       layout === "approval" && "items-start gap-x-2 gap-y-3",
       className,
     ),
@@ -257,8 +223,7 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
       className={cn(
         "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1",
         "group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2",
-        "@max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-end-4 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:row-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:justify-end",
-        "@max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:col-start-2 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:col-end-4 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:row-start-2 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:-ms-2 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:justify-start",
+        "group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto",
         className,
       )}
       {...props}
@@ -266,7 +231,6 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-/** Child rows keep their parent's columns and begin immediately after its header. */
 function Children({ className, render, ...props }: useRender.ComponentProps<"div">) {
   return useRender({
     defaultTagName: "div",
@@ -278,7 +242,6 @@ function Children({ className, render, ...props }: useRender.ComponentProps<"div
   });
 }
 
-/** Bounded banner content uses the app's scroll area and fades only overflowing edges. */
 function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollArea>) {
   return (
     <ScrollArea
@@ -287,7 +250,7 @@ function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollA
       className={cn("h-auto max-h-[min(24rem,40dvh)]", className)}
       {...props}
     >
-      {/* Clears the overlay scrollbar only once there is something to scroll. */}
+      {}
       <div className="[[data-has-overflow-y]>&]:pe-2">{children}</div>
     </ScrollArea>
   );
@@ -315,7 +278,6 @@ function Dot({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-// Decorative: the row itself is the control, so this only matches Dismiss's box.
 function ToggleIcon({ expanded }: { expanded: boolean }) {
   return (
     <Button
@@ -340,7 +302,6 @@ function Dismiss({ className, children, ...props }: ComponentProps<typeof Button
 
 export const ComposerBanner = {
   Surface,
-  Peek,
   Attachment,
   Dock,
   Column,
