@@ -11,7 +11,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useLocation } from "@tanstack/react-router";
-import { type KeyboardEvent, type ReactNode, useReducer, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useReducer, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   AuthOrchestrationOperateScope,
@@ -66,6 +66,7 @@ import {
   SettingsPageContainer,
   SettingsSearchField,
   SettingsSearchTarget,
+  useSettingsSearchTargetId,
   SettingsSection,
   SettingsToolbar,
 } from "./settingsLayout";
@@ -963,57 +964,85 @@ function KeybindingTableHead() {
 }
 
 /** Resting rows need only two triggers; mount capture and condition editors on demand. */
-function KeybindingSettingsRow(props: KeybindingRowProps) {
+function KeybindingSettingsRow(props: KeybindingRowProps & { activate: boolean }) {
   const [editing, setEditing] = useState<"shortcut" | "when" | null>(null);
+  const [focused, setFocused] = useState(false);
   if (editing) return <EditableKeybindingSettingsRow {...props} initialEditor={editing} />;
   const { row, anchorId, allRows, isSaving, onReset, onRemove } = props;
+  const active = props.activate || focused;
+  const title = active ? (
+    <KeybindingRowTitle row={row} />
+  ) : (
+    <span className="flex min-w-0 items-center gap-2 text-body text-foreground">
+      <span className="truncate">{commandLabel(row.command)}</span>
+      <KeybindingSourceBadge source={row.source} />
+    </span>
+  );
   return (
     <SettingsSearchTarget
       id={anchorId}
       role="row"
+      data-keybinding-row={row.id}
+      onFocusCapture={() => setFocused(true)}
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 38px" }}
       className={cn(KEYBINDING_TABLE_ROW, "group/row min-h-9.5 py-1 outline-none")}
     >
-      <span role="cell" className={KEYBINDING_TABLE_COMMAND}>
-        <KeybindingRowTitle row={row} />
+      <span role="cell" tabIndex={active ? undefined : 0} className={KEYBINDING_TABLE_COMMAND}>
+        {title}
       </span>
       <span role="cell" className="-ml-1.5 flex min-w-0 items-center">
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
-          onClick={() => setEditing("shortcut")}
-        >
-          {row.key ? <KeybindingPill value={row.key} /> : "Unassigned"}
-        </Button>
+        {active ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
+            onClick={() => setEditing("shortcut")}
+          >
+            {row.key ? <KeybindingPill value={row.key} /> : "Unassigned"}
+          </Button>
+        ) : row.key ? (
+          <KeybindingPill value={row.key} />
+        ) : (
+          "Unassigned"
+        )}
       </span>
       <div role="presentation" className={KEYBINDING_TABLE_TAIL}>
         <span role="cell" className="-ml-1.5 flex min-w-0 flex-1 items-center">
-          <Button
-            variant={row.when ? "ghost" : "ghost-muted"}
-            size="micro"
-            className="min-w-0 shrink"
-            aria-label={`Edit when clause for ${commandLabel(row.command)}`}
-            onClick={() => setEditing("when")}
-          >
-            <span className="truncate font-mono text-meta">{row.when || "Always"}</span>
-            <ChevronDownIcon className="size-3.5 shrink-0 opacity-0 group-focus-within/row:opacity-60 group-hover/row:opacity-60 pointer-coarse:opacity-60" />
-          </Button>
+          {active ? (
+            <Button
+              variant={row.when ? "ghost" : "ghost-muted"}
+              size="micro"
+              className="min-w-0 shrink"
+              aria-label={`Edit when clause for ${commandLabel(row.command)}`}
+              onClick={() => setEditing("when")}
+            >
+              <span className="truncate font-mono text-meta">{row.when || "Always"}</span>
+              <ChevronDownIcon className="size-3.5 shrink-0 opacity-0 group-focus-within/row:opacity-60 group-hover/row:opacity-60 pointer-coarse:opacity-60" />
+            </Button>
+          ) : (
+            <span className="truncate font-mono text-meta text-muted-foreground">
+              {row.when || "Always"}
+            </span>
+          )}
         </span>
         <span role="cell" className="flex shrink-0 items-center gap-1">
-          <KeybindingConflictWarning
-            labels={keybindingConflictLabels(allRows, {
-              rowId: row.id,
-              key: row.key,
-              when: row.when,
-            })}
-          />
-          <KeybindingHoverRowMenu
-            row={row}
-            isSaving={isSaving}
-            onReset={onReset}
-            onRemove={onRemove}
-          />
+          {active ? (
+            <>
+              <KeybindingConflictWarning
+                labels={keybindingConflictLabels(allRows, {
+                  rowId: row.id,
+                  key: row.key,
+                  when: row.when,
+                })}
+              />
+              <KeybindingHoverRowMenu
+                row={row}
+                isSaving={isSaving}
+                onReset={onReset}
+                onRemove={onRemove}
+              />
+            </>
+          ) : null}
         </span>
       </div>
     </SettingsSearchTarget>
@@ -1312,6 +1341,35 @@ interface KeybindingsListProps extends KeybindingRowActions {
   onClearQuery: () => void;
 }
 
+/** Mount controls as rows approach the viewport, retaining visited editors and all searchable text. */
+function useActiveKeybindingRows(rows: ReadonlyArray<KeybindingRow>) {
+  const tableRef = useRef<HTMLDivElement>(null);
+  const [activeRows, setActiveRows] = useState<ReadonlySet<string>>(() => new Set());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe browser visibility to defer offscreen controls; rows stay mounted after activation so edits and focus survive scrolling.
+  useEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const ids = entries
+          .filter((entry) => entry.isIntersecting)
+          .flatMap((entry) => {
+            observer.unobserve(entry.target);
+            return (entry.target as HTMLElement).dataset.keybindingRow ?? [];
+          });
+        if (ids.length) setActiveRows((previous) => new Set([...previous, ...ids]));
+      },
+      { root: table.closest("[data-settings-page-scroll]"), rootMargin: "400px" },
+    );
+    const rowIds = new Set(rows.map((row) => row.id));
+    for (const row of table.querySelectorAll<HTMLElement>("[data-keybinding-row]")) {
+      if (rowIds.has(row.dataset.keybindingRow ?? "")) observer.observe(row);
+    }
+    return () => observer.disconnect();
+  }, [rows]);
+  return { tableRef, activeRows };
+}
+
 /** The add-binding row, one settings row per binding, and the empty state. */
 function KeybindingsList(props: KeybindingsListProps) {
   const {
@@ -1333,11 +1391,14 @@ function KeybindingsList(props: KeybindingsListProps) {
     onCancel: onCancelAdd,
   };
   const anchorIds = keybindingAnchorIds(rows);
+  const targetId = useSettingsSearchTargetId();
+  const { tableRef, activeRows } = useActiveKeybindingRows(rows);
   return (
     <Tooltip<KeybindingCommand>>
       {({ payload }) => (
         <>
           <div
+            ref={tableRef}
             role="table"
             aria-label="Shortcuts"
             className={cn(
@@ -1347,10 +1408,13 @@ function KeybindingsList(props: KeybindingsListProps) {
           >
             <KeybindingTableHead />
             {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
-            {rows.map((row) => (
+            {rows.map((row, index) => (
               <KeybindingSettingsRow
                 key={row.id}
                 row={row}
+                activate={
+                  index < 16 || activeRows.has(row.id) || anchorIds.get(row.id) === targetId
+                }
                 anchorId={anchorIds.get(row.id)}
                 isSaving={savingCommand === row.command}
                 {...rowActions}
