@@ -279,6 +279,7 @@ interface ActiveOpenCodeTurn {
   admissionMessageId: string | null;
   interrupted: boolean;
   finalized: boolean;
+  contextOverflow: OrchestrationV2ProviderFailure | null;
   planId: PlanId | null;
   admissionGeneration: number;
   admissionReconciliationGeneration: number | null;
@@ -2027,6 +2028,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             status = "failed";
             terminal = { failure: nativeStreamFailure, threadDisposition: "broken" };
           }
+          let lastError = sessionEntity.lastError;
+          if (status === "completed" && turn.contextOverflow !== null) {
+            status = "failed";
+            terminal = { failure: turn.contextOverflow };
+            lastError = turn.contextOverflow.message;
+          }
           turn.finalized = true;
           const completedAt = yield* DateTime.now;
           for (const part of turn.parts.values()) {
@@ -2081,7 +2088,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           );
           yield* updateProviderSession(
             anotherTurnIsActive ? "running" : status === "failed" ? "error" : "ready",
-            status === "failed" ? sessionEntity.lastError : null,
+            status === "failed" ? lastError : null,
           );
           yield* emitProviderEvent(
             status === "failed"
@@ -2240,6 +2247,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             admissionMessageId: null,
             interrupted: false,
             finalized: false,
+            contextOverflow: null,
             planId: null,
             admissionGeneration: 0,
             admissionReconciliationGeneration: null,
@@ -2537,6 +2545,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             case "session.compacted": {
               const state = threads.get(event.properties.sessionID);
               if (state?.activeTurn !== undefined && state.activeTurn !== null) {
+                state.activeTurn.contextOverflow = null;
                 yield* emitCompactionItem(state, state.activeTurn);
               }
               return;
@@ -2639,6 +2648,20 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               return;
             }
             case "session.error": {
+              const overflowTurn =
+                event.properties.error?.name === "ContextOverflowError" &&
+                event.properties.sessionID !== undefined
+                  ? threads.get(event.properties.sessionID)?.activeTurn
+                  : undefined;
+              if (overflowTurn !== undefined && overflowTurn !== null) {
+                // OpenCode stays busy and auto-compacts; the turn fails only if it idles uncompacted.
+                overflowTurn.contextOverflow = makeProviderFailure({
+                  message: openCodeErrorMessage(event),
+                  code: "ContextOverflowError",
+                  class: "provider_error",
+                });
+                return;
+              }
               const states =
                 event.properties.sessionID === undefined
                   ? Array.from(threads.values()).filter((state) => state.activeTurn !== null)
@@ -3205,6 +3228,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 admissionMessageId,
                 interrupted: false,
                 finalized: false,
+                contextOverflow: null,
                 planId: null,
                 admissionGeneration: state.nextAdmissionGeneration++,
                 admissionReconciliationGeneration: null,
