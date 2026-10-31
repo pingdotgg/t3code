@@ -20,10 +20,13 @@ export function PullRequestCompactFilterMenu<Value extends string>({
   options,
   onChange,
   className,
+  labelClassName,
 }: {
   label: string;
   triggerIcon?: ReactNode;
   triggerLabel?: string;
+  /** Hides the words and chevron in a narrow column, leaving the icon. */
+  labelClassName?: string;
   outlined?: boolean;
   iconOnly?: boolean;
   value: Value;
@@ -49,15 +52,14 @@ export function PullRequestCompactFilterMenu<Value extends string>({
       >
         {iconOnly ? (
           <current.Icon aria-hidden className="size-4" />
-        ) : triggerLabel ? (
-          <>
-            {triggerIcon}
-            <span>{triggerLabel}</span>
-          </>
         ) : (
           <>
-            <span className="truncate">{current.label}</span>
-            <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-dim-foreground" />
+            {triggerIcon ?? <current.Icon aria-hidden className="size-3.5 shrink-0" />}
+            <span className={cn("truncate", labelClassName)}>{triggerLabel ?? current.label}</span>
+            <ChevronDownIcon
+              aria-hidden
+              className={cn("size-3 shrink-0 text-dim-foreground", labelClassName)}
+            />
           </>
         )}
       </MenuTrigger>

@@ -1,8 +1,14 @@
 /* oxlint-disable react/no-array-index-key -- Positions identify source rows and columns. */
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import type { DelimitedColumnKind } from "@t3tools/shared/delimitedPreview";
 import { observeResize } from "~/lib/observeResize";
+import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
+
+function columnClass(kind: DelimitedColumnKind | undefined) {
+  return kind === "number" ? "text-right font-mono" : kind === "date" ? "font-mono" : "text-left";
+}
 
 export default function VirtualTablePreview(props: {
   readonly name: string;
@@ -11,6 +17,7 @@ export default function VirtualTablePreview(props: {
   readonly getRows: (page: number) => readonly (readonly string[])[] | undefined;
   readonly loadPage?: (page: number) => void;
   readonly header?: readonly string[] | undefined;
+  readonly columnKinds?: readonly DelimitedColumnKind[] | undefined;
   readonly source?: boolean;
   readonly wrap?: boolean;
   readonly revealLine?: number | null;
@@ -47,10 +54,10 @@ export default function VirtualTablePreview(props: {
     );
     if (widths.length) setMeasured(widths);
   }, [measured, width, props.header]);
+  const rowHeader = props.source ? 56 : 28;
   const columnWidth = props.source
     ? 0
-    : Math.max(128, Math.min(320, (width - 56) / Math.min(props.columns, 6)));
-  const rowHeader = 56;
+    : Math.max(128, Math.min(320, (width - rowHeader) / Math.min(props.columns, 6)));
   const sizes = Array.from(
     { length: props.columns },
     (_, column) => measured?.[column] ?? columnWidth,
@@ -75,7 +82,10 @@ export default function VirtualTablePreview(props: {
   return (
     <div
       ref={ref}
-      className="relative min-h-0 flex-1 overflow-x-auto contain-strict"
+      className={cn(
+        "relative min-h-0 flex-1 overflow-x-auto contain-strict",
+        !props.source && "mx-4 mt-2",
+      )}
       onScroll={(event) => {
         event.currentTarget.style.setProperty(
           "--preview-scroll-left",
@@ -96,7 +106,10 @@ export default function VirtualTablePreview(props: {
               {props.header.map((cell, i) => (
                 <th
                   key={i}
-                  className="min-w-32 max-w-80 border-b px-3 py-1.5 text-left text-meta/4 whitespace-nowrap"
+                  className={cn(
+                    "min-w-32 max-w-80 border-b px-3 py-1.5 text-meta/4 whitespace-nowrap",
+                    columnClass(props.columnKinds?.[i]),
+                  )}
                 >
                   {cell}
                 </th>
@@ -112,7 +125,10 @@ export default function VirtualTablePreview(props: {
                   {row.map((cell, j) => (
                     <td
                       key={j}
-                      className="max-w-80 border-b px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums"
+                      className={cn(
+                        "max-w-80 border-b px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums",
+                        columnClass(props.columnKinds?.[j]),
+                      )}
                     >
                       {cell}
                     </td>
@@ -134,9 +150,12 @@ export default function VirtualTablePreview(props: {
           {!props.source ? (
             <div
               role="row"
-              className="relative z-10 flex min-h-[29px] shrink-0 border-b border-border bg-card text-meta/4"
+              className="relative z-10 flex min-h-[29px] shrink-0 rounded-t-row border-b border-divider bg-card text-meta/4 text-muted-foreground"
             >
-              <div className="sticky left-0 z-10 w-14 shrink-0 border-r border-border bg-background" />
+              <div
+                className="sticky left-0 z-10 shrink-0 rounded-tl-row bg-card"
+                style={{ width: rowHeader }}
+              />
               <div style={{ width: offset(firstColumn), flexShrink: 0 }} />
               {columns.map((column) => (
                 <Tooltip key={column}>
@@ -145,7 +164,10 @@ export default function VirtualTablePreview(props: {
                       <div
                         role="columnheader"
                         aria-colindex={column + 1}
-                        className="shrink-0 overflow-hidden border-r border-border/40 px-3 py-1.5 text-ellipsis whitespace-pre"
+                        className={cn(
+                          "shrink-0 overflow-hidden px-3 py-1.5 text-ellipsis whitespace-pre last:rounded-tr-row",
+                          columnClass(props.columnKinds?.[column]),
+                        )}
                         style={{ width: sizes[column] }}
                       >
                         {props.header?.[column] ?? columnLabel(column)}
@@ -206,7 +228,7 @@ function RowPage(
             className={
               props.source
                 ? `flex min-h-[29px] font-mono ${props.revealLine != null && Math.min(props.count, Math.max(1, props.revealLine)) === index + 1 ? "bg-primary/10" : ""}`
-                : `flex min-h-[29px] border-b border-border ${(index - (props.header ? 1 : 0)) % 2 ? "surface-card" : ""}`
+                : "flex min-h-[29px] border-b border-divider"
             }
             data-preview-reveal={
               props.revealLine != null &&
@@ -217,7 +239,12 @@ function RowPage(
           >
             <div
               role={props.source ? undefined : "rowheader"}
-              className={`${props.source ? "sticky left-0" : "relative"} z-1 shrink-0 border-r border-border bg-background px-2 py-1.5 text-right text-meta/4 text-muted-foreground tabular-nums select-none`}
+              className={cn(
+                "z-1 shrink-0 bg-background py-1.5 text-right font-mono tabular-nums select-none",
+                props.source
+                  ? "sticky left-0 border-r border-border px-2 text-meta/4 text-muted-foreground"
+                  : "relative pe-1 text-micro text-dim-foreground",
+              )}
               style={{
                 width: props.rowHeader,
                 transform: props.source ? undefined : "translateX(var(--preview-scroll-left, 0px))",
@@ -241,7 +268,10 @@ function RowPage(
                 className={
                   props.source
                     ? `min-w-0 flex-1 px-3 py-1 ${props.wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`
-                    : "shrink-0 border-r border-border/40 px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums"
+                    : cn(
+                        "shrink-0 truncate px-3 py-1.5 text-foreground tabular-nums",
+                        columnClass(props.columnKinds?.[column]),
+                      )
                 }
                 style={props.source ? undefined : { width: props.sizes[column] }}
               >
