@@ -37,6 +37,7 @@ import {
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
   normalizeAcpRegistryWebUrl,
+  rewriteAcpRegistrySkillMention,
 } from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
@@ -219,6 +220,22 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
+    ...(registryAgentId === "factory-droid" || registryAgentId === "kimi"
+      ? {
+          rewriteUserText: (text) => {
+            if (runtimeCoordinator === undefined) return Effect.succeed(text);
+            return runtimeCoordinator.getAvailableCommands(options.instanceId).pipe(
+              Effect.map((commands) =>
+                Option.match(commands, {
+                  onNone: () => text,
+                  onSome: ({ skills }) =>
+                    rewriteAcpRegistrySkillMention(text, registryAgentId, skills),
+                }),
+              ),
+            );
+          },
+        }
+      : {}),
     ...(registryAgentId === "factory-droid"
       ? { extractElicitationForm: extractDroidElicitationForm }
       : {}),
@@ -261,7 +278,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           onAvailableCommandsUpdate: (commands) =>
             runtimeCoordinator.publishAvailableCommands(
               options.instanceId,
-              normalizeAcpRegistryCommands(commands),
+              normalizeAcpRegistryCommands(commands, registryAgentId),
             ),
           onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
             runtimeCoordinator.publishLiveConfiguration(
