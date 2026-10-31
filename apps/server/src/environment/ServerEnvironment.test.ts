@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+import { parseTailscaleStatus } from "@t3tools/tailscale";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -18,11 +19,30 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
+import * as TailscaleHost from "../tailscale/TailscaleHost.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
+
+const layerTailscaleHost = (statusJson: string) =>
+  Layer.succeed(
+    TailscaleHost.TailscaleHost,
+    TailscaleHost.TailscaleHost.of({
+      inUse: Effect.succeed(true),
+      status: parseTailscaleStatus(statusJson),
+      whois: () => Effect.die("whois is not read by the descriptor"),
+    }),
+  );
+
+const RUNNING_STATUS = JSON.stringify({
+  Version: "1.102.2",
+  BackendState: "Running",
+  TUN: true,
+  Self: { ID: "nBox", UserID: 7, TailscaleIPs: ["100.88.1.2"] },
+});
 
 const layerServerEnvironment = (baseDir: string) =>
   ServerEnvironment.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(layerTailscaleHost(RUNNING_STATUS)),
     Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
 
@@ -98,6 +118,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           Effect.provide(
             ServerEnvironment.layer.pipe(
               Layer.provide(layerEmptySecretStore),
+              Layer.provide(layerTailscaleHost(RUNNING_STATUS)),
               Layer.provide(ServerConfig.layer({ ...config, mode })),
             ),
           ),
@@ -235,7 +256,10 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         prefix: "t3-server-environment-publish-test-",
       });
       const layerTest = Layer.mergeAll(
-        ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+        ServerEnvironment.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(layerTailscaleHost(RUNNING_STATUS)),
+        ),
         ServerSecretStore.layer,
       ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
 
@@ -264,6 +288,64 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         const disabled = yield* serverEnvironment.getDescriptor;
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
       }).pipe(Effect.provide(layerTest));
+    }),
+  );
+  it.effect.each([
+    { name: "sign-in off", signIn: false, status: {}, expected: undefined },
+    { name: "untagged and running", signIn: true, status: {}, expected: true },
+    {
+      name: "signed out",
+      signIn: true,
+      status: { BackendState: "NeedsLogin" },
+      expected: undefined,
+    },
+    {
+      name: "userspace networking",
+      signIn: true,
+      status: { TUN: false },
+      expected: undefined,
+    },
+    {
+      // Tailnet grants still let devices in without an owner.
+      name: "tagged with no owner",
+      signIn: true,
+      status: { Self: { ID: "nBox", Tags: ["tag:server"], TailscaleIPs: ["100.88.1.2"] } },
+      expected: true,
+    },
+    {
+      name: "Tailscale is older than sign-in supports",
+      signIn: true,
+      status: { Version: "1.78.1" },
+      expected: undefined,
+    },
+  ])("reports Tailscale sign-in when $name", ({ signIn, status, expected }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-tailnet-test-",
+      });
+      const config = yield* makeServerConfig(baseDir);
+      yield* fileSystem.makeDirectory(config.stateDir, { recursive: true });
+      const descriptor = yield* Effect.gen(function* () {
+        const environment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* environment.getDescriptor;
+      }).pipe(
+        Effect.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(layerEmptySecretStore),
+            Layer.provide(
+              layerTailscaleHost(JSON.stringify({ ...JSON.parse(RUNNING_STATUS), ...status })),
+            ),
+            Layer.provide(
+              ServerConfig.layer({
+                ...config,
+                tailscaleSignInEnabled: signIn,
+              }),
+            ),
+          ),
+        ),
+      );
+      expect(descriptor.capabilities.tailnetSignIn).toBe(expected);
     }),
   );
 });

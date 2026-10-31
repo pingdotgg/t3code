@@ -52,6 +52,7 @@ import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
+import * as DesktopTailscaleStatus from "./backend/DesktopTailscaleStatus.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopSnapShot from "./snapShot/DesktopSnapShot.ts";
@@ -157,6 +158,7 @@ const layerDesktopSsh = layerDesktopSshEnvironment.pipe(
 );
 
 const layerDesktopServerExposure = DesktopServerExposure.layer.pipe(
+  Layer.provideMerge(DesktopTailscaleStatus.layer),
   Layer.provideMerge(DesktopNetworkInterfaces.layer),
   Layer.provideMerge(layerDesktopFoundation),
 );

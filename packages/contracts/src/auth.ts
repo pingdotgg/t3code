@@ -395,6 +395,8 @@ export const AuthSessionState = Schema.Struct({
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
   permissions: authScopeResponseFields.permissions,
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
+  /** The session came from Tailscale sign-in, so its tailnet grant sets its scopes. */
+  signedInWithTailscale: Schema.optionalKey(Schema.Boolean),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;

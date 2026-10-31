@@ -59,6 +59,8 @@ import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as TailnetSignIn from "./auth/TailnetSignIn.ts";
+import * as TailnetPeers from "./environment/TailnetPeers.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -76,6 +78,7 @@ import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
+import * as TailscaleHealth from "./environment/TailscaleHealth.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -130,6 +133,14 @@ import {
   WS_RPC_SERVER_OPTIONS,
   withLateConfigDiscovery,
 } from "./ws.ts";
+
+const TAILSCALE_RUNNING = {
+  state: "running",
+  checkedAt: "2026-10-28T00:00:00.000Z",
+  magicDnsName: null,
+  keyExpiry: null,
+  issues: [],
+} as const;
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
@@ -231,6 +242,34 @@ it.effect("runs editor, remote open target and direct endpoint discovery side by
       remoteOpenTargets: [],
       directEndpoints: [],
     });
+  }),
+);
+
+it.effect("resends the host's Tailscale health when its facts change or go stale", () =>
+  Effect.gen(function* () {
+    const stopped = { ...TAILSCALE_RUNNING, state: "stopped" as const };
+    const stoppedLater = { ...stopped, checkedAt: "2026-10-28T00:10:00.000Z" };
+    const events = yield* withLateConfigDiscovery(
+      snapshotConfig({ tailscale: TAILSCALE_RUNNING }),
+      Stream.empty,
+      {
+        resolveAvailableEditors: () => Effect.succeed([]),
+        resolveFileManagerRevealKind: () => Effect.undefined,
+      },
+      { resolveTargets: () => Effect.succeed([]) },
+      Stream.make(
+        { ...TAILSCALE_RUNNING, checkedAt: "2026-10-28T00:01:00.000Z" },
+        stopped,
+        stopped,
+        stoppedLater,
+      ),
+    ).pipe(Stream.runCollect);
+
+    // A stale `checkedAt` would read as old news, so it is resent every 10 minutes.
+    assert.deepEqual(
+      Array.from(events, (event) => (event.type === "snapshot" ? event.config.tailscale : event)),
+      [stopped, stoppedLater],
+    );
   }),
 );
 
@@ -554,6 +593,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(PairingGrantStore.PairingGrantStore)({}),
   Layer.mock(PeerLinks.PeerLinks)({}),
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+  Layer.mock(TailnetSignIn.TailnetSignIn)({}),
+  Layer.mock(TailnetPeers.TailnetPeers)({}),
   Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
@@ -660,6 +701,10 @@ it.effect.each(["pending", "cached"] as const)(
             ),
         }),
         Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
+        Layer.mock(TailscaleHealth.TailscaleHealth)({
+          check: Effect.succeed(TAILSCALE_RUNNING),
+          reads: Stream.empty,
+        }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           scratchRoot: Effect.succeedNone,
           namedProjectsRoot: process.cwd(),
@@ -854,6 +899,10 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         resolveTargets: () => Effect.succeed([]),
       }),
       Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
+      Layer.mock(TailscaleHealth.TailscaleHealth)({
+        check: Effect.succeed(TAILSCALE_RUNNING),
+        reads: Stream.empty,
+      }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         scratchRoot: Effect.succeedNone,
         namedProjectsRoot: process.cwd(),

@@ -106,6 +106,12 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /** Tailscale devices may sign in with no pairing code: by grant, else the owner's own devices. */
+    readonly tailscaleSignInEnabled?: boolean | undefined;
+    /** The owner's Tailscale user ID on a tagged host, which has no user of its own. */
+    readonly tailscaleOwnerUserId?: string | undefined;
+    /** Accept only loopback and tailnet peers, and advertise no LAN routes. */
+    readonly tailscaleOnly?: boolean | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (

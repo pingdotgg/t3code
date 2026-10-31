@@ -131,6 +131,9 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
   const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
     authorizeBearer: () => Effect.die("Unexpected bearer connection preparation."),
     authorizeDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
+    signInTailnet: () => Effect.die("Unexpected Tailscale sign-in."),
+    authorizeTailnet: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
+    authorizeTailnetHttp: () => Effect.die("Unexpected Tailscale session."),
     authorizeDpopHttp: (input) =>
       Effect.sync(() => {
         authorizations.push(input);

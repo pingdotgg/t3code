@@ -507,6 +507,8 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       shellEnvironmentPrepared: input.shellEnvironmentPrepared,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
+      ...(backendExposure.tailscaleSignInEnabled ? { tailscaleSignInEnabled: true } : {}),
+      ...(backendExposure.tailscaleOnly ? { tailscaleOnly: true } : {}),
       desktopTelemetryFd: 4,
       desktopTelemetryControlFd: 5,
       desktopBrowserFd: 6,

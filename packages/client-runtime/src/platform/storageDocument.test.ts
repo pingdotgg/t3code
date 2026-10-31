@@ -335,6 +335,24 @@ describe("ConnectionCatalogDocument", () => {
     );
   });
 
+  it("remembers a removal so discovery skips it, until the user adds the machine again", () => {
+    const registration = new BearerConnectionRegistration({
+      target: BEARER_TARGET,
+      profile: BEARER_PROFILE,
+      credential: BEARER_CREDENTIAL,
+    });
+    const registered = registerConnectionInCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT, registration);
+
+    expect(removeConnectionFromCatalog(registered, ENVIRONMENT_ID).dismissedEnvironmentIds).toEqual(
+      [],
+    );
+    const dismissed = removeConnectionFromCatalog(registered, ENVIRONMENT_ID, { dismiss: true });
+    expect(dismissed.dismissedEnvironmentIds).toEqual([ENVIRONMENT_ID]);
+    expect(registerConnectionInCatalog(dismissed, registration).dismissedEnvironmentIds).toEqual(
+      [],
+    );
+  });
+
   it("persists the normalized SSH profile and its paired token beside its target", () => {
     const target = new SshConnectionTarget({
       environmentId: ENVIRONMENT_ID,

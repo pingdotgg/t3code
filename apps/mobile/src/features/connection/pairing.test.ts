@@ -33,6 +33,12 @@ describe("extractPairingUrlFromQrPayload", () => {
 });
 
 describe("parsePairingUrl", () => {
+  it("reads the t3 up QR, a plain tailnet address, as a host with no code", () => {
+    const pairingUrl = extractPairingUrlFromQrPayload("http://100.88.1.2:3773");
+    expect(parsePairingUrl(pairingUrl)).toEqual({ host: "http://100.88.1.2:3773", code: "" });
+    expect(buildPairingUrl("http://100.88.1.2:3773", "")).toBe("http://100.88.1.2:3773");
+  });
+
   it("reads hosted pairing links into backend host fields", () => {
     expect(
       parsePairingUrl(

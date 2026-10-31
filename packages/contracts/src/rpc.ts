@@ -27,6 +27,12 @@ import {
   PeerLinkSummary,
 } from "./peerLink.ts";
 import {
+  TailnetAccessError,
+  TailnetDeviceInput,
+  TailnetDeviceList,
+  TailnetPeerList,
+} from "./tailnet.ts";
+import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
   ChatGptImportProfileInput,
@@ -511,6 +517,10 @@ export const WS_METHODS = {
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
   peerLinksAnswerRequest: "peerLinks.answerRequest",
+  tailnetDevicesList: "tailnetDevices.list",
+  tailnetDevicesBlock: "tailnetDevices.block",
+  tailnetDevicesUnblock: "tailnetDevices.unblock",
+  tailnetPeersList: "tailnetPeers.list",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -816,6 +826,32 @@ const WsPeerLinksUnlinkRpc = Rpc.make(WS_METHODS.peerLinksUnlink, {
 const WsPeerLinksAnswerRequestRpc = Rpc.make(WS_METHODS.peerLinksAnswerRequest, {
   payload: PeerLinkRequestAnswerInput,
   error: Schema.Union([PeerLinkRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsTailnetDevicesListRpc = Rpc.make(WS_METHODS.tailnetDevicesList, {
+  payload: Schema.Struct({}),
+  success: TailnetDeviceList,
+  error: Schema.Union([TailnetAccessError, EnvironmentAuthorizationError]),
+});
+
+/** Ends the device's sessions here and refuses its Tailscale sign-in until unblocked. */
+const WsTailnetDevicesBlockRpc = Rpc.make(WS_METHODS.tailnetDevicesBlock, {
+  payload: TailnetDeviceInput,
+  success: Schema.Struct({ revokedSessionCount: NonNegativeInt }),
+  error: Schema.Union([TailnetAccessError, EnvironmentAuthorizationError]),
+});
+
+const WsTailnetDevicesUnblockRpc = Rpc.make(WS_METHODS.tailnetDevicesUnblock, {
+  payload: TailnetDeviceInput,
+  success: Schema.Struct({ unblocked: Schema.Boolean }),
+  error: Schema.Union([TailnetAccessError, EnvironmentAuthorizationError]),
+});
+
+/** T3 Code environments on this host's tailnet, so a phone finds boxes it has not seen. */
+const WsTailnetPeersListRpc = Rpc.make(WS_METHODS.tailnetPeersList, {
+  payload: Schema.Struct({}),
+  success: TailnetPeerList,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
@@ -2003,6 +2039,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
+  WsTailnetDevicesListRpc,
+  WsTailnetDevicesBlockRpc,
+  WsTailnetDevicesUnblockRpc,
+  WsTailnetPeersListRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,
