@@ -199,7 +199,7 @@ export function LayoutOnboarding() {
     >
       <PopoverPopup
         anchor={anchor}
-        className={step === 0 ? "w-75" : "w-82.5"}
+        className={step === 0 ? "w-75 max-w-full" : "w-82.5 max-w-full"}
         side="bottom"
         align={step === 3 ? "end" : "start"}
         sideOffset={12}
