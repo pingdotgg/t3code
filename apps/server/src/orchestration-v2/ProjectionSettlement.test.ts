@@ -21,7 +21,11 @@ import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { isAutoSettlementCandidate, isSnoozed, resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
+import {
+  isAutoSettlementCandidate,
+  isSnoozed,
+  resolveAutoSettlementAt,
+} from "./ThreadSettlementService.ts";
 
 const layerSql = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
@@ -137,9 +141,7 @@ const createItem = Effect.fn(function* (
   });
 });
 
-it.effect.each([
-  ["sql", layerSql],
-] as const)(
+it.effect.each([["sql", layerSql]] as const)(
   "%s: pending approvals wake a snoozed question even with older creation times",
   ([, testLayer]) =>
     Effect.gen(function* () {
