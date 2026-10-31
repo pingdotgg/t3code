@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import type { ProviderReplayEntry, ProviderReplayTranscript } from "@t3tools/contracts";
+import type { ProviderReplayTranscript } from "@t3tools/contracts";
 import { PiOrchestratorReplayHarness } from "../Adapters/PiAdapterV2.testkit.ts";
 import { OpenCodeOrchestratorReplayHarness } from "../Adapters/OpenCodeAdapterV2.testkit.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
