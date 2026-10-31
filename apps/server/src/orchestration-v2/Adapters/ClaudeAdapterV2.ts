@@ -8370,6 +8370,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const event = message.event;
             const reasoning = context.reasoning;
             if (event.type === "message_start") {
+              recordExecutedModel(context, event.message.model);
               reasoning.messageId = event.message.id;
               reasoning.streamBlocks.clear();
               const usage: ClaudeMessageUsage | undefined = event.message.usage;

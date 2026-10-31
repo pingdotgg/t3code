@@ -7266,6 +7266,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       yield* Queue.take(harness.terminalReceipts);
       assert.isUndefined(lastProviderTurn(harness.events).model);
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          ...turnInput,
+          attemptId: RunAttemptId.make("attempt-claude-restricted-model-4"),
+          providerTurnOrdinal: 4,
+          text: "Stream only.",
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        usageStreamFrame({
+          type: "message_start",
+          message: { id: "stream-model", model: "claude-sonnet-4-6", usage: zeroUsage },
+        }),
+        usageStreamFrame(
+          {
+            type: "message_start",
+            message: { id: "child-model", model: "claude-haiku-4-5", usage: zeroUsage },
+          },
+          "native-child",
+        ),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000666", result: "Done." }),
+      ]);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.equal(lastProviderTurn(harness.events).model, "claude-sonnet-4-6");
     }).pipe(
       Effect.scoped,
       Effect.provide(
