@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
   ScheduledTaskId,
+  type Project,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -1841,7 +1842,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               projectId,
               title: "MCP parent",
               modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
-              runtimeMode: "full-access",
+              runtimeMode: "auto",
               interactionMode: "default",
               branch: null,
               worktreePath: cwd,
@@ -1885,6 +1886,26 @@ describe("OrchestratorMcpService provider resolution", () => {
               ...request,
               clientRequestId: "empty",
             });
+
+            // The user raised this thread above the caller after its creation.
+            const raised = yield* service.createThreads(scope, {
+              ...request,
+              clientRequestId: "raised",
+            });
+            const raisedThreadId = raised.threads[0]!.threadId;
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("user-raise"),
+              threadId: raisedThreadId,
+              runtimeMode: "full-access",
+            });
+            const raisedError = yield* service
+              .createThreads(scope, { ...withPrompt, clientRequestId: "raised" })
+              .pipe(Effect.flip);
+            assert.equal(raisedError.code, "runtime_mode_escalation_denied");
+            const unprompted = yield* orchestrator.getThreadProjection(raisedThreadId);
+            assert.equal(unprompted.messages.length, 0);
+            assert.equal(unprompted.runs.length, 0);
 
             yield* settings.updateSettings({
               projectSettingsOverrides: {
@@ -2370,6 +2391,77 @@ describe("OrchestratorMcpService provider resolution", () => {
           .pipe(Effect.flip);
         assert.equal(error.code, "runtime_mode_escalation_denied");
         assert.equal(yield* Ref.get(upserted), 0);
+      }),
+    );
+
+    it.effect("refuses a replayed create over a task the user raised", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+        const upserted = yield* Ref.make(0);
+        const project = {
+          id: projectId,
+          title: "Scheduled",
+          workspaceRoot: "/tmp/scheduled",
+          defaultModelSelection: task({}).modelSelection,
+          scripts: [],
+          createdAt: "2026-10-05T00:00:00.000Z",
+          updatedAt: "2026-10-05T00:00:00.000Z",
+          deletedAt: null,
+        } as Project;
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            layerOrchestratorService.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  NodeServices.layer,
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({
+                    getThreadShell: () => Effect.succeed(null),
+                  }),
+                  ServerSettings.layerTest(),
+                  Layer.mock(ProviderRegistry.ProviderRegistry)({
+                    getProviders: Effect.succeed([]),
+                  }),
+                  Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                    list: () => Effect.succeed([]),
+                  }),
+                  Layer.mock(ProjectService.ProjectService)({
+                    getById: () => Effect.succeedSome(project),
+                  }),
+                  Layer.mock(SecretRequests.SecretRequests)({}),
+                  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                    list: () => Effect.map(Ref.get(saved), (tasks) => ({ tasks })),
+                    upsert: (input) =>
+                      Effect.gen(function* () {
+                        yield* Ref.update(upserted, (count) => count + 1);
+                        const saving = task({
+                          ...(input.id === undefined ? {} : { id: input.id }),
+                          prompt: input.prompt,
+                          runtimeMode: input.runtimeMode,
+                          interactionMode: input.interactionMode,
+                        });
+                        yield* Ref.set(saved, [saving]);
+                        return { task: saving };
+                      }),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+        const request = {
+          projectId,
+          prompt: "Check in",
+          schedule: { type: "interval", everyMs: 3_600_000 },
+          clientRequestId: "schedule-retry",
+        } as const;
+        yield* mcp.scheduleTask(supervisedClient, request);
+        yield* Ref.update(saved, (tasks) =>
+          tasks.map((task) => ({ ...task, runtimeMode: "full-access" as const })),
+        );
+        const error = yield* mcp.scheduleTask(supervisedClient, request).pipe(Effect.flip);
+        assert.equal(error.code, "runtime_mode_escalation_denied");
+        assert.equal(yield* Ref.get(upserted), 1);
       }),
     );
 
