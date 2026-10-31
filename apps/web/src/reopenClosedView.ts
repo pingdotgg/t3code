@@ -44,12 +44,15 @@ export function planNextReopen(
     }
     const alreadyOpen =
       entry.kind === "chat"
-        ? findLayoutTabByContent(useLayoutStore.getState().layout, { kind: "chat", target: closedChatTarget(entry) }) !== null
+        ? findLayoutTabByContent(useLayoutStore.getState().layout, {
+            kind: "chat",
+            target: closedChatTarget(entry),
+          }) !== null
         : entry.kind === "panel-tab"
-        ? owner.panel.isOpen && owner.panel.surfaces.some((s) => s.id === entry.surface.id)
-        : owner.panel.surfaces.some(
-            (s) => s.kind === "preview" && s.resourceId === entry.snapshot.tabId,
-          );
+          ? owner.panel.isOpen && owner.panel.surfaces.some((s) => s.id === entry.surface.id)
+          : owner.panel.surfaces.some(
+              (s) => s.kind === "preview" && s.resourceId === entry.snapshot.tabId,
+            );
     if (alreadyOpen) {
       drop.push(entry);
       continue;
@@ -60,8 +63,12 @@ export function planNextReopen(
 }
 
 export function closedChatTarget(view: Extract<ClosedView, { kind: "chat" }>): ThreadRouteTarget {
-  const promoted = view.draftId ? useComposerDraftStore.getState().getPromotedDraftRedirect(view.draftId) : null;
-  return view.draftId && !promoted ? { kind: "draft", draftId: view.draftId } : { kind: "server", threadRef: promoted ?? view.threadRef };
+  const promoted = view.draftId
+    ? useComposerDraftStore.getState().getPromotedDraftRedirect(view.draftId)
+    : null;
+  return view.draftId && !promoted
+    ? { kind: "draft", draftId: view.draftId }
+    : { kind: "server", threadRef: promoted ?? view.threadRef };
 }
 
 type PullRequestsSearchLike = Partial<PullRequestListPreferences> & {
@@ -115,7 +122,8 @@ export async function reopenClosedView(
   if (view.kind === "chat") {
     const store = useLayoutStore.getState();
     const content = { kind: "chat", target: closedChatTarget(view) } as const;
-    if (findLayoutPane(store.layout, view.paneId)) store.placeContent(content, { kind: "pane", paneId: view.paneId, index: view.index });
+    if (findLayoutPane(store.layout, view.paneId))
+      store.placeContent(content, { kind: "pane", paneId: view.paneId, index: view.index });
     else store.openTab(content, { placement: "active-pane" });
     return true;
   }
