@@ -1160,6 +1160,10 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
 });
 export type OrchestrationV2ContextHandoff = typeof OrchestrationV2ContextHandoff.Type;
 
+/** Side chat context is prepended to the provider prompt, never replayed as budgeted history. */
+export const isSideChatContextHandoff = (handoff: OrchestrationV2ContextHandoff): boolean =>
+  handoff.strategy === "manual_context" && handoff.transferId != null;
+
 export const OrchestrationV2ProviderTurn = Schema.Struct({
   id: ProviderTurnId,
   providerThreadId: ProviderThreadId,

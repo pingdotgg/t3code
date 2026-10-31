@@ -2,6 +2,7 @@ import {
   getPromptControlledTraits,
   getTraitSelectChange,
 } from "@t3tools/client-runtime/model-traits";
+import { deriveSideChatTurnSupervised } from "@t3tools/client-runtime/state/thread-execution";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
@@ -128,6 +129,7 @@ import {
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 
+const SUPERVISED_RUNTIME_MODES: ReadonlyArray<RuntimeMode> = ["approval-required"];
 const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
   "claudeAgent",
   "codex",
@@ -282,6 +284,8 @@ type ThreadSettingsSessionProps = {
   readonly optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
   readonly runtimeMode: RuntimeMode;
+  /** Narrower than the provider's modes when the server pins the next turn's mode. */
+  readonly allowedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
 };
 
@@ -512,7 +516,7 @@ function ThreadSettingsSessionProvider(
     props.providerGroups.flatMap((group) => group.models).find((option) => isApplied(option)) ??
     null;
   const runtimeModeChoices = runtimeModeChoicesForSupportedModes(
-    displayedModel?.supportedRuntimeModes,
+    props.allowedRuntimeModes ?? displayedModel?.supportedRuntimeModes,
   );
   const compatibleRuntimeMode = compatibleRuntimeModeForChoices(
     props.runtimeMode,
@@ -1565,6 +1569,9 @@ export function ExistingThreadSettingsRouteScreen({
         updateModelSelection({ ...modelSelection, options });
       }}
       runtimeMode={draftSettings.runtimeMode ?? selectedThread.runtimeMode}
+      {...(structure !== null && deriveSideChatTurnSupervised(structure.projection)
+        ? { allowedRuntimeModes: SUPERVISED_RUNTIME_MODES }
+        : {})}
       onUpdateRuntimeMode={(runtimeMode) => updateComposerDraftSettings(threadKey, { runtimeMode })}
       onClose={() => navigation.goBack()}
     />

@@ -1,4 +1,6 @@
 import {
+  ContextHandoffId,
+  ContextTransferId,
   TurnItemId,
   NodeId,
   MessageId,
@@ -23,6 +25,7 @@ import {
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
+  deriveSideChatTurnSupervised,
   deriveThreadActivityRun,
   deriveThreadRuntime,
   presentProviderGoal,
@@ -258,6 +261,84 @@ describe("thread execution presentation", () => {
       activeRunId: null,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
+  });
+});
+
+describe("deriveSideChatTurnSupervised", () => {
+  it("supervises the turn that carries a side chat's context, then offers every mode again", () => {
+    const providerThreadId = ProviderThreadId.make("provider-thread-side");
+    const attempt = (runId: RunId) => ({
+      id: RunAttemptId.make(`attempt-${runId}`),
+      runId,
+      attemptOrdinal: 1,
+      rootNodeId: NodeId.make(`node-${runId}`),
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      providerThreadId,
+      providerTurnId: null,
+      reason: "initial" as const,
+      status: "running" as const,
+      startedAt: now,
+      completedAt: null,
+    });
+    const failed = run("run-failed", 1, "failed");
+    const sideChat = {
+      ...v2Projection,
+      thread: {
+        ...v2Projection.thread,
+        lineage: {
+          ...v2Projection.thread.lineage,
+          parentThreadId: ThreadId.make("parent"),
+          sideChat: true,
+        },
+      },
+    };
+    const carried = {
+      ...sideChat,
+      runs: [failed],
+      attempts: [attempt(failed.id)],
+      contextHandoffs: [
+        {
+          id: ContextHandoffId.make("handoff-side"),
+          transferId: ContextTransferId.make("transfer-side"),
+          threadId: v2Projection.thread.id,
+          targetRunId: failed.id,
+          fromProviderThreadIds: [],
+          toProviderThreadId: providerThreadId,
+          coveredRunOrdinals: { from: 1, to: 1 },
+          strategy: "manual_context" as const,
+          status: "ready" as const,
+          summaryMessageId: null,
+          summaryText: "",
+          createdByProviderInstanceId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    };
+    const accepted = run("run-accepted", 2, "completed");
+    const delivered = {
+      ...carried,
+      runs: [failed, accepted],
+      attempts: [...carried.attempts, attempt(accepted.id)],
+      providerTurns: [
+        {
+          id: ProviderTurnId.make("provider-turn-side"),
+          providerThreadId,
+          nodeId: NodeId.make(`node-${accepted.id}`),
+          runAttemptId: RunAttemptId.make(`attempt-${accepted.id}`),
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "completed" as const,
+          startedAt: now,
+          completedAt: now,
+        },
+      ],
+    };
+
+    expect(deriveSideChatTurnSupervised(sideChat)).toBe(true);
+    expect(deriveSideChatTurnSupervised(carried)).toBe(true);
+    expect(deriveSideChatTurnSupervised(delivered)).toBe(false);
+    expect(deriveSideChatTurnSupervised(v2Projection)).toBe(false);
   });
 });
 

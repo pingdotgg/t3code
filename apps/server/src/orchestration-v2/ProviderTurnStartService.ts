@@ -11,6 +11,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
+  isSideChatContextHandoff,
   parseGoalCommand,
   RunId,
   ThreadId,
@@ -384,8 +385,7 @@ export const layer: Layer.Layer<
                     ))),
             )));
       const isSideChatHandoff = (handoff: OrchestrationV2ContextHandoff) =>
-        projection.thread.lineage.sideChat === true &&
-        ContextHandoffService.isSideChatContextHandoff(handoff);
+        projection.thread.lineage.sideChat === true && isSideChatContextHandoff(handoff);
       const handoffs = projection.contextHandoffs.filter(
         (handoff) =>
           !isSideChatHandoff(handoff) &&

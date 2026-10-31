@@ -78,7 +78,7 @@ it("an empty side chat offers only Supervised for the first turn the server supe
       lineage: {
         rootThreadId: parent.id,
         parentThreadId: parent.id,
-        relationshipToParent: null,
+        relationshipToParent: "fork",
         sideChat: true,
       },
     },
