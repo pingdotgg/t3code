@@ -52,6 +52,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { usePastedTextAttachmentThreshold } from "../../lib/usePastedTextAttachmentThreshold";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -415,6 +416,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const navigation = useNavigation();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
   const bodyText = useScaledTextRole("body");
+  const pastedTextAttachmentThreshold = usePastedTextAttachmentThreshold();
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
@@ -1062,6 +1064,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       text: paste.text,
                       wouldExceedInputLimit,
                       canAttach: true,
+                      thresholdBytes: pastedTextAttachmentThreshold,
                     }) === "attachment"
                   ) {
                     if (canAttach) {
