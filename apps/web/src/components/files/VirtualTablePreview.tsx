@@ -30,6 +30,8 @@ export default function VirtualTablePreview(props: {
   const widthRef = useRef(0);
   const measureRef = useRef<HTMLTableElement>(null);
   const [measured, setMeasured] = useState<number[] | null>(null);
+  const sampleRows = props.getRows(0);
+  const measuredRows = useRef(sampleRows);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the viewport before paint and observe container resizes to invalidate column measurements.
   useLayoutEffect(() => {
     const node = ref.current;
@@ -48,12 +50,17 @@ export default function VirtualTablePreview(props: {
   }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read the browser's laid-out table column widths before displaying the virtual table.
   useLayoutEffect(() => {
+    if (measuredRows.current !== sampleRows) {
+      measuredRows.current = sampleRows;
+      setMeasured(null);
+      return;
+    }
     if (!width || !props.header || !measureRef.current || measured) return;
     const widths = [...measureRef.current.querySelectorAll("thead th")].map(
       (cell) => cell.getBoundingClientRect().width,
     );
     if (widths.length) setMeasured(widths);
-  }, [measured, width, props.header]);
+  }, [measured, width, props.header, sampleRows]);
   const rowHeader = props.source ? 56 : 28;
   const columnWidth = props.source
     ? 0
@@ -98,8 +105,7 @@ export default function VirtualTablePreview(props: {
         <table
           ref={measureRef}
           aria-hidden="true"
-          className="invisible absolute top-0 border-separate border-spacing-0 text-meta/4"
-          style={{ width: Math.max(width - rowHeader, props.columns * 56) }}
+          className="invisible absolute top-0 w-max border-separate border-spacing-0 text-meta/4"
         >
           <thead>
             <tr>
@@ -117,24 +123,21 @@ export default function VirtualTablePreview(props: {
             </tr>
           </thead>
           <tbody>
-            {props
-              .getRows(0)
-              ?.slice(1, 20)
-              .map((row, i) => (
-                <tr key={i}>
-                  {row.map((cell, j) => (
-                    <td
-                      key={j}
-                      className={cn(
-                        "max-w-80 border-b px-2 py-1.5 whitespace-pre-wrap break-words tabular-nums",
-                        columnClass(props.columnKinds?.[j]),
-                      )}
-                    >
-                      {cell}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+            {sampleRows?.slice(1, 20).map((row, i) => (
+              <tr key={i}>
+                {row.map((cell, j) => (
+                  <td
+                    key={j}
+                    className={cn(
+                      "max-w-80 border-b px-2 py-1.5 whitespace-pre tabular-nums",
+                      columnClass(props.columnKinds?.[j]),
+                    )}
+                  >
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
       ) : null}
