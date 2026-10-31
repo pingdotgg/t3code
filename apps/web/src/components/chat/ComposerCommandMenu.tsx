@@ -5,8 +5,10 @@ import {
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
 import {
+  type DiscussionContextMetadata,
   type EnvironmentId,
   type EnvironmentMachineKind,
+  type IssueContextMetadata,
   type ProjectEntry,
   type ProviderDriverKind,
   type PullRequestContextMetadata,
@@ -16,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import {
   BlocksIcon,
+  CircleDotIcon,
   FolderIcon,
   MessagesSquareIcon,
   PackageIcon,
@@ -71,6 +74,20 @@ export type ComposerCommandItem =
       id: string;
       type: "pull-request";
       pullRequest: PullRequestContextMetadata;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "issue";
+      issue: IssueContextMetadata;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "discussion";
+      discussion: DiscussionContextMetadata;
       label: string;
       description: string;
     }
@@ -154,8 +171,8 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               {props.isLoading
                 ? props.triggerKind === "skill"
                   ? "Searching workspace skills..."
-                  : props.triggerKind === "pull-request"
-                    ? "Finding pull request..."
+                  : props.triggerKind === "hash-reference"
+                    ? "Finding references..."
                     : "Searching workspace files..."
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
@@ -221,6 +238,25 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           className="size-4 shrink-0 text-secondary-label"
         />
       ) : null}
+      {props.item.type === "issue" ? (
+        <CircleDotIcon
+          role="img"
+          aria-label={props.item.issue.state === "open" ? "Open issue" : "Closed issue"}
+          className={cn(
+            "size-4 shrink-0",
+            props.item.issue.state === "open" ? "text-success" : "text-secondary-label",
+          )}
+        />
+      ) : null}
+      {props.item.type === "discussion" ? (
+        <MessagesSquareIcon
+          role="img"
+          aria-label={
+            props.item.discussion.state === "open" ? "Open discussion" : "Closed discussion"
+          }
+          className="size-4 shrink-0 text-secondary-label"
+        />
+      ) : null}
       {pullRequestPresentation ? (
         <pullRequestPresentation.Icon
           role="img"
@@ -260,7 +296,7 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
 
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
   path: "Files and folders",
-  "pull-request": "Pull requests",
+  "hash-reference": "References",
   "slash-command": "Commands",
   skill: "Skills",
 };

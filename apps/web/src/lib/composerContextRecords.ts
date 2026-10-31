@@ -66,6 +66,14 @@ export function reviewCommentContextLabel(comment: ReviewCommentPresentation): s
   if (isPullRequestSummaryContext(comment) && pullRequestNumber !== null) {
     return `#${pullRequestNumber}`;
   }
+  const issueNumber = /^issue:(\d+)$/u.exec(comment.sectionId)?.[1];
+  if (isIssueSummaryContext(comment) && issueNumber !== undefined) {
+    return `#${issueNumber}`;
+  }
+  const discussionNumber = /^discussion:(\d+)$/u.exec(comment.sectionId)?.[1];
+  if (isDiscussionSummaryContext(comment) && discussionNumber !== undefined) {
+    return `#${discussionNumber}`;
+  }
   const diffRange = /^([+-])(\d+)(?: to \1(\d+))?$/u.exec(comment.rangeLabel);
   const rangeLabel = diffRange
     ? `L${diffRange[2]}${diffRange[3] ? ` to L${diffRange[3]}` : ""}${diffRange[1] === "-" ? " (before)" : ""}`
@@ -79,6 +87,22 @@ export function isPullRequestSummaryContext(comment: ReviewCommentPresentation):
     comment.sectionId.startsWith("pull-request:") &&
     comment.diff.trim().length === 0 &&
     /^PR #\d+$/u.test(comment.filePath)
+  );
+}
+
+export function isIssueSummaryContext(comment: ReviewCommentPresentation): boolean {
+  return (
+    comment.diff.trim().length === 0 &&
+    comment.sectionId.startsWith("issue:") &&
+    /^Issue #\d+$/u.test(comment.filePath)
+  );
+}
+
+export function isDiscussionSummaryContext(comment: ReviewCommentPresentation): boolean {
+  return (
+    comment.diff.trim().length === 0 &&
+    comment.sectionId.startsWith("discussion:") &&
+    /^Discussion #\d+$/u.test(comment.filePath)
   );
 }
 

@@ -52,6 +52,9 @@ import {
   type PullRequestProviderSummary,
   type PullRequestReactionInput,
   type PullRequestRef,
+  type RepoReferenceEntry,
+  type RepoReferenceSearchInput,
+  type RepoReferenceSearchResult,
   type PullRequestRoutingResult,
   type PullRequestRoutingIdentityInput,
   type PullRequestRoutingIdentityResult,
@@ -176,6 +179,9 @@ export class PullRequestService extends Context.Service<
     readonly list: (
       input: PullRequestListInput,
     ) => Effect.Effect<PullRequestListResult, PullRequestError>;
+    readonly searchReferences: (
+      input: RepoReferenceSearchInput,
+    ) => Effect.Effect<RepoReferenceSearchResult, PullRequestError>;
     readonly listStats: (
       input: PullRequestListStatsInput,
     ) => Effect.Effect<PullRequestListStatsResult, PullRequestError>;
@@ -528,6 +534,11 @@ function withRateLimitBackoff(
       ? {}
       : { withVerifiedCredential: api.withVerifiedCredential }),
     listChangeRequests: wrap("listChangeRequests", api.listChangeRequests),
+    ...(api.searchHashReferences === undefined
+      ? {}
+      : {
+          searchHashReferences: wrap("searchHashReferences", api.searchHashReferences),
+        }),
     ...(api.listChangeRequestsAcross === undefined
       ? {}
       : {
@@ -3699,12 +3710,184 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const searchReferences: PullRequestService["Service"]["searchReferences"] = Effect.fn(
+    "PullRequestService.searchReferences",
+  )(function* (input) {
+    const limit = input.limit ?? 12;
+    const query = input.query?.trim() ?? "";
+    const project = yield* requireProject({
+      projectId: input.projectId,
+      repository: input.repository,
+      number: 1,
+    });
+    const viewer = (yield* viewerOf(project)) ?? "";
+    const number =
+      query.length > 0 && /^\d+$/u.test(query) && Number.isSafeInteger(Number(query))
+        ? Number(query)
+        : null;
+
+    const providerErrorMessage = (error: unknown, fallback: string) =>
+      isPullRequestProviderError(error) ? error.detail : fallback;
+
+    const listedPullRequests = yield* project.api
+      .listChangeRequests({
+        cwd: project.project.workspaceRoot,
+        repository: project.repository,
+        host: project.host,
+        state: "all",
+        involvement: "all",
+        viewer,
+        limit: Math.max(limit, number === null ? limit : 1),
+        ...(query.length === 0 || number !== null ? {} : { query }),
+      })
+      .pipe(
+        Effect.map((page) => ({
+          items: page.items,
+          error: null as string | null,
+        })),
+        Effect.catch((error) =>
+          Effect.succeed({
+            items: [] as ReadonlyArray<ProviderChangeRequest>,
+            error: providerErrorMessage(error, "Pull requests could not be read."),
+          }),
+        ),
+      );
+
+    const exactPullRequestMissing =
+      number !== null && !listedPullRequests.items.some((item) => item.number === number);
+    const exactPullRequest = exactPullRequestMissing
+      ? yield* project.api
+          .getChangeRequest({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            number,
+          })
+          .pipe(
+            Effect.map((item) => ({
+              items: [item] as const,
+              error: null as string | null,
+            })),
+            Effect.catch((error) =>
+              Effect.succeed({
+                items: [] as const,
+                // Missing is expected when `#N` is an issue or discussion, not a PR.
+                error:
+                  isPullRequestProviderError(error) && error.reason === "not-found"
+                    ? null
+                    : providerErrorMessage(error, "Pull request could not be read."),
+              }),
+            ),
+          )
+      : { items: [] as const, error: null as string | null };
+
+    const hashPage =
+      project.api.searchHashReferences === undefined
+        ? { items: [] as const, error: null as string | null }
+        : yield* project.api
+            .searchHashReferences({
+              cwd: project.project.workspaceRoot,
+              repository: project.repository,
+              host: project.host,
+              limit,
+              ...(query.length === 0 ? {} : { query }),
+            })
+            .pipe(
+              Effect.map((page) => ({ items: page.items, error: null as string | null })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  items: [] as const,
+                  error: providerErrorMessage(error, "References could not be read."),
+                }),
+              ),
+            );
+
+    const pullRequestEntries: RepoReferenceEntry[] = [
+      ...exactPullRequest.items,
+      ...listedPullRequests.items,
+    ].map((item) => ({
+      kind: "pull-request" as const,
+      projectId: project.project.id,
+      repository: project.repository,
+      number: item.number,
+      title: item.title,
+      url: item.url,
+      headBranch: item.headBranch,
+      baseBranch: item.baseBranch,
+      state: item.state,
+      isDraft: item.isDraft,
+      updatedAt: item.updatedAt,
+    }));
+
+    const otherEntries: RepoReferenceEntry[] = hashPage.items.map((item) =>
+      item.kind === "issue"
+        ? {
+            kind: "issue" as const,
+            projectId: project.project.id,
+            repository: project.repository,
+            number: item.number,
+            title: item.title,
+            url: item.url,
+            state: item.state,
+            updatedAt: item.updatedAt,
+          }
+        : {
+            kind: "discussion" as const,
+            projectId: project.project.id,
+            repository: project.repository,
+            number: item.number,
+            title: item.title,
+            url: item.url,
+            state: item.state,
+            updatedAt: item.updatedAt,
+            ...(item.category === undefined ? {} : { category: item.category }),
+          },
+    );
+
+    const keyOf = (entry: RepoReferenceEntry) =>
+      `${entry.kind}:${entry.repository.trim().toLowerCase()}#${entry.number}`;
+    const unique = new Map<string, RepoReferenceEntry>();
+    for (const entry of [...pullRequestEntries, ...otherEntries]) {
+      if (!unique.has(keyOf(entry))) unique.set(keyOf(entry), entry);
+    }
+
+    const matchesQuery = (entry: RepoReferenceEntry) => {
+      if (query.length === 0) return true;
+      if (number !== null) return String(entry.number).includes(query);
+      const words = query.toLowerCase().split(/\s+/u).filter(Boolean);
+      const text = `#${entry.number} ${entry.title} ${entry.repository} ${
+        entry.kind === "pull-request" ? entry.headBranch : ""
+      }`.toLowerCase();
+      return words.every((word) => text.includes(word));
+    };
+
+    const entries = [...unique.values()]
+      .filter(matchesQuery)
+      .sort(
+        (left, right) =>
+          Number(number !== null && right.number === number) -
+            Number(number !== null && left.number === number) ||
+          right.updatedAt.localeCompare(left.updatedAt),
+      )
+      .slice(0, limit);
+
+    const errors = [listedPullRequests.error, exactPullRequest.error, hashPage.error].flatMap(
+      (message) => (message === null ? [] : [{ message }]),
+    );
+
+    return {
+      entries,
+      errors,
+    };
+  });
+
   return PullRequestService.of({
     withSharedProjectReads,
     routing,
     routingIdentity,
     withRoutingCredential,
     list,
+    searchReferences,
     filterOptions,
     // The local operation owns the span; this wrapper only canonicalizes refs.
     listStats: Effect.fnUntraced(function* (input) {

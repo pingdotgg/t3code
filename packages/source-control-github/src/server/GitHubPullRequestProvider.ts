@@ -384,6 +384,17 @@ export const make = Effect.gen(function* () {
           })),
         ),
 
+    searchHashReferences: (input) =>
+      cli
+        .searchHashReferences({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          query: input.query,
+          limit: input.limit,
+        })
+        .pipe(Effect.mapError(fail("searchHashReferences"))),
+
     listChangeRequestsAcross: (input) =>
       cli
         .searchPullRequests({

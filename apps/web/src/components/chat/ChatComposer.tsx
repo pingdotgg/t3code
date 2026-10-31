@@ -205,6 +205,10 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
+import {
+  buildDiscussionReferenceContext,
+  buildIssueReferenceContext,
+} from "~/lib/repoReferenceContext";
 import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
 import {
@@ -1924,14 +1928,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       return;
     }
-    if (item.type === "pull-request") {
+    if (item.type === "pull-request" || item.type === "issue" || item.type === "discussion") {
       if (
-        trigger.kind !== "pull-request" ||
+        trigger.kind !== "hash-reference" ||
         !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
       ) {
         return;
       }
-      const comment = buildPullRequestReferenceContext(item.pullRequest);
+      const comment =
+        item.type === "pull-request"
+          ? buildPullRequestReferenceContext(item.pullRequest)
+          : item.type === "issue"
+            ? buildIssueReferenceContext(item.issue)
+            : buildDiscussionReferenceContext(item.discussion);
       const replacement = `${formatInlineContextReference(
         reviewCommentContextReference(comment),
       )} `;
@@ -3287,8 +3296,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <div role="status" aria-atomic="true" className="sr-only">
                 {composerSuggestionsVisible && composerMenuItems.length === 0
                   ? isComposerMenuLoading
-                    ? composerTriggerKind === "pull-request"
-                      ? "Finding pull request..."
+                    ? composerTriggerKind === "hash-reference"
+                      ? "Finding references..."
                       : "Searching workspace files..."
                     : composerMenuEmptyState
                   : ""}

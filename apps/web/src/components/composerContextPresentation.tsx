@@ -8,7 +8,12 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
-import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
+import {
+  CircleDotIcon,
+  MessageCircleIcon,
+  MessagesSquareIcon,
+  MousePointerClickIcon,
+} from "lucide-react";
 import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -23,6 +28,8 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import {
   fileContextReference,
   imageContextReference,
+  isDiscussionSummaryContext,
+  isIssueSummaryContext,
   isPullRequestSummaryContext,
   pullRequestContextDisplayState,
   pullRequestContextKindLabel,
@@ -428,6 +435,8 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
           return <UnresolvedContextChip label={context.label} />;
         }
         const isPullRequest = isPullRequestSummaryContext(entry.record);
+        const isIssue = isIssueSummaryContext(entry.record);
+        const isDiscussion = isDiscussionSummaryContext(entry.record);
         const pullRequestState = pullRequestContextDisplayState(entry.record) ?? "unknown";
         if (isPullRequest && entry.record.pullRequest !== undefined) {
           return (
@@ -439,12 +448,38 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
         }
         return (
           <ContextChip
-            icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
+            icon={
+              isPullRequest ? (
+                <PullRequestGlyph.pullRequest />
+              ) : isIssue ? (
+                <CircleDotIcon />
+              ) : isDiscussion ? (
+                <MessagesSquareIcon />
+              ) : (
+                <MessageCircleIcon />
+              )
+            }
             label={reviewCommentContextLabel(entry.record)}
-            kindLabel={isPullRequest ? pullRequestContextKindLabel(entry.record) : "Review comment"}
+            kindLabel={
+              isPullRequest
+                ? pullRequestContextKindLabel(entry.record)
+                : isIssue
+                  ? "Issue"
+                  : isDiscussion
+                    ? "Discussion"
+                    : "Review comment"
+            }
             details={<ComposerReviewCommentDetails comment={entry.record} />}
             detailsMode={definition.capabilities.details}
-            kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
+            kind={
+              isPullRequest
+                ? PULL_REQUEST_CHIP_KINDS[pullRequestState]
+                : isIssue
+                  ? "issue"
+                  : isDiscussion
+                    ? "discussion"
+                    : "review-comment"
+            }
           />
         );
       },

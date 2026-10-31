@@ -292,6 +292,23 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
       }
       return lines.join("\n");
     }
+    case "issue":
+      return [
+        `issue: #${record.issue.number}`,
+        `title: ${record.issue.title}`,
+        `url: ${record.issue.url}`,
+        `state: ${record.issue.state}`,
+        ...(record.text.trim() ? ["details:", indent(record.text.trim())] : []),
+      ].join("\n");
+    case "discussion":
+      return [
+        `discussion: #${record.discussion.number}`,
+        `title: ${record.discussion.title}`,
+        `url: ${record.discussion.url}`,
+        `state: ${record.discussion.state}`,
+        ...(record.discussion.category ? [`category: ${record.discussion.category}`] : []),
+        ...(record.text.trim() ? ["details:", indent(record.text.trim())] : []),
+      ].join("\n");
     case "mention":
       return `path: ${record.path}`;
     case "skill":

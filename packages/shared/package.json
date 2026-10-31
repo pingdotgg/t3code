@@ -23,6 +23,10 @@
       "types": "./src/composerPullRequestMatches.ts",
       "import": "./src/composerPullRequestMatches.ts"
     },
+    "./composerRepoReferenceMatches": {
+      "types": "./src/composerRepoReferenceMatches.ts",
+      "import": "./src/composerRepoReferenceMatches.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"

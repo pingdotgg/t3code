@@ -38,6 +38,8 @@ const CONTEXT_CHIP_PRESENTATIONS = {
     accent: "#7079e4",
     icon: "git-pull-request-arrow",
   },
+  issue: { accent: "#009f6e", icon: "circle-dashed" },
+  discussion: { accent: "#7079e4", icon: "messages-square" },
   skill: { accent: "#b261be", icon: "skill" },
   thread: {
     accent: "#009c96",
@@ -127,7 +129,11 @@ export function contextChipPresentation(
         ? "image"
         : kind === "review-comment" && record?.sectionId?.startsWith("pull-request:")
           ? "pull-request"
-          : kind;
+          : kind === "review-comment" && record?.sectionId?.startsWith("issue:")
+            ? "issue"
+            : kind === "review-comment" && record?.sectionId?.startsWith("discussion:")
+              ? "discussion"
+              : kind;
   if (presentationKind === "pull-request") {
     const pullRequest = record?.pullRequest;
     const state =

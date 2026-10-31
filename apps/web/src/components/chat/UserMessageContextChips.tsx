@@ -24,7 +24,13 @@ import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown from "../ChatMarkdown";
 import { EnvironmentContextChip } from "../EnvironmentContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
-import { MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
+import {
+  CircleDotIcon,
+  MessageCircleIcon,
+  MessagesSquareIcon,
+  MousePointerClickIcon,
+  PaintbrushIcon,
+} from "lucide-react";
 import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/contracts";
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
@@ -39,6 +45,8 @@ import {
   UnresolvedChip,
 } from "../contextChipParts";
 import {
+  isDiscussionSummaryContext,
+  isIssueSummaryContext,
   isPullRequestSummaryContext,
   pullRequestContextDisplayState,
   pullRequestContextKindLabel,
@@ -445,8 +453,16 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           return <UnavailableUserMessageContextChip {...context} />;
         }
         const isPullRequest = isPullRequestSummaryContext(record);
+        const isIssue = isIssueSummaryContext(record);
+        const isDiscussion = isDiscussionSummaryContext(record);
         const label = reviewCommentContextLabel(record);
-        const kindLabel = isPullRequest ? pullRequestContextKindLabel(record) : "Review comment";
+        const kindLabel = isPullRequest
+          ? pullRequestContextKindLabel(record)
+          : isIssue
+            ? "Issue"
+            : isDiscussion
+              ? "Discussion"
+              : "Review comment";
         const pullRequestState = pullRequestContextDisplayState(record) ?? "unknown";
         if (isPullRequest && record.pullRequest !== undefined) {
           return (
@@ -461,8 +477,26 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           <UserMessageContextPopover
             copyMarkdown={context.copyMarkdown}
             accessibleLabel={`${kindLabel}, ${label}${record.pullRequest ? `, ${record.pullRequest.title}` : ""}`}
-            kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
-            icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
+            kind={
+              isPullRequest
+                ? PULL_REQUEST_CHIP_KINDS[pullRequestState]
+                : isIssue
+                  ? "issue"
+                  : isDiscussion
+                    ? "discussion"
+                    : "review-comment"
+            }
+            icon={
+              isPullRequest ? (
+                <PullRequestGlyph.pullRequest />
+              ) : isIssue ? (
+                <CircleDotIcon />
+              ) : isDiscussion ? (
+                <MessagesSquareIcon />
+              ) : (
+                <MessageCircleIcon />
+              )
+            }
             label={label}
           >
             <UserMessageReviewCommentCard
@@ -485,6 +519,59 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           </UserMessageContextPopover>
         );
       },
+    },
+    {
+      kind: "issue",
+      canRender: (record) => record.kind === "issue",
+      render: (record, context) =>
+        record.kind === "issue" ? (
+          <UserMessageContextPopover
+            copyMarkdown={context.copyMarkdown}
+            accessibleLabel={`Issue, #${record.issue.number}, ${record.issue.title}`}
+            kind="issue"
+            icon={<CircleDotIcon />}
+            label={`#${record.issue.number}`}
+          >
+            <div className="space-y-1 rounded-lg border border-border/70 bg-background/70 p-3">
+              <div className="text-xs font-medium text-foreground">{record.issue.title}</div>
+              <div className="text-2xs text-muted-foreground">
+                Issue #{record.issue.number} · {record.issue.state}
+              </div>
+              {record.text.length > 0 ? (
+                <div className="wrap-break-word whitespace-pre-wrap text-sm">{record.text}</div>
+              ) : null}
+            </div>
+          </UserMessageContextPopover>
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
+      kind: "discussion",
+      canRender: (record) => record.kind === "discussion",
+      render: (record, context) =>
+        record.kind === "discussion" ? (
+          <UserMessageContextPopover
+            copyMarkdown={context.copyMarkdown}
+            accessibleLabel={`Discussion, #${record.discussion.number}, ${record.discussion.title}`}
+            kind="discussion"
+            icon={<MessagesSquareIcon />}
+            label={`#${record.discussion.number}`}
+          >
+            <div className="space-y-1 rounded-lg border border-border/70 bg-background/70 p-3">
+              <div className="text-xs font-medium text-foreground">{record.discussion.title}</div>
+              <div className="text-2xs text-muted-foreground">
+                Discussion #{record.discussion.number} · {record.discussion.state}
+                {record.discussion.category ? ` · ${record.discussion.category}` : ""}
+              </div>
+              {record.text.length > 0 ? (
+                <div className="wrap-break-word whitespace-pre-wrap text-sm">{record.text}</div>
+              ) : null}
+            </div>
+          </UserMessageContextPopover>
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
     },
     {
       kind: "preview-annotation",

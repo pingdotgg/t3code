@@ -22,7 +22,12 @@ import {
   formatComposerContextReference,
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
-import { environmentComposerContext, pullRequestComposerContext } from "../../lib/composerContext";
+import {
+  discussionComposerContext,
+  environmentComposerContext,
+  issueComposerContext,
+  pullRequestComposerContext,
+} from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
   getComposerDraftSnapshot,
@@ -56,11 +61,8 @@ import { useEffect, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
-import {
-  useComposerPathSearch,
-  useComposerPullRequestSearch,
-  useThreadSearch,
-} from "../../state/queries";
+import { useComposerPathSearch, useThreadSearch } from "../../state/queries";
+import { useComposerHashReferenceSearch } from "../../state/useComposerHashReferenceSearch";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
@@ -307,37 +309,74 @@ export function useComposerCommandMenu({
     trigger?.kind === "path" ? trigger.query : "",
     { titlesOnly: true },
   );
-  const pullRequestSearch = useComposerPullRequestSearch({
+  const hashReferenceSearch = useComposerHashReferenceSearch({
     environmentId,
     projectId: pullRequestProjectId,
     repository: pullRequestRepository,
     threadPullRequests,
-    query: trigger?.kind === "pull-request" ? trigger.query : null,
+    query: trigger?.kind === "hash-reference" ? trigger.query : null,
   });
 
   const items = ((): ComposerCommandItem[] => {
     if (!trigger) return [];
 
-    if (trigger.kind === "pull-request") {
-      return pullRequestSearch.entries.map((entry) => ({
-        id: `pr:${entry.projectId}:${entry.repository}:${entry.number}`,
-        type: "pull-request",
-        pullRequest: {
-          number: entry.number,
-          title: entry.title,
-          url: entry.url,
-          headBranch: entry.headBranch,
-          baseBranch: entry.baseBranch,
-          state: entry.state,
-          isDraft: entry.isDraft,
-        },
-        label: `#${entry.number}`,
-        description: `${entry.isDraft ? "Draft" : entry.state} · ${
+    if (trigger.kind === "hash-reference") {
+      return hashReferenceSearch.entries.flatMap((entry): ComposerCommandItem[] => {
+        const descriptionPrefix =
           entry.repository.toLowerCase() === pullRequestRepository?.toLowerCase()
             ? ""
-            : `${entry.repository} · `
-        }${entry.title}`,
-      }));
+            : `${entry.repository} · `;
+        if (entry.kind === "pull-request") {
+          return [
+            {
+              id: `pr:${entry.projectId}:${entry.repository}:${entry.number}`,
+              type: "pull-request",
+              pullRequest: {
+                number: entry.number,
+                title: entry.title,
+                url: entry.url,
+                headBranch: entry.headBranch,
+                baseBranch: entry.baseBranch,
+                state: entry.state,
+                isDraft: entry.isDraft,
+              },
+              label: `#${entry.number}`,
+              description: `${entry.isDraft ? "Draft" : entry.state} · ${descriptionPrefix}${entry.title}`,
+            },
+          ];
+        }
+        if (entry.kind === "issue") {
+          return [
+            {
+              id: `issue:${entry.projectId}:${entry.repository}:${entry.number}`,
+              type: "issue",
+              issue: {
+                number: entry.number,
+                title: entry.title,
+                url: entry.url,
+                state: entry.state,
+              },
+              label: `#${entry.number}`,
+              description: `${entry.state} · ${descriptionPrefix}${entry.title}`,
+            },
+          ];
+        }
+        return [
+          {
+            id: `discussion:${entry.projectId}:${entry.repository}:${entry.number}`,
+            type: "discussion",
+            discussion: {
+              number: entry.number,
+              title: entry.title,
+              url: entry.url,
+              state: entry.state,
+              ...(entry.category === undefined ? {} : { category: entry.category }),
+            },
+            label: `#${entry.number}`,
+            description: `${entry.state} · ${descriptionPrefix}${entry.title}`,
+          },
+        ];
+      });
     }
 
     if (trigger.kind === "slash-command") {
@@ -551,14 +590,19 @@ export function useComposerCommandMenu({
       setSelection({ start: result.cursor, end: result.cursor });
       return;
     }
-    if (item.type === "pull-request") {
+    if (item.type === "pull-request" || item.type === "issue" || item.type === "discussion") {
       if (
         !ownerKey ||
-        trigger.kind !== "pull-request" ||
+        trigger.kind !== "hash-reference" ||
         !items.some((candidate) => candidate.id === item.id)
       )
         return;
-      const record = pullRequestComposerContext(item.pullRequest, uuidv4());
+      const record =
+        item.type === "pull-request"
+          ? pullRequestComposerContext(item.pullRequest, uuidv4())
+          : item.type === "issue"
+            ? issueComposerContext(item.issue, uuidv4())
+            : discussionComposerContext(item.discussion, uuidv4());
       if (
         (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
         COMPOSER_CONTEXT_MAX_RECORDS
@@ -616,12 +660,12 @@ export function useComposerCommandMenu({
     items,
     skills,
     isLoading:
-      trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
+      trigger?.kind === "hash-reference" ? hashReferenceSearch.isPending : pathSearch.isPending,
     error:
-      trigger?.kind === "pull-request"
+      trigger?.kind === "hash-reference"
         ? pullRequestProjectId === null || pullRequestRepository === null
-          ? "Pull requests are unavailable for this project."
-          : pullRequestSearch.error
+          ? "References are unavailable for this project."
+          : hashReferenceSearch.error
         : null,
     onSelect,
   };

@@ -60,6 +60,20 @@ describe("detectComposerTrigger", () => {
       query: text.slice(1),
     });
   });
+
+  it.each(["#", "#42", "#fix-login"])("detects the hash reference in %j", (token) => {
+    const text = `See ${token}`;
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "hash-reference",
+      query: token.slice(1),
+      rangeStart: 4,
+      rangeEnd: text.length,
+    });
+  });
+
+  it.each(["# Heading", "issue#123"])("does not treat %j as a hash reference", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
 });
 
 describe("serializeComposerFileLink", () => {

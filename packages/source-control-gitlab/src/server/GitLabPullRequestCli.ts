@@ -59,8 +59,14 @@ import {
 } from "./gitLabMergeRequestJson.ts";
 import type {
   ProviderFileStats,
+  ProviderHashReferencePage,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
+import {
+  decodeIssueDetailBody,
+  decodeIssueListBody,
+  hashReferenceSearchPaths,
+} from "./gitLabHashReferences.ts";
 
 export class GitLabMergeRequestReadError extends Schema.TaggedError<GitLabMergeRequestReadError>()(
   "GitLabMergeRequestReadError",
@@ -356,6 +362,14 @@ export class GitLabPullRequestCli extends Context.Service<
       { readonly items: ReadonlyArray<PullRequestActor>; readonly truncated: boolean },
       GitLabPullRequestCliError
     >;
+
+    readonly searchHashReferences: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly query?: string | undefined;
+      readonly limit: number;
+    }) => Effect.Effect<ProviderHashReferencePage, GitLabPullRequestCliError>;
 
     readonly setReviewerRequest: (input: {
       readonly cwd: string;
@@ -1557,6 +1571,42 @@ export const make = Effect.gen(function* () {
           truncated: rawCount >= MAX_PAGE_SIZE,
         })),
       );
+    }),
+
+    searchHashReferences: Effect.fn("GitLabPullRequestCli.searchHashReferences")(function* (input) {
+      const paths = hashReferenceSearchPaths(input);
+      if (paths === null) return { items: [] };
+
+      if (paths.number !== null && paths.issueDetailPath !== null) {
+        const body = yield* api({
+          cwd: input.cwd,
+          host: input.host,
+          path: paths.issueDetailPath,
+        }).pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.catchTags({
+            GitLabCliCommandError: (error) => {
+              if (isVcsProcessExitError(error.cause) && error.cause.failureKind === "not-found") {
+                return Effect.succeed(null as string | null);
+              }
+              return Effect.fail(error);
+            },
+          }),
+        );
+        if (body === null || body.length === 0) return { items: [] };
+        const item = decodeIssueDetailBody(body);
+        return { items: item === null ? [] : [item] };
+      }
+
+      if (paths.issueListPath === null) return { items: [] };
+      const result = yield* api({
+        cwd: input.cwd,
+        host: input.host,
+        path: paths.issueListPath,
+      });
+      const raw = result.stdout.trim();
+      if (raw.length === 0) return { items: [] };
+      return { items: decodeIssueListBody(raw).slice(0, input.limit) };
     }),
 
     listReviewerCandidates: Effect.fn("GitLabPullRequestCli.listReviewerCandidates")(

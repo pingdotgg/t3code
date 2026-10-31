@@ -113,8 +113,19 @@ import {
 } from "./gitHubPullRequestJson.ts";
 import type {
   ProviderChangeRequestSummary,
+  ProviderHashReference,
+  ProviderHashReferencePage,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
+import {
+  DISCUSSION_TEXT_SEARCH_MAX_PAGES,
+  decodeDiscussionDetailBody,
+  decodeDiscussionListPage,
+  decodeIssueDetailBody,
+  decodeIssueSearchBody,
+  discussionListPath,
+  hashReferenceSearchPaths,
+} from "./gitHubHashReferences.ts";
 
 export class GitHubPullRequestReadError extends Schema.TaggedError<GitHubPullRequestReadError>()(
   "GitHubPullRequestReadError",
@@ -450,6 +461,14 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly cursor?: ProviderListCursor | undefined;
       readonly filters?: PullRequestListFilters | undefined;
     }) => Effect.Effect<GitHubPullRequestSearchBatch, GitHubPullRequestApiError>;
+
+    readonly searchHashReferences: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository: string;
+      readonly query?: string | undefined;
+      readonly limit: number;
+    }) => Effect.Effect<ProviderHashReferencePage, GitHubPullRequestApiError>;
 
     readonly listPullRequestStats: (input: {
       readonly cwd: string;
@@ -1936,6 +1955,111 @@ export const make = Effect.gen(function* () {
             };
           }),
         );
+    }),
+
+    searchHashReferences: Effect.fn("GitHubPullRequestApi.searchHashReferences")(function* (input) {
+      const paths = hashReferenceSearchPaths(input);
+      if (paths === null) {
+        return yield* new GitHubRepositorySelectorError({
+          cwd: input.cwd,
+          operation: "searchHashReferences",
+        });
+      }
+      const query = input.query?.trim() ?? "";
+      const ignoreNotFound = <A>(effect: Effect.Effect<A, GitHubPullRequestApiError>) =>
+        effect.pipe(
+          Effect.catchTags({
+            GitHubApiNotFoundError: () => Effect.succeed(null as A | null),
+          }),
+        );
+
+      if (
+        paths.number !== null &&
+        paths.issueDetailPath !== null &&
+        paths.discussionDetailPath !== null
+      ) {
+        const [issueBody, discussionBody] = yield* Effect.all(
+          [
+            ignoreNotFound(
+              api
+                .rest({
+                  host: input.host,
+                  operation: "searchHashReferences",
+                  path: paths.issueDetailPath,
+                })
+                .pipe(Effect.map((response) => response.body)),
+            ),
+            ignoreNotFound(
+              api
+                .rest({
+                  host: input.host,
+                  operation: "searchHashReferences",
+                  path: paths.discussionDetailPath,
+                })
+                .pipe(Effect.map((response) => response.body)),
+            ),
+          ],
+          { concurrency: 2 },
+        );
+        const items: ProviderHashReference[] = [];
+        if (issueBody !== null) {
+          const issue = decodeIssueDetailBody(issueBody);
+          if (issue !== null) items.push(issue);
+        }
+        if (discussionBody !== null) {
+          const discussion = decodeDiscussionDetailBody(discussionBody);
+          if (discussion !== null) items.push(discussion);
+        }
+        return { items };
+      }
+
+      const loadDiscussions = Effect.gen(function* () {
+        const discussions: ProviderHashReference[] = [];
+        const maxPages = paths.paginateDiscussions ? DISCUSSION_TEXT_SEARCH_MAX_PAGES : 1;
+        for (let page = 1; page <= maxPages && discussions.length < input.limit; page++) {
+          const body = yield* ignoreNotFound(
+            api
+              .rest({
+                host: input.host,
+                operation: "searchHashReferences",
+                path: discussionListPath({
+                  owner: paths.owner,
+                  name: paths.name,
+                  perPage: paths.discussionListPerPage,
+                  page,
+                }),
+              })
+              .pipe(Effect.map((response) => response.body)),
+          );
+          if (body === null) break;
+          const decoded = decodeDiscussionListPage(body, query);
+          discussions.push(...decoded.items);
+          if (decoded.rawCount < paths.discussionListPerPage) break;
+        }
+        return discussions;
+      });
+
+      const [issueBody, discussions] = yield* Effect.all(
+        [
+          paths.issueSearchPath === null
+            ? Effect.succeed(null as string | null)
+            : api
+                .rest({
+                  host: input.host,
+                  operation: "searchHashReferences",
+                  path: paths.issueSearchPath,
+                })
+                .pipe(Effect.map((response) => response.body)),
+          loadDiscussions,
+        ],
+        { concurrency: 2 },
+      );
+      const issues = issueBody === null ? [] : decodeIssueSearchBody(issueBody);
+      return {
+        items: [...issues, ...discussions]
+          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+          .slice(0, input.limit),
+      };
     }),
 
     listPullRequestStats: Effect.fn("GitHubPullRequestApi.listPullRequestStats")(

@@ -1,6 +1,6 @@
 export type ComposerTriggerKind =
   | "path"
-  | "pull-request"
+  | "hash-reference"
   | "slash-command"
   | "slash-model"
   | "skill";
@@ -128,11 +128,11 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
-  if (pullRequestMatch)
+  const hashReferenceMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
+  if (hashReferenceMatch)
     return {
-      kind: "pull-request",
-      query: pullRequestMatch[1] ?? "",
+      kind: "hash-reference",
+      query: hashReferenceMatch[1] ?? "",
       rangeStart: tokenStart,
       rangeEnd: cursor,
     };

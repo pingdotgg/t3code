@@ -279,18 +279,18 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger(text, text.length)).toBeNull();
   });
 
-  it("detects a pull request number at a token boundary", () => {
+  it("detects a hash reference number at a token boundary", () => {
     const text = "Compare this with #8737";
 
     expect(detectComposerTrigger(text, text.length)).toEqual({
-      kind: "pull-request",
+      kind: "hash-reference",
       query: "8737",
       rangeStart: "Compare this with ".length,
       rangeEnd: text.length,
     });
   });
 
-  it("does not keep pull request completion active for headings or embedded hashes", () => {
+  it("does not keep hash reference completion active for headings or embedded hashes", () => {
     expect(detectComposerTrigger("# Heading", "# Heading".length)).toBeNull();
     expect(detectComposerTrigger("issue#123", "issue#123".length)).toBeNull();
   });

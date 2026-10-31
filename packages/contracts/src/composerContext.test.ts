@@ -102,6 +102,31 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
       isDraft: false,
     },
   },
+  issue: {
+    ...base,
+    kind: "issue",
+    label: "#7",
+    text: "The issue is #7, titled `Fix login`, at `https://github.com/acme/web/issues/7`.",
+    issue: {
+      number: 7,
+      title: "Fix login",
+      url: "https://github.com/acme/web/issues/7",
+      state: "open",
+    },
+  },
+  discussion: {
+    ...base,
+    kind: "discussion",
+    label: "#9",
+    text: "The discussion is #9, titled `RFC: dark mode`, at `https://github.com/acme/web/discussions/9`.",
+    discussion: {
+      number: 9,
+      title: "RFC: dark mode",
+      url: "https://github.com/acme/web/discussions/9",
+      state: "open",
+      category: "Ideas",
+    },
+  },
   mention: { ...base, kind: "mention", label: "@src/index.ts", path: "src/index.ts" },
   skill: { ...base, kind: "skill", label: "$pinchtab", name: "pinchtab" },
   thread: {

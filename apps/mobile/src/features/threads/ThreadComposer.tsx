@@ -831,7 +831,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         {props.draftControls}
         {!isSubmissionLocked &&
         composerMenu.trigger &&
-        (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
+        (composerMenu.items.length > 0 || composerMenu.trigger.kind === "hash-reference") ? (
           <ComposerPopoverAnchor>
             <ComposerCommandPopover
               items={composerMenu.items}

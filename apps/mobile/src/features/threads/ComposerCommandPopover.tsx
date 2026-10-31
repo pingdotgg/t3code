@@ -3,8 +3,10 @@ import {
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
 import type {
+  DiscussionContextMetadata,
   EnvironmentId,
   EnvironmentMachineKind,
+  IssueContextMetadata,
   PullRequestContextMetadata,
   ScopedThreadRef,
   ServerProviderSkill,
@@ -25,6 +27,20 @@ export type ComposerCommandItem =
       readonly id: string;
       readonly type: "pull-request";
       readonly pullRequest: PullRequestContextMetadata;
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "issue";
+      readonly issue: IssueContextMetadata;
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "discussion";
+      readonly discussion: DiscussionContextMetadata;
       readonly label: string;
       readonly description: string;
     }
@@ -112,6 +128,10 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
   switch (item.type) {
     case "pull-request":
       return pullRequestStatus(item.pullRequest).icon;
+    case "issue":
+      return "circle.dashed";
+    case "discussion":
+      return "text.bubble";
     case "slash-command":
     case "provider-slash-command":
       return "terminal";
@@ -128,8 +148,8 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
 
 function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
   switch (triggerKind) {
-    case "pull-request":
-      return "Pull requests";
+    case "hash-reference":
+      return "References";
     case "slash-command":
       return "Commands";
     case "skill":
@@ -146,8 +166,8 @@ function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean):
     return triggerKind === "path" ? "Searching files…" : "Loading…";
   }
   switch (triggerKind) {
-    case "pull-request":
-      return "No matching pull requests.";
+    case "hash-reference":
+      return "No matching references.";
     case "path":
       return "No matching files or folders.";
     case "skill":

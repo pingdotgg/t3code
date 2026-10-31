@@ -71,6 +71,29 @@ export interface ProviderChangeRequestWatchFingerprint {
   readonly remarks: string;
 }
 
+export type ProviderHashReference =
+  | {
+      readonly kind: "issue";
+      readonly number: number;
+      readonly title: string;
+      readonly url: string;
+      readonly state: "open" | "closed";
+      readonly updatedAt: string;
+    }
+  | {
+      readonly kind: "discussion";
+      readonly number: number;
+      readonly title: string;
+      readonly url: string;
+      readonly state: "open" | "closed";
+      readonly updatedAt: string;
+      readonly category?: string;
+    };
+
+export interface ProviderHashReferencePage {
+  readonly items: ReadonlyArray<ProviderHashReference>;
+}
+
 export interface PullRequestProviderFailure {
   readonly reason: PullRequestProviderError["reason"];
   readonly retryAt?: number | undefined;
@@ -332,6 +355,17 @@ export interface PullRequestProviderApi {
       readonly filters?: PullRequestListFilters | undefined;
     },
   ) => Effect.Effect<ProviderChangeRequestPage, PullRequestProviderError>;
+
+  /**
+   * Issues and discussions for `#` composer autocomplete. Pull requests stay on
+   * `listChangeRequests`; absent means the host only offers change requests for `#`.
+   */
+  readonly searchHashReferences?: (
+    input: ProviderRepositoryRef & {
+      readonly query?: string | undefined;
+      readonly limit: number;
+    },
+  ) => Effect.Effect<ProviderHashReferencePage, PullRequestProviderError>;
 
   /** Newest `limit` rows total across repositories, under one cursor boundary. */
   readonly listChangeRequestsAcross?: (input: {

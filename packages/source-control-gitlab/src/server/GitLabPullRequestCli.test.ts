@@ -2,6 +2,7 @@ import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
+import { VcsProcessExitError } from "@t3tools/contracts";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
@@ -1386,6 +1387,117 @@ layer("GitLabPullRequestCli.layer", (it) => {
         }),
       );
       expect(result).toMatchObject({ _tag: "Failure", failure: error });
+    }),
+  );
+
+  it.effect("searches project issues for a text hash-reference query", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify([
+              {
+                iid: 3,
+                title: "Login bug",
+                web_url: "https://gitlab.com/acme/web/-/issues/3",
+                state: "opened",
+                updated_at: "2026-01-01T00:00:00Z",
+              },
+            ]),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const page = yield* cli.searchHashReferences({
+        cwd: "/w",
+        repository: "acme/web",
+        query: "login",
+        limit: 12,
+      });
+
+      expect(argsOfCall(0)[1]).toContain("projects/acme%2Fweb/issues?");
+      expect(argsOfCall(0)[1]).toContain("search=login");
+      expect(page.items).toEqual([
+        {
+          kind: "issue",
+          number: 3,
+          title: "Login bug",
+          url: "https://gitlab.com/acme/web/-/issues/3",
+          state: "open",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("looks up an exact issue by iid for a numeric hash-reference query", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              iid: 42,
+              title: "Exact",
+              web_url: "https://gitlab.com/acme/web/-/issues/42",
+              state: "closed",
+              updated_at: "2026-01-02T00:00:00Z",
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const page = yield* cli.searchHashReferences({
+        cwd: "/w",
+        repository: "acme/web",
+        query: "42",
+        limit: 12,
+      });
+
+      expect(argsOfCall(0)[1]).toBe("projects/acme%2Fweb/issues/42");
+      expect(page.items).toEqual([
+        {
+          kind: "issue",
+          number: 42,
+          title: "Exact",
+          url: "https://gitlab.com/acme/web/-/issues/42",
+          state: "closed",
+          updatedAt: "2026-01-02T00:00:00Z",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("returns no issue when a numeric hash-reference lookup is not found", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitLabCli.GitLabCliCommandError({
+            operation: "execute",
+            command: "glab",
+            cwd: "/w",
+            cause: new VcsProcessExitError({
+              operation: "GitLabCli.execute",
+              command: "glab",
+              cwd: "/w",
+              exitCode: 1,
+              detail: "404",
+              failureKind: "not-found",
+            }),
+          }),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const page = yield* cli.searchHashReferences({
+        cwd: "/w",
+        repository: "acme/web",
+        query: "99",
+        limit: 12,
+      });
+
+      expect(page.items).toEqual([]);
     }),
   );
 });

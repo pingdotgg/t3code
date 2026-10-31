@@ -10,6 +10,7 @@ import {
   PullRequestChangeBreakdown,
   PullRequestFilesViewedResult,
   PullRequestLinkedThreadsResult,
+  RepoReferenceSearchResult,
   type EnvironmentId,
   type PullRequestActor,
   type PullRequestActionInput,
@@ -363,6 +364,12 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId, input }) =>
         input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
       ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
+    }),
+    searchReferences: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:repo-references:search",
+      persistence: persistQuery(RepoReferenceSearchResult),
+      tag: WS_METHODS.repoReferencesSearch,
+      staleTimeMs: 15_000,
     }),
     /**
      * Its own query because the listing is quicker without them — measured over twelve

@@ -21,6 +21,8 @@ export const COMPOSER_CONTEXT_KINDS = [
   "element",
   "preview-annotation",
   "review-comment",
+  "issue",
+  "discussion",
   "mention",
   "skill",
   "thread",
@@ -78,6 +80,23 @@ export const PullRequestContextMetadata = Schema.Struct({
   isDraft: Schema.Boolean,
 });
 export type PullRequestContextMetadata = typeof PullRequestContextMetadata.Type;
+
+export const IssueContextMetadata = Schema.Struct({
+  number: PositiveInt,
+  title: ShortString,
+  url: ShortString,
+  state: Schema.Literals(["open", "closed"]),
+});
+export type IssueContextMetadata = typeof IssueContextMetadata.Type;
+
+export const DiscussionContextMetadata = Schema.Struct({
+  number: PositiveInt,
+  title: ShortString,
+  url: ShortString,
+  state: Schema.Literals(["open", "closed"]),
+  category: Schema.optional(ShortString),
+});
+export type DiscussionContextMetadata = typeof DiscussionContextMetadata.Type;
 
 const recordBase = {
   version: Schema.Literal(1),
@@ -189,6 +208,22 @@ export const ReviewCommentContextRecord = Schema.Struct({
 }).check(Schema.makeFilter((record) => record.endIndex >= record.startIndex));
 export type ReviewCommentContextRecord = typeof ReviewCommentContextRecord.Type;
 
+export const IssueContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("issue"),
+  text: BoundedString(COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS),
+  issue: IssueContextMetadata,
+});
+export type IssueContextRecord = typeof IssueContextRecord.Type;
+
+export const DiscussionContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("discussion"),
+  text: BoundedString(COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS),
+  discussion: DiscussionContextMetadata,
+});
+export type DiscussionContextRecord = typeof DiscussionContextRecord.Type;
+
 export const MentionContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("mention"),
@@ -251,6 +286,8 @@ export const KnownComposerContextRecord = Schema.Union([
   ElementContextRecord,
   PreviewAnnotationContextRecord,
   ReviewCommentContextRecord,
+  IssueContextRecord,
+  DiscussionContextRecord,
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,
