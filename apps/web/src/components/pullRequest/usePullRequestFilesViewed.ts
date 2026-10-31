@@ -15,7 +15,7 @@ export interface PullRequestFilesViewedView {
   readonly enabled: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
-  readonly setViewed: (path: string, viewed: boolean) => void;
+  readonly setViewed: (path: string, viewed: boolean, revision: string | undefined) => void;
   readonly truncated: boolean;
   readonly error: string | null;
   readonly refresh: () => void;

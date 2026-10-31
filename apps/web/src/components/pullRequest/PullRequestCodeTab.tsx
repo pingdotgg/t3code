@@ -722,7 +722,10 @@ function PullRequestCodeTab({
       extendRange ? lastViewedFileKey : null,
     );
     setLastViewedFileKey(fileKey);
-    for (const file of range) setViewed(file.path, viewed);
+    for (const file of range) {
+      // Commit diffs name the commit's version rather than the current head.
+      setViewed(file.path, viewed, commit === null ? file.fileDiff.newObjectId : undefined);
+    }
     setToggledFiles((current) =>
       range.reduce(
         (next, file) =>

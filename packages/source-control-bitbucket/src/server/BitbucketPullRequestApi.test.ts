@@ -248,6 +248,24 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("reads the pushed revision on consecutive comparison reads", () =>
+    Effect.gen(function* () {
+      for (const revision of ["2222222", "3333333"]) {
+        mockedRequest.mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              `diff --git a/a.ts b/a.ts\nindex 1111111..${revision} 100644\n@@ -1 +1 @@\n-a\n+b\n`,
+            ),
+          ),
+        );
+      }
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      const input = { repository: "acme/web", number: 73, paths: ["a.ts"] };
+      assert.strictEqual((yield* api.getFileRevisions(input)).revisions.get("a.ts"), "2222222");
+      assert.strictEqual((yield* api.getFileRevisions(input)).revisions.get("a.ts"), "3333333");
+    }),
+  );
+
   it.effect("says nothing about the files past the end of a patch it could not read whole", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(

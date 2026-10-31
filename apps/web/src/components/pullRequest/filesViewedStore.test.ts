@@ -71,14 +71,17 @@ function setup(initial: PullRequestFilesViewedResult | null = answer(false)) {
 
 describe("createFilesViewedStore", () => {
   it("batches presses and holds them until a read that could have seen them", async () => {
-    using t = setup();
+    const unchanged = { files: [{ path: "a.ts", state: "dismissed" as const }], truncated: false };
+    using t = setup(unchanged);
     const scope = t.store.scope(first);
     const release = scope.subscribe(() => {});
-    scope.setViewed("a.ts", true);
+    scope.setViewed("a.ts", true, "shown-revision");
     expect(scope.getSnapshot().get("a.ts")).toBe(true);
     await vi.advanceTimersByTimeAsync(400);
     expect(t.send).toHaveBeenCalledTimes(1);
-    expect(t.send.mock.calls[0]?.[1]).toEqual([{ path: "a.ts", viewed: true }]);
+    expect(t.send.mock.calls[0]?.[1]).toEqual([
+      { path: "a.ts", viewed: true, revision: "shown-revision" },
+    ]);
 
     t.settles[0]?.(AsyncResult.success(undefined));
     await vi.advanceTimersByTimeAsync(0);
@@ -86,10 +89,7 @@ describe("createFilesViewedStore", () => {
     expect(scope.getSnapshot().get("a.ts")).toBe(true);
 
     // A push landed between the write and the next read: the host's answer wins.
-    t.answerFor(first, {
-      files: [{ path: "a.ts", state: "dismissed" }],
-      truncated: false,
-    });
+    t.answerFor(first, unchanged);
     expect(scope.getSnapshot().size).toBe(0);
     release();
   });
@@ -203,9 +203,6 @@ describe("createFilesViewedStore", () => {
     await vi.advanceTimersByTimeAsync(400);
     t.settles[0]?.(AsyncResult.success(undefined));
     await vi.advanceTimersByTimeAsync(0);
-    // The same answer published again is not a new read.
-    t.answerFor(first, agreeing);
-    expect(scope.getSnapshot().get("a.ts")).toBe(true);
     t.answerFor(first, answer(false));
     expect(scope.getSnapshot().size).toBe(0);
     release();

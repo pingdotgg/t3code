@@ -10,6 +10,7 @@ import {
   type EnvironmentId,
   type ProjectId,
   type PullRequestChecksState,
+  type PullRequestFilesViewedResult,
   type PullRequestListInput,
   type PullRequestFilterOptionsInput,
   type PullRequestListStatsInput,
@@ -366,8 +367,44 @@ export function restoredPullRequestList(
   return restorePullRequestList(snapshotStorage(), targets);
 }
 
+const filesViewedAnswerListeners = new Map<
+  string,
+  Set<(answer: PullRequestFilesViewedResult) => void>
+>();
+
+function filesViewedAnswerKey({ environmentId, input }: EnvironmentQueryTarget<PullRequestRef>) {
+  return JSON.stringify([
+    environmentId,
+    input.projectId,
+    input.host,
+    input.expectedAccountId,
+    input.allowStale,
+    input.repository,
+    input.number,
+  ]);
+}
+
+export function subscribePullRequestFilesViewedAnswers(
+  target: EnvironmentQueryTarget<PullRequestRef>,
+  onAnswer: (answer: PullRequestFilesViewedResult) => void,
+) {
+  const key = filesViewedAnswerKey(target);
+  let listeners = filesViewedAnswerListeners.get(key);
+  if (listeners === undefined) filesViewedAnswerListeners.set(key, (listeners = new Set()));
+  listeners.add(onAnswer);
+  return () => {
+    listeners.delete(onAnswer);
+    if (listeners.size === 0) filesViewedAnswerListeners.delete(key);
+  };
+}
+
 // Answers are stamped on arrival: older servers leave no other ordering for same-dated reads.
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
+  filesViewed: (target, answer) =>
+    Effect.sync(() => {
+      for (const listener of filesViewedAnswerListeners.get(filesViewedAnswerKey(target)) ?? [])
+        listener(answer);
+    }),
   list: ({ environmentId, input }, answer, registry) =>
     Effect.map(Clock.currentTimeMillis, (observedAt) => {
       rememberPullRequestListAnswer(snapshotStorage(), { environmentId, input }, answer);

@@ -714,6 +714,8 @@ export const PullRequestSetFilesViewedInput = Schema.Struct({
     Schema.Struct({
       path: FilePath,
       viewed: Schema.Boolean,
+      /** The displayed revision; omitted clients fall back to a fresh head read. */
+      revision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
     }),
   ).check(Schema.isMaxLength(MAX_FILES_VIEWED_PRESSES)),
 });

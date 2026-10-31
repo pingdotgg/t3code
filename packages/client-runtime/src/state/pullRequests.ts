@@ -163,6 +163,7 @@ export interface PullRequestAnswerHandlers {
   readonly list?: QueryAnswerHandler<PullRequestListInput, PullRequestListResult>;
   readonly listStats?: QueryAnswerHandler<PullRequestListStatsInput, PullRequestListStatsResult>;
   readonly detail?: QueryAnswerHandler<PullRequestRef, PullRequestDetail>;
+  readonly filesViewed?: QueryAnswerHandler<PullRequestRef, PullRequestFilesViewedResult>;
   readonly checks?: QueryAnswerHandler<PullRequestRef, PullRequestChecks | null>;
   readonly reviewGuide?: QueryAnswerHandler<PullRequestRef, PullRequestReviewGuideResult>;
 }
@@ -437,6 +438,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     }),
     filesViewed: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:files-viewed",
+      ...(onAnswer.filesViewed === undefined ? {} : { onAnswer: onAnswer.filesViewed }),
       persistence: persistQuery(PullRequestFilesViewedResult),
       tag: WS_METHODS.pullRequestsFilesViewed,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsFilesViewed, input),

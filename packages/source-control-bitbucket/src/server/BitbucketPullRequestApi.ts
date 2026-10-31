@@ -1,9 +1,6 @@
 import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
-import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -122,12 +119,6 @@ const MAX_LIST_PAGES = 10;
 const CONVERSATION_PAGE_SIZE = 50;
 const CONVERSATION_PAGES = 10;
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
-/** Must expire before the caller's version cache so refreshes reach Bitbucket. */
-const REVISION_PATCH_TTL = Duration.seconds(5);
-const REVISION_PATCH_CAPACITY = 16;
-const encodeRevisionKey = Schema.encodeSync(
-  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Number])),
-);
 export interface BitbucketPullRequestBatch {
   readonly items: ReadonlyArray<BitbucketPullRequest>;
   readonly truncated: boolean;
@@ -508,23 +499,6 @@ export const make = Effect.gen(function* () {
             ),
         );
 
-  // Cache revisions, not large patch bodies that need reparsing.
-  const revisionPatches = yield* Cache.makeWith(
-    (key: string) => {
-      const [repository, number] = JSON.parse(key) as [string, number];
-      return pullRequestDiff({ repository, number }).pipe(
-        Effect.map((diff) => ({
-          revisions: parseDiffFileRevisions(diff.patch),
-          truncated: diff.truncated,
-        })),
-      );
-    },
-    {
-      capacity: REVISION_PATCH_CAPACITY,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? REVISION_PATCH_TTL : Duration.zero),
-    },
-  );
-
   return BitbucketPullRequestApi.of({
     getViewer: Effect.fn("BitbucketPullRequestApi.getViewer")(function () {
       return bitbucket.request({ method: "GET", url: "/user" }).pipe(
@@ -598,12 +572,9 @@ export const make = Effect.gen(function* () {
     getFileRevisions: Effect.fn("BitbucketPullRequestApi.getFileRevisions")(function* (input) {
       if (input.paths.length === 0)
         return { revisions: new Map<string, string>(), complete: false };
-      return yield* Cache.get(
-        revisionPatches,
-        encodeRevisionKey([input.repository, input.number]),
-      ).pipe(
+      return yield* pullRequestDiff(input).pipe(
         Effect.map((diff) => {
-          const revisions = new Map(diff.revisions);
+          const revisions = new Map(parseDiffFileRevisions(diff.patch));
           // A truncated patch cannot identify absent paths as deleted.
           if (!diff.truncated) {
             for (const path of input.paths) {
