@@ -687,7 +687,6 @@ export default defineConfig({
         "apps/web/src/components/GitActionsControl.tsx": 3,
         "apps/web/src/components/pullRequest/PullRequestReactions.tsx": 3,
         "apps/web/src/components/RightPanelTabs.tsx": 3,
-        "apps/web/src/components/settings/SettingsScopePicker.tsx": 3,
         "apps/web/src/components/settings/ProjectIconPickerDialog.tsx": 3,
         "apps/web/src/components/chat/ChangedFilesTree.tsx": 2,
         "apps/web/src/components/preview/PreviewRecentUrlCard.tsx": 2,
