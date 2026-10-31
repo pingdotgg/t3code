@@ -109,7 +109,10 @@ it("reports the routing proxy's accounts unless a hub already points at it or ow
       enabled: true,
     },
   });
-  for (const unreadableHub of [{ ...hub, managementKey: "" }, { ...hub, enabled: false }]) {
+  for (const unreadableHub of [
+    { ...hub, managementKey: "" },
+    { ...hub, enabled: false },
+  ]) {
     expect(
       UsageLimitSources.effectiveUsageLimitSources({
         ...settings,
