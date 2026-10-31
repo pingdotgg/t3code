@@ -1240,7 +1240,7 @@ export function ThemeEditorPanel({
       <div
         aria-label={isEditing ? "Edit theme" : "Create theme"}
         className={cn(
-          "surface-dialog fixed z-[110] flex max-h-[min(42rem,calc(100dvh-4.5rem))] w-[min(21.5rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border text-popover-foreground",
+          "surface-popover fixed z-[110] flex max-h-[min(42rem,calc(100dvh-4.5rem))] w-[min(21.5rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border text-popover-foreground",
           position === null && "right-5 top-13",
           isMinimized && "max-h-none",
         )}
