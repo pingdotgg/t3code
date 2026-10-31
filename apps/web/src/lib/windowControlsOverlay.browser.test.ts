@@ -1,19 +1,15 @@
 import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
-import { syncDocumentWindowControlsOverlayClass } from "./windowControlsOverlay";
+import {
+  syncDocumentElectronPlatformClasses,
+  syncDocumentWindowControlsOverlayClass,
+} from "./windowControlsOverlay";
 
 vi.mock("~/env", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/env")>()),
   isElectron: true,
 }));
-
-function fakeOverlay(rect: Pick<DOMRect, "height" | "right">) {
-  return Object.assign(new EventTarget(), {
-    visible: true,
-    getTitlebarAreaRect: () => rect as DOMRect,
-  });
-}
 
 function paintedTitlebarLayout() {
   const probe = document.createElement("div");
@@ -29,8 +25,8 @@ function paintedTitlebarLayout() {
 }
 
 // The test page has no overlay, so env(titlebar-area-*) is undefined just as in a minimized window.
-it("keeps the last overlay geometry while Windows reports an empty overlay", () => {
-  const overlay = fakeOverlay({ height: 40, right: window.innerWidth - 137 });
+it("keeps the titlebar layout while Windows reports an empty overlay", () => {
+  const overlay = Object.assign(new EventTarget(), { visible: true });
   using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
   using _overlay = vi
     .spyOn(
@@ -40,18 +36,17 @@ it("keeps the last overlay geometry while Windows reports an empty overlay", () 
     )
     .mockReturnValue(overlay);
   const root = document.documentElement;
+  const stopPlatformClasses = syncDocumentElectronPlatformClasses("Win32");
   const stop = syncDocumentWindowControlsOverlayClass();
   try {
     overlay.visible = false;
-    overlay.getTitlebarAreaRect = () => new DOMRect();
     overlay.dispatchEvent(new Event("geometrychange"));
 
     expect(root.classList.contains("wco")).toBe(true);
     expect(paintedTitlebarLayout()).toEqual({ height: 40, width: 137 + 12 });
   } finally {
     stop();
+    stopPlatformClasses();
     root.classList.remove("wco");
-    root.style.removeProperty("--wco-height");
-    root.style.removeProperty("--wco-controls-width");
   }
 });
