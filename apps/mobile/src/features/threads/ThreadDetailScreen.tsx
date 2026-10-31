@@ -671,7 +671,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
-  const floatingStatus = ((): FloatingWorkingStatus | null => {
+  const deriveFloatingStatus = (ready: boolean): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
       connectionError: connectionRetrying ? retryConnectionError : props.connectionError,
       connectionState: props.connectionStateLabel,
@@ -724,7 +724,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       return { kind: "syncing", label: threadSyncLabel };
     }
     const childInput = childThreadInputs[0];
-    if (childInput && contentPresentationKind === "ready") {
+    if (childInput && ready) {
       return {
         kind: "child-input",
         label: childThreadInputsTitle(childThreadInputs),
@@ -735,13 +735,13 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
         },
       };
     }
-    if (props.isCompacting && contentPresentationKind === "ready") {
+    if (props.isCompacting && ready) {
       return { kind: "compacting" };
     }
-    if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
+    if (props.activeWorkStartedAt !== null && ready) {
       return { kind: "working", startedAt: props.activeWorkStartedAt };
     }
-    if (pendingBackgroundWork !== null && contentPresentationKind === "ready") {
+    if (pendingBackgroundWork !== null && ready) {
       return {
         kind: "background",
         label: pendingBackgroundWork.title,
@@ -764,7 +764,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
         },
       };
     }
-    if (contentPresentationKind === "ready" && (snoozed || settled || woke)) {
+    if (ready && (snoozed || settled || woke)) {
       const state = snoozed ? "snoozed" : settled ? "settled" : "woke";
       const label =
         snoozed && snoozedUntil !== null
@@ -791,7 +791,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
         },
       };
     }
-    if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {
+    if (props.selectedThread.goal !== null && ready) {
       const goal = presentProviderGoal(props.selectedThread.goal, false);
       return {
         kind: "goal",
@@ -800,10 +800,16 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       };
     }
     return null;
-  })();
+  };
+  const floatingStatus = deriveFloatingStatus(contentPresentationKind === "ready");
   const showWorkingControl = floatingStatus !== null;
+  // The pill appears once messages load. Reserving its room while they load lets the feed lay
+  // out once; room that appears mid-load moves the end the feed is settling toward.
+  const reservesStatusRoom =
+    contentPresentationKind === "loading" && deriveFloatingStatus(true) !== null;
   const showFloatingStatus =
     showWorkingControl ||
+    reservesStatusRoom ||
     queuedCount > 0 ||
     agentsSegment !== null ||
     devicePreviews.length > 0 ||
@@ -1038,22 +1044,33 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   // LegendList does not re-anchor short followed conversations when floating
   // coverage changes after load. Re-pin each time it settles at a new value;
   // the repin checks follow state so a user who scrolled up stays put.
-  const settledFloatingCoverageRef = useRef(0);
+  const floatingCoverageTarget = showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0;
+  const settledFloatingCoverageRef = useRef(floatingCoverageTarget);
+  const markCoverageSettled = (coverage: number) => {
+    settledFloatingCoverageRef.current = coverage;
+  };
   const repinAfterCoverageSettles = (coverage: number) => {
     if (coverage === settledFloatingCoverageRef.current) return;
     settledFloatingCoverageRef.current = coverage;
     scheduleOverlayRepin(50);
   };
-  const floatingCoverageTarget = showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0;
-  const floatingControlCoverage = useDerivedValue(
-    () =>
-      withTiming(
-        floatingCoverageTarget,
-        { duration: 180, reduceMotion: ReduceMotion.System },
-        (finished) => {
-          if (finished) runOnJS(repinAfterCoverageSettles)(floatingCoverageTarget);
-        },
-      ),
+  const floatingControlCoverage = useSharedValue(floatingCoverageTarget);
+  useAnimatedReaction(
+    () => floatingCoverageTarget,
+    (target, previous) => {
+      // The first run applies its target without animating; animating would move the feed's end.
+      // The target can change after the first render but before this first run.
+      if (previous === null) {
+        floatingControlCoverage.set(target);
+        runOnJS(markCoverageSettled)(target);
+        return;
+      }
+      floatingControlCoverage.set(
+        withTiming(target, { duration: 180, reduceMotion: ReduceMotion.System }, (finished) => {
+          if (finished) runOnJS(repinAfterCoverageSettles)(target);
+        }),
+      );
+    },
     [floatingCoverageTarget],
   );
   // Android measures its expanded card in-flow; only iOS needs extra overlay coverage.
