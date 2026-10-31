@@ -784,6 +784,17 @@ describe("ClaudeAdapterV2 approval presentation", () => {
       callbackOptions: { decisionReason: "Run make?" },
     });
     assert.deepEqual(presentation, {});
+
+    // With no command, title, or description, the prompt is the raw reason itself.
+    const reasonOnly = "\u001b[33mHook needs confirmation\u001b[0m";
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeApprovalPresentation({
+        permissionMode: "default",
+        prompt: reasonOnly,
+        callbackOptions: { decisionReason: reasonOnly },
+      }),
+      {},
+    );
   });
 });
 
@@ -802,6 +813,22 @@ describe("ClaudeAdapterV2 session permissions", () => {
     assert.equal(result.message, "User declined tool execution.");
     assert.equal(result.interrupt, undefined);
   });
+
+  it.each(["Bash", "Monitor"])(
+    "does not grant all %s commands without an SDK suggestion",
+    (toolName) => {
+      const result = ClaudeAdapterV2.permissionResultFromDecision({
+        toolName,
+        decision: "acceptForSession",
+        toolInput: { command: "git push" },
+        toolUseID: "escalated-command",
+      });
+      assert.equal(result.behavior, "allow");
+      if (result.behavior !== "allow") return;
+      assert.deepEqual(result.updatedInput, { command: "git push" });
+      assert.deepEqual(result.updatedPermissions ?? [], []);
+    },
+  );
 
   it("forces suggested permission updates to session scope", () => {
     const result = ClaudeAdapterV2.permissionResultFromDecision({
@@ -856,8 +883,12 @@ describe("ClaudeAdapterV2 session permissions", () => {
   });
 });
 
-describe("ClaudeAdapterV2 Auto-accept edits", () => {
-  it.effect("asks before a command instead of allowing it", () =>
+describe("ClaudeAdapterV2 escalated permissions", () => {
+  it.effect.each([
+    { mode: "auto", response: "accept" },
+    { mode: "auto", response: "decline" },
+    { mode: "auto-accept-edits", response: "accept" },
+  ] as const)("asks in $mode ($response)", ({ mode, response }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -898,7 +929,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           },
         });
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "auto-accept-edits",
+          runtimeMode: mode,
           interactionMode: "default",
           cwd: "/workspace",
         });
@@ -926,16 +957,16 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
             runtimePolicy,
           }),
         );
-        assert.equal(openedOptions?.permissionMode, "acceptEdits");
+        assert.equal(openedOptions?.permissionMode, mode === "auto" ? "auto" : "acceptEdits");
         const canUseTool = openedOptions?.canUseTool;
         assert.isFunction(canUseTool);
 
         const requestEvent = yield* runtime.events.pipe(
-          Stream.takeUntil(
+          Stream.filter(
             (event) =>
               event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
           ),
-          Stream.runCollect,
+          Stream.runHead,
           Effect.forkScoped,
         );
         const command = { command: "node -e 'console.log(42)'" };
@@ -944,7 +975,8 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
             signal: new AbortController().signal,
             toolUseID: "tool-bash-accept-edits",
             requestId: "request-bash-accept-edits",
-            description: "Check the Node runtime",
+            title: "Claude wants to run node",
+            decisionReason: "\u001b[33mHook needs confirmation\u001b[0m",
           }),
         ).pipe(Effect.forkScoped);
         const first = yield* Effect.raceFirst(
@@ -957,19 +989,26 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
         );
         assert.equal(first.type, "request", "the command ran without asking");
         if (first.type !== "request") return;
-        const event = first.event.find((event) => event.type === "runtime_request.updated");
-        assert.equal(event?.runtimeRequest.kind, "command");
-        const approval = first.event.findLast((event) => event.type === "turn_item.updated");
-        assert.equal(
-          approval?.turnItem.type === "approval_request" ? approval.turnItem.prompt : undefined,
-          command.command,
-        );
+        const event = first.event;
+        assert.isTrue(Option.isSome(event));
+        if (
+          Option.isNone(event) ||
+          event.value.type !== "turn_item.updated" ||
+          event.value.turnItem.type !== "approval_request"
+        )
+          return;
+        assert.equal(event.value.turnItem.requestKind, "command");
+        assert.equal(event.value.turnItem.prompt, command.command);
+        assert.equal(event.value.turnItem.reason, "Hook needs confirmation");
 
         yield* runtime.respondToRuntimeRequest({
-          requestId: event!.runtimeRequest.id,
-          decision: "accept",
+          requestId: event.value.turnItem.requestId,
+          decision: response,
         });
-        assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
+        assert.equal(
+          (yield* Fiber.join(decision))?.behavior,
+          response === "accept" ? "allow" : "deny",
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
