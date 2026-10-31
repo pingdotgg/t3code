@@ -53,6 +53,10 @@ function readFocusContext(event: KeyboardEvent): Partial<ShortcutMatchContext> {
   };
 }
 
+function isInsideConfirmation(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[role="alertdialog"]') !== null;
+}
+
 function runScope(scope: CommandScope, event: KeyboardEvent): boolean {
   const { commands, options } = scope;
   if (options.when && !options.when(event)) return false;
@@ -63,7 +67,12 @@ function runScope(scope: CommandScope, event: KeyboardEvent): boolean {
     { context: { ...readFocusContext(event), ...options.context?.() } },
   );
   const handler = command === null ? undefined : commands[command];
-  return handler !== undefined && handler(event) !== false;
+  if (handler === undefined) return false;
+  if (isInsideConfirmation(event.target)) {
+    event.preventDefault();
+    return true;
+  }
+  return handler(event) !== false;
 }
 
 function runScopes(scopes: readonly CommandScope[], event: KeyboardEvent): boolean {

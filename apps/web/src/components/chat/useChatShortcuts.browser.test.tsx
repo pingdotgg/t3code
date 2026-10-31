@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { useChatShortcuts } from "./useChatShortcuts";
@@ -25,7 +26,8 @@ function Launcher(props: { keys: string; received: string[] }) {
   useEffect(() => {
     const claim = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (!props.keys.toLowerCase().split("").includes(event.key.toLowerCase())) return;
+      const key = surfaceShortcutKey(event);
+      if (key === null || !props.keys.toLowerCase().includes(key)) return;
       event.preventDefault();
       props.received.push(event.key);
     };
@@ -93,4 +95,40 @@ it("still types other letters into the composer while the launcher is open", asy
 
   expect(composerKeys).toEqual(["a"]);
   expect(received).toEqual([]);
+});
+
+it("leaves a non-Latin launcher letter to the launcher by its physical key", async () => {
+  const composerKeys: string[] = [];
+  const received: string[] = [];
+  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
+  await screen.rerender(<Chat composerKeys={composerKeys} launcher={{ keys: "BT", received }} />);
+
+  // Playwright cannot press a key its US layout lacks, so send what a Ukrainian T key sends.
+  const event = new KeyboardEvent("keydown", {
+    key: "\u0435",
+    code: "KeyT",
+    bubbles: true,
+    cancelable: true,
+  });
+  (document.activeElement ?? document.body).dispatchEvent(event);
+
+  expect(composerKeys).toEqual([]);
+  expect(received).toEqual(["\u0435"]);
+});
+
+it.each([
+  { key: "b", code: "KeyN", composer: [], launcher: ["b"] },
+  { key: "x", code: "KeyB", composer: ["x"], launcher: [] },
+  { key: "è", code: "KeyT", composer: ["è"], launcher: [] },
+])("routes $key on $code by the typed letter", async ({ key, code, composer, launcher }) => {
+  const composerKeys: string[] = [];
+  const received: string[] = [];
+  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
+  await screen.rerender(<Chat composerKeys={composerKeys} launcher={{ keys: "BT", received }} />);
+
+  const event = new KeyboardEvent("keydown", { key, code, bubbles: true, cancelable: true });
+  (document.activeElement ?? document.body).dispatchEvent(event);
+
+  expect(composerKeys).toEqual(composer);
+  expect(received).toEqual(launcher);
 });
