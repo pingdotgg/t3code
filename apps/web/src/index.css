@@ -2428,6 +2428,12 @@ code {
   position: relative;
 }
 
+/* Tiptap's injected base CSS disables ligatures; match sent messages. */
+.composer-tiptap.ProseMirror {
+  font-variant-ligatures: normal;
+  font-feature-settings: normal;
+}
+
 .composer-tiptap p {
   margin: 0;
 }
