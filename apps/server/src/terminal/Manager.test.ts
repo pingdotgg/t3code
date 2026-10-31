@@ -40,6 +40,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as TerminalManager from "./Manager.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import packageJson from "../../package.json" with { type: "json" };
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
@@ -1806,6 +1807,51 @@ it.layer(
         expect.soft(fishFeatures, JSON.stringify({ platform, env, runtimeEnv })).toEqual(expected);
       }
     }),
+  );
+
+  it.effect.each([
+    {
+      platform: "linux",
+      parentEnv: { TERM_PROGRAM: "Apple_Terminal", TERM_PROGRAM_VERSION: "455" },
+      runtimeEnv: { TERM_PROGRAM: "", TERM_PROGRAM_VERSION: "custom-version" },
+    },
+    {
+      platform: "win32",
+      parentEnv: { term_program: "Apple_Terminal", Term_Program_Version: "455" },
+      runtimeEnv: { Term_Program: "", term_program_version: "custom-version" },
+    },
+  ] as const)(
+    "identifies as T3 Code unless the terminal env overrides it on $platform",
+    ({ platform, parentEnv, runtimeEnv }) =>
+      Effect.gen(function* () {
+        const originalEnv = { ...parentEnv };
+        const env = Object.freeze(parentEnv);
+        const { manager, ptyAdapter } = yield* createManager(5, { env }).pipe(
+          Effect.provide(layerWithHostPlatform(platform)),
+        );
+
+        yield* manager.open(openInput());
+        yield* manager.restart(restartInput({ env: runtimeEnv }));
+
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        for (const [index, expected] of [
+          { TERM_PROGRAM: "t3code", TERM_PROGRAM_VERSION: packageJson.version },
+          { TERM_PROGRAM: "", TERM_PROGRAM_VERSION: "custom-version" },
+        ].entries()) {
+          const spawnEnv = ptyAdapter.spawnInputs[index]!.env;
+          for (const [key, value] of Object.entries(expected)) {
+            expect
+              .soft(
+                Object.entries(spawnEnv)
+                  .filter(([candidate]) => candidate.toUpperCase() === key)
+                  .map(([, entryValue]) => entryValue),
+                `${index === 0 ? "open" : "restart"} ${key}`,
+              )
+              .toEqual([value]);
+          }
+        }
+        expect(env).toEqual(originalEnv);
+      }),
   );
 
   it.effect("filters app runtime env variables from terminal sessions", () =>
