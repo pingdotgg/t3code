@@ -1200,7 +1200,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        const message = `t3 checkpoint ref=${input.checkpointRef}`;
+        const headBranch = headExists
+          ? (yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["symbolic-ref", "-q", "HEAD"],
+              allowNonZeroExit: true,
+            })).stdout.trim()
+          : "";
+        // listAuthoredPaths reads head= back; refnames cannot contain spaces.
+        const message = `t3 checkpoint ref=${input.checkpointRef}${headBranch ? ` head=${headBranch}` : ""}`;
         // HEAD is the parent so listAuthoredPaths can see how HEAD moved between checkpoints.
         const commitTreeResult = yield* execute({
           operation,
@@ -1406,17 +1415,23 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         args: [
           "log",
           "--no-walk=unsorted",
-          "--format=%P %ct",
+          "--format=%P %ct %s",
           `${input.fromCheckpointRef}^{commit}`,
           `${input.toCheckpointRef}^{commit}`,
         ],
       });
       const [fromLine = "", toLine = ""] = heads.stdout.trimEnd().split("\n");
-      const [startHead = "", capturedAt = ""] = fromLine.split(" ");
-      const [endHead = ""] = toLine.split(" ");
+      const fromFields = fromLine.split(" ");
+      const toFields = toLine.split(" ");
+      const [startHead = "", capturedAt = ""] = fromFields;
+      const [endHead = ""] = toFields;
       if (startHead === "" || endHead === "" || startHead === endHead) {
         return null;
       }
+      const headBranch = (fields: ReadonlyArray<string>) =>
+        fields.find((field) => field.startsWith("head="))?.slice("head=".length);
+      const startBranch = headBranch(fromFields);
+      const endBranch = headBranch(toFields);
 
       const listPaths = (args: ReadonlyArray<string>) =>
         execute({
@@ -1427,11 +1442,25 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
+      // Commits HEAD left behind count as discarded work (reset, amend, rebase) unless the
+      // turn switched branches and the branch it left still holds them.
+      const switchedBranch =
+        startBranch !== undefined &&
+        endBranch !== undefined &&
+        startBranch !== endBranch &&
+        (yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["merge-base", "--is-ancestor", startHead, startBranch],
+          allowNonZeroExit: true,
+        })).exitCode === 0;
       const pathLists = yield* Effect.all(
         [
           listPaths(["diff", startHead, `${input.fromCheckpointRef}^{commit}`]),
           listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
-          listPaths(["log", "--format=", "--diff-merges=remerge", `${endHead}..${startHead}`]),
+          switchedBranch
+            ? Effect.succeed([])
+            : listPaths(["log", "--format=", "--diff-merges=remerge", `${endHead}..${startHead}`]),
           listPaths([
             "log",
             "--format=",
