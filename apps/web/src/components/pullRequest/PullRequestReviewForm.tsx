@@ -1,54 +1,38 @@
 import { useAtomCommand } from "~/state/use-atom-command";
 import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
+/**
+ * with whatever line comments the review is holding. The verdict is picked by the composer's
+ * segmented control; the popover around it belongs to PullRequestComposer.
+ */
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
-import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
-import { useState, type ReactNode, type RefObject } from "react";
+import { MessageSquareIcon, XIcon } from "lucide-react";
+import type { RefObject } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { Button } from "../ui/button";
-import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { readableFailure } from "./pullRequestDetail.logic";
+import { PullRequestSubmitKeyHint } from "./PullRequestSubmitKeyHint";
 import {
   pullRequestReviewKey,
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
 
-const VERDICTS: ReadonlyArray<{
-  readonly value: PullRequestReviewVerdict;
-  readonly label: string;
-  readonly sent: (term: string) => string;
-  readonly icon: ReactNode;
-}> = [
-  {
-    value: "comment",
-    label: "Comment",
-    sent: () => "Review submitted",
-    icon: <MessageSquareIcon className="size-3" />,
-  },
-  {
-    value: "approve",
-    label: "Approve",
-    sent: (term) => `${capitalizeTerm(term)} approved`,
-    icon: <CheckIcon className="size-3" />,
-  },
-  {
-    value: "request-changes",
-    label: "Request changes",
-    sent: () => "Changes requested",
-    icon: <XCircleIcon className="size-3" />,
-  },
-];
+const sent = (term: string): Record<PullRequestReviewVerdict, string> => ({
+  comment: "Review submitted",
+  approve: `${capitalizeTerm(term)} approved`,
+  "request-changes": "Changes requested",
+});
 
 export function PullRequestReviewForm({
   environmentId,
   reference,
+  verdict,
   term,
-  verdicts,
   requestChangesSummaryRequired,
   textareaRef,
   pending,
@@ -57,32 +41,27 @@ export function PullRequestReviewForm({
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  /** The host's word for a change request, as in "pull request". */
+  verdict: PullRequestReviewVerdict;
   term: string;
-  verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   requestChangesSummaryRequired: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   pending: boolean;
   onPendingChange: (pending: boolean) => void;
   onSubmitted: () => void;
 }) {
-  const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
   const comments = usePendingReviewComments(reference);
   const reviewKey = pullRequestReviewKey(reference);
   const body = usePullRequestReviewStore((store) => store.summaries[reviewKey] ?? "");
   const removeComments = usePullRequestReviewStore((store) => store.removeComments);
   const setSummary = usePullRequestReviewStore((store) => store.setSummary);
   const clearSummary = usePullRequestReviewStore((store) => store.clearSummary);
+  const clearComments = usePullRequestReviewStore((store) => store.clear);
   const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
     reportFailure: false,
   });
 
-  const offered = VERDICTS.filter((verdict) => verdicts.includes(verdict.value));
-  const selectedVerdict =
-    offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
-
-  const submit = async (verdict: (typeof VERDICTS)[number]) => {
-    if (pending) return;
+  const submit = async () => {
+    if (pending || !canSubmit) return;
     const submittedBody = body;
     const submittedComments = comments;
     onPendingChange(true);
@@ -90,7 +69,7 @@ export function PullRequestReviewForm({
       environmentId,
       input: {
         ...reference,
-        verdict: verdict.value,
+        verdict,
         body: submittedBody,
         comments: submittedComments,
       },
@@ -113,21 +92,21 @@ export function PullRequestReviewForm({
       submittedComments.map((comment) => comment.id),
     );
     clearSummary(reviewKey, submittedBody);
-    toastManager.add({ type: "success", title: verdict.sent(term) });
+    toastManager.add({ type: "success", title: sent(term)[verdict] });
     onSubmitted();
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
-  const canSubmit = (verdict: PullRequestReviewVerdict, summary: string) =>
+  const canSubmitReview = (verdict: PullRequestReviewVerdict, summary: string) =>
     verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
       : verdict === "approve" || summary.trim().length > 0 || comments.length > 0;
-  const placeholder =
-    selectedVerdict === undefined || canSubmit(selectedVerdict.value, "")
-      ? "Summarize your review (optional)"
-      : selectedVerdict.value === "request-changes" && requestChangesSummaryRequired
-        ? "Summarize your review (required to request changes)"
-        : "Summarize your review or add line comments";
+  const canSubmit = canSubmitReview(verdict, body);
+  const placeholder = canSubmitReview(verdict, "")
+    ? "Summarize your review (optional)"
+    : verdict === "request-changes" && requestChangesSummaryRequired
+      ? "Summarize your review (required to request changes)"
+      : "Summarize your review or add line comments";
 
   return (
     <>
@@ -138,44 +117,39 @@ export function PullRequestReviewForm({
         placeholder={placeholder}
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
-      />
-      <div className="mt-2 flex justify-end gap-2">
-        {offered.length > 1 ? (
-          <Select
-            value={selectedVerdict?.value ?? null}
-            disabled={pending}
-            onValueChange={(value) => {
-              if (value !== null) setRequestedVerdict(value);
-            }}
-          >
-            <SelectTrigger size="xs" className="mr-auto w-auto min-w-0" aria-label="Review verdict">
-              <span className="flex items-center gap-1.5">
-                {selectedVerdict?.icon}
-                {selectedVerdict?.label}
-              </span>
-            </SelectTrigger>
-            <SelectPopup side="top" alignItemWithTrigger={false}>
-              {offered.map((verdict) => (
-                <SelectItem key={verdict.value} value={verdict.value}>
-                  <span className="flex items-center gap-1.5">
-                    {verdict.icon}
-                    {verdict.label}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        ) : null}
-        <Button
-          size="xs"
-          disabled={
-            pending || selectedVerdict === undefined || !canSubmit(selectedVerdict.value, body)
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          // Approving takes no words, so the chord submits an empty summary too.
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !pending && canSubmit) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!event.repeat) void submit();
           }
-          onClick={() => {
-            if (selectedVerdict !== undefined) void submit(selectedVerdict);
-          }}
-        >
+        }}
+      />
+      <div className="mt-2 flex items-center justify-between gap-2">
+        {comments.length > 0 ? (
+          <span className="inline-flex min-w-0 items-center gap-1.5 rounded-row border border-border py-0.5 pr-0.5 pl-2 text-meta text-muted-foreground">
+            <MessageSquareIcon aria-hidden className="size-3.5 shrink-0" />
+            <span className="truncate">
+              {comments.length} line {comments.length === 1 ? "comment" : "comments"}
+            </span>
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
+              aria-label="Discard pending line comments"
+              disabled={pending}
+              onClick={() => clearComments(reviewKey)}
+            >
+              <XIcon className="size-3" />
+            </Button>
+          </span>
+        ) : (
+          <span />
+        )}
+        <Button size="xs" disabled={pending || !canSubmit} onClick={() => void submit()}>
           {pending ? "Submitting..." : "Submit review"}
+          <PullRequestSubmitKeyHint />
         </Button>
       </div>
     </>
