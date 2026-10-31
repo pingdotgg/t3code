@@ -132,7 +132,7 @@ With the `settings` capability, list up to 32 fields in `settings`. Each has a `
 ]
 ```
 
-Fill them in under **Settings** > **Integrations** in the web or desktop app, for the environment
+Fill them in under **Settings** > **Plugins** in the web or desktop app, for the environment
 selected at the top. A saved secret shows only that it is saved: enter a new value to replace it, or
 **Clear** it. A browser paired with a standard link sees the values but cannot change them. The
 mobile app shows the saved values read-only on the environment's settings screen (secrets only as

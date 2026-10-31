@@ -1,19 +1,5 @@
-/**
- * The actions enabled plugins offer, and running one.
- *
- * Actions come from the manifest of each enabled installation, so listing
- * them never starts a plugin. Each listed action carries an id naming the
- * installation's registration (`<installationId>:<generation>:<name>`). An
- * invoke with an id from an earlier registration is refused as `stale`, and
- * the catalogue's own generation check refuses one that races a re-enable,
- * so a click never reaches a plugin the list did not show. The list is
- * bounded per environment (see `PluginActionsSnapshot`), and only listed
- * actions run.
- *
- * Running an action calls the plugin's `action:<name>` handler with the
- * resolved target (see pluginApi.ts) under a deadline. Interrupting the
- * caller (a client that goes away) cancels the call.
- */
+// Ids pin registration generations; stale or omitted actions must never reach a replacement.
+// Listing starts no plugin, and caller interruption cancels the invoked handler.
 import {
   PLUGIN_ACTION_MESSAGE_MAX_LENGTH,
   PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT,

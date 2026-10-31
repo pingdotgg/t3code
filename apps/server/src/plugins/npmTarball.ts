@@ -1,16 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Gunzips with node:zlib, whose maxOutputLength bounds the inflated size.
-/**
- * Reads an npm package tarball into memory and refuses anything that could
- * land outside the package or that a digest could not describe.
- *
- * Only regular files and directories are accepted. Links, devices, absolute
- * paths, `..` or `.` segments, backslashes, colons, NUL bytes, and two entries that would be the
- * same file on a case-insensitive disk are refused, never skipped or
- * rewritten. Like npm, the first path segment (`package/`) is dropped. The
- * whole archive is checked before the caller writes any of it. Parsing runs
- * on the server's event loop, so every header, path, and entry is bounded and
- * the work stays linear in the inflated size.
- */
+// Validate the whole archive before writing: refuse nonregular entries, escaping paths and case-insensitive collisions.
+// Parsing runs on the event loop, so bound every header/path/entry and keep work linear in inflated size.
 import * as NodeZlib from "node:zlib";
 
 import * as Effect from "effect/Effect";

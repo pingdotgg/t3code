@@ -80,6 +80,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
+import { PluginSettingsSection } from "../plugins/PluginSettingsSection";
+
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
@@ -148,6 +150,7 @@ async function settle<A, E>(command: Promise<AtomCommandResult<A, E>>): Promise<
 /** Lets callbacks created earlier (dialogs, multi-step actions) act only on what the screen still shows. */
 function usePluginActionGate(current: PluginActionSubject | null) {
   const [gate] = useState(createPluginActionGate);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Dialog callbacks retain a gate that must track the committed screen and revoke on unmount.
   useLayoutEffect(() => {
     gate.set(current);
     return () => gate.set(null);
@@ -182,6 +185,7 @@ function AccessStatusSlot({ status }: { readonly status: string | null }) {
 /** Calls `refresh` when `key` changes from one known value to another; never on a timer. */
 function useRefreshOnChange(key: string | null, refresh: () => void) {
   const last = useRef(key);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate the external npm query cache when catalogue provenance changes.
   useEffect(() => {
     const previous = last.current;
     last.current = key;
@@ -254,7 +258,7 @@ type PluginManageAccessChildren = (
  * and renders `children` with it. Plugin settings forms, which save through an
  * administrative RPC, use it to go read-only.
  */
-export function PluginManageAccessScope({
+function PluginManageAccessScope({
   environment,
   children,
 }: {
@@ -467,6 +471,13 @@ export function PluginEnvironmentCatalog({
           </>
         )}
       </SettingsSection>
+      {catalogState._tag === "available" ? (
+        <PluginSettingsSection
+          environmentId={environment.environmentId}
+          capabilities={environment.serverConfig?.environment.capabilities}
+          readOnly={!canManage}
+        />
+      ) : null}
       {adding ? (
         <AddPluginDialog
           environment={environment}

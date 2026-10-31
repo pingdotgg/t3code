@@ -147,6 +147,7 @@ vi.mock("~/previewMiniPlayerStore", () => ({
   ),
 }));
 vi.mock("~/rightPanelStore", () => ({
+  rightPanelHostRef: (ref: ScopedThreadRef) => ref,
   selectSelectedRightPanelSurface: () => null,
   useRightPanelStore: { getState: () => ({ close: vi.fn() }) },
 }));
