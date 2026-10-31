@@ -1208,7 +1208,10 @@ function sortMessagesByTurnItemOrder(
 interface FamilyPageThread {
   readonly id: ThreadId;
   readonly deleted: boolean;
-  /** Ordinal of the source run a fork copied history through; null when that run is gone. */
+  /**
+   * Ordinal of the source run a fork copied history through; null when that run is gone.
+   * Null for side chats, which show only their own rows (`inheritedRunFork`).
+   */
   readonly forkedFrom: { readonly threadId: ThreadId; readonly runOrdinal: number | null } | null;
 }
 
@@ -5408,6 +5411,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       FROM family
       LEFT JOIN family AS source
         ON json_extract(family.payload_json, '$.forkedFrom.type') = 'run'
+        AND json_extract(family.payload_json, '$.lineage.sideChat') IS NOT 1
         AND source.thread_id = json_extract(family.payload_json, '$.forkedFrom.threadId')
       LEFT JOIN orchestration_v2_projection_runs AS run
         ON run.thread_id = source.thread_id

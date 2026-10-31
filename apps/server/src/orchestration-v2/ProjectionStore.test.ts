@@ -1406,7 +1406,11 @@ it.effect("SQL delete a fork family's pages once no live thread shows them", () 
       const id = (name: string) => ThreadId.make(`thread:fork-pages:${family}:${name}`);
       const runId = (thread: string, ordinal: number) =>
         RunId.make(`run:fork-pages:${family}:${thread}:${ordinal}`);
-      const createThread = (name: string, forkedFrom?: { thread: string; ordinal: number }) =>
+      const createThread = (
+        name: string,
+        forkedFrom?: { thread: string; ordinal: number },
+        sideChat?: true,
+      ) =>
         store.apply({
           id: EventId.make(`event:fork-pages:${family}:${name}`),
           type: "thread.created",
@@ -1429,6 +1433,7 @@ it.effect("SQL delete a fork family's pages once no live thread shows them", () 
               parentThreadId: forkedFrom === undefined ? null : id(forkedFrom.thread),
               relationshipToParent: forkedFrom === undefined ? null : "fork",
               rootThreadId: id("source"),
+              ...(sideChat ? { sideChat } : {}),
             },
             forkedFrom:
               forkedFrom === undefined
@@ -1532,7 +1537,8 @@ it.effect("SQL delete a fork family's pages once no live thread shows them", () 
       });
 
       // source: run 1 (page + MCP App), run 2 (page). fork: run 1 of source, then its own
-      // runs 1 and 2. nested: run 1 of fork.
+      // runs 1 and 2. nested: run 1 of fork. side: a side chat from run 1 of source, which
+      // shows only its own rows.
       yield* createThread("source");
       yield* createRun("source", 1);
       yield* createRun("source", 2);
@@ -1545,6 +1551,7 @@ it.effect("SQL delete a fork family's pages once no live thread shows them", () 
       const forkPage = yield* publish("fork", 1, "html_render");
       const forkLater = yield* publish("fork", 2, "mcp_app");
       yield* createThread("nested", { thread: "fork", ordinal: 1 });
+      yield* createThread("side", { thread: "source", ordinal: 1 }, true);
       const pages = { sourcePage, sourceApp, sourceLater, forkPage, forkLater };
       const deleteThread = (name: string) =>
         Effect.gen(function* () {
@@ -1576,9 +1583,11 @@ it.effect("SQL delete a fork family's pages once no live thread shows them", () 
       [...(yield* sourceFirst.deleteThread("nested"))],
       [sourceFirst.pages.sourcePage, sourceFirst.pages.sourceApp, sourceFirst.pages.forkPage],
     );
+    assert.sameMembers([...(yield* sourceFirst.deleteThread("side"))], []);
 
     // Forks first: each thread's own pages go with the last thread that shows them.
     const forksFirst = yield* createFamily("forks-first");
+    assert.sameMembers([...(yield* forksFirst.deleteThread("side"))], []);
     assert.sameMembers([...(yield* forksFirst.deleteThread("nested"))], []);
     assert.sameMembers(
       [...(yield* forksFirst.deleteThread("fork"))],
