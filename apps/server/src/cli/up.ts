@@ -198,7 +198,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   if (before.connect === null && Option.getOrElse(flags.connect, () => false)) {
     return yield* new CliError.UserError({
       cause: "connect",
-      userMessage: "T3 Connect is unavailable in this build.",
+      userMessage:
+        "T3 Connect is unavailable: T3CODE_CONNECT_ENABLED=false, or this build is missing T3 Connect public configuration.",
     });
   }
 
