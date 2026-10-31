@@ -14,7 +14,6 @@ import {
   ChartNoAxesColumnIcon,
   CircleAlertIcon,
   ChevronDownIcon,
-  ChevronRightIcon,
   InfoIcon,
   ServerIcon,
   SlidersHorizontalIcon,
@@ -84,11 +83,14 @@ import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { SettingsPaneHeader, SettingsTabNotch } from "../settings/SettingsTabNotch";
-import { WorkspaceBreadcrumbText } from "../WorkspaceBreadcrumb";
+import {
+  WorkspaceBreadcrumb,
+  WorkspaceBreadcrumbItem,
+  WorkspaceBreadcrumbSeparator,
+  WorkspaceBreadcrumbText,
+} from "../WorkspaceBreadcrumb";
 import { PageEmptyState } from "../PageEmptyState";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
-import { PaneNotch } from "../PaneNotch";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
@@ -367,18 +369,14 @@ export function UsagePage() {
     shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
       ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} – ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12)}`
       : `${formatDayShort(shownWindow.sinceDay)} – ${formatDayShort(shownWindow.untilDay)}`;
-  // The page is its pane's notch tab, like Settings (pen OxNuE), with the
-  // metric and period on the pane's top bar to its right.
   const topbarContent = (
-    <>
-      <SettingsTabNotch
-        modal
-        title="Usage"
-        icon={<ChartNoAxesColumnIcon aria-hidden className="size-3.5 shrink-0 text-foreground" />}
-      >
-        <nav aria-label="Usage breadcrumb" className="flex min-w-0 items-center gap-1.75">
-          <h1 className="shrink-0">Usage</h1>
-          <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-dim-foreground" />
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
+      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
+        <WorkspaceBreadcrumbItem>
+          <h1>Usage</h1>
+        </WorkspaceBreadcrumbItem>
+        <WorkspaceBreadcrumbSeparator />
+        <WorkspaceBreadcrumbItem className="min-w-10 shrink">
           <UsageEnvironmentFilter
             environments={environments}
             selectedEnvironments={selectedEnvironments}
@@ -391,17 +389,16 @@ export function UsagePage() {
             contractMismatches={merged.contractMismatches}
             onOpenModelPrices={() => setPriceDialog({})}
           />
-          <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-dim-foreground" />
+        </WorkspaceBreadcrumbItem>
+        <WorkspaceBreadcrumbSeparator />
+        <WorkspaceBreadcrumbItem current className="min-w-10">
           <UsageProviderFilter
             hiddenProviders={hiddenProviders}
             onChange={(next) => updatePreferences({ hiddenProviders: next })}
           />
-        </nav>
-      </SettingsTabNotch>
-      <PaneNotch
-        side="right"
-        className="ms-auto hidden shrink-0 justify-end gap-2 @4xl/usage-header:flex"
-      >
+        </WorkspaceBreadcrumbItem>
+      </WorkspaceBreadcrumb>
+      <div className="ms-auto hidden shrink-0 items-center justify-end gap-2 @4xl/usage-header:flex">
         {/* Limits are always current, so they have no period. The period sits before the metric
             tabs so dropping it never moves them. */}
         {showingLimits ? null : (
@@ -446,11 +443,8 @@ export function UsagePage() {
         >
           <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
-      </PaneNotch>
-      <PaneNotch
-        side="right"
-        className="ms-auto shrink-0 justify-end gap-1 @4xl/usage-header:hidden"
-      >
+      </div>
+      <div className="ms-auto flex shrink-0 items-center justify-end gap-1 @4xl/usage-header:hidden">
         {showingLimits ? null : (
           <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
             <SelectTrigger
@@ -510,20 +504,17 @@ export function UsagePage() {
         >
           <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
-      </PaneNotch>
-    </>
+      </div>
+    </div>
   );
 
   return (
-    <AppRouteModal label="Usage">
-      <div
-        data-app-modal-pane=""
-        className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground"
-      >
-        <SettingsPaneHeader modal className="@container/usage-header">
+    <AppRouteModal label="Usage" variant="app-panel">
+      <div data-app-modal-pane="" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 ps-5 pe-2">
           {topbarContent}
           <AppRouteModalClose />
-        </SettingsPaneHeader>
+        </header>
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer
@@ -1411,21 +1402,21 @@ function UsageEnvironmentFilter({
 
   return (
     <Menu>
-      <MenuTrigger render={<InlineButton />} className="min-w-0 max-w-full sm:shrink">
-        {/* The leading glyph doubles as the issue status, so the picker keeps
-            its width while environments report. */}
-        <span className="mr-1.5 flex size-3.5 shrink-0 items-center justify-center">
+      <MenuTrigger render={<InlineButton />} className="group/usage-environment min-w-0 max-w-full">
+        <WorkspaceBreadcrumbText>{label}</WorkspaceBreadcrumbText>
+        <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
           {showUsageStatus && hasIssue ? (
             <CircleAlertIcon
               className="size-3.5 text-warning-foreground"
               aria-label="Some environments could not report usage"
             />
           ) : (
-            <ServerIcon className="size-3.5" aria-hidden />
+            <ChevronDownIcon
+              className="size-3.5 opacity-60 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
+              aria-hidden
+            />
           )}
         </span>
-        <WorkspaceBreadcrumbText className="mr-1.5">{label}</WorkspaceBreadcrumbText>
-        <ChevronDownIcon className="size-3 shrink-0 text-icon-muted" aria-hidden />
       </MenuTrigger>
       <MenuPopup align="start">
         <MenuCheckboxItem
@@ -1559,9 +1550,12 @@ function UsageProviderFilter({
 
   return (
     <Menu>
-      <MenuTrigger render={<InlineButton />} className="min-w-0 max-w-full sm:shrink">
-        <span className="mr-1.5 min-w-0 truncate">{label}</span>
-        <ChevronDownIcon className="size-3 shrink-0 text-icon-muted" aria-hidden />
+      <MenuTrigger render={<InlineButton />} className="group/usage-provider min-w-0 max-w-full">
+        <span className="min-w-0 truncate">{label}</span>
+        <ChevronDownIcon
+          className="size-3.5 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100"
+          aria-hidden
+        />
       </MenuTrigger>
       <MenuPopup align="start">
         <MenuCheckboxItem
