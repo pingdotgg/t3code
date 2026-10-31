@@ -20,6 +20,7 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
+import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
 import type {
   ChangeRequest,
@@ -1670,6 +1671,328 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(second).toBeNull();
       expect(listed(providerCalls)).toHaveLength(2);
     }),
+  );
+
+  it.effect.each(["merged", "closed"] as const)(
+    "status and discovery drop a %s PR only beyond its head and recover after external resets",
+    (state) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const behind = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+        yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Release head"]);
+        const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+        yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Unpushed work after release"]);
+        const ahead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "-b", "diverged", behind]);
+        yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Unrelated work"]);
+        const diverged = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "develop"]);
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: {
+            prListByHeadSelector: {
+              develop: [
+                {
+                  number: 301,
+                  title: "Release",
+                  url: "https://github.com/pingdotgg/t3code/pull/301",
+                  baseRefName: "main",
+                  headRefName: "develop",
+                  headSha: head,
+                  state,
+                  updatedAt: "2026-04-02T15:00:00Z",
+                },
+              ],
+            },
+          },
+        });
+
+        const results = [];
+        for (const [position, tip] of [
+          ["equal", head],
+          ["ahead", ahead],
+          ["reset to head", head],
+          ["behind", behind],
+          ["diverged", diverged],
+        ] as const) {
+          // External resets do not invalidate the branch lookup or provider caches.
+          yield* runGit(repoDir, ["reset", "--hard", tip]);
+          const discovered = yield* manager.branchPullRequest({ cwd: repoDir, branch: "develop" });
+          yield* manager.invalidateRemoteStatus(repoDir);
+          const status = yield* manager.status({ cwd: repoDir });
+          results.push({
+            position,
+            discovered: discovered?.number ?? null,
+            status: status.pr?.number ?? null,
+          });
+        }
+        expect(results).toEqual([
+          { position: "equal", discovered: 301, status: 301 },
+          { position: "ahead", discovered: null, status: null },
+          { position: "reset to head", discovered: 301, status: 301 },
+          { position: "behind", discovered: 301, status: 301 },
+          { position: "diverged", discovered: 301, status: 301 },
+        ]);
+        expect(listed(providerCalls)).toHaveLength(1);
+      }),
+  );
+
+  it.effect.each([
+    { state: "merged", head: "unfetched" },
+    { state: "closed", head: "missing" },
+    { state: "open", head: "ancestor" },
+  ] as const)("keeps a $state PR with a $head head", ({ state, head }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+      const headSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Continue work"]);
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListByHeadSelector: {
+            develop: [
+              {
+                number: 301,
+                title: "Release",
+                url: "https://github.com/pingdotgg/t3code/pull/301",
+                baseRefName: "main",
+                headRefName: "develop",
+                ...(head === "missing"
+                  ? {}
+                  : { headSha: head === "ancestor" ? headSha : "f".repeat(40) }),
+                state,
+              },
+            ],
+          },
+        },
+      });
+      const discovered = yield* manager.branchPullRequest({ cwd: repoDir, branch: "develop" });
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(discovered?.number).toBe(301);
+      expect(status.pr?.number).toBe(301);
+    }),
+  );
+
+  it.effect("keeps a terminal PR for a deleted branch even when a nested branch has advanced", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/release"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/release"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["push", "origin", "--delete", "feature/release"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/release"]);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Later work"]);
+      yield* runGit(repoDir, ["branch", "feature/release/child"]);
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListByHeadSelector: {
+            "feature/release": [
+              {
+                number: 301,
+                title: "Deleted release branch",
+                url: "https://github.com/pingdotgg/t3code/pull/301",
+                baseRefName: "main",
+                headRefName: "feature/release",
+                headSha: head,
+                state: "merged",
+              },
+            ],
+          },
+        },
+      });
+      const discovered = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/release",
+      });
+      expect(discovered?.number).toBe(301);
+    }),
+  );
+
+  it.effect("status filters its last known terminal PR when the host fails after local work", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+      const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [
+            [
+              {
+                number: 301,
+                title: "Release",
+                url: "https://github.com/pingdotgg/t3code/pull/301",
+                baseRefName: "main",
+                headRefName: "develop",
+                headSha: head,
+                state: "merged",
+              },
+            ],
+          ],
+          failWith: "Host unavailable",
+          failAfterCalls: 1,
+        },
+      });
+      expect((yield* manager.status({ cwd: repoDir })).pr?.number).toBe(301);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Work after release"]);
+      yield* manager.invalidateStatus(repoDir);
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(listed(providerCalls).length).toBeGreaterThan(1);
+      expect(status.pr).toBeNull();
+    }),
+  );
+
+  it.effect.each(["develop", "main"])(
+    "judges each saved PR by its own head on %s, regardless of PR number or latest update",
+    (branch) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        if (branch !== "main") yield* runGit(repoDir, ["checkout", "-b", branch]);
+        const released = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Next release"]);
+        const current = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        const remoteDir = yield* createBareRemote();
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "git@github.com:pingdotgg/t3code.git",
+          remoteDir,
+        );
+        yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+        const results = [];
+        for (const saved of [
+          {
+            name: "older number at current head",
+            number: 20,
+            headSha: current,
+            repository: "pingdotgg/t3code",
+            headBranch: branch,
+          },
+          {
+            name: "newer number already outgrown",
+            number: 40,
+            headSha: released,
+            repository: "pingdotgg/t3code",
+            headBranch: branch,
+          },
+          {
+            name: "unfetched saved head",
+            number: 20,
+            headSha: "f".repeat(40),
+            repository: "pingdotgg/t3code",
+            headBranch: branch,
+          },
+          {
+            name: "outgrown PR from this fork into an upstream",
+            number: 30,
+            headSha: released,
+            repository: "acme/t3code",
+            headBranch: branch,
+            headRepository: "pingdotgg/t3code",
+          },
+          {
+            name: "outgrown PR from another fork",
+            number: 30,
+            headSha: released,
+            repository: "acme/t3code",
+            headBranch: branch,
+            headRepository: "someone-else/t3code",
+          },
+          {
+            name: "another branch",
+            number: 20,
+            headSha: released,
+            repository: "pingdotgg/t3code",
+            headBranch: "other-release",
+          },
+        ]) {
+          const url = `https://github.com/${saved.repository}/pull/${saved.number}`;
+          const { manager, providerCalls } = yield* makeManager({
+            providerScenario: {
+              prListByHeadSelector: {
+                [branch]: [
+                  {
+                    number: 30,
+                    title: "Older release updated most recently",
+                    url: "https://github.com/pingdotgg/t3code/pull/30",
+                    baseRefName: "production",
+                    headRefName: branch,
+                    headSha: released,
+                    state: "merged",
+                    updatedAt: "2026-04-03T15:00:00Z",
+                  },
+                ],
+              },
+              pullRequest: {
+                number: saved.number,
+                url,
+                title: "Saved release into a different base",
+                baseRefName: "release",
+                headRefName: saved.headBranch,
+                headSha: saved.headSha,
+                state: "merged",
+                ...("headRepository" in saved
+                  ? {
+                      isCrossRepository: true,
+                      headRepositoryNameWithOwner: saved.headRepository,
+                      headRepositoryOwnerLogin: saved.headRepository.split("/")[0],
+                    }
+                  : {}),
+              },
+            },
+          });
+          yield* manager.branchPullRequest({ cwd: repoDir, branch });
+          const superseded = () =>
+            manager.branchSupersededPullRequest({
+              cwd: repoDir,
+              branch,
+              pullRequest: { number: saved.number, url },
+            });
+          results.push({ name: saved.name, superseded: yield* superseded() });
+          if (saved.name === "older number at current head") {
+            expect(
+              yield* Effect.all([superseded(), superseded(), superseded()], {
+                concurrency: "unbounded",
+              }),
+            ).toEqual([false, false, false]);
+            const savedReads = () =>
+              providerCalls.filter((call) => call.operation === "getChangeRequest").length;
+            expect(savedReads()).toBe(1);
+            yield* TestClock.adjust("5 minutes");
+            expect(yield* superseded()).toBe(false);
+            expect(savedReads()).toBe(2);
+          }
+          if (saved.name === "newer number already outgrown") {
+            yield* runGit(repoDir, ["reset", "--hard", released]);
+            expect(yield* superseded()).toBe(false);
+            yield* runGit(repoDir, ["reset", "--hard", current]);
+          }
+        }
+        expect(results).toEqual([
+          { name: "older number at current head", superseded: false },
+          { name: "newer number already outgrown", superseded: true },
+          { name: "unfetched saved head", superseded: false },
+          { name: "outgrown PR from this fork into an upstream", superseded: true },
+          { name: "outgrown PR from another fork", superseded: false },
+          { name: "another branch", superseded: false },
+        ]);
+      }),
   );
 
   // regression: #8600 settle threads server-side

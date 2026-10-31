@@ -228,7 +228,12 @@ export const make = Effect.gen(function* () {
                 });
                 if (
                   previous.headBranch === thread.branch &&
-                  (previous.state === "merged" || previous.state === "closed")
+                  (previous.state === "merged" || previous.state === "closed") &&
+                  !(yield* git.branchSupersededPullRequest({
+                    cwd,
+                    branch: thread.branch,
+                    pullRequest: thread.branchPullRequest,
+                  }))
                 ) {
                   branchPullRequest = thread.branchPullRequest;
                 }
