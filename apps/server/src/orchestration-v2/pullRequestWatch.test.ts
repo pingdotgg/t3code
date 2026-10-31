@@ -228,6 +228,23 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(still.changes, []);
     assert.deepEqual(still.next.owedChecks, ["e2e"]);
 
+    // Another gate failure owes the gate's running checks on top of those still owed.
+    const lint = { ...check("lint", "failure"), required: true };
+    const another = detail({ checks: [...gated.checks, lint] });
+    const both = evaluatePullRequestWatch(still.next, another, noRemarks);
+    assert.deepEqual(both.changes, [{ kind: "checks-failed", failed: [lint] }]);
+    assert.deepEqual(both.next.owedChecks, ["e2e"]);
+
+    // The last owed check finishing still wakes when an unrelated check fails in the same read.
+    const bot = check("bot", "failure");
+    const finishedWithBot = detail({
+      checks: [sonar, check("unit", "success"), check("e2e", "success"), bot],
+    });
+    assert.deepEqual(evaluatePullRequestWatch(waiting.next, finishedWithBot, noRemarks).changes, [
+      { kind: "checks-failed", failed: [bot] },
+      { kind: "checks-finished", failing: [sonar, bot] },
+    ]);
+
     // A later failure is its own wake and leaves nothing more owed.
     const broke = detail({ checks: [sonar, check("unit", "success"), check("e2e", "failure")] });
     const failure = evaluatePullRequestWatch(waiting.next, broke, noRemarks);

@@ -92,11 +92,13 @@ export function evaluatePullRequestWatch(
       const running = detail.checks
         .filter((check) => check.status === "pending")
         .map((check) => check.name);
+      const stillOwed = owedBefore.filter((name) => running.includes(name));
       const gateNewlyFailed = newlyFailed.some((check) => gateNames.includes(check.name));
       owedChecks = gateNewlyFailed
-        ? running.filter((name) => gateNames.includes(name))
-        : owedBefore.filter((name) => running.includes(name));
-      if (newlyFailed.length === 0 && owedBefore.length > 0 && owedChecks.length === 0) {
+        ? [...new Set([...stillOwed, ...running.filter((name) => gateNames.includes(name))])]
+        : stillOwed;
+      const owedFailed = newlyFailed.some((check) => owedBefore.includes(check.name));
+      if (!owedFailed && owedBefore.length > 0 && owedChecks.length === 0) {
         changes.push({ kind: "checks-finished", failing: gate.filter(isFailedCheck) });
       }
     }
