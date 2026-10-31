@@ -13441,7 +13441,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     // A concurrent command with this id for another thread can commit first,
     // under that thread's lock; its receipt is not this command's result.
-    if (!canReplayCommandReceipt(committed.receipt.threadId, commandThreadId(command))) {
+    if (committed.receipt.threadId !== commandThreadId(command)) {
       return yield* new OrchestratorCommandIdConflictError({
         commandId: command.commandId,
         commandType: command.type,
