@@ -698,6 +698,7 @@ describe("mobile composer drafts", () => {
       const fileLink = formatComposerContextReference(
         getComposerDraftSnapshot(key).context!.records[0]!,
       );
+      expect(getComposerDraftSnapshot(key).text).toBe(`${fileLink} `);
       setComposerDraftText(key, `${fileLink} ${fileLink}`);
       expect(getComposerDraftSnapshot(key).attachments).toEqual([file, image]);
       setComposerDraftText(key, fileLink);
