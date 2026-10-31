@@ -72,7 +72,6 @@ import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolb
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigation";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { relativeTime } from "../../lib/time";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -114,6 +113,7 @@ import { usePullRequestFilesSection } from "./PullRequestFiles";
 import { usePullRequestMaintainerEdits } from "./usePullRequestMaintainerEdits";
 import { PullRequestDescription } from "./PullRequestDescription";
 import { PullRequestMediaVisibleContext } from "./PullRequestMedia";
+import { usePullRequestTabControl } from "./PullRequestTabControl";
 import { PullRequestMarkdownRepository } from "./PullRequestMarkdown";
 import {
   PullRequestStatusMenu,
@@ -132,6 +132,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 
 const EMPTY_IDS: readonly string[] = [];
+const LIST_PADDING_TOP = 8;
 
 function PullRequestTabScrollView(props: ScrollViewProps) {
   return (
@@ -401,6 +402,17 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     scrollViews.current[next]?.getNativeScrollRef().scrollTo({ y: offset, animated: false });
     setSection(next);
   };
+  const tabControl = usePullRequestTabControl({
+    options: [
+      { value: "overview", label: "Overview" },
+      ...(guidesEnabled ? [{ value: "guide" as const, label: "Guide" }] : []),
+      { value: "activity", label: "Activity" },
+    ],
+    selected: section,
+    onSelect: selectSection,
+    barInsetTop: barInsets.top,
+    listPaddingTop: LIST_PADDING_TOP,
+  });
   const tabContent = activityContent;
   const filesY = useRef(0);
   const descriptionY = useRef(0);
@@ -693,6 +705,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               >
                 <AnimatedLegendList
                   ref={listRefs[tab]}
+                  sharedValues={tabControl.listSharedValues(tab)}
                   // The scroll view owns its resting offset. LegendList keeps the first
                   // initialScrollOffset it gets, and the first render has the window's top
                   // inset (0 on the folded iPhone Duo), not the header's.
@@ -736,7 +749,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   }}
                   contentContainerStyle={{
                     paddingHorizontal: 16,
-                    paddingTop: 8,
+                    paddingTop: LIST_PADDING_TOP,
                     paddingBottom: 24 + (Platform.OS === "android" ? toolbarHeight : 0),
                     // Short tabs must still be tall enough to preserve the collapsed header.
                     minHeight: Math.max(
@@ -870,22 +883,11 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           onLayout={(event) => {
                             bodyY.current = event.nativeEvent.layout.height;
                             setHeaderHeight(event.nativeEvent.layout.height);
+                            tabControl.onHeaderLayout(event.nativeEvent.layout.y);
                           }}
                         >
                           <PullRequestIdentity pr={identity} params={params} />
-                          <SegmentedControl
-                            options={[
-                              { value: "overview", label: "Overview" },
-                              ...(guidesEnabled
-                                ? [{ value: "guide" as const, label: "Guide" }]
-                                : []),
-                              { value: "activity", label: "Activity" },
-                            ]}
-                            selected={section}
-                            onSelect={selectSection}
-                            role="tab"
-                            size="compact"
-                          />
+                          {tabControl.header}
                         </View>
                       ) : null}
                     </>
@@ -894,6 +896,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 />
               </View>
             ))}
+          {identity ? tabControl.overlay : null}
         </View>
         <PullRequestActionToolbar
           pr={pr}
