@@ -5,12 +5,11 @@ on:
     branches:
       - main
   # Redeploys main after a variable or secret change. Alchemy redeploys the
-  # Worker when a value it reads changes, so force is rarely needed, and it
-  # replaces the Postgres runtime role (alchemy-run/alchemy#1832).
+  # Worker when a value it reads changes, so force is rarely needed.
   workflow_dispatch:
     inputs:
       force:
-        description: Redeploy every resource, including ones with no detected changes. Replaces the Postgres runtime role.
+        description: Redeploy every resource, including ones with no detected changes.
         type: boolean
         default: false
 
@@ -81,6 +80,7 @@ jobs:
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
           FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+          T3CHAT_LINK_SECRET: ${{ secrets.T3CHAT_LINK_SECRET }}
 
       - name: Publish relay deploy commit status
         uses: actions/github-script@v8

@@ -17,12 +17,7 @@ export type ProviderOrchestrationAdapterInfrastructure =
   | CursorKeychain.CursorKeychain
   | IdAllocator.IdAllocatorV2;
 
-/**
- * `providerContinuationRequestsLayer` must be the same layer reference the
- * orchestration runtime provides to its continuation worker so Effect layer
- * memoization yields one shared queue. The contribution status store follows
- * the same rule with the WebSocket server that streams it.
- */
+// Reuse exact continuation and contribution-status layer references so their consumers share state.
 export const layer = Layer.mergeAll(
   ClaudeAdapterV2.layerQueryRunner,
   CodexAdapterV2.layerAppServerClientFactory,
