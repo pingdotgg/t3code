@@ -467,6 +467,16 @@ const program = Effect.gen(function* () {
       },
     });
 
+  const writeHarnessFailure = Effect.promise(
+    () =>
+      new Promise<void>((resolve) => {
+        process.stderr.write(
+          "I1022 11:04:37.910207 1865358 local_connection.py:551] harness stderr: Agent run failed: failed to handle call hook response: no pending hook for ID hook_request_2\n",
+          () => resolve(),
+        );
+      }),
+  );
+
   const finishPrompt = (
     targetSessionId: string,
     stopReason: AcpSchema.StopReason,
@@ -913,6 +923,19 @@ const program = Effect.gen(function* () {
           Effect.forkDetach,
         );
         return {};
+      }
+      const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
+      if (
+        harnessFailure === "1" ||
+        harnessFailure === "pending" ||
+        harnessFailure === "after-end-turn"
+      ) {
+        if (harnessFailure === "after-end-turn") {
+          return yield* finishPrompt(requestedSessionId, "end_turn");
+        }
+        yield* writeHarnessFailure;
+        if (harnessFailure === "pending") return yield* Effect.never;
+        return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
       if (clientFsProbePath !== undefined && clientFsProbeLogPath !== undefined) {
@@ -1913,7 +1936,9 @@ const program = Effect.gen(function* () {
             typeof params === "object" && params !== null ? Reflect.get(params, "code") : undefined;
           process.exit(typeof code === "number" ? code : 19);
         })
-      : Effect.void,
+      : method === "_test/harness-failure"
+        ? writeHarnessFailure
+        : Effect.void,
   );
 
   return yield* Effect.never;
