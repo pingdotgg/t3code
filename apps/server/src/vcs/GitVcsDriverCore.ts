@@ -4556,14 +4556,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRemoteRef: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteRef"] = Effect.fn(
     "fetchRemoteRef",
   )(function* (input) {
-    yield* runGit("GitVcsDriver.fetchRemoteRef.fetch", input.cwd, [
-      "fetch",
-      "--quiet",
-      "--no-tags",
-      "--",
-      input.remoteName,
-      `+${input.remoteRef}:refs/heads/${input.localBranch}`,
-    ]);
+    yield* runGit(
+      "GitVcsDriver.fetchRemoteRef.fetch",
+      input.cwd,
+      [
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--",
+        input.remoteName,
+        `+${input.remoteRef}:refs/heads/${input.localBranch}`,
+      ],
+      // Long network transfers bypass the short-command pool used by local Git reads.
+      { timeoutMs: Duration.toMillis(Duration.minutes(5)) },
+    );
   });
 
   const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = (input) =>

@@ -1333,6 +1333,56 @@ it.effect("retries a fetch that lost a ref update to another Git process", () =>
   }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("allows slow remote-ref fetches but interrupts them after five minutes", () =>
+  Effect.gen(function* () {
+    for (const shouldTimeout of [false, true]) {
+      const started = yield* Deferred.make<void>();
+      const finished = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command))
+            return yield* Effect.die("expected Git command");
+          if (command.args[0] !== "fetch") return makeNonRepositoryHandle();
+          yield* Deferred.succeed(started, undefined);
+          return ChildProcessSpawner.makeHandle({
+            ...makeSuccessfulHandle(""),
+            exitCode: Deferred.await(finished).pipe(
+              Effect.as(ChildProcessSpawner.ExitCode(0)),
+              Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+            ),
+          });
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const fetch = yield* driver
+        .fetchRemoteRef({
+          cwd: yield* makeTmpDir(),
+          remoteName: "origin",
+          remoteRef: "refs/pull-requests/1/from",
+          localBranch: "feature/pr",
+        })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(shouldTimeout ? "5 minutes" : "1 minute");
+      if (shouldTimeout) {
+        yield* Deferred.await(interrupted);
+        const result = yield* Fiber.join(fetch);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.equal(result.failure.operation, "GitVcsDriver.fetchRemoteRef.fetch");
+          assert.equal(result.failure.detail, "Git command timed out.");
+        }
+      } else {
+        yield* Deferred.succeed(finished, undefined);
+        assert.isTrue(Result.isSuccess(yield* Fiber.join(fetch)));
+      }
+    }
+  }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.effect("lets a worktree checkout that is still working run past five minutes", () =>
   Effect.gen(function* () {
     const checkoutStarted = yield* Deferred.make<void>();
