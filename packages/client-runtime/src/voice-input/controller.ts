@@ -121,7 +121,7 @@ export function resolveTranscriptCommit(
   if (atSentenceStart) {
     if (!/\p{Lu}/u.test(firstWord)) insertion = withFirstLetterCase(insertion, locale, true);
   } else {
-    const plainCapitalized = /^\p{Lu}\p{Ll}*\P{L}*$/u.test(firstWord) && !/^I\b/u.test(firstWord);
+    const plainCapitalized = /^(?:And|Also|Then|But|Or|So)\b/u.test(firstWord);
     if (usesEnglishSpacing && plainCapitalized) {
       insertion = withFirstLetterCase(insertion, locale, false);
     }

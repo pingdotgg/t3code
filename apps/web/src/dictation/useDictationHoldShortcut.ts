@@ -34,6 +34,7 @@ export function useDictationHoldShortcut(input: {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const { dictation, enabled, isDictateShortcut } = latest.current;
       const phase = dictation.readPhase();
       const active = phase === "preparing" || phase === "recording" || phase === "transcribing";

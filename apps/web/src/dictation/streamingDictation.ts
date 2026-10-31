@@ -11,7 +11,12 @@ import {
   type VoiceRecorder,
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
-import type { DictationSessionId, EnvironmentId } from "@t3tools/contracts";
+import {
+  DICTATION_MAX_SECONDS,
+  DICTATION_SAMPLE_RATE,
+  type DictationSessionId,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import * as Base64 from "effect/encoding/Base64";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -77,6 +82,7 @@ export function createStreamingDictation(input: {
   const capture = new PcmCapture();
   const level = createDictationLevel();
   let session: DictationSession | null = null;
+  let captureStartedAt = 0;
   let limitTimer: ReturnType<typeof setTimeout> | null = null;
 
   const run = <W, A, E>(command: AtomCommand<W, A, E>, value: W) =>
@@ -202,10 +208,13 @@ export function createStreamingDictation(input: {
       const current = session;
       if (current === null) throw new Error("No dictation session is open.");
       clearLimit();
-      limitTimer = setTimeout(() => {
-        limitTimer = null;
-        void capture.stop().then(() => input.finishedAtLimit(sessionUri(current)));
-      }, forDuration * 1_000);
+      limitTimer = setTimeout(
+        () => {
+          limitTimer = null;
+          void capture.stop().then(() => input.finishedAtLimit(sessionUri(current)));
+        },
+        Math.max(0, forDuration * 1_000 - (Date.now() - captureStartedAt)),
+      );
     },
     stop: async () => {
       clearLimit();
@@ -231,8 +240,19 @@ export function createStreamingDictation(input: {
         }
         await capture.prepare();
         const current = session;
+        captureStartedAt = Date.now();
+        let capturedBytes = 0;
+        const maxBytes = DICTATION_MAX_SECONDS * DICTATION_SAMPLE_RATE * 2;
         capture.start((frame) => {
-          if (current !== null) sendChunk(current, frame);
+          const remaining = maxBytes - capturedBytes;
+          if (current === null || remaining <= 0) return;
+          const chunk = frame.byteLength > remaining ? frame.slice(0, remaining) : frame;
+          capturedBytes += chunk.byteLength;
+          sendChunk(current, chunk);
+          if (capturedBytes === maxBytes) {
+            clearLimit();
+            void capture.stop().then(() => input.finishedAtLimit(sessionUri(current)));
+          }
         }, level.set);
         return { granted: true, canAskAgain: true };
       },

@@ -173,6 +173,12 @@ describe("resolveTranscriptCommit", () => {
     expect(
       resolveTranscriptCommit(continuing, continuing, "Und die Tests.", "de-DE"),
     ).toMatchObject({ text: "Fix the bugUnd die Tests before release." });
+    const beforeName = at("ask ", 4);
+    expect(
+      resolveTranscriptCommit(beforeName, beforeName, "Maria to review.", "en-US"),
+    ).toMatchObject({
+      text: "ask Maria to review.",
+    });
     const midSentence = at("Fix the bug before release.", 11);
     expect(resolveTranscriptCommit(midSentence, midSentence, "and tests", "en-US")).toMatchObject({
       text: "Fix the bug and tests before release.",

@@ -41,13 +41,7 @@ function createComposerDictationController(input: {
     resolveEnvironmentId: () => readLatest().environmentId,
     interrupt: (message) => void controller?.interruptRecording(message),
     rewriteTranscript: (text) => readLatest().rewriteTranscript(text),
-    finishedAtLimit: (uri) =>
-      void controller?.handleRecorderStatus({
-        isFinished: true,
-        hasError: false,
-        error: null,
-        url: uri,
-      }),
+    finishedAtLimit: () => void controller?.stop(),
   });
   const created = new VoiceInputController({
     ...streaming.dependencies,

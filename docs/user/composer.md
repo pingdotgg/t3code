@@ -199,7 +199,7 @@ transcription or cancellation; only the message text is sent when you submit.
 ## Dictation on web and desktop
 
 Dictation turns speech into text with a speech model that runs on one of your T3 Code
-machines. Set it up for that machine in **Settings → Integrations → Dictation**: turn it on and
+machines. Set it up for that machine in **Settings → Devices → Dictation**: turn it on and
 pick a model. Parakeet v3 covers 25 European languages, Whisper turbo covers 99, and Moonshine
 base is a small English-only model. Nothing downloads until dictation is on; then the machine
 downloads the model you picked and the status line shows the progress. **Language** can pin

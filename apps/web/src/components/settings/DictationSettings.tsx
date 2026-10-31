@@ -388,7 +388,7 @@ export function DictationRoutingSettings({
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
         The machine that turns this device's dictation into text. Automatic uses the machine that
         owns the thread when its dictation is ready, otherwise another ready machine. Download
-        models in Integrations. This applies only to this device.
+        models in Devices. This applies only to this device.
       </p>
       {environments.map((environment) => (
         <EnvironmentRow
