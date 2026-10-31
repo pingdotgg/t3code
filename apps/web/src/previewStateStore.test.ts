@@ -18,6 +18,7 @@ import {
   readThreadPreviewState,
   reconcilePreviewServerSessions,
   resetPreviewStateForTests,
+  selectAudiblePreviewTabId,
   setActivePreviewTab,
 } from "./previewStateStore";
 import { appAtomRegistry } from "./rpc/atomRegistry";
@@ -223,6 +224,39 @@ describe("previewStateStore (single-tab)", () => {
     expect(Object.keys(state.sessions)).toEqual([first.tabId, second.tabId]);
     expect(state.snapshot?.tabId).toBe(first.tabId);
     expect(state.desktopOverlay?.canGoBack).toBe(true);
+  });
+
+  it("finds the background tab playing unmuted audio", () => {
+    const silent = makeSnapshot({ tabId: "tab_silent" });
+    const playing = makeSnapshot({ tabId: "tab_playing", updatedAt: "2026-01-02T00:00:00.000Z" });
+    applyPreviewServerSnapshot(ref, playing);
+    applyPreviewServerSnapshot(ref, silent);
+    const overlay = {
+      hasWebContents: true,
+      canGoBack: false,
+      canGoForward: false,
+      loading: false,
+      zoomFactor: 1,
+      pictureInPicture: false,
+      colorScheme: "system" as const,
+      audioMuted: false,
+      audible: true,
+      controller: "none" as const,
+      favicon: null,
+    };
+    const audibleTabId = () => selectAudiblePreviewTabId(readThreadPreviewState(ref));
+
+    applyPreviewDesktopState(ref, silent.tabId, { ...overlay, audible: false });
+    applyPreviewDesktopState(ref, playing.tabId, overlay);
+    expect(readThreadPreviewState(ref).activeTabId).toBe(silent.tabId);
+    expect(audibleTabId()).toBe(playing.tabId);
+
+    applyPreviewDesktopState(ref, playing.tabId, { ...overlay, audioMuted: true });
+    expect(audibleTabId()).toBeNull();
+
+    applyPreviewDesktopState(ref, playing.tabId, overlay);
+    beginPreviewSessionClose(ref, playing.tabId);
+    expect(audibleTabId()).toBeNull();
   });
 
   it("reconciles an authoritative session list without focusing a background tab", () => {
