@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   groupLinearIssues,
+  linearBadgeTextTone,
   pickActivityPill,
   recentActivityIssueIds,
   runningCountByTeam,
@@ -189,5 +190,15 @@ describe("groupLinearIssues", () => {
   it("returns one flat group for none and nothing for no issues", () => {
     expect(groupLinearIssues([issue("a"), issue("b")], "none")).toHaveLength(1);
     expect(groupLinearIssues([], "none")).toEqual([]);
+  });
+});
+
+describe("linearBadgeTextTone", () => {
+  it("picks dark text on light team colors and light text on dark ones", () => {
+    expect(linearBadgeTextTone("#f2c94c")).toBe("dark");
+    expect(linearBadgeTextTone("#fff")).toBe("dark");
+    expect(linearBadgeTextTone("#5e6ad2")).toBe("light");
+    expect(linearBadgeTextTone("#000000ff")).toBe("light");
+    expect(linearBadgeTextTone("#12345")).toBe("light");
   });
 });

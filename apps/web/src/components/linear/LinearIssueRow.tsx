@@ -45,22 +45,11 @@ export function LinearIssueRow({
   return (
     <>
       <div
-        role="button"
-        tabIndex={0}
         data-linear-issue-id={issue.id}
         data-selected={selected || undefined}
-        aria-current={selected || undefined}
-        onClick={() => context.onSelect(issue.id)}
-        onKeyDown={(event) => {
-          if (event.target !== event.currentTarget) return;
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            context.onSelect(issue.id);
-          }
-        }}
         style={{ marginLeft: depth * 20 }}
         className={cn(
-          "relative flex w-auto cursor-pointer items-center gap-2 rounded-md py-1.5 pr-1.5 pl-1 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+          "relative flex items-center gap-2 rounded-md pl-1 hover:bg-accent/60",
           selected && "bg-primary/9 ring-1 ring-primary/28 ring-inset hover:bg-primary/9",
         )}
       >
@@ -69,10 +58,7 @@ export function LinearIssueRow({
             type="button"
             aria-label={expanded ? "Collapse sub-issues" : "Expand sub-issues"}
             aria-expanded={expanded}
-            onClick={(event) => {
-              event.stopPropagation();
-              setExpanded((open) => !open);
-            }}
+            onClick={() => setExpanded((open) => !open)}
             className="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <ChevronRightIcon
@@ -83,45 +69,53 @@ export function LinearIssueRow({
         ) : (
           <span aria-hidden className="size-3.5 shrink-0" />
         )}
-        <span className="inline-flex w-4 shrink-0 justify-center">
-          <LinearStateIcon type={issue.state.type} color={issue.state.color} />
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
-              {issue.identifier}
-            </span>
-            <span className={cn("min-w-0 truncate text-sm", finished && "text-muted-foreground")}>
-              {issue.title}
-            </span>
-            {hasChildren ? (
-              <span className="inline-flex shrink-0 items-center gap-0.5 text-2xs tabular-nums text-muted-foreground">
-                <CornerDownRightIcon aria-hidden className="size-3" />
-                {issue.completedSubIssueCount}/{issue.subIssueCount}
+        <button
+          type="button"
+          aria-current={selected || undefined}
+          onClick={() => context.onSelect(issue.id)}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1.5 pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        >
+          <span className="inline-flex w-4 shrink-0 justify-center">
+            <LinearStateIcon type={issue.state.type} color={issue.state.color} />
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
+                {issue.identifier}
               </span>
-            ) : null}
-          </span>
-          <span className="flex min-w-0 items-center gap-1.5 overflow-hidden text-2xs leading-4 text-muted-foreground">
-            <LinearPriorityIcon priority={issue.priority} />
-            {issue.labels.map((label) => (
-              <LinearLabelChip key={label.id} name={label.name} color={label.color} />
-            ))}
-            {pullRequest ? (
-              <span className="inline-flex shrink-0 items-center gap-1 tabular-nums">
-                <PullRequestGlyph.pullRequest aria-hidden className="size-3" />#{pullRequest.number}
+              <span className={cn("min-w-0 truncate text-sm", finished && "text-muted-foreground")}>
+                {issue.title}
               </span>
-            ) : null}
+              {hasChildren ? (
+                <span className="inline-flex shrink-0 items-center gap-0.5 text-2xs tabular-nums text-muted-foreground">
+                  <CornerDownRightIcon aria-hidden className="size-3" />
+                  {issue.completedSubIssueCount}/{issue.subIssueCount}
+                </span>
+              ) : null}
+            </span>
+            <span className="flex min-w-0 items-center gap-1.5 overflow-hidden text-2xs leading-4 text-muted-foreground">
+              <LinearPriorityIcon priority={issue.priority} />
+              {issue.labels.map((label) => (
+                <LinearLabelChip key={label.id} name={label.name} color={label.color} />
+              ))}
+              {pullRequest ? (
+                <span className="inline-flex shrink-0 items-center gap-1 tabular-nums">
+                  <PullRequestGlyph.pullRequest aria-hidden className="size-3" />#
+                  {pullRequest.number}
+                </span>
+              ) : null}
+            </span>
           </span>
-        </span>
-        <span className="flex shrink-0 flex-col items-end gap-0.5">
-          <span className="flex items-center gap-1.5">
-            {pill ? <LinearActivityPill pill={pill} /> : null}
-            <LinearAvatar user={issue.assignee} />
+          <span className="flex shrink-0 flex-col items-end gap-0.5">
+            <span className="flex items-center gap-1.5">
+              {pill ? <LinearActivityPill pill={pill} /> : null}
+              <LinearAvatar user={issue.assignee} />
+            </span>
+            <span className="text-2xs tabular-nums text-muted-foreground">
+              <RelativeTime timestamp={issue.updatedAt} />
+            </span>
           </span>
-          <span className="text-2xs tabular-nums text-muted-foreground">
-            <RelativeTime timestamp={issue.updatedAt} />
-          </span>
-        </span>
+        </button>
       </div>
       {expanded ? (
         <div className="relative">

@@ -5,10 +5,12 @@ import { linearMoveHint } from "./linearLaunch.logic";
 
 function HintToggle({
   label,
+  shortLabel,
   enabled,
   onToggle,
 }: {
   readonly label: string;
+  readonly shortLabel: string;
   readonly enabled: boolean;
   readonly onToggle: () => void;
 }) {
@@ -28,7 +30,8 @@ function HintToggle({
           />
         }
       >
-        {label}
+        <span className="max-sm:hidden">{label}</span>
+        <span className="sm:hidden">{shortLabel}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">{enabled ? "Turn off" : "Turn on"} for this launch</TooltipPopup>
     </Tooltip>
@@ -43,18 +46,31 @@ export function LinearLaunchHint({ draftTarget }: { readonly draftTarget: Compos
   const launch = useComposerDraftStore(
     (state) => state.getDraftThread(draftTarget)?.linearIssue ?? null,
   );
+  const newWorktree = useComposerDraftStore((state) => {
+    const draft = state.getDraftThread(draftTarget);
+    return draft?.envMode === "worktree" && draft.worktreePath === null;
+  });
   const setDraftLinearIssue = useComposerDraftStore((state) => state.setDraftLinearIssue);
   if (launch === null) return null;
   const moveLabel = linearMoveHint(launch);
   return (
     <div
       data-chat-composer-linear-hint="true"
-      className="hidden min-w-0 shrink items-center gap-1 text-xs text-muted-foreground sm:flex"
+      className="flex min-w-0 shrink items-center gap-1 text-xs text-muted-foreground"
     >
-      {moveLabel !== null ? (
+      {newWorktree ? (
+        <>
+          <span className="min-w-0 truncate max-sm:hidden">worktree on {launch.branchName}</span>
+          <span aria-hidden className="max-sm:hidden">
+            ·
+          </span>
+        </>
+      ) : null}
+      {moveLabel !== null && launch.moveTo ? (
         <>
           <HintToggle
             label={moveLabel}
+            shortLabel={`→ ${launch.moveTo.name}`}
             enabled={launch.moveEnabled}
             onToggle={() =>
               setDraftLinearIssue(draftTarget, { ...launch, moveEnabled: !launch.moveEnabled })
@@ -65,6 +81,7 @@ export function LinearLaunchHint({ draftTarget }: { readonly draftTarget: Compos
       ) : null}
       <HintToggle
         label="comments link"
+        shortLabel="comment"
         enabled={launch.commentEnabled}
         onToggle={() =>
           setDraftLinearIssue(draftTarget, { ...launch, commentEnabled: !launch.commentEnabled })

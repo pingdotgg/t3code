@@ -1,12 +1,22 @@
 import { SearchIcon } from "lucide-react";
 import { useRef, useState, type Ref } from "react";
 
+import { formatShortcutLabel } from "~/keybindings";
 import { cn } from "~/lib/utils";
 
 import { Spinner } from "../ui/spinner";
 import { Kbd } from "../ui/kbd";
 import { LinearGlyph } from "./linearIcons";
 import type { LinearJumpTarget } from "./linearJump";
+
+const JUMP_SHORTCUT_LABEL = formatShortcutLabel({
+  key: "k",
+  modKey: true,
+  metaKey: false,
+  ctrlKey: false,
+  shiftKey: false,
+  altKey: false,
+});
 
 const KIND_LABEL: Record<LinearJumpTarget["kind"], string> = {
   team: "Team",
@@ -48,7 +58,7 @@ export function LinearJumpSearch({
   return (
     <div
       ref={containerRef}
-      className="relative w-64 max-w-full shrink-0"
+      className="relative w-40 shrink-0 sm:w-64"
       onBlur={(event) => {
         if (!containerRef.current?.contains(event.relatedTarget)) setOpen(false);
       }}
@@ -92,7 +102,7 @@ export function LinearJumpSearch({
             }
           }}
         />
-        {term === "" ? <Kbd>⌘K</Kbd> : null}
+        {term === "" ? <Kbd>{JUMP_SHORTCUT_LABEL}</Kbd> : null}
       </label>
       {showResults ? (
         <ul

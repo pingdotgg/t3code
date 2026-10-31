@@ -29,13 +29,20 @@ function ProgressBar({ progress, className }: { progress: number; className?: st
   );
 }
 
+function formatIssueCount(count: number, capped: boolean): string {
+  if (capped) return `${count}+ issues`;
+  return `${count} ${count === 1 ? "issue" : "issues"}`;
+}
+
 export function LinearProgressSummary({
   progress,
   issueCount,
+  issueCountCapped,
   targetDate,
 }: {
   progress: number;
   issueCount: number;
+  issueCountCapped: boolean;
   targetDate: string | null;
 }) {
   const target = formatLinearTargetDate(targetDate);
@@ -44,9 +51,7 @@ export function LinearProgressSummary({
       <ProgressBar progress={progress} />
       <span className="tabular-nums">{formatProgressPercent(progress)}%</span>
       <span aria-hidden>·</span>
-      <span className="tabular-nums">
-        {issueCount} {issueCount === 1 ? "issue" : "issues"}
-      </span>
+      <span className="tabular-nums">{formatIssueCount(issueCount, issueCountCapped)}</span>
       {target ? (
         <>
           <span aria-hidden>·</span>
@@ -103,7 +108,7 @@ export function LinearTeamCards({
               </span>
               {running > 0 ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-info/35 bg-info/9 px-1.5 text-info-foreground">
-                  <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-current" />
+                  <span aria-hidden className="size-1.5 rounded-full bg-current" />
                   <span className="tabular-nums">{running}</span> running
                 </span>
               ) : null}
@@ -216,7 +221,7 @@ export function LinearMilestoneList({
                 {formatProgressPercent(milestone.progress)}%
               </span>
               <span className="hidden w-16 shrink-0 text-right text-xs text-muted-foreground tabular-nums sm:inline">
-                {milestone.issueCount} {milestone.issueCount === 1 ? "issue" : "issues"}
+                {formatIssueCount(milestone.issueCount, milestone.issueCountCapped)}
               </span>
               <span className="hidden w-14 shrink-0 text-right text-xs text-muted-foreground sm:inline">
                 {target ?? ""}

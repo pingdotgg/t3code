@@ -40,7 +40,7 @@ import { SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const ROW_GRID =
-  "grid grid-cols-[minmax(0,1.4fr)_1rem_minmax(0,1.2fr)_5.5rem_2rem] items-center gap-3 px-4 max-sm:grid-cols-[minmax(0,1fr)_2rem]";
+  "grid grid-cols-[minmax(0,1.4fr)_1rem_minmax(0,1.2fr)_5.5rem_2rem] items-center gap-3 px-4 max-sm:grid-cols-[minmax(0,1fr)_2rem] max-sm:gap-y-1.5";
 
 export function LinearMappingSettings({ status }: { readonly status: LinearConnectionStatus }) {
   const environmentId = useLinearEnvironmentId();
@@ -118,7 +118,7 @@ function MappingSection({
         ) : (
           rows.map((row) => (
             <div key={row.key} className={`${ROW_GRID} min-h-12 py-2`}>
-              <div className="flex min-w-0 items-center gap-2 text-sm">
+              <div className="flex min-w-0 items-center gap-2 text-sm max-sm:row-start-1">
                 {row.teamKey ? <LinearTeamBadge teamKey={row.teamKey} /> : null}
                 <span className="truncate font-medium text-foreground">{row.name}</span>
                 {row.kind === "project" ? (
@@ -142,7 +142,7 @@ function MappingSection({
                 aria-hidden
                 className="size-3.5 text-muted-foreground max-sm:hidden"
               />
-              <div className="min-w-0 max-sm:hidden">
+              <div className="min-w-0 max-sm:col-start-1 max-sm:row-start-2">
                 {row.mapping ? (
                   <LinearProjectSelect
                     projects={t3Projects}
@@ -154,35 +154,42 @@ function MappingSection({
                   <span className="text-sm text-muted-foreground">Ask each time</span>
                 )}
               </div>
-              <span className="font-mono text-xs text-muted-foreground max-sm:hidden">
-                {row.mapping?.baseBranch ?? (row.mapping ? "default" : "")}
+              <span className="font-mono text-xs text-muted-foreground max-sm:col-start-1 max-sm:row-start-3 max-sm:empty:hidden">
+                {row.mapping ? (
+                  <>
+                    <span className="font-sans sm:hidden">Base branch </span>
+                    {row.mapping.baseBranch ?? "default"}
+                  </>
+                ) : null}
               </span>
-              <Menu>
-                <MenuTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="ghost-muted"
-                      aria-label={`Actions for ${row.name}`}
-                    />
-                  }
-                >
-                  <MoreHorizontalIcon aria-hidden />
-                </MenuTrigger>
-                <MenuPopup align="end">
-                  <MenuItem onClick={() => setDialog({ mode: "edit", row })}>
-                    {row.mapping ? "Edit mapping" : "Map to a T3 project"}
-                  </MenuItem>
-                  {row.mapping ? (
-                    <MenuItem
-                      variant="destructive"
-                      onClick={() => void save(removeLinearMapping(mappings, row.mapping!.id))}
-                    >
-                      Remove mapping
+              <div className="max-sm:col-start-2 max-sm:row-start-1">
+                <Menu>
+                  <MenuTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        variant="ghost-muted"
+                        aria-label={`Actions for ${row.name}`}
+                      />
+                    }
+                  >
+                    <MoreHorizontalIcon aria-hidden />
+                  </MenuTrigger>
+                  <MenuPopup align="end">
+                    <MenuItem onClick={() => setDialog({ mode: "edit", row })}>
+                      {row.mapping ? "Edit mapping" : "Map to a T3 project"}
                     </MenuItem>
-                  ) : null}
-                </MenuPopup>
-              </Menu>
+                    {row.mapping ? (
+                      <MenuItem
+                        variant="destructive"
+                        onClick={() => void save(removeLinearMapping(mappings, row.mapping!.id))}
+                      >
+                        Remove mapping
+                      </MenuItem>
+                    ) : null}
+                  </MenuPopup>
+                </Menu>
+              </div>
             </div>
           ))
         )}

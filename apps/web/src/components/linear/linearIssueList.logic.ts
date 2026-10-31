@@ -177,3 +177,27 @@ const ACTIVITY_STATUS_LABEL: Record<string, string> = {
 export function activityStatusLabel(status: string): string {
   return ACTIVITY_STATUS_LABEL[status] ?? status;
 }
+
+function srgbChannelToLinear(channel: number): number {
+  const value = channel / 255;
+  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+
+/** Black or white, whichever reads better on a team's hex color (WCAG relative luminance). */
+export function linearBadgeTextTone(hexColor: string): "dark" | "light" {
+  const digits = hexColor.replace(/^#/u, "");
+  const rgb =
+    digits.length === 3 || digits.length === 4
+      ? digits
+          .slice(0, 3)
+          .split("")
+          .map((digit) => digit + digit)
+      : digits.length === 6 || digits.length === 8
+        ? [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 6)]
+        : null;
+  if (rgb === null) return "light";
+  const [red, green, blue] = rgb.map((pair) => srgbChannelToLinear(Number.parseInt(pair, 16)));
+  const luminance = 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+  // Above this, black text out-contrasts white.
+  return luminance > 0.179 ? "dark" : "light";
+}

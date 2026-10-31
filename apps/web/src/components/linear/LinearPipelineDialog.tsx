@@ -45,6 +45,7 @@ import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { LinearStateIcon } from "./linearIcons";
 import { LinearProjectSelect } from "./LinearProjectSelect";
+import { linearWriteBackOf } from "./linearLaunch.logic";
 import type { LinearLaunchWorkspace } from "./linearLaunchTypes";
 import {
   includesFromSettings,
@@ -292,10 +293,7 @@ function PipelineDialogBody({
         threadId: run.parentThreadId,
         title: `${pipeline.name}: ${issue.identifier} ${issue.title}`,
       },
-      writeBack: {
-        ...(moveEnabled && moveTarget ? { moveToStateId: moveTarget.id } : {}),
-        comment: commentEnabled,
-      },
+      writeBack: linearWriteBackOf({ moveTo: moveTarget, moveEnabled, commentEnabled }),
     });
     onClose();
     const parentRef = scopeThreadRef(environmentId, run.parentThreadId);
