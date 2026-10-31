@@ -39,6 +39,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as PipelineService from "../pipelines/PipelineService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -189,6 +190,7 @@ it.effect.each([
               Layer.mock(RemoteDelegation.RemoteDelegation)({}),
               ServerSettings.layerTest(),
               Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+              Layer.mock(PipelineService.PipelineService)({}),
               NodeServices.layer,
               NodeCrypto.layer,
             ),

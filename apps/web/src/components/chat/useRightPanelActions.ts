@@ -34,7 +34,10 @@ import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 interface RightPanelActionsInput {
-  /** An embedded chat has no right panel of its own, so it leaves global panel actions alone. */
+  /**
+   * A side chat or coordinator tab has no right panel of its own, so it leaves global panel
+   * and preview bus actions to the main view.
+   */
   readonly embedded: boolean;
   readonly activeThreadRef: ScopedThreadRef | null;
   readonly activeProject: EnvironmentProject | null;
@@ -45,8 +48,6 @@ interface RightPanelActionsInput {
   readonly pullRequestPanelTarget: ReturnType<typeof threadPullRequestPanelTarget> | null;
   readonly threadPanelPresentation: ThreadPanelPresentation;
   readonly isServerThread: boolean;
-  /** A side chat pane; the main view already answers preview bus actions. */
-  readonly embedded: boolean;
   readonly isGitRepo: boolean;
   readonly browserAvailable: boolean;
   readonly canOperatePreview: boolean;
@@ -80,7 +81,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     pullRequestPanelTarget,
     threadPanelPresentation,
     isServerThread,
-    embedded,
     isGitRepo,
     browserAvailable,
     canOperatePreview,
