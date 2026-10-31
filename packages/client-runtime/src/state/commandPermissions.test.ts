@@ -143,23 +143,41 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect.each([WS_METHODS.scheduledTasksDelete, ORCHESTRATION_V2_WS_METHODS.stopWorkflow])(
-    "uses the target grant for both availability and execution of %s",
-    (method) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const registry = yield* setup;
-          const permissions = createCommandPermissions(runtime, method);
-          registry.set(sessions(env), AsyncResult.success(grant(true)));
-          expect(registry.get(permissions.permissionAtom(env))).toBe(true);
-          expect(permissions.permissionAtom(env)).toBe(permissions.permissionAtom(env));
-          yield* permissions.authorize(registry, env);
-          registry.set(sessions(other), AsyncResult.success(grant(false)));
-          expect(registry.get(permissions.permissionAtom(other))).toBe(false);
-          const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
-          expect(denied._tag).toBe("EnvironmentAuthorizationError");
-        }),
-      ),
+  it.effect("requires the destination orchestration grant to update a scheduled task", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const update = createCommandPermissions(runtime, WS_METHODS.scheduledTasksUpdate);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(update.permissionAtom(env))).toBe(false);
+        const denied = yield* update.authorize(registry, env).pipe(Effect.flip);
+        expect(denied.requiredScope).toBe(AuthOrchestrationOperateScope);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(update.permissionAtom(env))).toBe(true);
+        yield* update.authorize(registry, env);
+      }),
+    ),
+  );
+
+  it.effect.each([
+    WS_METHODS.scheduledTasksDelete,
+    WS_METHODS.scheduledTasksUpdate,
+    ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
+  ])("uses the target grant for both availability and execution of %s", (method) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const permissions = createCommandPermissions(runtime, method);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(permissions.permissionAtom(env))).toBe(true);
+        expect(permissions.permissionAtom(env)).toBe(permissions.permissionAtom(env));
+        yield* permissions.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(permissions.permissionAtom(other))).toBe(false);
+        const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
+        expect(denied._tag).toBe("EnvironmentAuthorizationError");
+      }),
+    ),
   );
   it.effect("waits for an initial grant", () =>
     Effect.scoped(

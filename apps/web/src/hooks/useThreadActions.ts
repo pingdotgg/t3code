@@ -406,7 +406,7 @@ export function useThreadActions() {
       action: "Archived",
       claim: action,
       undo: () => unarchiveThread(threadRef, { navigate: shouldNavigateToDraft }),
-      failureTitle: "Failed to undo archive",
+      failureTitle: "Failed to unarchive thread",
     });
 
     if (shouldNavigateToDraft && router.state.location.href === requestingRouteHref) {

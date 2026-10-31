@@ -382,44 +382,48 @@ it.effect.each(
   },
 );
 
-it.effect(
-  "returns no dispatched thread when sending an automation to a missing thread fails",
-  () => {
-    const harness = makeHarness();
-    const layerScheduledTasks = ScheduledTasks.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          harness.layer,
-          NodeCrypto.layer,
-          Scheduler.layer,
-          Layer.mock(SecretRequests.SecretRequests)({}),
-        ),
+it.effect("rejects an automation whose bound thread is missing", () => {
+  const harness = makeHarness();
+  const layerScheduledTasks = ScheduledTasks.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        harness.layer,
+        NodeCrypto.layer,
+        Scheduler.layer,
+        Layer.mock(SecretRequests.SecretRequests)({}),
       ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const tasks = yield* ScheduledTasks.ScheduledTaskService;
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const { threadId } = yield* launches.launch(
+      launchInput({ command: "command:missing", thread: "thread:missing" }),
     );
-    return Effect.gen(function* () {
-      const tasks = yield* ScheduledTasks.ScheduledTaskService;
-      const threadId = ThreadId.make("thread:missing");
-      const { task } = yield* tasks.upsert({
-        title: "Daily audit",
-        prompt: "Audit performance and crashes.",
-        enabled: false,
-        schedule: { type: "interval", everyMs: 60_000 },
-        projectId,
-        threadId,
-        workspaceStrategy: { type: "root" },
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const result = yield* tasks.runNow({ id: task.id });
-      assert.equal(result.task.lastRunStatus, "failed");
-      assert.isNull(result.threadId);
-      assert.equal(result.task.threadId, threadId);
-    }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
-  },
-);
+    const { task } = yield* tasks.upsert({
+      title: "Daily audit",
+      prompt: "Audit performance and crashes.",
+      enabled: false,
+      schedule: { type: "interval", everyMs: 60_000 },
+      projectId,
+      threadId,
+      workspaceStrategy: { type: "root" },
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`DELETE FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
+    const result = yield* tasks.runNow({ id: task.id }).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(result));
+    if (Exit.isFailure(result)) assert.include(Cause.pretty(result.cause), "paused");
+    const saved = (yield* tasks.list()).tasks.find((candidate) => candidate.id === task.id);
+    assert.equal(saved?.lastRunStatus, "never");
+    assert.equal(saved?.threadId, threadId);
+  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
+});
 
 it.effect("runs a thread-bound automation on the provider the thread uses now", () => {
   const harness = makeHarness({ adapters: [adapter, claudeAdapter] });

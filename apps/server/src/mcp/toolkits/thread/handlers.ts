@@ -95,13 +95,17 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
-      if (!tasks.some((task) => task.id === input.taskId))
+      const listed = tasks.find((task) => task.id === input.taskId);
+      if (listed === undefined)
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
+      // The listed project rides into the dispatch transaction: a task moved
+      // to another project after this check is a missing row, never a run
+      // fired in a project the caller was not checked against.
       const { task, threadId } = yield* scheduler
-        .runNow({ id: input.taskId })
+        .runNow({ id: input.taskId, projectId: listed.projectId })
         .pipe(Effect.mapError(unavailable));
       const scope = yield* McpInvocationContext.McpInvocationContext;
       return {

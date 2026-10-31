@@ -23,6 +23,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer } from "effect/ai";
@@ -700,10 +701,12 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
                   scheduledTask("task-auto", "auto"),
                 ],
               }),
-            upsert: (input) =>
-              Effect.succeed({
-                task: { ...(scheduledTask(input.id ?? "task-auto", "auto") as object), ...input },
-              } as never),
+            update: ({ id, projectId: _projectId, ...patch }) =>
+              Effect.succeed(
+                Option.some({
+                  task: { ...(scheduledTask(id, "auto") as object), ...patch },
+                }) as never,
+              ),
           }),
         ),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),

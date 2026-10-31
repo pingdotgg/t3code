@@ -89,6 +89,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverReportClientActivity]: "server",
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
+  [WS_METHODS.scheduledTasksUpdate]: "scheduledTasks",
   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",
   [WS_METHODS.scheduledTasksDelete]: "scheduledTasks",
   [WS_METHODS.scheduledTasksRunNow]: "scheduledTasks",

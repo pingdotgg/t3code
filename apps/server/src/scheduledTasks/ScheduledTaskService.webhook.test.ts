@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
+  ScheduledTaskUpdateInput,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliveryId,
   SecretRequestError,
@@ -17,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as EffectScheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -31,6 +33,7 @@ import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import { renderWebhookPrompt } from "./webhookTemplate.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
+const decodeUpdateInput = Schema.decodeUnknownEffect(ScheduledTaskUpdateInput);
 
 it.effect(
   "preserves omitted dedupe settings, releases duplicate claims, and retains coalesced claims",
@@ -234,7 +237,9 @@ const withService = <A, E>(
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
       }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamStoredEventsFrom: () => Stream.empty,
+      }),
       Layer.mock(SecretRequests.SecretRequests)({
         consume: ({ ref }) => {
           const value = secretsByRef.get(ref);
@@ -779,6 +784,18 @@ it.effect("a signature can take the user's secret by ref, which works only once"
         )
         .pipe(Effect.flip);
       assert.include(reused.message, "already used");
+      assert.instanceOf(reused.cause, SecretRequestError);
+      const reusedByEdit = yield* service
+        .update(
+          yield* decodeUpdateInput({
+            id: task.id,
+            projectId: task.projectId,
+            schedule: githubSchedule("secret-ref:00000000000000000000000000000001"),
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.include(reusedByEdit.message, "already used");
+      assert.instanceOf(reusedByEdit.cause, SecretRequestError);
     }),
   ),
 );

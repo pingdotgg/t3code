@@ -3,6 +3,7 @@ import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
@@ -310,7 +311,9 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamStoredEventsFrom: () => Stream.empty,
+      }),
       Layer.mock(SecretRequests.SecretRequests)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -329,6 +332,101 @@ const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
     ),
   ),
 );
+
+it.layer(
+  ScheduledTaskService.layer.pipe(
+    Layer.provideMerge(layerTest),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+    Layer.provide(NodeCrypto.layer),
+    Layer.provide(Scheduler.layer),
+    Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+    Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+    Layer.provide(
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+    ),
+  ),
+)("scheduled tasks with real thread lifecycle commands", (it) => {
+  it.effect("archive pauses bound tasks; unarchive requires an explicit schedule resume", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("runtime-scheduled-archive-project");
+      const threadId = ThreadId.make("runtime-scheduled-archive-thread");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-scheduled-archive-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId,
+        title: "Scheduled archive",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const { task } = yield* tasks.upsert({
+        title: "Bound schedule",
+        prompt: "Scheduled prompt",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        threadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.isTrue(task.enabled);
+      assert.isNotNull(task.nextRunAt);
+
+      const archive = yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-scheduled-archive"),
+        threadId,
+      });
+      assert.isAbove(archive.sequence, 0);
+      // Await the scheduler's change stream: no inserted lifecycle events or sleeps.
+      const paused = yield* tasks.subscribeList().pipe(
+        Stream.map(({ tasks: current }) => current.find((entry) => entry.id === task.id)),
+        Stream.filter((entry) => entry !== undefined && !entry.enabled),
+        Stream.runHead,
+      );
+      assert.isNull(Option.getOrThrow(paused)?.nextRunAt);
+      const archiveEvents = yield* sql<{ readonly sequence: number }>`
+        SELECT sequence FROM orchestration_events
+        WHERE event_type = 'thread.archived' AND aggregate_kind = 'thread'
+          AND application_event_version = 2 AND stream_id = ${threadId}
+      `;
+      assert.lengthOf(archiveEvents, 1);
+
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-scheduled-unarchive"),
+        threadId,
+      });
+      const stillPaused = (yield* tasks.list()).tasks.find((entry) => entry.id === task.id);
+      assert.isFalse(stillPaused?.enabled);
+      assert.isNull(stillPaused?.nextRunAt);
+      assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 0);
+
+      const resumed = yield* tasks.setEnabled({ id: task.id, enabled: true });
+      assert.isTrue(resumed.task.enabled);
+      assert.isNotNull(resumed.task.nextRunAt);
+      // A late notification about that same archive must not revoke the explicit resume.
+      yield* tasks.pauseForThread(threadId);
+      const afterLatePause = (yield* tasks.list()).tasks.find((entry) => entry.id === task.id);
+      assert.isTrue(afterLatePause?.enabled);
+    }),
+  );
+});
 
 const layerProjectDeletionTest = Layer.mergeAll(
   RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
@@ -411,7 +509,8 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
             prompt: "Check orchestration progress",
             enabled: !webhook,
             schedule: webhook ? { type: "webhook" } : { type: "interval", everyMs: 60_000 },
-            projectId,
+            projectId:
+              target === otherThreadId ? ProjectId.make("automation-other-project") : projectId,
             threadId: target,
             workspaceStrategy: { type: "root" },
             modelSelection,
@@ -6705,7 +6804,7 @@ it.layer(layerScratchPromotionTest)("turning a No project thread into a project"
         id: ScheduledTaskId.make("promotion-moves-bound"),
         title: "Bound",
         prompt: "Check in",
-        enabled: true,
+        enabled: false,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: SCRATCH_PROJECT_ID,
         threadId: siblingId,
