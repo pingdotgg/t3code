@@ -576,7 +576,8 @@ const dialedHostPort = (url: string) => {
 
 const reachesTarget = (url: string, target: { readonly host: string; readonly port: number }) => {
   const dialed = dialedHostPort(url);
-  if (dialed === undefined || dialed.port !== String(target.port)) return undefined;
+  // Go reads the port as a decimal number, so 03773 is 3773.
+  if (dialed === undefined || Number(dialed.port) !== target.port) return undefined;
   const reach = reaches(dialed.host, target.host);
   return reach === undefined ? undefined : { reach, hostname: dialed.host };
 };

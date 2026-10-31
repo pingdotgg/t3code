@@ -293,6 +293,19 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
           [...(codexHome.summary?.limits?.providers?.lockedInstanceFields?.[codex] ?? [])],
           ["config.homePath", "config.shadowHomePath"],
         );
+        // A server URL makes OpenCode skip the local launch a pin sets, so the pin owns it too.
+        const opencode = ProviderDriverKind.make("opencode");
+        const opencodePinned = yield* ManagedPolicy.fromDocument("/test/policy.json", {
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: {
+            providers: { instances: { [opencode]: { locked: true, binaryPath: "/opt/opencode" } } },
+          },
+        });
+        assert.include(
+          opencodePinned.summary?.limits?.providers?.lockedInstanceFields?.[opencode] ?? [],
+          "config.serverUrl",
+        );
         // The same override from the environment that starts the server is ignored too.
         const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "--yolo" };
         assert.deepEqual(providerHostEnvironment((yield* policyOn("linux")).summary, host), {

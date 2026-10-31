@@ -133,6 +133,7 @@ describe("tailscale", () => {
             // Credentials before the host, and IPv6 written out in full, still dial here.
             "/n": { Proxy: "http://user:pass@127.0.0.1:3773" },
             "/o": { Proxy: "http://[0:0:0:0:0:ffff:7f00:1]:3773" },
+            "/p": { Proxy: "http://127.0.0.1:03773" },
           },
         },
       },
@@ -164,6 +165,7 @@ describe("tailscale", () => {
           ["/l", "127.1"],
           ["/n", undefined],
           ["/o", undefined],
+          ["/p", undefined],
         ] as const
       ).map(([mount, ambiguous]) => ({
         servePort: 10000,
