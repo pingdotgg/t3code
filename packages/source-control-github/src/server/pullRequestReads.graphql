@@ -446,6 +446,33 @@ query ReviewerCandidates($owner: String!, $name: String!, $number: Int!) {
           }
         }
       }
+      suggestedReviewers {
+        isAuthor
+        isCommenter
+        reviewer {
+          login
+          name
+          avatarUrl
+        }
+      }
+      requestEvents: timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 100) {
+        nodes {
+          ... on ReviewRequestedEvent {
+            createdAt
+            requestedReviewer {
+              ... on User {
+                login
+              }
+              ... on Team {
+                slug
+              }
+              ... on Bot {
+                login
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

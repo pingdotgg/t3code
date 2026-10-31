@@ -41,15 +41,18 @@ export function PullRequestLabelChip({
   size = "sm",
   className,
   children,
+  ...props
 }: {
   label: Pick<PullRequestLabel, "name" | "color">;
   size?: "sm" | "default";
   className?: string;
   children?: ReactNode;
+  "data-row-label"?: string;
 }) {
   const color = pullRequestLabelColor(label.color);
   return (
     <Badge
+      {...props}
       size={size}
       variant={color ? "label" : "secondary"}
       className={cn("min-w-0 max-w-40 shrink justify-start", className)}
