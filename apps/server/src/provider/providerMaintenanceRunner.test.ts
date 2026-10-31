@@ -707,6 +707,65 @@ describe("providerMaintenanceRunner", () => {
     ),
   );
 
+  it.effect("reports the updater's error rather than a trailing hint after it", () =>
+    Effect.forEach(
+      [
+        {
+          stdout: "Current version: 2.1.310\nChecking for updates to latest version...\n",
+          stderr: [
+            "Error: Failed to install native update",
+            "TelemetrySafeError: Failed to fetch version from https://downloads.claude.ai/claude-code-releases/latest after 3 attempt(s): Request failed with status code 403",
+            'Try running "claude doctor" for diagnostics',
+            "",
+          ].join("\n"),
+          reason: "Request failed with status code 403",
+          hint: "claude doctor",
+        },
+        {
+          stdout: "",
+          stderr: [
+            "Failed to check for updates",
+            "Unable to fetch latest version from npm registry",
+            "",
+            "Possible causes:",
+            "  • Network connectivity issues",
+            "  • npm registry is unreachable",
+            "  • Corporate proxy/firewall blocking npm",
+            "",
+            "Try:",
+            "  • Check your internet connection",
+            "  • Run with --debug flag for more details",
+            "  • Manually check: npm view @anthropic-ai/claude-code version",
+            "  • Check if you need to login: npm whoami",
+            "",
+          ].join("\n"),
+          reason: "Failed to check for updates",
+          hint: "npm whoami",
+        },
+      ],
+      ({ stdout, stderr, reason, hint }) =>
+        Effect.gen(function* () {
+          const { registry } = yield* makeRegistry(baseNativeCliProvider);
+          const updater = yield* makeTestRunner(registry);
+
+          const result = yield* updater.updateProvider(NATIVE_CLI_DRIVER);
+          const message = result.providers[0]?.updateState?.message ?? "";
+
+          assert.include(message, reason);
+          assert.notInclude(message, hint);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layerNonWindowsPlatform,
+              layerLatestVersionHttpClient("0.0.0"),
+              layerMockSpawner(() => ({ stdout, stderr, code: 1 })),
+            ),
+          ),
+        ),
+      { discard: true },
+    ),
+  );
+
   it.effect("keeps the exit code message when a failed command prints nothing", () =>
     Effect.gen(function* () {
       const { registry } = yield* makeRegistry();
