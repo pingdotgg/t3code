@@ -1,3 +1,4 @@
+import type { SDKModel } from "@cursor/sdk";
 import {
   ProviderDriverKind,
   ProviderSetupError,
@@ -165,10 +166,12 @@ export const CursorDriver: ProviderDriver<
       });
 
     let catalogModels: ReadonlyArray<ServerProviderModel> = [];
+    let catalogSdkModels: ReadonlyArray<SDKModel> = [];
     const orchestrationAdapter = yield* makeCursorAdapterV2({
       instanceId,
       environment: processEnv,
       getModels: () => catalogModels,
+      getSdkModels: () => catalogSdkModels,
     }).pipe(
       Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
         ...sdkRunner,
@@ -224,24 +227,29 @@ export const CursorDriver: ProviderDriver<
           },
           auth.usesApiKey ? "api-key" : "browser",
         ).pipe(
-          Effect.filterOrElse(
-            (snapshot) =>
-              !(
-                effectiveConfig.enabled &&
-                snapshot.installed &&
-                snapshot.auth.status === "authenticated"
-              ),
-            (snapshot) =>
-              host.settings.get.pipe(
-                Effect.flatMap((settings) =>
-                  readCursorUsageLimits(
-                    effectiveConfig,
-                    { ...processEnv, CURSOR_API_KEY: apiKey },
-                    settings.cursorKeychainUsageEnabled,
+          Effect.flatMap(({ provider: statusProvider, sdkModels }) =>
+            Effect.succeed(statusProvider).pipe(
+              Effect.filterOrElse(
+                (snapshot) =>
+                  !(
+                    effectiveConfig.enabled &&
+                    snapshot.installed &&
+                    snapshot.auth.status === "authenticated"
                   ),
-                ),
-                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+                (snapshot) =>
+                  host.settings.get.pipe(
+                    Effect.flatMap((settings) =>
+                      readCursorUsageLimits(
+                        effectiveConfig,
+                        { ...processEnv, CURSOR_API_KEY: apiKey },
+                        settings.cursorKeychainUsageEnabled,
+                      ),
+                    ),
+                    Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+                  ),
               ),
+              Effect.map((provider) => ({ provider, sdkModels })),
+            ),
           ),
         ),
       ),
@@ -249,15 +257,24 @@ export const CursorDriver: ProviderDriver<
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.provideService(CursorKeychain.CursorKeychain, keychain),
-      Effect.map(stampSnapshot),
-      Effect.tap((provider) =>
+      Effect.map(({ provider, sdkModels }) => ({
+        provider: stampSnapshot(provider),
+        sdkModels,
+      })),
+      Effect.tap(({ provider, sdkModels }) =>
         Effect.sync(() => {
           // A failed check lists only custom models, so keep the last loaded catalog.
           if (provider.models.some((model) => !model.isCustom)) {
             catalogModels = provider.models;
           }
+          // Reuse the timed status probe — a second unbounded catalog.read would
+          // defeat the probe timeout when the first request stalled.
+          if (sdkModels !== undefined) {
+            catalogSdkModels = sdkModels;
+          }
         }),
       ),
+      Effect.map(({ provider }) => provider),
       Effect.provide(CursorSdkCatalog.layer),
     );
 

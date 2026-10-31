@@ -92,6 +92,30 @@ const sdkParameterizedModel = {
   ],
 } satisfies SDKModel;
 
+const sdkOptionalMaxModeModel = {
+  id: "composer-2",
+  displayName: "Composer 2",
+  parameters: [
+    {
+      id: "fast",
+      displayName: "Fast",
+      values: [{ value: "false" }, { value: "true", displayName: "Fast" }],
+    },
+  ],
+  variants: [
+    {
+      displayName: "Composer 2",
+      isDefault: true,
+      params: [{ id: "fast", value: "false" }],
+    },
+    {
+      displayName: "Composer 2 Max",
+      isMaxMode: true,
+      params: [{ id: "fast", value: "false" }],
+    },
+  ],
+} satisfies SDKModel;
+
 describe("buildCursorProviderSnapshot", () => {
   it("downgrades ready status to warning when SDK model discovery returns no models", () => {
     expect(
@@ -134,6 +158,17 @@ describe("Cursor SDK model discovery", () => {
     );
   });
 
+  it("adds a Max Mode boolean when the catalog offers optional max mode", () => {
+    expect(buildCursorCapabilitiesFromSdkModel(sdkOptionalMaxModeModel)).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          booleanDescriptor("fastMode", "Fast", false),
+          booleanDescriptor("maxMode", "Max Mode", false),
+        ],
+      }),
+    );
+  });
+
   it("filters invalid and duplicate SDK model entries", () => {
     expect(
       buildCursorDiscoveredModelsFromSdk([
@@ -155,7 +190,7 @@ describe("Cursor SDK model discovery", () => {
 describe("checkCursorProviderStatus", () => {
   it.effect("uses the SDK catalog when CURSOR_API_KEY is configured", () =>
     Effect.gen(function* () {
-      const provider = yield* checkCursorProviderStatus(
+      const { provider, sdkModels } = yield* checkCursorProviderStatus(
         {
           ...baseCursorSettings,
           customModels: ["internal/cursor-model"],
@@ -190,12 +225,13 @@ describe("checkCursorProviderStatus", () => {
           { slug: "internal/cursor-model", isCustom: true },
         ],
       });
+      expect(sdkModels).toEqual([sdkParameterizedModel]);
     }),
   );
 
   it.effect("surfaces SDK authentication failures", () =>
     Effect.gen(function* () {
-      const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
+      const { provider, sdkModels } = yield* checkCursorProviderStatus(baseCursorSettings, {
         CURSOR_API_KEY: "invalid-test-key",
       }).pipe(
         Effect.provide(
@@ -215,6 +251,7 @@ describe("checkCursorProviderStatus", () => {
         auth: { status: "unauthenticated" },
         message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
       });
+      expect(sdkModels).toBeUndefined();
     }),
   );
 
@@ -233,7 +270,7 @@ describe("checkCursorProviderStatus", () => {
     "explains a rejected plan for $authenticationType authentication",
     ({ authenticationType, message }) =>
       Effect.gen(function* () {
-        const provider = yield* checkCursorProviderStatus(
+        const { provider, sdkModels } = yield* checkCursorProviderStatus(
           baseCursorSettings,
           { CURSOR_API_KEY: "free-plan-key" },
           authenticationType,
@@ -258,6 +295,7 @@ describe("checkCursorProviderStatus", () => {
           auth: { status: "unknown" },
           message,
         });
+        expect(sdkModels).toBeUndefined();
       }),
   );
 
@@ -351,7 +389,7 @@ describe("checkCursorProviderStatus", () => {
 
   it.effect("requires a Cursor API key without probing any external Cursor binary", () =>
     Effect.gen(function* () {
-      const provider = yield* checkCursorProviderStatus(baseCursorSettings).pipe(
+      const { provider, sdkModels } = yield* checkCursorProviderStatus(baseCursorSettings).pipe(
         Effect.provide(
           CursorSdkCatalog.layerTest(() =>
             Effect.die("SDK catalog must not be used without CURSOR_API_KEY"),
@@ -365,6 +403,7 @@ describe("checkCursorProviderStatus", () => {
         auth: { status: "unauthenticated" },
         message: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
       });
+      expect(sdkModels).toBeUndefined();
     }),
   );
 });
