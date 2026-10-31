@@ -22,6 +22,8 @@ import * as Effect from "effect/Effect";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
+import * as NetService from "@t3tools/shared/Net";
+
 import { loopbackBindAddress } from "../auth/utils.ts";
 
 type PolicyDocument = { readonly document: ManagedPolicyDocument | undefined };
@@ -107,6 +109,8 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
   target: { readonly host: string; readonly port: number },
 ) {
   if (allowsRemoteClients(policy)) return;
+  // Another app holds the port, so its routes are not ours, and the bind will fail anyway.
+  if (!(yield* (yield* NetService.NetService).canListenOnHost(target.port, target.host))) return;
   const readRoutes = readTailscaleServeRoutesTo(target).pipe(
     Effect.catchTags({
       // Only a CLI that is not there; one that will not run might still front a daemon.
@@ -138,7 +142,10 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
       )
     : null;
   const formerName = (route: TailscaleServeRoute) =>
-    route.host !== undefined && currentName !== null && route.host.toLowerCase() !== currentName;
+    route.owner === undefined &&
+    route.host !== undefined &&
+    currentName !== null &&
+    route.host.toLowerCase() !== currentName;
   // A Service is shared across the tailnet, and a foreground route lives as long as its command.
   const removable = (route: TailscaleServeRoute) =>
     route.owner === undefined &&
@@ -166,7 +173,7 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
       }
       const command = `"tailscale ${off.join(" ")}"`;
       return route.ambiguous !== undefined
-        ? `${where}, and its target ${route.ambiguous} can also reach another service on this port; check it, then turn it off with ${command}`
+        ? `${where}, and its target ${route.ambiguous} might be another service on this port; check it, then turn it off with ${command}`
         : `${where}; turn it off with ${command}`;
     };
     return yield* refuseRemoteClients(

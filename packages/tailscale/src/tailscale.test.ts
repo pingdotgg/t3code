@@ -123,6 +123,8 @@ describe("tailscale", () => {
             "/g": { Proxy: "3773" },
             "/h": { Proxy: "localhost:3773" },
             "/i": { Proxy: "http://[::]:3773" },
+            // A name can resolve to any address, the bound one included.
+            "/j": { Proxy: "http://ip6-localhost:3773" },
           },
         },
       },
@@ -149,6 +151,7 @@ describe("tailscale", () => {
           ["/g", undefined],
           ["/h", "localhost"],
           ["/i", "[::]"],
+          ["/j", "ip6-localhost"],
         ] as const
       ).map(([mount, ambiguous]) => ({
         servePort: 10000,

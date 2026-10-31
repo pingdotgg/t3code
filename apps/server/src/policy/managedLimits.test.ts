@@ -6,6 +6,8 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as NetService from "@t3tools/shared/Net";
+
 import * as EnvironmentAuthPolicy from "../auth/EnvironmentAuthPolicy.ts";
 import * as ManagedLimits from "./managedLimits.ts";
 import * as ManagedPolicy from "./ManagedPolicy.ts";
@@ -242,6 +244,8 @@ it.effect(
         ),
       );
     };
+    const portFree = { ...NetService.make(), canListenOnHost: () => Effect.succeed(true) };
+    const portHeld = { ...portFree, canListenOnHost: () => Effect.succeed(false) };
     return Effect.gen(function* () {
       // A route that shares the port with this server's stays, as does one to another loopback
       // address on the same port; a TCP forward here goes too.
@@ -301,7 +305,7 @@ it.effect(
         localhostOffCalls,
       ).pipe(Effect.flip);
       assert.deepEqual(localhostOffCalls, []);
-      assert.include(localhost.message, "its target localhost can also reach another service");
+      assert.include(localhost.message, "its target localhost might be another service");
       // Only a fresh read confirms the route is gone, whatever `off` exits with.
       for (const answers of [{ offIgnored: true }, { offIgnored: true, offExitCode: 1 }]) {
         const stuck = yield* close(answers).pipe(Effect.flip);
@@ -383,6 +387,10 @@ it.effect(
       );
       // A CLI that is there but will not run might still front a daemon with a mapping.
       yield* spawnFailing("PermissionDenied").pipe(Effect.flip);
-    });
+      // Another app holds the port: its route is not ours, and the bind fails anyway.
+      const heldOffCalls: Array<ReadonlyArray<string>> = [];
+      yield* close({}, heldOffCalls).pipe(Effect.provideService(NetService.NetService, portHeld));
+      assert.deepEqual(heldOffCalls, []);
+    }).pipe(Effect.provideService(NetService.NetService, portFree));
   },
 );

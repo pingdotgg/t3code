@@ -452,7 +452,7 @@ export interface TailscaleServeRoute {
   readonly mount?: string;
   /** The machine name a web route serves under. */
   readonly host?: string;
-  /** A target, such as `localhost`, that can also dial a different service on the other loopback. */
+  /** A target, such as a name, that may dial this server or another service on the same port. */
   readonly ambiguous?: string;
   /** The Tailscale Service it belongs to, or `foreground` for a `tailscale serve` still running. */
   readonly owner?: string;
@@ -524,8 +524,9 @@ const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
 );
 
 /**
- * Whether a proxy to `hostname` dials `bindHost`. `0.0.0.0` reaches 127.0.0.1; `localhost` and
- * `[::]` may reach either loopback, since Go dials `::` and then 0.0.0.0 (golang/go#18806).
+ * Whether a proxy to `hostname` dials `bindHost`. `0.0.0.0` reaches 127.0.0.1. `[::]` may reach
+ * either loopback, since Go dials `::` and then 0.0.0.0 (golang/go#18806), and a name such as
+ * `localhost` may resolve to whatever the server binds.
  */
 const reaches = (hostname: string, bindHost: string): "exact" | "either" | undefined => {
   let address = normalizeHostname(hostname);
@@ -538,9 +539,10 @@ const reaches = (hostname: string, bindHost: string): "exact" | "either" | undef
   } else if (address.startsWith("::ffff:")) {
     address = address.slice("::ffff:".length);
   }
-  if (address === "localhost" || address === "::") {
+  const literal = address.includes(":") || /^\d{1,3}(?:\.\d{1,3}){3}$/u.test(address);
+  if (!literal) return "either";
+  if (address === "::")
     return bindHost === "127.0.0.1" || bindHost === "::1" ? "either" : undefined;
-  }
   return (address === "0.0.0.0" ? "127.0.0.1" : address) === bindHost ? "exact" : undefined;
 };
 
