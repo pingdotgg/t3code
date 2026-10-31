@@ -29,6 +29,7 @@ import {
   useEffect,
   useEffectEvent,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -49,6 +50,23 @@ export interface ServerBrowserHandle {
   readonly reload: (options?: { readonly ignoreCache?: boolean }) => void;
   readonly viewport: (setting: PreviewViewportSetting) => void;
   readonly canvas: () => HTMLCanvasElement | null;
+}
+
+let handoffFrame: { key: string; canvas: HTMLCanvasElement } | null = null;
+
+/** Carry the displayed frame across a panel/mini-player handoff until its new stream paints. */
+export function handoffServerBrowserFrame(environmentId: EnvironmentId, threadId: string, tabId: string, source: HTMLCanvasElement | null): void {
+  handoffFrame = null;
+  if (!source || source.width < 1 || source.height < 1) return;
+  const canvas = document.createElement("canvas");
+  canvas.width = source.width;
+  canvas.height = source.height;
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  context.drawImage(source, 0, 0);
+  const frame = { key: JSON.stringify([environmentId, threadId, tabId]), canvas };
+  handoffFrame = frame;
+  window.setTimeout(() => { if (handoffFrame === frame) handoffFrame = null; }, 1000);
 }
 
 const RESIZE_THROTTLE_MS = 150;
@@ -218,6 +236,22 @@ export function ServerBrowserSurface(props: {
   const probeRef = useRef<TouchProbe | null>(null);
   const lastProbeRef = useRef<{ x: number; y: number; editable: boolean; at: number } | null>(null);
   const firstFrame = useEffectEvent(() => onFirstFrame?.());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Paint the handoff frame before the destination becomes visible while its stream reconnects.
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!visible || pdfUrl || !canvas || handoffFrame?.key !== JSON.stringify([environmentId, threadId, tabId])) return;
+    const seed = handoffFrame.canvas;
+    handoffFrame = null;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    canvas.width = seed.width;
+    canvas.height = seed.height;
+    context.drawImage(seed, 0, 0);
+    if (!hasFrameRef.current) {
+      hasFrameRef.current = true;
+      firstFrame();
+    }
+  }, [environmentId, threadId, tabId, visible, pdfUrl]);
   const viewportChanged = useEffectEvent((viewport: PreviewStreamViewport) =>
     onViewport?.(viewport),
   );
