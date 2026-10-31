@@ -421,12 +421,10 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A thread bound to an existing native session starts empty. Loading the
-   * session replays its history only into the adapter's own snapshot, so copy
-   * that snapshot into the thread as run-less history, as transcript imports do.
-   * The `v1_import` origin it sets is what forks read to keep that history, and
-   * marks the import done, so a call after a failed read repairs the thread and
-   * any later call does nothing.
+   * Loading a native session replays its history only into the adapter's own
+   * snapshot, so copy that snapshot into the thread as run-less history. The
+   * `v1_import` origin keeps it in forks and marks the import done, so a call
+   * after a failed read repairs the thread and any later call does nothing.
    */
   const importNativeHistory = Effect.fn("importNativeHistoryV2")(function* (input: {
     readonly threadId: ThreadId;

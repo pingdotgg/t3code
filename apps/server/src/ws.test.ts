@@ -1128,6 +1128,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
       Layer.mock(DirectEndpoints.DirectEndpoints)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
       Layer.mock(ProjectService.ProjectService)({
@@ -1178,9 +1179,8 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
             scopes: [],
           },
           {},
-          {},
-          yield* PreviewAutomationBroker.PreviewAutomationBroker,
           yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
         ).pipe(
           Layer.provide(services),
           Layer.merge(

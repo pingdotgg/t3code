@@ -245,9 +245,9 @@ it("offers to import a pending thread's history but not to delete its session", 
   });
   await using screen = await renderSection();
   await screen.click("List sessions");
-  expect(screen.button("Delete").disabled).toBe(true);
+  await expect.element(screen.button("Delete")).toBeDisabled();
   await screen.click("Import");
   expect(commands.import).toHaveBeenCalledOnce();
-  expect(screen.button("Imported").disabled).toBe(true);
-  expect(screen.button("Delete").disabled).toBe(true);
+  await expect.element(screen.button("Imported")).toBeDisabled();
+  await expect.element(screen.button("Delete")).toBeDisabled();
 });
