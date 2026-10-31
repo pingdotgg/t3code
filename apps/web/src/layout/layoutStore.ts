@@ -1,6 +1,6 @@
 /** Layout state belongs to the device, across environments. Surface stores retain resource state;
  * surfaceSync keeps their tabs in step. */
-import type { KeybindingCommand } from "@t3tools/contracts";
+import type { KeybindingCommand, ScopedThreadRef } from "@t3tools/contracts";
 import { flushSync } from "react-dom";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
@@ -91,6 +91,7 @@ export function arrangeLayoutChange(before: LayoutState, after: LayoutState): La
  * fade.
  */
 export type LayoutHint =
+  | { id: number; kind: "terminal"; threadRef: ScopedThreadRef }
   | { id: number; kind: "column"; index: number; count: number; command: KeybindingCommand | null }
   | {
       id: number;
