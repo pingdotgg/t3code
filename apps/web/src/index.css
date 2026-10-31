@@ -111,10 +111,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-control-gap: 0.5rem;
   --sidebar-icon-color: var(--contrast-sidebar-muted-foreground);
   --sidebar-row-content-inset: 0.625rem;
-  /* A 28px icon control placed this far inside the sidebar's content edge
-     centers its glyph on the icon column, the center of a row's 16px leading
-     icon. The titlebar cluster and the sidebar footer both start here, so
-     their glyphs stack on the favicons. */
+  /* Align inset sidebar controls with the row's leading icon. The window
+     navigation uses its own edge inset (pen Pk2BE). */
   --sidebar-icon-control-inset: calc(
     var(--sidebar-row-content-inset) + 0.5rem - var(--workspace-titlebar-control-size) / 2
   );
@@ -134,9 +132,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-controls-edge-right: env(safe-area-inset-right);
   --workspace-topbar-height: var(--workspace-chrome-row-height);
   --workspace-controls-top: var(--workspace-chrome-controls-top);
-  --workspace-controls-left: calc(
-    env(safe-area-inset-left) + var(--workspace-pane-inset) + var(--sidebar-icon-control-inset)
-  );
+  --workspace-controls-left: calc(env(safe-area-inset-left) + 0.375rem);
   --workspace-controls-right: calc(var(--workspace-controls-edge-right) + 0.75rem);
   --workspace-native-controls-inset: 0px;
   /* The inset content pane on the chrome (pen mSaSF): 12px from the window
@@ -211,9 +207,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-controls-edge-right: calc(
     100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px)
   );
-  --workspace-controls-left: calc(
-    env(titlebar-area-x, 0px) + var(--workspace-pane-inset) + var(--sidebar-icon-control-inset)
-  );
+  --workspace-controls-left: calc(env(titlebar-area-x, 0px) + 0.375rem);
   --workspace-native-controls-inset: calc(var(--workspace-controls-edge-right) + 0.75rem);
   /* The caption buttons already reach past the pane's right edge. */
   --workspace-pane-controls-right: calc(var(--workspace-controls-edge-right) + 0.75rem);
