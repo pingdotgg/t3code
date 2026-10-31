@@ -6,6 +6,8 @@ import {
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
   PreviewAutomationNavigateInput,
+  PreviewAutomationNetworkInput,
+  PreviewAutomationNetworkLog,
   PreviewAutomationOpenInput,
   PreviewAutomationRecordingArtifact,
   PreviewAutomationRecordingStatus,
@@ -194,6 +196,17 @@ const PreviewWaitForTool = readonlyBrowserTool(
   }).annotate(Tool.Title, "Wait for preview page condition"),
 );
 
+const PreviewNetworkTool = readonlyBrowserTool(
+  Tool.make("preview_network", {
+    description:
+      "List the chosen tab's recent requests, newest last: method, URL, status, state, and timing. Filter with `urlIncludes`. Works on a tab the user is driving. Pass a listed `id` as `requestId` for its headers, with credentials redacted, and its text bodies up to 16 KB; that needs your tab, or an unclaimed one. The log keeps a tab's newest 200 requests.",
+    parameters: PreviewAutomationNetworkInput,
+    success: Schema.Struct({ ...PreviewAutomationNetworkLog.fields, ...presentationFields }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Inspect preview network requests"),
+);
+
 const PreviewRecordingStartTool = safeBrowserTool(
   Tool.make("preview_recording_start", {
     description: "Start recording the chosen tab.",
@@ -226,6 +239,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewActTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
+  PreviewNetworkTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
 );
@@ -240,6 +254,7 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewActTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
+  PreviewNetworkTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
 );

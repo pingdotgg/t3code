@@ -12,6 +12,7 @@ import {
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
+  type PreviewAutomationNetworkLog,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -1825,6 +1826,81 @@ it.live("agents read a human's tab with no arguments and act on it only while no
         .invoke<void>({ scope, tabId, operation: "press", input: { key: "Enter" } })
         .pipe(Effect.flip);
       expect(retaken).toMatchObject({ reason: "humanControl" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("agents list a human's requests but read one's headers and bodies only once released", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      const opened = yield* manager.open({
+        threadId: scope.thread.threadId,
+        url: "http://localhost:5173/login",
+        runtime: "server",
+      });
+      const tabId = PreviewTabId.make(opened.tabId);
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      const page = contexts[0]!.page;
+      const login = {
+        url: () => "http://localhost:5173/api/login",
+        method: () => "POST",
+        resourceType: () => "fetch",
+        isNavigationRequest: () => false,
+        frame: () => page,
+        headers: () => ({ "content-type": "application/json", authorization: "Bearer t" }),
+        postDataBuffer: () => Buffer.from('{"password":"hunter2"}'),
+        sizes: async () => ({ responseBodySize: 24 }),
+      };
+      page.emit("request", login);
+      page.emit("response", {
+        url: login.url,
+        request: () => login,
+        status: () => 401,
+        headers: () => ({ "content-type": "application/json" }),
+        body: async () => Buffer.from('{"error":"bad password"}'),
+      });
+      page.emit("requestfinished", login);
+
+      const listed = yield* broker.invoke<PreviewAutomationNetworkLog>({
+        scope,
+        tabId,
+        operation: "network",
+        input: { urlIncludes: "/api/" },
+      });
+      expect(listed).toMatchObject({
+        tabId,
+        matched: 1,
+        requests: [{ id: "r1", method: "POST", status: 401, state: "finished" }],
+      });
+      const refused = yield* broker
+        .invoke<PreviewAutomationNetworkLog>({
+          scope,
+          tabId,
+          operation: "network",
+          input: { requestId: "r1" },
+        })
+        .pipe(Effect.flip);
+      expect(refused).toMatchObject({
+        _tag: "PreviewAutomationControlInterruptedError",
+        reason: "humanControl",
+      });
+
+      yield* viewer.input({ type: "releaseControl" });
+      const detail = yield* broker.invoke<PreviewAutomationNetworkLog>({
+        scope,
+        tabId,
+        operation: "network",
+        input: { requestId: "r1" },
+      });
+      expect(detail.requests[0]).toMatchObject({
+        requestHeaders: { authorization: "[redacted]" },
+        requestBody: { text: '{"password":"hunter2"}' },
+        responseBody: { text: '{"error":"bad password"}' },
+      });
     }),
   ).pipe(Effect.provide(layer)),
 );

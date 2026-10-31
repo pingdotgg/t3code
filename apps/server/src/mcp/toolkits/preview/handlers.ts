@@ -13,6 +13,7 @@ import {
   type ToolActivityIcon,
   type ThreadId,
   type PreviewAutomationOperation,
+  type PreviewAutomationNetworkLog,
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
   type PreviewAutomationResizeResult,
@@ -235,6 +236,9 @@ const handlers = {
   ),
   preview_wait_for: McpToolAccess.readsAsCaller((input) =>
     invokeTargeted<object>("waitFor", input, input.timeoutMs),
+  ),
+  preview_network: McpToolAccess.readsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationNetworkLog>("network", input),
   ),
   preview_recording_start: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),

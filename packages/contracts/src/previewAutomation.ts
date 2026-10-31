@@ -51,6 +51,7 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "hover",
   "select",
   "drag",
+  "network",
 ] as const;
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_SERVER_OPERATIONS);
 export type PreviewAutomationOperation = typeof PreviewAutomationOperation.Type;
@@ -525,6 +526,63 @@ export const PreviewAutomationNetworkEntry = Schema.Struct({
   timestamp: Schema.String,
 });
 export type PreviewAutomationNetworkEntry = typeof PreviewAutomationNetworkEntry.Type;
+
+const PREVIEW_NETWORK_LOG_LIMIT = 50;
+
+export const PreviewAutomationNetworkInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  urlIncludes: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "Keep requests whose URL contains this text. Case counts.",
+  }),
+  limit: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: PREVIEW_NETWORK_LOG_LIMIT })),
+  ).annotate({ description: "Newest matches to list. Default 20." }),
+  requestId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(32))).annotate({
+    description: "An `id` from a listing. Returns that request with headers and bodies.",
+  }),
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      input.requestId === undefined ||
+      (input.urlIncludes === undefined && input.limit === undefined) ||
+      "Pass requestId alone, or list with urlIncludes and limit.",
+  ),
+);
+export type PreviewAutomationNetworkInput = typeof PreviewAutomationNetworkInput.Type;
+
+export const PreviewAutomationNetworkBody = Schema.Struct({
+  text: Schema.optional(Schema.String),
+  /** Missing when the body was not read and the response declared no length. */
+  sizeBytes: Schema.optional(Schema.Int),
+  truncated: Schema.Boolean,
+  omitted: Schema.optional(Schema.Literals(["binary", "unavailable"])),
+});
+export type PreviewAutomationNetworkBody = typeof PreviewAutomationNetworkBody.Type;
+
+export const PreviewAutomationNetworkRequest = Schema.Struct({
+  id: Schema.String,
+  method: Schema.String,
+  url: Schema.String,
+  resourceType: Schema.String,
+  state: Schema.Literals(["pending", "finished", "failed"]),
+  status: Schema.NullOr(Schema.Int),
+  errorText: Schema.optional(Schema.String),
+  startedAt: Schema.String,
+  durationMs: Schema.NullOr(Schema.Int),
+  requestHeaders: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  responseHeaders: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  requestBody: Schema.optional(PreviewAutomationNetworkBody),
+  responseBody: Schema.optional(PreviewAutomationNetworkBody),
+});
+export type PreviewAutomationNetworkRequest = typeof PreviewAutomationNetworkRequest.Type;
+
+export const PreviewAutomationNetworkLog = Schema.Struct({
+  tabId: PreviewTabId,
+  /** Matches still held in the tab's log; `requests` lists the newest of them. */
+  matched: Schema.Int,
+  requests: Schema.Array(PreviewAutomationNetworkRequest),
+});
+export type PreviewAutomationNetworkLog = typeof PreviewAutomationNetworkLog.Type;
 
 export const PreviewAutomationActionEvent = Schema.Struct({
   id: Schema.String,
