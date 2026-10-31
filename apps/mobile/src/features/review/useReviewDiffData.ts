@@ -22,6 +22,11 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import { reviewEnvironment } from "../../state/review";
+import {
+  filterPullRequestTestFiles,
+  shownPatchIndices,
+} from "../pull-requests/pullRequestFileFilters";
+import { useHideTestFilesPreference } from "../pull-requests/usePullRequestFileFilter";
 
 const EMPTY_INLINE_REVIEW_COMMENTS = Object.freeze([]);
 type ParsedFilePatch = AsyncResult.AsyncResult<
@@ -121,6 +126,8 @@ function formatHeaderDiffSummary(
   };
 }
 
+const EMPTY_REVIEW_FILES: ReadonlyArray<ReviewRenderableFile> = [];
+
 export function useReviewDiffData(input: {
   readonly threadKey: string | null;
   readonly environmentId: EnvironmentId | undefined;
@@ -149,10 +156,20 @@ export function useReviewDiffData(input: {
     source?.baseRef,
     source?.diffHash,
   ]);
-  const [requested, setRequested] = useState({ scope, indices: [0, 1, 2] });
+  const hideTestFilesPreference = useHideTestFilesPreference();
+  const { hideTestFiles } = hideTestFilesPreference;
+  const lazyFiles = lazySource?.files;
+  const seedIndices = useMemo(
+    () => shownPatchIndices(lazyFiles ?? [], hideTestFiles, null),
+    [lazyFiles, hideTestFiles],
+  );
+  const [requested, setRequested] = useState<{ scope: string; indices: number[] }>({
+    scope,
+    indices: [],
+  });
   const indices = useMemo(
-    () => new Set(requested.scope === scope ? requested.indices : [0, 1, 2]),
-    [requested, scope],
+    () => new Set([...seedIndices, ...(requested.scope === scope ? requested.indices : [])]),
+    [requested, scope, seedIndices],
   );
   const queries = useMemo(
     () =>
@@ -202,17 +219,20 @@ export function useReviewDiffData(input: {
   const loadVisibleFile = useCallback(
     (fileId: string | null, retry = false) => {
       const index =
-        fileId === null ? 0 : (lazySource?.files?.findIndex((file) => file.path === fileId) ?? -1);
+        fileId === null
+          ? (seedIndices[0] ?? -1)
+          : (lazySource?.files?.findIndex((file) => file.path === fileId) ?? -1);
       if (index < 0) return;
       setRequested((current) => {
-        const previous = current.scope === scope ? current.indices : [0, 1, 2];
-        const added = [index, index + 1, index + 2].filter((next) => !previous.includes(next));
+        const previous = current.scope === scope ? current.indices : [];
+        const nearby = shownPatchIndices(lazyFiles ?? [], hideTestFiles, index);
+        const added = nearby.filter((next) => !previous.includes(next));
         return added.length === 0 ? current : { scope, indices: [...previous, ...added] };
       });
       if (retry && patches[index]?._tag === "Failure" && queries[index])
         registry.refresh(queries[index]);
     },
-    [lazySource, scope, patches, queries, registry],
+    [lazySource, lazyFiles, scope, patches, queries, registry, seedIndices, hideTestFiles],
   );
   const parsedDiff = useMemo<ReviewParsedDiff>(() => {
     if (!lazySource?.files) return applyReviewDiffMetadata(previewDiff, selectedSection);
@@ -239,8 +259,20 @@ export function useReviewDiffData(input: {
     }
     return inlineReviewComments.filter((comment) => comment.sectionId === selectedSectionId);
   }, [inlineReviewComments, selectedSectionId]);
+  const shownDiff = useMemo(
+    () => filterPullRequestTestFiles(parsedDiff, hideTestFiles),
+    [parsedDiff, hideTestFiles],
+  );
+  const fileFilter = {
+    ...hideTestFilesPreference,
+    parsed: shownDiff,
+    hiddenCount:
+      parsedDiff.kind === "files" && shownDiff.kind === "files"
+        ? parsedDiff.fileCount - shownDiff.fileCount
+        : 0,
+  };
   const nativeReviewDiffData = getCachedNativeReviewDiffData({
-    parsedDiff,
+    parsedDiff: fileFilter.parsed,
     comments: selectedSectionInlineComments,
   });
   const pendingReviewCommentCount = inlineReviewComments.length;
@@ -259,7 +291,9 @@ export function useReviewDiffData(input: {
   }, [parsedDiff, selectedSection?.id]);
 
   return {
-    parsedDiff,
+    parsedDiff: fileFilter.parsed,
+    allFiles: parsedDiff.kind === "files" ? parsedDiff.files : EMPTY_REVIEW_FILES,
+    fileFilter,
     loadVisibleFile,
     isPending: patches.some((patch) => patch?._tag === "Initial" || patch?.waiting),
     headerDiffSummary,
