@@ -5,7 +5,6 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -28,12 +27,6 @@ const GatewayHeadersEntriesJson = Schema.fromJsonString(GatewayHeadersEntries);
 const decodeEntriesJson = Schema.decodeEffect(GatewayHeadersEntriesJson);
 const encodeEntriesJson = Schema.encodeEffect(GatewayHeadersEntriesJson);
 
-const GatewayHeadersDocumentJson = Schema.fromJsonString(
-  Schema.Struct({ version: Schema.Literal(1), encryptedEntries: Schema.String }),
-);
-const decodeDocumentJson = Schema.decodeEffect(GatewayHeadersDocumentJson);
-const encodeDocumentJson = Schema.encodeEffect(GatewayHeadersDocumentJson);
-
 export class DesktopGatewayHeadersError extends Schema.TaggedError<DesktopGatewayHeadersError>()(
   "DesktopGatewayHeadersError",
   {
@@ -42,7 +35,6 @@ export class DesktopGatewayHeadersError extends Schema.TaggedError<DesktopGatewa
       "encryption-unavailable",
       "read-failed",
       "persist-failed",
-      "apply-failed",
     ]),
     cause: Schema.optionalKey(Schema.Defect()),
   },
@@ -57,8 +49,6 @@ export class DesktopGatewayHeadersError extends Schema.TaggedError<DesktopGatewa
         return "Could not read the saved gateway headers, so they were left unchanged.";
       case "persist-failed":
         return "Could not save the gateway headers.";
-      case "apply-failed":
-        return "Could not apply the gateway headers.";
     }
   }
 }
@@ -99,10 +89,7 @@ export function withGatewayHeaders(
 }
 
 const toEntryViews = (entries: GatewayHeadersEntries): ReadonlyArray<DesktopGatewayHeadersEntry> =>
-  entries.map((entry) => ({
-    origin: entry.origin,
-    headerNames: entry.headers.map((header) => header.name),
-  }));
+  entries.map(({ origin, headers }) => ({ origin, headerNames: headers.map(({ name }) => name) }));
 
 /** Installs or, with `null`, removes the one request-header listener for the window's session. */
 export type GatewayRequestHook = (
@@ -141,30 +128,24 @@ export const make = Effect.fn("DesktopGatewayHeaders.make")(function* (hook: Gat
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
-  const filePath = path.join(environment.stateDir, "gateway-headers.json");
+  const filePath = path.join(environment.stateDir, "gateway-headers.bin");
   // `null` until the saved file is read; a mutation must not overwrite a file it could not read.
   const entriesRef = yield* Ref.make<GatewayHeadersEntries | null>(null);
   const mutex = yield* Semaphore.make(1);
 
   const apply = (entries: GatewayHeadersEntries) =>
-    Effect.try({
-      try: () =>
-        hook(
-          entries.length === 0 ? null : gatewayUrlPatterns(entries.map((entry) => entry.origin)),
-          (url, requestHeaders) => withGatewayHeaders(entries, url, requestHeaders),
-        ),
-      catch: (cause) => new DesktopGatewayHeadersError({ reason: "apply-failed", cause }),
-    }).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Could not apply desktop gateway headers.", { cause }),
+    Effect.sync(() =>
+      hook(
+        entries.length === 0 ? null : gatewayUrlPatterns(entries.map((entry) => entry.origin)),
+        (url, requestHeaders) => withGatewayHeaders(entries, url, requestHeaders),
       ),
     );
 
   const load = Effect.gen(function* () {
     if (!(yield* fileSystem.exists(filePath))) return [];
-    const document = yield* decodeDocumentJson(yield* fileSystem.readFileString(filePath));
-    const encrypted = yield* Effect.fromResult(Base64.decode(document.encryptedEntries));
-    return yield* decodeEntriesJson(yield* safeStorage.decryptString(encrypted));
+    return yield* decodeEntriesJson(
+      yield* safeStorage.decryptString(yield* fileSystem.readFile(filePath)),
+    );
   });
 
   const persist = Effect.fn("DesktopGatewayHeaders.persist")(function* (
@@ -178,13 +159,9 @@ export const make = Effect.fn("DesktopGatewayHeaders.make")(function* (hook: Gat
     }
     yield* Effect.gen(function* () {
       const encrypted = yield* safeStorage.encryptString(yield* encodeEntriesJson(entries));
-      const document = yield* encodeDocumentJson({
-        version: 1,
-        encryptedEntries: Base64.encode(encrypted),
-      });
       yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
       const tempPath = `${filePath}.${process.pid}.tmp`;
-      yield* fileSystem.writeFileString(tempPath, `${document}\n`);
+      yield* fileSystem.writeFile(tempPath, encrypted);
       yield* fileSystem.rename(tempPath, filePath);
     }).pipe(
       Effect.mapError(
@@ -196,12 +173,10 @@ export const make = Effect.fn("DesktopGatewayHeaders.make")(function* (hook: Gat
     return toEntryViews(entries);
   });
 
-  const requireOrigin = (raw: string) => {
-    const origin = gatewayOrigin(raw);
-    return origin === null
-      ? Effect.fail(new DesktopGatewayHeadersError({ reason: "invalid-origin" }))
-      : Effect.succeed(origin);
-  };
+  const requireOrigin = (raw: string) =>
+    Effect.fromNullishOr(gatewayOrigin(raw)).pipe(
+      Effect.mapError(() => new DesktopGatewayHeadersError({ reason: "invalid-origin" })),
+    );
 
   const current = Effect.gen(function* () {
     const loaded = yield* Ref.get(entriesRef);

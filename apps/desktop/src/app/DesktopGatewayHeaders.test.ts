@@ -72,7 +72,7 @@ const withGatewayHeaders = <A, E>(
     const { stateDir } = yield* DesktopEnvironment.DesktopEnvironment.pipe(
       Effect.provide(layerDependencies),
     );
-    return yield* use({ start, calls, filePath: `${stateDir}/gateway-headers.json` });
+    return yield* use({ start, calls, filePath: `${stateDir}/gateway-headers.bin` });
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 const serviceToken = [
