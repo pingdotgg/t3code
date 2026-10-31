@@ -198,6 +198,41 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("looks up a project/repository path as that project's repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            JSON.stringify({
+              name: "repo",
+              webUrl: "https://dev.azure.com/acme/project/_git/repo",
+              remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+              sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
+              project: { name: "project" },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.getRepositoryCloneUrls({ cwd: "/somewhere", repository: "project/repo" });
+
+      assert.deepStrictEqual(mockRun.mock.calls.at(-1)?.[0].args, [
+        "repos",
+        "show",
+        "--detect",
+        "true",
+        "--repository",
+        "repo",
+        "--project",
+        "project",
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("preserves VCS causes without copying upstream details into messages", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
