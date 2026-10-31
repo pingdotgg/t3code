@@ -2,6 +2,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
+  isOrchestrationV2WorkActive,
   PIPELINE_MAX_STEPS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   PipelineError,
@@ -1290,6 +1291,48 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     return yield* result(input.runId);
   });
 
+  /** The wait never settles while these run, so a handoff has to wait for them to end. */
+  const requireNoBackgroundWork = Effect.fn("PipelineRunner.requireNoBackgroundWork")(function* (
+    run: PipelineRun,
+    threadId: ThreadId,
+  ) {
+    const records = yield* threads
+      .getProjectThreadRecords({ projectId: run.projectId, threadId }, [
+        "subagents",
+        "providerThreads",
+      ])
+      .pipe(
+        Effect.catchTags({
+          ThreadManagementThreadNotFoundError: () => Effect.succeed(null),
+          ThreadManagementProjectionLoadError: (cause) =>
+            pipelineError("Could not read the step's background work.", {
+              runId: run.id,
+              cause,
+            }),
+        }),
+      );
+    if (records === null) return;
+    const subagents = records.subagents.filter((subagent) =>
+      isOrchestrationV2WorkActive(subagent.status),
+    );
+    const tasks = records.providerThreads.flatMap((thread) => thread.pendingBackgroundTasks ?? []);
+    if (subagents.length === 0 && tasks.length === 0) return;
+    const named = tasks
+      .map((task) => task.description ?? task.taskId)
+      .map((text) => (text.length > 80 ? `${text.slice(0, 80)}…` : text))
+      .slice(0, 3);
+    const parts = [
+      ...(tasks.length === 0
+        ? []
+        : [`${tasks.length} background task(s) still running (${named.join("; ")})`]),
+      ...(subagents.length === 0 ? [] : [`${subagents.length} subagent(s) still running`]),
+    ];
+    return yield* pipelineError(
+      `Stop or finish your background work before handing off: ${parts.join(", ")}`,
+      { runId: run.id },
+    );
+  });
+
   /**
    * Records a step agent's result. The run advances when the agent's turn ends; a run that paused
    * because an earlier turn ended without a handoff resumes. While the run waits before the next
@@ -1313,6 +1356,15 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
         const now = yield* nowIso;
         const handedOff = { output: input.output, handedOff: true } as const;
         const current = step.index === run.currentStepIndex && step.status === "running";
+        const accepted =
+          (current &&
+            (run.status === "running" ||
+              (run.status === "paused" && run.pauseReason === "awaiting_handoff"))) ||
+          (step.status === "completed" &&
+            run.status === "paused" &&
+            run.pauseReason === "awaiting_continue" &&
+            run.currentStepIndex === step.index + 1);
+        if (accepted) yield* requireNoBackgroundWork(run, input.threadId);
         if (current && run.status === "running") {
           yield* store.updateStep(run.id, step.index, handedOff);
         } else if (current && run.status === "paused" && run.pauseReason === "awaiting_handoff") {

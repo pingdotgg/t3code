@@ -171,7 +171,17 @@ const makeHarness = Effect.gen(function* () {
     }
   });
 
+  /** Delegated work a thread still has, as the projection reports it. */
+  const delegatedWork = new Map<
+    ThreadId,
+    {
+      backgroundTasks: ReadonlyArray<{ taskId: string; description?: string }>;
+      subagents: ReadonlyArray<{ status: string; completionDelivery?: string }>;
+    }
+  >();
+
   const recordsFor = (threadId: ThreadId, runId = `run-of:${threadId}`) => {
+    const work = delegatedWork.get(threadId);
     const output = outputs.get(runId) ?? outputs.get(threadId) ?? {};
     const turnItems: Array<Record<string, unknown>> = [];
     if (output.reply !== undefined) {
@@ -190,7 +200,13 @@ const makeHarness = Effect.gen(function* () {
       output.reply === undefined
         ? []
         : [{ id: "message-1", runId, role: "assistant", text: output.reply }];
-    return { runs: [], messages, turnItems };
+    return {
+      runs: [],
+      messages,
+      turnItems,
+      subagents: work?.subagents ?? [],
+      providerThreads: [{ pendingBackgroundTasks: work?.backgroundTasks ?? [] }],
+    };
   };
 
   const shellFor = (threadId: ThreadId) => {
@@ -319,6 +335,7 @@ const makeHarness = Effect.gen(function* () {
     providerEnabled,
     commands,
     outputs,
+    delegatedWork,
     settle,
     subscriptions,
     stopStarted,
@@ -1209,6 +1226,50 @@ it.effect("a handoff after the pause resumes the run once the agent's turn ends"
 
       const second = yield* Queue.take(harness.launches);
       assert.strictEqual(promptBody(second.input.initialMessage?.text), "Build from: plan on main");
+    }),
+  ),
+);
+
+it.effect("a handoff is refused while the step's thread has background work", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      harness.behavior.autoHandoff = false;
+      const { run } = yield* service.start(startInput("cmd-handoff-background"));
+      const first = yield* Queue.take(harness.launches);
+      const before = yield* service.getRun(run.id);
+
+      const refuse = Effect.fn(function* (work: Parameters<typeof harness.delegatedWork.set>[1]) {
+        harness.delegatedWork.set(first.threadId, work);
+        const refused = yield* Effect.flip(
+          service.handoffStep({ runId: run.id, threadId: first.threadId, output: "the plan" }),
+        );
+        assert.include(refused.message, "Stop or finish your background work");
+        const current = yield* service.getRun(run.id);
+        assert.deepStrictEqual(
+          [current.status, current.steps[0]?.handedOff, current.updatedAt],
+          ["running", false, before.updatedAt],
+        );
+        return refused;
+      });
+
+      const task = yield* refuse({
+        backgroundTasks: [{ taskId: "bg-1", description: "pnpm run test" }],
+        subagents: [],
+      });
+      assert.include(task.message, "1 background task(s) still running (pnpm run test)");
+      const subagent = yield* refuse({ backgroundTasks: [], subagents: [{ status: "running" }] });
+      assert.include(subagent.message, "1 subagent(s) still running");
+
+      // A finished subagent whose result delivery is still settling does not block.
+      harness.delegatedWork.set(first.threadId, {
+        backgroundTasks: [],
+        subagents: [{ status: "completed", completionDelivery: "pending" }],
+      });
+      yield* service.handoffStep({ runId: run.id, threadId: first.threadId, output: "the plan" });
+      yield* harness.settle(first.threadId, "completed");
+
+      const second = yield* Queue.take(harness.launches);
+      assert.strictEqual(promptBody(second.input.initialMessage?.text), "Build from: the plan");
     }),
   ),
 );
