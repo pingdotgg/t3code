@@ -47,15 +47,20 @@ export interface ThreadPullRequestChain {
   readonly depths: ReadonlyArray<number>;
 }
 
-export type ThreadPullRequestBadge = {
-  readonly state: "open" | "closed" | "merged" | "draft";
-} & (
+type ThreadPullRequestBadgeState = "open" | "closed" | "merged" | "draft";
+
+export type ThreadPullRequestBadge =
   | {
       readonly kind: "stack";
       readonly layers: number;
+      readonly state: ThreadPullRequestBadgeState;
     }
-  | { readonly kind: "pull-request"; readonly others: number }
-);
+  | {
+      readonly kind: "pull-request";
+      readonly others: number;
+      // Unrelated pull requests in different states have no honest overall state.
+      readonly state: ThreadPullRequestBadgeState | "mixed";
+    };
 
 /**
  * Thread pull request identity reads a link's URL through the hosts in `registry`, so each side
@@ -302,7 +307,11 @@ export function makeThreadPullRequests(
     if (visible.length > 1 && chains.length === 1) {
       return { kind: "stack", layers: visible.length, state };
     }
-    return { kind: "pull-request", others: visible.length - 1, state };
+    return {
+      kind: "pull-request",
+      others: visible.length - 1,
+      state: states.every((entry) => entry === states[0]) ? state : "mixed",
+    };
   }
 
   /** Older V2 event payloads stored one link; an explicit empty array means it was unlinked. */

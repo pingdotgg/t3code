@@ -186,6 +186,14 @@ function resolveThreadPullRequestBadgePresentation({
 
   const tooltip = status?.tooltip ?? `${terminology.shortLabel} #${number}, status pending`;
   if (badge?.kind === "pull-request" && badge.others > 0) {
+    if (badge.state === "mixed") {
+      return {
+        Icon: PullRequestGlyph.pullRequest,
+        toneClassName: "text-muted-foreground",
+        label: `${badge.others + 1} linked ${terminology.plural} in different states`,
+        text: `+${badge.others + 1}`,
+      };
+    }
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
       Icon: aggregate.Icon,
@@ -816,6 +824,8 @@ function settledPrHoverColorClass(state: ThreadPullRequestBadge["state"]): strin
       return "group-hover/sidebar-row:text-violet-600 dark:group-hover/sidebar-row:text-violet-300/90";
     case "closed":
       return "group-hover/sidebar-row:text-red-600 dark:group-hover/sidebar-row:text-red-300/90";
+    case "mixed":
+      return "";
   }
 }
 
