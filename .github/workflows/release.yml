@@ -131,6 +131,8 @@ jobs:
 
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
 
@@ -245,6 +247,8 @@ jobs:
 
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -275,6 +279,8 @@ jobs:
 
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -309,6 +315,8 @@ jobs:
 
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
       - name: Resolve Playwright version
         id: playwright_version
@@ -336,6 +344,12 @@ jobs:
       - name: Test
         run: vp run --filter @t3tools/web test
 
+      # Browser tests run source modules; this boots the production chunk graph.
+      - name: Boot the built web client
+        run: |
+          vp run --filter @t3tools/web build
+          node apps/web/scripts/verify-built-boot.ts
+
   # Server test files run one at a time, so more small runners beat fewer big ones.
   test_server:
     name: Release server tests ${{ matrix.shard }}
@@ -359,6 +373,8 @@ jobs:
 
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
@@ -404,14 +420,10 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
         with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=t3code-relay...
+          install-args: --filter=t3code-relay...
 
       # The deployed stack's outputs, read from Alchemy's state store without
       # planning or applying. Select the backend explicitly to avoid loading
@@ -506,13 +518,6 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: false
-
       # pnpm checks the lockfile and policy before reusing this result. A missing
       # artifact leaves the cache empty, so installation runs the checks again.
       - name: Download dependency verification
@@ -522,10 +527,12 @@ jobs:
           name: release-dependency-verification
           path: ${{ runner.temp }}/pnpm-metadata
 
-      - name: Install bundle dependencies
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
-        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
 
       - name: Download relay client tracing config
         uses: actions/download-artifact@v8
@@ -603,6 +610,7 @@ jobs:
       rust_target: aarch64-apple-darwin
       resource_key: darwin-arm64
       cli_archive: true
+      launch_check: true
 
   desktop_mac_x64:
     name: Desktop macOS x64
@@ -652,6 +660,7 @@ jobs:
       rust_target: x86_64-unknown-linux-gnu
       resource_key: linux-x64
       cli_archive: true
+      launch_check: true
 
   # node-pty has no Linux prebuild and compiles from source, so the arm64 app
   # and archive are built on arm64 hardware rather than cross-built.
@@ -753,24 +762,25 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+      # Release notes read PR bodies and authors.
+      pull-requests: read
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.ref }}
+          # Release notes need history back to the previous tag, not file contents.
+          fetch-depth: 0
+          filter: blob:none
           sparse-checkout: |
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
         with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=@t3tools/scripts...
+          install-args: --filter=@t3tools/scripts...
 
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
@@ -887,6 +897,27 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
+      # A short model summary over GitHub's full list. Without a notes file, the
+      # release falls back to GitHub's generated notes.
+      - name: Write release notes
+        if: needs.preflight.outputs.release_channel != 'preview' && needs.preflight.outputs.previous_tag != ''
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          node scripts/generate-release-notes.ts \
+            --repository "${{ github.repository }}" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --ref "${{ needs.preflight.outputs.ref }}" \
+            --previous-tag "${{ needs.preflight.outputs.previous_tag }}" \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --output release-notes.md
+          if [[ -f release-notes.md ]]; then
+            cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # A preview release gets a warning instead of generated notes. Generated
       # notes would list every commit since the previous preview, which is
       # unmerged branch history no one should read as a changelog, and would
@@ -912,10 +943,11 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
-          generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
-          body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
+          generate_release_notes: ${{ hashFiles('release-notes.md') == '' }}
+          body_path: ${{ hashFiles('release-notes.md') != '' && 'release-notes.md' || '' }}
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
+          draft: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
@@ -931,10 +963,22 @@ jobs:
           generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
           body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
+          draft: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
+
+      # The action keeps a stable release a draft until its assets finish uploading, but publishes a
+      # prerelease first. Desktop clients update connected servers from the CLI archives as soon as
+      # they see the release, so a prerelease also goes public only once every asset is attached.
+      - name: Publish prerelease
+        if: needs.preflight.outputs.is_prerelease == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: gh release edit "$RELEASE_TAG" --draft=false
 
   # The `t3` npm package is a launcher that downloads this version's CLI
   # archive from the GitHub Release, so it publishes only once that release
@@ -959,15 +1003,10 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
         with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=t3...
-              - --filter=@t3tools/scripts...
+          install-args: --filter=t3... --filter=@t3tools/scripts...
 
       - name: Build the npm launcher
         run: node scripts/build-npm-launcher.ts --version "${{ needs.preflight.outputs.version }}" --output-dir npm-packages
@@ -1023,15 +1062,10 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
         with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=@t3tools/scripts...
-              - --filter=@t3tools/web...
+          install-args: --filter=@t3tools/scripts... --filter=@t3tools/web...
 
       - name: Download relay client tracing config
         uses: actions/download-artifact@v8
@@ -1127,11 +1161,9 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: ./.github/actions/setup-ci-deps
         with:
-          node-version-file: package.json
-          cache: false
-          run-install: false
+          install: false
 
       - name: Alias channel
         shell: bash
@@ -1198,14 +1230,10 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
         with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=@t3tools/marketing...
+          install-args: --filter=@t3tools/marketing...
 
       - id: deploy
         name: Build staged deployment
@@ -1269,11 +1297,9 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: ./.github/actions/setup-ci-deps
         with:
-          node-version-file: package.json
-          cache: false
-          run-install: false
+          install: false
 
       - name: Promote marketing site
         shell: bash
@@ -1328,15 +1354,10 @@ jobs:
           echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
           echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
         with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=@t3tools/scripts...
-              - --filter=@t3tools/oxlint-plugin-t3code...
+          install-args: --filter=@t3tools/scripts... --filter=@t3tools/oxlint-plugin-t3code...
 
       - id: update_versions
         name: Update version strings
@@ -1393,14 +1414,10 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
         with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=@t3tools/scripts...
+          install-args: --filter=@t3tools/scripts...
 
       - name: Read published release notes
         if: needs.preflight.outputs.is_prerelease == 'true'
