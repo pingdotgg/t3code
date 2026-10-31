@@ -140,9 +140,9 @@ export const disallowedDriverReason = (
 };
 
 /**
- * Variables that replace a provider's launch configuration. They come from whoever starts the
- * server or from the user's instance settings, so a policy that locks launch arguments, as a
- * runtime-mode ceiling does, ignores them.
+ * Variables that replace a provider's launch configuration. From the environment that starts the
+ * server they are ignored under any policy, which can lock launch arguments in more than one way;
+ * from an instance's own variables they are ignored when the policy locks launch arguments.
  */
 const LAUNCH_OVERRIDE_VARIABLES = ["T3CODE_CODEX_LAUNCH_ARGS"] as const;
 
@@ -151,9 +151,7 @@ export const providerHostEnvironment = (
   summary: ManagedPolicySummary | undefined,
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv => {
-  const codex =
-    summary?.limits?.providers?.lockedInstanceFields?.[ProviderDriverKind.make("codex")];
-  if (codex?.includes("config.launchArgs") !== true) return environment;
+  if (summary === undefined) return environment;
   const next = { ...environment };
   for (const name of LAUNCH_OVERRIDE_VARIABLES) delete next[name];
   return next;
@@ -291,7 +289,20 @@ export function makeManagedProviders(
     if (new Set(names).size !== names.length) {
       return { _tag: "Invalid", reason: `instances.${driver}.environment repeats a variable` };
     }
-    pins.set(driver, pin);
+    // A child on Windows gets the first spelling in sort order, and upper case sorts first, so the
+    // pinned value wins over any spelling inherited at launch.
+    pins.set(
+      driver,
+      platform === "win32" && pin.environment !== undefined
+        ? {
+            ...pin,
+            environment: pin.environment.map((variable) => ({
+              ...variable,
+              name: variableKey(variable.name),
+            })),
+          }
+        : pin,
+    );
   }
 
   const rules = new Map<ProviderDriverKind, DriverRule>();
@@ -425,6 +436,16 @@ export function makeManagedProviders(
           path: `providerInstances.${instanceId}.environment.${variable.name}`,
         };
       }
+    }
+    // The client never saw a launch override the lock hides, so keep the stored one.
+    if (rule.config.includes("launchArgs")) {
+      const overrides = new Set(LAUNCH_OVERRIDE_VARIABLES.map(variableKey));
+      environment = [
+        ...environment.filter((variable) => !overrides.has(variableKey(variable.name))),
+        ...(stored?.environment ?? []).filter((variable) =>
+          overrides.has(variableKey(variable.name)),
+        ),
+      ];
     }
     return { _tag: "Kept", environment };
   };

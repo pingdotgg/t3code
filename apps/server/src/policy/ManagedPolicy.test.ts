@@ -210,12 +210,31 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
                 ProviderInstanceId.make("codex")
               ]?.environment,
           );
-        const gateway = variable("Https_Proxy", "http://gateway");
-        assert.deepEqual(yield* environmentOn("win32"), [gateway]);
+        // On Windows the pin is upper case, which sorts first and so wins any inherited spelling.
+        assert.deepEqual(yield* environmentOn("win32"), [
+          variable("HTTPS_PROXY", "http://gateway"),
+        ]);
         assert.deepEqual(yield* environmentOn("linux"), [
           variable("HTTPS_PROXY", "http://mine"),
-          gateway,
+          variable("Https_Proxy", "http://gateway"),
         ]);
+        // Saving what the client was shown keeps the override it never saw.
+        const linux = yield* policyOn("linux");
+        const shown = linux.providers.applyLimits(settings);
+        const codexId = ProviderInstanceId.make("codex");
+        const saved = linux.providers.vetWrite(settings, {
+          ...shown,
+          providerInstances: {
+            ...shown.providerInstances,
+            [codexId]: { ...shown.providerInstances[codexId]!, displayName: "Codex (work)" },
+          },
+        });
+        assert.equal(saved._tag, "Allowed");
+        const savedEnvironment =
+          saved._tag === "Allowed"
+            ? (saved.settings.providerInstances[codexId]?.environment ?? [])
+            : [];
+        assert.isTrue(savedEnvironment.some((entry) => entry.name === "T3CODE_CODEX_LAUNCH_ARGS"));
         // The same override from the environment that starts the server is ignored too.
         const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "--yolo" };
         assert.deepEqual(providerHostEnvironment((yield* policyOn("linux")).summary, host), {
