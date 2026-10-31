@@ -1404,6 +1404,157 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("keeps the last 256 KiB of streamed shell output when the result carries none", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-shell-" });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-shell-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const chunks = Array.from({ length: 3000 }, (_, index) => `${index}`.padEnd(255, ".") + "\n");
+      const shell = {
+        type: "shell" as const,
+        args: { command: "yes", workingDirectory: workspace },
+      };
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-shell",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.gen(function* () {
+                  yield* input.onDelta!({
+                    type: "tool-call-started",
+                    modelCallId: "model-call",
+                    callId: "shell-call",
+                    toolCall: shell,
+                  });
+                  for (const chunk of chunks) {
+                    yield* input.onDelta!({
+                      type: "shell-output-delta",
+                      event: { stdout: chunk },
+                    });
+                  }
+                  yield* input.onDelta!({
+                    type: "tool-call-completed",
+                    modelCallId: "model-call",
+                    callId: "shell-call",
+                    toolCall: {
+                      ...shell,
+                      result: {
+                        status: "success",
+                        value: {
+                          exitCode: 0,
+                          signal: "",
+                          stdout: "",
+                          stderr: "",
+                          executionTime: 0,
+                        },
+                      },
+                    },
+                  });
+                  return {
+                    agentId: "native-cursor-shell",
+                    runId: "native-cursor-run",
+                    wait: Effect.succeed({
+                      id: "native-cursor-run",
+                      requestId: "native-request",
+                      status: "finished" as const,
+                      durationMs: 1,
+                    }),
+                    cancel: Effect.void,
+                  };
+                }).pipe(Effect.orDie),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-shell-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-shell-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-shell-attempt"),
+        rootNodeId: NodeId.make("cursor-shell-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-shell-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Cursor shell",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-shell-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "hi",
+          attachments: [],
+        },
+      });
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      const output = events
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "command_execution" &&
+          event.turnItem.status === "completed"
+            ? [event.turnItem.output]
+            : [],
+        )
+        .at(-1);
+      assert.equal(output, chunks.join("").slice(-256 * 1024));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect("names a custom model Cursor's account catalog rejects", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
