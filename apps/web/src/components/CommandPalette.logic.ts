@@ -223,6 +223,13 @@ export interface CommandPaletteGroup {
   readonly items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
 }
 
+export function resolveNewThreadProjectGroups(
+  groups: ReadonlyArray<CommandPaletteGroup>,
+  items: ReadonlyArray<CommandPaletteActionItem>,
+): ReadonlyArray<CommandPaletteGroup> {
+  return groups[0]?.value === "new-thread-in" ? [{ ...groups[0], items }] : groups;
+}
+
 export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;

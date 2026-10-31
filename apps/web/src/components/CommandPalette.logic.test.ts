@@ -9,6 +9,7 @@ import {
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
+  resolveNewThreadProjectGroups,
   reduceCommandPaletteUiState,
   resolveAddProjectEntry,
   createCommandPaletteSearchState,
@@ -917,6 +918,48 @@ describe("returning from file and content search", () => {
     expect(closed).toEqual({ open: false, mode: "files", openIntent: null, session: 0 });
     expect(reduceCommandPaletteUiState(closed, { _tag: "BackToCommand" })).toEqual(closed);
     expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual(root);
+  });
+});
+
+describe("open new-thread project choices", () => {
+  it("uses current choices and actions while preserving other submenus", async () => {
+    const staleRun = vi.fn(async () => undefined);
+    const currentRun = vi.fn(async () => undefined);
+    const action = (value: string, run = staleRun) => ({
+      kind: "action" as const,
+      value,
+      title: value,
+      searchTerms: [value],
+      icon: null,
+      run,
+    });
+    const stored = [
+      {
+        value: "new-thread-in",
+        label: "Projects",
+        items: [action("scratch"), action("checkout-a"), action("checkout-b")],
+      },
+    ];
+    const current = [action("grouped-repository"), action("arriving-project", currentRun)];
+    const groups = resolveNewThreadProjectGroups(stored, current);
+    const visible = filterCommandPaletteGroups({
+      activeGroups: groups,
+      query: "",
+      isInSubmenu: true,
+      projectSearchItems: [],
+      threadSearchItems: [],
+    });
+    expect(visible.flatMap((group) => group.items.map((item) => item.title))).toEqual([
+      "grouped-repository",
+      "arriving-project",
+    ]);
+    const arriving = visible[0]!.items[1]!;
+    if (arriving.kind !== "action") throw new Error("Expected a project action");
+    await arriving.run();
+    expect(currentRun).toHaveBeenCalledOnce();
+    expect(staleRun).not.toHaveBeenCalled();
+    const other = [{ ...stored[0]!, value: "projects" }];
+    expect(resolveNewThreadProjectGroups(other, current)).toBe(other);
   });
 });
 
