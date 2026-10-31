@@ -108,7 +108,10 @@ const decodeCodexAuthFile = Schema.decodeUnknownOption(
 const decodeCodexIdTokenClaims = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
-      email: Schema.String,
+      email: Schema.optionalKey(Schema.String),
+      "https://api.openai.com/profile": Schema.optionalKey(
+        Schema.Struct({ email: Schema.optionalKey(Schema.String) }),
+      ),
       "https://api.openai.com/auth": Schema.Struct({ chatgpt_account_id: Schema.String }),
     }),
   ),
@@ -128,7 +131,7 @@ const readCodexStoredChatGptLogin = Effect.fn("readCodexStoredChatGptLogin")(fun
     Option.map((payload) => Buffer.from(payload, "base64url").toString("utf8")),
     Option.flatMap(decodeCodexIdTokenClaims),
     Option.flatMap((claims): Option.Option<CodexStoredChatGptLogin> => {
-      const email = claims.email.trim();
+      const email = (claims.email ?? claims["https://api.openai.com/profile"]?.email)?.trim();
       const accountId = claims["https://api.openai.com/auth"].chatgpt_account_id.trim();
       return email && accountId ? Option.some({ email, accountId }) : Option.none();
     }),

@@ -358,6 +358,7 @@ it.live("names a proxied login by its saved ChatGPT email only when Codex reads 
     const codexHome = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-codex-home-" });
     const claims = {
       email: "same@example.com",
+      "https://api.openai.com/profile": { email: "profile@example.com" },
       "https://api.openai.com/auth": { chatgpt_account_id: "acct-1" },
     };
     const idToken = `header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`;
@@ -408,6 +409,20 @@ it.live("names a proxied login by its saved ChatGPT email only when Codex reads 
     assert.strictEqual(noUsageAccount.status, "ready");
     assert.strictEqual(noUsageAccount.auth.email, undefined);
     assert.strictEqual(savedLoginReads, 0);
+    const profileClaims = {
+      "https://api.openai.com/profile": { email: "profile@example.com" },
+      "https://api.openai.com/auth": claims["https://api.openai.com/auth"],
+    };
+    yield* fileSystem.writeFileString(
+      path.join(codexHome, "auth.json"),
+      JSON.stringify({
+        tokens: {
+          id_token: `header.${Buffer.from(JSON.stringify(profileClaims)).toString("base64url")}.sig`,
+        },
+      }),
+    );
+    const profileOnly = yield* proxied("acct-1", "file");
+    assert.strictEqual(profileOnly.auth.email, "profile@example.com");
     const stalledLogin = yield* proxied("acct-1", "file").pipe(
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
