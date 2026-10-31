@@ -209,11 +209,12 @@ it("app-stream-assistant-turn", async () => {
       .element(page.getByText(`word${STREAM_DELTAS - 1}`, { exact: false }))
       .toBeVisible();
   });
-  // Only the streaming row changes. The timeline renders for the new item and its layout, not
-  // per delta, and history rows not at all.
+  // Only the streaming working-window text changes. The timeline renders for the new item
+  // and its layout, not per delta, and history rows not at all.
   expect(counted.components.ConversationTimeline).toBeLessThanOrEqual(3);
   expect(counted.components.UserTimelineRow).toBeUndefined();
-  expect(counted.components.AssistantTimelineRow).toBe(STREAM_DELTAS);
+  expect(counted.components.AssistantTimelineRow).toBeUndefined();
+  expect(counted.components.WorkingWindowText).toBe(STREAM_DELTAS);
   // Each delta adds a paragraph; finished blocks keep their render.
   expect(counted.components.MarkdownParagraph).toBe(STREAM_DELTAS);
   await report("app-stream-assistant-turn", [counted], { commits: false });
