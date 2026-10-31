@@ -266,6 +266,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   canSteer: boolean;
   alternateShortcutLabel: string | null;
   showPlanFollowUpPrompt: boolean;
+  onImplementPlanInNewThread?: () => void;
   promptHasText: boolean;
   voiceInputActive?: boolean;
   isSendBusy: boolean;
@@ -309,6 +310,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         followUpBehavior={props.followUpBehavior}
         canSteer={props.canSteer}
         alternateShortcutLabel={props.alternateShortcutLabel}
+        onImplementPlanInNewThread={props.onImplementPlanInNewThread}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
         voiceInputActive={props.voiceInputActive ?? false}
