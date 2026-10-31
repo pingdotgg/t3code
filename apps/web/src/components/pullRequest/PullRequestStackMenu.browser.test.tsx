@@ -28,11 +28,10 @@ function setup(detail: string) {
 const HEAD_MOVED = "The stack head moved. Refresh the stack before trying again.";
 
 it.each([
-  { label: "Merge stack", openMenu: false, detail: HEAD_MOVED, description: HEAD_MOVED },
-  { label: "Rebase stack", openMenu: true, detail: HEAD_MOVED, description: HEAD_MOVED },
+  { label: "Merge stack", detail: HEAD_MOVED, description: HEAD_MOVED },
+  { label: "Rebase stack", detail: HEAD_MOVED, description: HEAD_MOVED },
   {
     label: "Rebase stack",
-    openMenu: true,
     detail: "GitHub CLI command failed.",
     description:
       "The host refused the rebase. A rebase stops at the first commit that does not apply cleanly.",
@@ -63,7 +62,7 @@ it.each([
       />
     </ToastProvider>,
   );
-  if (row.openMenu) {
+  if (row.label === "Rebase stack") {
     await screen.getByRole("button", { name: "Stack 1, layer 1 of 1" }).click();
     await page.getByRole("menuitem", { name: row.label }).click();
   } else {
