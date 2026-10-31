@@ -113,7 +113,7 @@ layer("OrchestrationEventStore", (it) => {
       const id = NodeId.make("node:subagent-prompt");
       const driver = ProviderDriverKind.make("claudeAgent");
       const providerInstanceId = ProviderInstanceId.make("claudeAgent");
-      const prompt = "Audit the repository. ".repeat(200);
+      const prompt = 'Audit "repo"\n漢字 '.repeat(9_000);
       const subagent = (index: number, progress: string, nextPrompt = prompt) =>
         ({
           id: EventId.make(`event:subagent-prompt:subagent:${index}`),
@@ -185,14 +185,14 @@ layer("OrchestrationEventStore", (it) => {
         subagent(3, "Retrying", "Audit again."),
         item(3, "Retrying", "Audit again."),
       ];
-      yield* store.appendAgentEvents({ events });
+      const appended = yield* store.appendAgentEvents({ events });
 
       const stored = yield* sql<{ readonly payload_json: string }>`
         SELECT payload_json FROM orchestration_events
         WHERE stream_id = ${threadId} ORDER BY sequence ASC
       `;
       assert.deepEqual(
-        stored.map((row) => row.payload_json.includes(prompt)),
+        stored.map((row) => row.payload_json.includes(JSON.stringify(prompt).slice(1, -1))),
         [true, true, false, false, false, false, false, false],
       );
       const replayed = yield* store
@@ -214,6 +214,28 @@ layer("OrchestrationEventStore", (it) => {
         throughSequence: yield* store.latestApplicationSequence,
       });
       assert.isAbove(applicationStats.rawPayloadBytes, prompt.length * 6);
+      const paged = yield* store
+        .readAgentEvents({ threadId, afterSequence, maxPageBytes: 256 * 1024 })
+        .pipe(Stream.runCollect);
+      assert.deepEqual(
+        paged.map((entry) => entry.event),
+        events,
+      );
+      // The first two updates here reference prompts in earlier anchor rows.
+      // Sizing must stop before touching a later page's malformed payload.
+      yield* sql`UPDATE orchestration_events SET payload_json = '{' WHERE sequence = ${appended[4]!.sequence}`;
+      const firstPage = yield* store
+        .readAgentEvents({
+          threadId,
+          afterSequence: appended[1]!.sequence,
+          throughSequence: appended[4]!.sequence,
+          maxPageBytes: 256 * 1024,
+        })
+        .pipe(Stream.take(1), Stream.runCollect);
+      assert.deepEqual(
+        firstPage.map((entry) => entry.event),
+        [events[2]!],
+      );
     }),
   );
 
