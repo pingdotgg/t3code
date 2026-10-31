@@ -7,6 +7,8 @@ import {
   CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
+  EyeIcon,
+  EyeOffIcon,
   LayersIcon,
   PlusIcon,
   Trash2Icon,
@@ -634,6 +636,8 @@ interface ProviderInstanceCardProps {
   readonly readOnly?: boolean | undefined;
   readonly canWriteSettings?: boolean;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
+  readonly hidden: boolean;
+  readonly onSetHidden?: (() => void) | undefined;
   readonly onDelete?: (() => void) | undefined;
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
@@ -681,6 +685,8 @@ export function ProviderInstanceCard({
   readOnly = false,
   canWriteSettings = true,
   onUpdate,
+  hidden,
+  onSetHidden,
   onDelete,
   headerAction,
   setup,
@@ -887,6 +893,26 @@ export function ProviderInstanceCard({
 
   const titleTailNode = headerAction ? (
     <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">{headerAction}</span>
+  ) : null;
+
+  const hiddenToggleNode = onSetHidden ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost-muted"
+            disabled={readOnly || !canWriteSettings}
+            onClick={onSetHidden}
+            aria-label={hidden ? `Show ${displayName}` : `Hide ${displayName}`}
+          >
+            {hidden ? <EyeIcon className="size-3.5" /> : <EyeOffIcon className="size-3.5" />}
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">{hidden ? "Show provider" : "Hide provider"}</TooltipPopup>
+    </Tooltip>
   ) : null;
 
   const versionCodeNode = versionLabel ? (
@@ -1115,6 +1141,7 @@ export function ProviderInstanceCard({
             onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
             aria-label={`Enable ${displayName}`}
           />
+          {hiddenToggleNode}
         </span>
       </div>
     );
@@ -1136,6 +1163,7 @@ export function ProviderInstanceCard({
         className={cn("inline-flex items-center gap-1 empty:hidden", readOnly && "opacity-50")}
       >
         {titleTailNode}
+        {hiddenToggleNode}
         {onDelete ? (
           <Button
             type="button"

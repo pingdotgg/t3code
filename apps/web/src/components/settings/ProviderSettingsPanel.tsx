@@ -35,7 +35,7 @@ import {
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Result from "effect/Result";
-import { PlusIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, EyeOffIcon, PlusIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
@@ -575,6 +575,7 @@ export function EnvironmentProviderSettings({
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
+  const [hiddenProvidersExpanded, setHiddenProvidersExpanded] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
     targetInstanceId ?? null,
   );
@@ -771,13 +772,16 @@ export function EnvironmentProviderSettings({
     }
   }
 
+  const visibleRows = rows.filter((row) => row.explicitInstance?.hidden !== true);
+  const hiddenRows = rows.filter((row) => row.explicitInstance?.hidden === true);
+
   const targetInstanceMissing =
     targetInstanceId !== undefined &&
     selectedInstanceId === targetInstanceId &&
     !rows.some((row) => row.instanceId === targetInstanceId);
   const selectedRow =
     rows.find((row) => row.instanceId === selectedInstanceId) ??
-    (targetInstanceMissing ? null : (rows[0] ?? null));
+    (targetInstanceMissing ? null : (visibleRows[0] ?? rows[0] ?? null));
 
   const persistInstance = async (
     instanceId: ProviderInstanceId,
@@ -902,6 +906,8 @@ export function EnvironmentProviderSettings({
     runProviderUpdate,
     updateInstance,
     enableInstance,
+    setInstanceHidden: (instanceId, instance, hidden) =>
+      updateInstance(instanceId, instance, { ...instance, hidden }),
     deleteInstance,
     resetDefaultInstance,
     writeProjectOverride,
@@ -1036,7 +1042,29 @@ export function EnvironmentProviderSettings({
               className="@min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-1"
             >
               <div className="divide-y divide-border/50">
-                {rows.map((row) => renderProviderInstance(row, "list"))}
+                {visibleRows.map((row) => renderProviderInstance(row, "list"))}
+                {hiddenRows.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
+                      onClick={() => setHiddenProvidersExpanded((expanded) => !expanded)}
+                      aria-expanded={hiddenProvidersExpanded}
+                    >
+                      <EyeOffIcon className="size-4 shrink-0" />
+                      <span className="flex-1">Hidden providers</span>
+                      <span className="tabular-nums">{hiddenRows.length}</span>
+                      {hiddenProvidersExpanded ? (
+                        <ChevronDownIcon className="size-3.5 shrink-0" />
+                      ) : (
+                        <ChevronRightIcon className="size-3.5 shrink-0" />
+                      )}
+                    </button>
+                    {hiddenProvidersExpanded
+                      ? hiddenRows.map((row) => renderProviderInstance(row, "list"))
+                      : null}
+                  </>
+                ) : null}
                 {!readOnly ? (
                   <button
                     type="button"
@@ -1187,6 +1215,11 @@ interface ProviderInstanceRowActions {
     instanceId: ProviderInstanceId,
     next: ProviderInstanceConfig,
   ) => Promise<void>;
+  readonly setInstanceHidden: (
+    instanceId: ProviderInstanceId,
+    instance: ProviderInstanceConfig,
+    hidden: boolean,
+  ) => void;
   readonly deleteInstance: (
     instanceId: ProviderInstanceId,
     instance: ProviderInstanceConfig,
@@ -1370,6 +1403,12 @@ function ProviderInstanceRow({
         ) : null
       }
       onUpdate={(next) => actions.updateInstance(instanceId, instance, next)}
+      hidden={instance.hidden === true}
+      onSetHidden={
+        readOnly
+          ? undefined
+          : () => actions.setInstanceHidden(instanceId, instance, !instance.hidden)
+      }
       onDelete={
         mode === "editor" && !isDefault
           ? () => actions.deleteInstance(instanceId, instance)
