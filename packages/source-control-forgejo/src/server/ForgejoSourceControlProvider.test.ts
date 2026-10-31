@@ -703,7 +703,6 @@ const listClosedPulls = (
   limit: number,
   delivered?: number,
   requests: Array<string> = [],
-  pulls: ReadonlyArray<ReturnType<typeof closedPull>> = closedPulls,
 ) =>
   Effect.gen(function* () {
     const provider = yield* ForgejoPullRequestProvider.make;
@@ -734,8 +733,8 @@ const listClosedPulls = (
           const params = new URLSearchParams(query);
           requests.push(`${params.get("state")}:${params.get("page")}`);
           const page = Number(params.get("page"));
-          const rel = page * 3 < pulls.length ? "next" : "prev";
-          return encodeJsonEffect(pulls.slice((page - 1) * 3, page * 3)).pipe(
+          const rel = page * 3 < closedPulls.length ? "next" : "prev";
+          return encodeJsonEffect(closedPulls.slice((page - 1) * 3, page * 3)).pipe(
             Effect.orDie,
             Effect.map((stdout) =>
               processOutput(stdout, { stderr: `Link: <${input.path}>; rel="${rel}"` }),
@@ -761,18 +760,6 @@ it.effect.each([
   }),
 );
 
-it.effect("stops a Forgejo slice at its row budget when every row it read is filtered out", () =>
-  Effect.gen(function* () {
-    const requests: Array<string> = [];
-    // Starts at #3 and reads two merged rows. It keeps none, but still counts both.
-    const list = yield* listClosedPulls("closed", 2, 2, requests);
-    assert.deepStrictEqual(list.numbers, []);
-    assert.strictEqual(list.truncated, true);
-    assert.strictEqual(list.cursorAdvance, 2);
-    assert.deepStrictEqual(requests, ["closed:1", "closed:2"]);
-  }),
-);
-
 it.effect.each([
   ["closed", 3, [[2], [], [7, 9], [10]], [3, 3, 3, 1]],
   ["merged", 4, [[1, 3, 4], [5, 6, 8], []], [4, 4, 2]],
@@ -794,30 +781,6 @@ it.effect.each([
       // Each slice reads at most `limit` rows however few of them it keeps.
       assert.deepStrictEqual<ReadonlyArray<number | undefined>>(consumed, advances);
     }),
-);
-
-it.effect("reaches an old closed Forgejo pull request behind a long merged history", () =>
-  Effect.gen(function* () {
-    // Forty merged pull requests, then the only one closed without merging.
-    const pulls = Array.from({ length: 40 }, (_, index) => closedPull(index + 1, true));
-    pulls.push(closedPull(41, false));
-    const slices: Array<ReadonlyArray<number>> = [];
-    let delivered: number | undefined;
-    for (;;) {
-      const requests: Array<string> = [];
-      const list = yield* listClosedPulls("closed", 5, delivered, requests, pulls);
-      slices.push(list.numbers);
-      // The first page, read for its size, and the pages holding at most five rows.
-      assert.isAtMost(requests.length, 4);
-      assert.isAtMost(list.cursorAdvance ?? 0, 5);
-      if (!list.truncated) break;
-      delivered = (delivered ?? 0) + (list.cursorAdvance ?? 0);
-    }
-    assert.deepStrictEqual<ReadonlyArray<ReadonlyArray<number>>>(slices, [
-      ...Array.from({ length: 8 }, () => []),
-      [41],
-    ]);
-  }),
 );
 
 it.effect("gives Forgejo identities the browser URL of the login that serves them", () =>

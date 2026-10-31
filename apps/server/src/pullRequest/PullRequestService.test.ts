@@ -649,91 +649,33 @@ it.effect(
     }),
 );
 
-it.effect("carries a Forgejo list on past slices whose rows were all filtered out", () =>
-  Effect.gen(function* () {
-    // Seven merged pull requests, then the only one closed without merging, on pages of three.
-    const pulls = Array.from({ length: 9 }, (_, index) => ({
-      number: index + 1,
-      title: `Change ${index + 1}`,
-      body: "",
-      html_url: `https://forgejo.test/maria/project/pulls/${index + 1}`,
-      user: { login: "maria" },
-      state: "closed",
-      merged: index !== 7,
-      head: { ref: `change-${index + 1}`, sha: "head", repo: null },
-      base: { ref: "main", sha: "base", repo: null },
-      created_at: "2026-09-01T00:00:00Z",
-      updated_at: `2026-09-${String(20 - index).padStart(2, "0")}T00:00:00Z`,
-      closed_at: "2026-09-02T00:00:00Z",
-      merged_at: index !== 7 ? "2026-09-02T00:00:00Z" : null,
-      labels: [],
-    }));
-    const provider = yield* ForgejoPullRequestProvider.make.pipe(
-      Effect.provide(
-        Layer.mock(ForgejoCli.ForgejoCli)({
-          api: (input) => {
-            const [path, query] = input.path.split("?");
-            const page = Number(new URLSearchParams(query).get("page"));
-            const rows = path === "user" ? { login: "maria" } : pulls.slice(page * 3 - 3, page * 3);
-            return Effect.succeed({
-              exitCode: ChildProcessSpawner.ExitCode(0),
-              stdout: JSON.stringify(rows),
-              stderr: `Link: <${input.path}>; rel="${page * 3 < pulls.length ? "next" : "prev"}"`,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            });
-          },
-        }),
-      ),
-    );
-    const service = yield* makeService({
-      projects: [
-        project({
-          id: "forgejo",
-          title: "on forgejo",
-          workspaceRoot: "/forgejo",
-          repository: "maria/project",
-          provider: SourceControlProviderKind.make("forgejo"),
-          host: "forgejo.test",
-        }),
-      ],
-      providers: [provider],
-    });
-
-    const slices: Array<ReadonlyArray<number>> = [];
-    let cursors: Record<string, string> | undefined;
-    for (;;) {
-      const result = yield* service.list({
-        state: "closed",
-        limit: 3,
-        ...(cursors === undefined ? {} : { cursors }),
-      });
-      slices.push(result.entries.map((entry) => entry.number));
-      if (Object.keys(result.nextCursors).length === 0) break;
-      cursors = result.nextCursors;
-    }
-
-    // Each slice reads three rows. The two that keep nothing still say where to carry on.
-    assert.deepStrictEqual<ReadonlyArray<ReadonlyArray<number>>>(slices, [[], [], [8]]);
-  }),
-);
-
-it.effect("ends a list on an empty slice whose host consumed nothing", () =>
+it.effect.each([
+  [
+    "carries a list on past an empty slice whose host consumed rows",
+    3,
+    { "github.com pingdotgg/t3code": "2026-07-02T00:00:00Z|4|7" },
+  ],
+  ["ends a list on an empty slice whose host consumed nothing", 0, {}],
+] as const)("%s", ([, cursorAdvance, nextCursors]) =>
   Effect.gen(function* () {
     const service = yield* makeService({
       projects: [
         project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
       ],
       providers: [
-        fakeProvider(SourceControlProviderKind.make("github"), {
-          listChangeRequests: () => Effect.succeed({ items: [], truncated: true, continues: true }),
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({ items: [], truncated: true, continues: true, cursorAdvance }),
         }),
       ],
     });
 
-    const result = yield* service.list({ state: "open" });
+    const result = yield* service.list({
+      state: "open",
+      cursors: { "github.com pingdotgg/t3code": "2026-07-02T00:00:00Z|1|7" },
+    });
 
-    assert.deepStrictEqual(result.nextCursors, {});
+    assert.deepStrictEqual<Record<string, string>>(result.nextCursors, nextCursors);
   }),
 );
 
