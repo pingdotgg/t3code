@@ -4,6 +4,7 @@ import {
   AuthSourceControlWriteScope,
   WS_METHODS,
   VcsProcessExitError,
+  type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsStatusResult,
 } from "@t3tools/contracts";
@@ -153,6 +154,64 @@ describe("cached VCS refs", () => {
     });
     registry.dispose();
   });
+
+  it.effect("bypasses the server ref snapshot when a mounted list is invalidated", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requests = yield* Queue.unbounded<VcsListRefsInput>();
+        const client = {
+          [WS_METHODS.vcsListRefs]: (input: VcsListRefsInput) =>
+            Effect.sync(() => {
+              Queue.offerUnsafe(requests, input);
+              return LIVE_REFS;
+            }),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+          _environmentId,
+          stream,
+        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          followStream,
+        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        );
+        const atoms = createVcsEnvironmentAtoms(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            registry.mount(
+              atoms.listRefs({
+                environmentId: TARGET.environmentId,
+                input: { cwd: "/repo", limit: 100 },
+              }),
+            ),
+          ),
+          (unmount) => Effect.sync(unmount),
+        );
+
+        expect(yield* Queue.take(requests)).toEqual({ cwd: "/repo", limit: 100 });
+
+        invalidateVcsRefs(registry, TARGET);
+
+        expect(yield* Queue.take(requests)).toEqual({ cwd: "/repo", limit: 100, refresh: true });
+      }),
+    ),
+  );
 
   it.effect("does not repersist a refresh superseded by ref invalidation", () =>
     Effect.scoped(
