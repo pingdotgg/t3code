@@ -2666,7 +2666,6 @@ export function ChatComposer(props: ChatComposerProps) {
       pendingUserInputs,
       supportsQuestionAttachments,
       isLiteralPendingAnswer,
-      projectSelectionRequired,
       questionAttachmentTarget,
       attachmentTargetKey,
       fileStagingLimit,
