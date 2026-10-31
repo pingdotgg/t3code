@@ -71,6 +71,7 @@ vi.mock("~/hooks/useSettings", () => ({
     select(DEFAULT_CLIENT_SETTINGS),
   useEnvironmentSettings: () => undefined,
 }));
+vi.mock("~/commandPaletteBus", () => ({ isCommandPaletteOpen: () => false }));
 vi.mock("~/hooks/useLiveRefresh", () => ({ useLiveRefresh: () => {} }));
 vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
 vi.mock("~/state/sourceControlActions", () => ({
@@ -136,6 +137,7 @@ vi.mock("~/components/ui/menu", () => ({
   MenuGroup: Wrapper,
   MenuTrigger: Trigger,
   MenuItem: "button",
+  MenuCheckboxItem: "button",
   MenuRadioGroup: Wrapper,
   MenuRadioItem: "button",
   MenuSeparator: () => null,

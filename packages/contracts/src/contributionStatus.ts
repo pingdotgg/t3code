@@ -90,14 +90,8 @@ export const ContributionStatusEntry = Schema.Struct({
 });
 export type ContributionStatusEntry = typeof ContributionStatusEntry.Type;
 
-/**
- * Every live status in one environment, ordered by thread id, then provider
- * sources before any other kind, then source key. `subscribeContributionStatus`
- * sends one on subscribe and a full replacement after each change, so a
- * client replaces its copy and never merges. Entries an older client cannot
- * decode, such as a future source kind, are dropped rather than failing the
- * stream.
- */
+// Frames replace the entire snapshot, including after reconnect; unknown entries are dropped.
+// Order is thread id, provider sources first, then source key.
 export const ContributionStatusSnapshot = Schema.Struct({
   entries: ForwardCompatibleArray(ContributionStatusEntry),
 });
