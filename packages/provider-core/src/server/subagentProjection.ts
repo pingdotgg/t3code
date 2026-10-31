@@ -177,10 +177,17 @@ export function withSubstitutedModelNote(
   input: {
     readonly requestedModel: string;
     readonly executedModel: string | null | undefined;
+    // Set where the provider resolved aliases; older environments omit it.
+    readonly modelSubstituted?: boolean | undefined;
     readonly notices?: ReadonlyArray<string>;
   },
 ): string {
-  if (input.executedModel == null || input.executedModel === input.requestedModel) return result;
+  if (
+    input.executedModel == null ||
+    !(input.modelSubstituted ?? input.executedModel !== input.requestedModel)
+  ) {
+    return result;
+  }
   const note = [
     `Requested model ${input.requestedModel}, but the provider ran ${input.executedModel}.`,
     ...(input.notices ?? []).map((notice) => `Provider notice: ${notice}`),
@@ -260,17 +267,15 @@ export function subagentResultForRun(
     (run.status === "completed"
       ? "Child task completed without an assistant result."
       : `Child task ended with status ${run.status}.`);
-  const executedModel = latestProviderTurnForAttempt(
-    projection.providerTurns,
-    run.activeAttemptId,
-  )?.model;
+  const latestTurn = latestProviderTurnForAttempt(projection.providerTurns, run.activeAttemptId);
   return {
     text:
-      executedModel === undefined
+      latestTurn?.model === undefined
         ? result
         : withSubstitutedModelNote(result, {
             requestedModel: run.modelSelection.model,
-            executedModel,
+            executedModel: latestTurn.model,
+            modelSubstituted: latestTurn.modelSubstituted,
             notices: rootProviderNotices(projection, run),
           }),
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,

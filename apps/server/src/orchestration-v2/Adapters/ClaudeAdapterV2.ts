@@ -2911,8 +2911,14 @@ function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
   return message.type === "system" && (message.subtype as string) === "background_tasks_changed";
 }
 
+// A wake can stream its root message before its init frame.
 function isClaudeTurnStartMessage(message: SDKMessage): boolean {
-  return message.type === "system" && message.subtype === "init";
+  return (
+    (message.type === "system" && message.subtype === "init") ||
+    (message.type === "stream_event" &&
+      message.event.type === "message_start" &&
+      message.parent_tool_use_id == null)
+  );
 }
 
 function isClaudeRootTurnFrame(message: SDKMessage): boolean {
@@ -4037,7 +4043,7 @@ interface ActiveClaudeTurnContext {
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
   // Claude can run another model than requested, such as when an organization disallows it.
-  executedModel: string | undefined;
+  executedModel: { readonly model: string; readonly modelSubstituted: boolean } | undefined;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -4133,8 +4139,11 @@ interface PendingClaudeSubagentLaunch {
   readonly ownerToolUseId?: string;
 }
 
-function executedModelField(context: ActiveClaudeTurnContext): { readonly model?: string } {
-  return context.executedModel === undefined ? {} : { model: context.executedModel };
+function executedModelField(context: ActiveClaudeTurnContext): {
+  readonly model?: string;
+  readonly modelSubstituted?: boolean;
+} {
+  return context.executedModel ?? {};
 }
 
 function canonicalClaudeSubagentModel(catalog: ClaudeModelCatalog, model: string): string {
@@ -5556,12 +5565,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // "<synthetic>" identifies CLI notices, not a model.
           if (reported.length > 0 && reported !== "<synthetic>") {
             const executed = resolveClaudeModelSlug(subagentModelCatalog, reported);
-            const requested = context.input.modelSelection.model;
-            // Keep the run's own label, such as an alias, when it names the model that ran.
-            context.executedModel =
-              resolveClaudeModelSlug(subagentModelCatalog, requested) === executed
-                ? requested
-                : executed;
+            // An alias such as `opus` requests the model its canonical slug names.
+            const requested = resolveClaudeModelSlug(
+              subagentModelCatalog,
+              context.input.modelSelection.model,
+            );
+            context.executedModel = { model: executed, modelSubstituted: requested !== executed };
           }
         };
 
@@ -7899,11 +7908,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
             });
           }
-          const isWakeTurnStart =
-            isClaudeTurnStartMessage(message) ||
-            (message.type === "stream_event" &&
-              message.event.type === "message_start" &&
-              message.parent_tool_use_id == null);
+          const isWakeTurnStart = isClaudeTurnStartMessage(message);
           const isWakeEvidence =
             isPendingTaskNotification ||
             isPendingSubagentNotification ||

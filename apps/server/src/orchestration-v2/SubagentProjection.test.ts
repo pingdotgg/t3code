@@ -496,34 +496,35 @@ it("notes a substituted model with the root provider notice from the same run", 
     `Requested model gpt-5.4, but the provider ran gpt-5.4-mini.\nProvider notice: ${fallback}\n\nReview done.`,
   );
   assert.equal(result.messageId, answer.message.id);
-  assert.equal(
+  const resultWithTurns = (providerTurns: ReadonlyArray<object>) =>
     subagentResultForRun(
       {
         ...projection,
         messages: [{ ...answer.message, runId: run.id }],
         turnItems: [notice("fallback", fallback)],
-        providerTurns: [
-          { runAttemptId: run.activeAttemptId, ordinal: 1, model: "gpt-5.4" },
-        ] as never,
+        providerTurns: providerTurns as never,
       },
       run,
-    ).text,
+    ).text;
+  const attempt = { id: ProviderTurnId.make("active-notice"), runAttemptId: run.activeAttemptId };
+  // The provider's own verdict wins over comparing labels, such as for an alias it resolved.
+  assert.equal(
+    resultWithTurns([
+      { ...attempt, ordinal: 1, model: "gpt-5.4-2026-03-05", modelSubstituted: false },
+    ]),
     "Review done.",
   );
+  assert.equal(
+    resultWithTurns([{ ...attempt, ordinal: 1, model: "gpt-5.4-mini", modelSubstituted: true }]),
+    `Requested model gpt-5.4, but the provider ran gpt-5.4-mini.\nProvider notice: ${fallback}\n\nReview done.`,
+  );
+  assert.equal(resultWithTurns([{ ...attempt, ordinal: 1, model: "gpt-5.4" }]), "Review done.");
   // The newest turn reported no model, so an earlier turn's substitution is not attributed to it.
   assert.equal(
-    subagentResultForRun(
-      {
-        ...projection,
-        messages: [{ ...answer.message, runId: run.id }],
-        turnItems: [notice("fallback", fallback)],
-        providerTurns: [
-          { runAttemptId: run.activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" },
-          { runAttemptId: run.activeAttemptId, ordinal: 2 },
-        ] as never,
-      },
-      run,
-    ).text,
+    resultWithTurns([
+      { ...attempt, ordinal: 1, model: "gpt-5.4-mini", modelSubstituted: true },
+      { ...attempt, ordinal: 2 },
+    ]),
     "Review done.",
   );
 });

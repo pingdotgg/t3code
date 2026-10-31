@@ -832,10 +832,11 @@ const DedupedBodyMarker = Schema.optionalKey(Schema.Literal(true));
  * of in a child thread here: that environment and the ordinary thread it runs
  * as there. Such a task has no `childThreadId`.
  */
-// executedModel is null when the environment there reported none, as older versions never do.
+// executedModel is null and modelSubstituted absent when the environment there reported none, as older versions never do.
 const OrchestrationV2RemoteTaskResultModel = Schema.Struct({
   model: Schema.String,
   executedModel: Schema.NullOr(Schema.String),
+  modelSubstituted: Schema.optional(Schema.Boolean),
 });
 
 export const OrchestrationV2RemoteTaskChild = Schema.Struct({
@@ -1166,6 +1167,8 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   turnTokenUsage: Schema.optional(TurnTokenUsage),
   /** The model the provider reported running this turn's root agent, which can differ from the requested one. */
   model: Schema.optional(TrimmedNonEmptyString),
+  /** Whether `model` is another model than the run requested, which an alias for it is not. */
+  modelSubstituted: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
 

@@ -7182,6 +7182,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect("records the root model Claude reports for each turn, not the requested one", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
+      const executed = () => {
+        const { model, modelSubstituted } = lastProviderTurn(harness.events);
+        return { model, modelSubstituted };
+      };
       const turnInput = {
         threadId: harness.threadId,
         providerThread: harness.providerThread,
@@ -7226,7 +7230,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         turnOneResult,
       ]);
       yield* Queue.take(harness.terminalReceipts);
-      assert.equal(lastProviderTurn(harness.events).model, "claude-sonnet-4-6");
+      assert.deepEqual(executed(), { model: "claude-sonnet-4-6", modelSubstituted: true });
       const localNotices = harness.events.flatMap((event) =>
         event.type === "turn_item.updated" &&
         event.turnItem.type === "system_notice" &&
@@ -7254,7 +7258,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000663", result: "Done." }),
       ]);
       yield* Queue.take(harness.terminalReceipts);
-      assert.equal(lastProviderTurn(harness.events).model, "claude-haiku-4-5");
+      assert.deepEqual(executed(), { model: "claude-haiku-4-5", modelSubstituted: true });
 
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
@@ -7269,7 +7273,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000664", result: "Done." }),
       );
       yield* Queue.take(harness.terminalReceipts);
-      assert.isUndefined(lastProviderTurn(harness.events).model);
+      assert.deepEqual(executed(), { model: undefined, modelSubstituted: undefined });
 
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
@@ -7294,7 +7298,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000666", result: "Done." }),
       ]);
       yield* Queue.take(harness.terminalReceipts);
-      assert.equal(lastProviderTurn(harness.events).model, "claude-sonnet-4-6");
+      assert.deepEqual(executed(), { model: "claude-sonnet-4-6", modelSubstituted: true });
 
       // A requested alias that the catalog resolves to the reported model is no substitution.
       const aliasTurn = (ordinal: number, reported: string) =>
@@ -7319,13 +7323,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           ]);
           yield* Queue.take(harness.terminalReceipts);
-          return lastProviderTurn(harness.events).model;
+          return executed();
         });
-      assert.equal(
-        yield* aliasTurn(5, resolveClaudeModelSlug(BUNDLED_CLAUDE_MODEL_CATALOG, "opus")),
-        "opus",
-      );
-      assert.equal(yield* aliasTurn(6, "claude-sonnet-4-6"), "claude-sonnet-4-6");
+      const opus = resolveClaudeModelSlug(BUNDLED_CLAUDE_MODEL_CATALOG, "opus");
+      assert.deepEqual(yield* aliasTurn(5, opus), { model: opus, modelSubstituted: false });
+      assert.deepEqual(yield* aliasTurn(6, "claude-sonnet-4-6"), {
+        model: "claude-sonnet-4-6",
+        modelSubstituted: true,
+      });
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -10778,11 +10783,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   };
 
   it.effect.each([
-    { label: "an empty one", quotaFailureFirst: false },
-    { label: "a quota failure and an empty one", quotaFailureFirst: true },
+    { label: "an empty one", quotaFailureFirst: false, nextOpensWith: "init" },
+    { label: "a quota failure and an empty one", quotaFailureFirst: true, nextOpensWith: "init" },
+    { label: "an empty one by streaming", quotaFailureFirst: false, nextOpensWith: "stream" },
   ])(
     "keeps the wake run open for the turn Claude opens right after $label",
-    ({ quotaFailureFirst }) =>
+    ({ quotaFailureFirst, nextOpensWith }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const harness = yield* makeWakeHarness;
@@ -10863,7 +10869,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           );
           yield* harness.offerAndWait(
-            claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000963" }),
+            nextOpensWith === "init"
+              ? claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000963" })
+              : usageStreamFrame({
+                  type: "message_start",
+                  message: { id: "wake-pair-next", model: "claude-sonnet-4-6", usage: zeroUsage },
+                }),
           );
           assert.lengthOf(harness.continuationRequests, 1);
 
