@@ -1784,6 +1784,27 @@ it("OWN-03 passes a reported conflict and fails reuse or close of the owner's se
   assert.isNotEmpty(failed(c.expect, trace("", "Saved /tmp/proof/settings.png.")));
 });
 
+it("never calls a proxied GPT run free", () => {
+  const usage = { input: 10, output: 0, cacheWrite: 0, cacheRead: 0 };
+  const row = {
+    id: "A",
+    kind: "bad" as const,
+    pattern: "p",
+    role: "top",
+    pass: true,
+    usage,
+    shellUsage: usage,
+  };
+  const summary = summarize([row], {
+    header: "run",
+    shellModel: "claude-haiku-5-5",
+    model: "gpt-6.1-sol",
+  });
+  assert.include(summary, "the agent is not priced");
+  assert.include(summary, "bill an API key");
+  assert.notInclude(summary, "not applicable");
+});
+
 it("leaves errored samples out of pass rates and lists them in the summary", () => {
   const usage = { input: 10, output: 0, cacheWrite: 0, cacheRead: 0 };
   const row = (id: string, pass: boolean, error?: string) => ({

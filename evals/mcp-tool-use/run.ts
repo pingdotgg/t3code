@@ -1834,7 +1834,7 @@ export const summarize = (
     `- Pass: ${percent(passRate(rows))} of ${finished} samples.`,
     ...(errors.length > 0 ? [errorNote] : []),
     codex
-      ? "- Cost: not applicable (subscription through proxy)."
+      ? "- Cost: the agent is not priced. `vibeproxy` in `~/.codex/config.toml` may use a subscription or bill an API key per token; agent tokens are below."
       : `- Estimated cost $${cost.toFixed(2)}, $${(cost / rows.length).toFixed(3)} per sample.`,
     `- Agent tokens: ${agent.tokens}${codex ? "." : ` ($${agent.cost.toFixed(2)}).`}`,
     `- Shell simulator (${options.shellModel}) tokens: ${shell.tokens} (API-price estimate $${shell.cost.toFixed(2)}).`,
