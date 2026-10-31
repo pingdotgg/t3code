@@ -368,15 +368,33 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
     <LiveActivityRow label="Thinking" iconName="brain" active={live} shimmer={live} />
   );
   const { groupId } = row;
-  if (groupId === undefined) return activity;
+  // Without a group there is nothing to focus, so keyboard users could never
+  // reveal a hover-only timestamp; that row shows it all the time.
+  const timestamp = row.createdAt ? (
+    <TimelineRowTimestamp
+      createdAt={row.createdAt}
+      timestampFormat={ctx.timestampFormat}
+      className="ms-auto"
+      alwaysVisible={groupId === undefined}
+    />
+  ) : null;
+  if (groupId === undefined) {
+    return (
+      <div className="group/timeline-row flex min-h-6 w-full min-w-0 items-center pe-0.5">
+        {activity}
+        {timestamp}
+      </div>
+    );
+  }
   return (
     <button
       type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className="group/timeline-row flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md pe-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       aria-expanded={row.expanded === true}
       onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
     >
       {activity}
+      {timestamp}
     </button>
   );
 }
@@ -508,7 +526,7 @@ export function LiveWorkEntryTimelineRow({
     <button
       type="button"
       className={cn(
-        "group/live-work flex w-full max-w-full cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        "group/timeline-row flex w-full max-w-full cursor-pointer rounded-md pe-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
         thoughtLine ? "flex-col items-start" : "min-h-6 items-center",
       )}
       aria-label={
@@ -545,37 +563,44 @@ export function LiveWorkEntryTimelineRow({
           wrapLabel
         />
       ) : null}
-      <LiveActivityRow
-        label={
-          thoughtIsStatus ? (
-            row.active ? (
-              "Thinking"
+      <span className="flex min-h-6 w-full min-w-0 items-center">
+        <LiveActivityRow
+          label={
+            thoughtIsStatus ? (
+              row.active ? (
+                "Thinking"
+              ) : (
+                "Thought"
+              )
+            ) : row.entry.itemType === "reasoning" ? (
+              <ChatMarkdown
+                inline
+                text={row.entry.detail ?? label}
+                cwd={ctx.markdownCwd}
+                parseRawHtml={false}
+                extraRemarkPlugins={row.active ? THINKING_PREVIEW_PLUGINS : THOUGHT_PREVIEW_PLUGINS}
+              />
+            ) : threadLabel ? (
+              <ThreadReadLabel
+                label={threadLabel}
+                environmentId={ctx.activeThreadEnvironmentId}
+                linked={false}
+              />
             ) : (
-              "Thought"
+              label
             )
-          ) : row.entry.itemType === "reasoning" ? (
-            <ChatMarkdown
-              inline
-              text={row.entry.detail ?? label}
-              cwd={ctx.markdownCwd}
-              parseRawHtml={false}
-              extraRemarkPlugins={row.active ? THINKING_PREVIEW_PLUGINS : THOUGHT_PREVIEW_PLUGINS}
-            />
-          ) : threadLabel ? (
-            <ThreadReadLabel
-              label={threadLabel}
-              environmentId={ctx.activeThreadEnvironmentId}
-              linked={false}
-            />
-          ) : (
-            label
-          )
-        }
-        iconName={workEntryIconName(row.entry)}
-        toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
-        failed={failed}
-        active={row.active}
-      />
+          }
+          iconName={workEntryIconName(row.entry)}
+          toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
+          failed={failed}
+          active={row.active}
+        />
+        <TimelineRowTimestamp
+          createdAt={row.entry.createdAt}
+          timestampFormat={ctx.timestampFormat}
+          className="ms-auto"
+        />
+      </span>
     </button>
   );
 }
