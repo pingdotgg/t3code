@@ -10,7 +10,7 @@ import {
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
@@ -178,6 +178,7 @@ export function ThreadHtmlRender(props: {
       | { readonly attachmentId: string }
       | { readonly resource: Extract<AssetResource, { readonly _tag: "tool-input-html" }> }
     );
+  readonly renderErrorFallback?: () => ReactNode;
   readonly frameWidth?: number;
   readonly iconColor?: ColorValue;
 }) {
@@ -219,6 +220,7 @@ export function ThreadHtmlRender(props: {
 
   return (
     <View style={{ marginBottom: ROW_BOTTOM_MARGIN }}>
+      {failed || asset._tag === "Failure" ? props.renderErrorFallback?.() : null}
       <View style={{ height }}>
         {uri !== null && !failed ? (
           <HtmlRenderWebView

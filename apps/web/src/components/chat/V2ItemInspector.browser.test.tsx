@@ -14,17 +14,21 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { V2ItemInspector } from "./V2ItemInspector";
 
-const asset = vi.hoisted(() => ({ url: "" }));
+const asset = vi.hoisted(() => ({ url: "", denied: false }));
 vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
-  useLongLivedAssetUrl: () => ({
-    _tag: "Success",
-    url: asset.url,
-    expiresAt: Date.now() + 60 * 60_000,
-  }),
+  useLongLivedAssetUrl: () =>
+    asset.denied
+      ? { _tag: "Failure" }
+      : {
+          _tag: "Success",
+          url: asset.url,
+          expiresAt: Date.now() + 60 * 60_000,
+        },
 }));
 
 function setup() {
   asset.url = "";
+  asset.denied = false;
 }
 
 function projectedHtml(
@@ -103,12 +107,14 @@ it("renders HTML tool details in the existing sandbox and fits the page", async 
   serve(html);
   await using screen = await render(inspector(html, "2026-10-20T00:00:00Z"));
 
-  await expect
-    .poll(() => loaded)
-    .toEqual([{ type: "html-preview-ready", text: "Release status", isolated: true }]);
-  await expect
-    .poll(() => screen.container.querySelector("iframe")?.clientHeight ?? 0)
-    .toBeGreaterThan(600);
+  await vi.waitFor(() =>
+    expect(loaded).toEqual([
+      { type: "html-preview-ready", text: "Release status", isolated: true },
+    ]),
+  );
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector("iframe")?.clientHeight ?? 0).toBeGreaterThan(600),
+  );
   expect(screen.container.textContent).toContain("width 728");
   expect(screen.container.textContent).toContain("Console: no errors");
   expect(screen.container.textContent).not.toContain("<!doctype");
@@ -116,18 +122,20 @@ it("renders HTML tool details in the existing sandbox and fits the page", async 
   const updatedHtml = html.replace("Release status", "Updated status");
   serve(updatedHtml);
   await screen.rerender(inspector(updatedHtml, "2026-10-20T00:00:01Z"));
-  await expect.poll(() => loaded).toHaveLength(2);
+  await vi.waitFor(() => expect(loaded).toHaveLength(2));
   expect(loaded[1]).toEqual({ type: "html-preview-ready", text: "Updated status", isolated: true });
 });
 
 it.each([
-  { status: "failed" as const, isError: false, guest: false },
-  { status: "completed" as const, isError: true, guest: false },
-  { status: "completed" as const, isError: false, guest: true },
+  { status: "failed" as const, isError: false, guest: false, denied: false },
+  { status: "completed" as const, isError: true, guest: false, denied: false },
+  { status: "completed" as const, isError: false, guest: true, denied: false },
+  { status: "completed" as const, isError: false, guest: false, denied: true },
 ])(
   "keeps HTML source readable when a preview is unavailable: %j",
-  async ({ status, isError, guest }) => {
+  async ({ status, isError, guest, denied }) => {
     setup();
+    asset.denied = denied;
     const html = "<style>body{min-height:100vh}</style><h1>Invalid page</h1>";
     const projected = projectedHtml(html, "2026-10-20T00:00:00Z", status, isError);
     const detail = Atom.make(AsyncResult.success({ item: projected.item }));
@@ -141,7 +149,7 @@ it.each([
     );
     expect(screen.container.textContent).toContain(html);
     expect(screen.container.textContent).toContain(
-      guest ? "Console: no errors" : "Viewport height rejected",
+      guest || denied ? "Console: no errors" : "Viewport height rejected",
     );
     expect(screen.container.querySelector("iframe")).toBeNull();
   },

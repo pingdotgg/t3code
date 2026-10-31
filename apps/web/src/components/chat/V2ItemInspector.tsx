@@ -230,6 +230,7 @@ function ToolCallBody(
           htmlRender={{ resource: props.htmlResource, title: "HTML preview", height: 400 }}
           threadRef={props.threadRef}
           onImageExpand={props.onImageExpand}
+          errorFallback={<StructuredValue value={props.args} highlightJson />}
         />
       ) : null}
       {call.args ? (

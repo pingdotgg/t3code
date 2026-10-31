@@ -1222,6 +1222,18 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         >
           {call?.html ? (
             <ThreadHtmlRender
+              renderErrorFallback={() => (
+                <Text
+                  selectable
+                  className="font-mono text-2xs leading-normal text-foreground-muted"
+                >
+                  {JSON.stringify(
+                    shownItem.type === "dynamic_tool" ? shownItem.input : null,
+                    null,
+                    2,
+                  )}
+                </Text>
+              )}
               key={`${props.environmentId}:${row.projectedItem.sourceThreadId}:${row.projectedItem.sourceItemId}:${turnItemDetailRevision(shownItem)}`}
               environmentId={props.environmentId}
               threadId={row.projectedItem.sourceThreadId}

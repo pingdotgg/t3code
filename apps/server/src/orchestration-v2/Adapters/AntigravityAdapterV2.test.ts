@@ -794,6 +794,13 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         page: undefined,
         output: "Summary of failed",
       });
+      for (const nativeId of ["failed", "error"]) {
+        const node = events.findLast(
+          (event) =>
+            event.type === "node.updated" && event.node.nativeItemRef?.nativeId === nativeId,
+        );
+        assert.strictEqual(node?.type === "node.updated" ? node.node.status : undefined, "failed");
+      }
       assert.deepEqual(tool("error"), {
         status: "failed",
         toolName: "t3-code.html_render",

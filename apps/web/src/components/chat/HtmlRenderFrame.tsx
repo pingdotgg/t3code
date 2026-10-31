@@ -6,7 +6,7 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
@@ -28,6 +28,7 @@ export function HtmlRenderFrame(props: {
       | { readonly attachmentId: string }
       | { readonly resource: Extract<AssetResource, { readonly _tag: "tool-input-html" }> }
     );
+  readonly errorFallback?: ReactNode;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
@@ -129,9 +130,11 @@ export function HtmlRenderFrame(props: {
           ) : null}
         </>
       ) : failed ? (
-        <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
-          Unable to load {title}
-        </p>
+        (props.errorFallback ?? (
+          <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
+            Unable to load {title}
+          </p>
+        ))
       ) : null}
     </div>
   );
