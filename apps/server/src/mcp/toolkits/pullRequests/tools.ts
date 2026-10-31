@@ -234,6 +234,7 @@ const PullRequestNumbersByRepository = Schema.Array(
 export const LinkPullRequestsResult = Schema.Struct({
   linked: PullRequestNumbersByRepository,
   alreadyLinked: PullRequestNumbersByRepository,
+  linkedCount: Schema.Int,
   invalidUrls: Schema.optional(Schema.Array(Schema.String)),
   next: Schema.optional(Schema.String),
 });

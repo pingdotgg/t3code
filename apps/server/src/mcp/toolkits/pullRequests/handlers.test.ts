@@ -529,6 +529,7 @@ describe("pull request toolkit handlers", () => {
       expect(result).toEqual({
         linked: [{ host: "github.com", repository: "t3tools/t3code", numbers: [2, 3] }],
         alreadyLinked: [{ host: "github.com", repository: "t3tools/t3code", numbers: [1] }],
+        linkedCount: 3,
         invalidUrls: ["https://example.com/not-a-pr"],
       });
       expect(yield* Ref.get(harness.commands)).toMatchObject([

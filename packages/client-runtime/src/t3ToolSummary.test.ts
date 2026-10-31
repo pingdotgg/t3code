@@ -36,14 +36,12 @@ describe("summarizeT3ToolCalls", () => {
   });
 
   it("counts the pull requests batch link and unlink calls changed", () => {
-    const links = completed(
-      { urls: ["https://github.com/o/r/pull/1", "https://github.com/o/r/pull/2"] },
-      {},
-    );
+    const urls = ["https://github.com/o/r/pull/1", "https://github.com/o/r/pull/1", "not-a-pr"];
+    const links = completed({ urls }, { linkedCount: 1 });
     expect(summarizeT3ToolCalls("link-pr", [links, completed({ number: 3 })]).label).toBe(
-      "Linked 3 pull requests",
+      "Linked 2 pull requests",
     );
-    expect(summarizeT3ToolCalls("link-pr", [completed("Large tool output", {})]).label).toBe(
+    expect(summarizeT3ToolCalls("link-pr", [completed({ urls }, {})]).label).toBe(
       "Linked pull requests",
     );
     const batch = completed({ states: ["merged"] }, { unlinkedCount: 2 });

@@ -754,7 +754,9 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
         : call.tool === "link_pull_requests" &&
             isRecord(call.input) &&
             Array.isArray(call.input.urls)
-          ? call.input.urls.map((url) => pullRequest(repo, { url }).url)
+          ? call.input.urls
+              .filter((url) => PULL_REQUEST_URL.test(valueText(url)))
+              .map((url) => pullRequest(repo, { url }).url)
           : [],
     ),
   ];
@@ -960,6 +962,8 @@ const DEFAULT_THREAD = {
 const HTML_RENDERED =
   "Shown to the reader above your reply. Don't mention or describe the page; reply with only what it doesn't already say.";
 
+const PULL_REQUEST_URL = /\/pull\/\d+\/?$/;
+
 /** Pull request identity from a `url` or `repository` plus `number` input, like T3's results. */
 const pullRequest = (repo: string, input: Readonly<Record<string, unknown>>) => {
   const url = typeof input.url === "string" ? input.url : "";
@@ -1027,7 +1031,9 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
       return { ...pr(), alreadyLinked };
     }
     case "link_pull_requests": {
-      const targets = (Array.isArray(input.urls) ? input.urls : []).map((url) =>
+      const urls = Array.isArray(input.urls) ? input.urls.map(valueText) : [];
+      const invalidUrls = urls.filter((url) => !PULL_REQUEST_URL.test(url));
+      const targets = [...new Set(urls.filter((url) => PULL_REQUEST_URL.test(url)))].map((url) =>
         pullRequest(sample.repo, { url }),
       );
       const fresh = targets.filter(({ url }) => !sample.linked.has(url));
@@ -1041,6 +1047,8 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
       return {
         linked: byRepository(fresh),
         alreadyLinked: byRepository(targets.filter((pr) => !fresh.includes(pr))),
+        linkedCount: targets.length,
+        ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
       };
     }
     case "request_secret": {

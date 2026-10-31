@@ -433,6 +433,7 @@ const make = Effect.gen(function* () {
         return {
           linked: byRepository(fresh),
           alreadyLinked: byRepository(alreadyLinked),
+          linkedCount: targets.length,
           ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
           ...(thread.lineage.relationshipToParent === "subagent"
             ? { next: CHILD_PULL_REQUEST_REPORT_NEXT }
