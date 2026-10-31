@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import type {
   PullRequestActor,
   PullRequestCheck,
+  PullRequestChecksState,
   PullRequestCheckStatus,
   PullRequestComment,
   PullRequestCommit,
@@ -123,8 +124,32 @@ export function forgejoActor(
     : null;
 }
 
-export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
+function checksStateOf(
+  checks: ReadonlyArray<PullRequestCheck>,
+): PullRequestChecksState | undefined {
+  if (checks.length === 0) return undefined;
+  const required = checks.filter((check) => check.required === true);
+  const gate = required.length > 0 ? required : checks;
+  if (
+    gate.some(
+      (check) =>
+        check.status === "failure" ||
+        check.status === "cancelled" ||
+        check.status === "action-required",
+    )
+  )
+    return "failing";
+  if (gate.some((check) => check.status === "pending")) return "pending";
+  return "passing";
+}
+
+export function forgejoChangeRequest(
+  pr: typeof ForgejoPullRequest.Type,
+  checks?: ReadonlyArray<PullRequestCheck>,
+) {
+  const checksState = checks === undefined ? undefined : checksStateOf(checks);
   return {
+    ...(checksState === undefined ? {} : { checksState }),
     number: pr.number,
     title: pr.title,
     url: pr.html_url,

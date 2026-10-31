@@ -103,6 +103,9 @@ it.effect.each([
     if (readChecks === undefined) return yield* Effect.die("checks read missing");
     const summary = yield* readChecks(requiredChecksInput);
     const detail = yield* provider.getChangeRequest(requiredChecksInput);
+    const snapshot = yield* provider.getChangeRequestSummary!(requiredChecksInput);
+    assert.strictEqual(snapshot.checksState, "pending");
+    assert.strictEqual(detail.checksState, "pending");
     for (const checks of [summary.checks, detail.checks]) {
       assert.deepStrictEqual(
         checks.map((check) => [check.name, check.status, check.required]),
@@ -140,6 +143,88 @@ it.effect.each([
       ),
     ),
   ),
+);
+
+it.effect(
+  "rolls up list and link checks using each base policy and reads shared heads once",
+  () => {
+    const cases = [
+      ["success", "release/1.x", "passing"],
+      ["failure", "release/1.x", "failing"],
+      ["pending", "release/1.x", "pending"],
+      ["missing", "release/1.x", "pending"],
+      ["skipped", "release/1.x", "passing"],
+      ["warning", "release/1.x", "passing"],
+      ["success", "unprotected", "failing"],
+      ["empty", "unprotected", undefined],
+    ] as const;
+    const pulls = cases.map(([sha, base], index) => ({
+      ...requiredChecksPullRequest,
+      number: index + 1,
+      head: { ...requiredChecksPullRequest.head, sha },
+      base: { ...requiredChecksPullRequest.base, ref: base },
+    }));
+    const reads = new Map<string, number>();
+    return Effect.gen(function* () {
+      const provider = yield* ForgejoPullRequestProvider.make;
+      const list = yield* provider.listChangeRequests({
+        ...requiredChecksInput,
+        state: "open",
+        involvement: "all",
+        viewer: "maria",
+        limit: pulls.length,
+      });
+      assert.deepStrictEqual(
+        list.items.map((item) => item.checksState),
+        cases.map((row) => row[2]),
+      );
+      assert.strictEqual(list.cursorAdvance, pulls.length);
+      assert.strictEqual(reads.get("repos/acme/web/branches/release/1.x"), 1);
+      assert.strictEqual(reads.get("repos/acme/web/branches/unprotected"), 1);
+      assert.strictEqual(
+        reads.get("repos/acme/web/statuses/success?sort=recentupdate&limit=50&page=1"),
+        1,
+      );
+      for (const [index, row] of cases.entries()) {
+        const summary = yield* provider.getChangeRequestSummary!({
+          ...requiredChecksInput,
+          number: index + 1,
+        });
+        assert.strictEqual(summary.checksState, row[2]);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) => {
+            const [path, query] = input.path.split("?");
+            reads.set(input.path, (reads.get(input.path) ?? 0) + 1);
+            let response: unknown;
+            if (path === "repos/acme/web/pulls") response = pulls;
+            else if (path?.startsWith("repos/acme/web/pulls/"))
+              response = pulls[Number(path.split("/").at(-1)) - 1];
+            else if (path?.startsWith("repos/acme/web/branches/"))
+              response = {
+                enable_status_check: path.endsWith("release/1.x"),
+                status_check_contexts: ["ci/required-*"],
+              };
+            else if (path?.startsWith("repos/acme/web/statuses/")) {
+              const state = path.split("/").at(-1);
+              response =
+                new URLSearchParams(query).get("page") !== "1" || state === "empty"
+                  ? []
+                  : [
+                      ...(state === "missing"
+                        ? []
+                        : [{ ...requiredChecksStatuses[0], status: state }]),
+                      requiredChecksStatuses[1],
+                    ];
+            } else return Effect.die(`Unexpected Forgejo request: ${input.path}`);
+            return encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));
+          },
+        }),
+      ),
+    );
+  },
 );
 
 it("matches many-wildcard required patterns against long check names without backtracking", () => {
