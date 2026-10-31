@@ -23,6 +23,7 @@ import {
   type AntigravityProfile,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
+  LINUX_ANTIGRAVITY_SECCOMP_LAUNCHER,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
   parseAntigravityAuthorizationUrl,
@@ -655,5 +656,148 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(yield* fs.exists(profileDirectory)).toBe(false);
       }
     }),
+  );
+
+  // Detection reads /proc through FileSystem, so tests swap in the host shapes
+  // that matter. An omitted file reads a path that does not exist.
+  const withProcFiles = (
+    fs: FileSystem.FileSystem,
+    missingPath: string,
+    procFiles: { readonly limits?: string; readonly status?: string },
+  ): FileSystem.FileSystem => ({
+    ...fs,
+    readFileString: (file, encoding) =>
+      file === "/proc/self/limits"
+        ? procFiles.limits === undefined
+          ? fs.readFileString(missingPath, encoding)
+          : Effect.succeed(
+              "Max cpu time              unlimited            unlimited            seconds   \n" +
+                `Max realtime timeout      ${procFiles.limits}                    us        \n`,
+            )
+        : file === "/proc/self/status"
+          ? procFiles.status === undefined
+            ? fs.readFileString(missingPath, encoding)
+            : Effect.succeed(`Name:\tnode\nSeccomp:\t${procFiles.status}\nSeccomp_filters:\t0\n`)
+          : fs.readFileString(file, encoding),
+  });
+
+  const preparePythonDirectory = Effect.fn(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const binDirectory = path.join(directory, "bin");
+    yield* fs.makeDirectory(binDirectory, { recursive: true });
+    const python = path.join(binDirectory, "python3");
+    yield* fs.writeFileString(python, "#!/bin/sh\nexit 0\n");
+    yield* fs.chmod(python, 0o755);
+    return { directory, binDirectory, python };
+  });
+
+  const installation = { executablePath: "/release/acp", harnessPath: "/release/harness" };
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "launches ACP through the python seccomp launcher on Linux with a zero realtime limit and no filter",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { directory, binDirectory, python } = yield* preparePythonDirectory();
+        const profile = yield* prepareAntigravityProfile({
+          profileDirectory: path.join(directory, "profile"),
+          platform: "linux",
+          userHome: directory,
+          baseEnv: { PATH: path.relative(process.cwd(), binDirectory) },
+        }).pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            withProcFiles(fs, path.join(directory, "missing"), {
+              limits: "0                    0",
+              status: "0",
+            }),
+          ),
+        );
+
+        const spawn = buildAntigravityAcpSpawnInput({ installation, profile, cwd: directory });
+        expect(spawn.command).toBe(python);
+        expect(spawn.args).toEqual([
+          "-I",
+          "-c",
+          LINUX_ANTIGRAVITY_SECCOMP_LAUNCHER,
+          "/release/acp",
+          "--uid=",
+        ]);
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "keeps the direct ACP launch outside the zero-limit, unfiltered Linux case",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { directory, binDirectory } = yield* preparePythonDirectory();
+        const zeroLimit = "0                    0";
+        const cases: ReadonlyArray<{
+          readonly name: string;
+          readonly platform: NodeJS.Platform;
+          readonly limits?: string;
+          readonly status?: string;
+          readonly pythonExecutable?: string;
+        }> = [
+          {
+            name: "unlimited",
+            platform: "linux",
+            limits: "unlimited            unlimited",
+            status: "0",
+          },
+          {
+            name: "non-zero limit",
+            platform: "linux",
+            limits: "1000000              1000000",
+            status: "0",
+          },
+          {
+            name: "raisable hard limit",
+            platform: "linux",
+            limits: "0                    unlimited",
+            status: "0",
+          },
+          { name: "existing filter", platform: "linux", limits: zeroLimit, status: "2" },
+          { name: "missing status", platform: "linux", limits: zeroLimit },
+          { name: "missing limits", platform: "linux", status: "0" },
+          {
+            name: "opted out",
+            platform: "linux",
+            limits: zeroLimit,
+            status: "0",
+            pythonExecutable: "",
+          },
+          { name: "macOS", platform: "darwin", limits: zeroLimit, status: "0" },
+        ];
+        for (const [index, testCase] of cases.entries()) {
+          const profile = yield* prepareAntigravityProfile({
+            profileDirectory: path.join(directory, String(index)),
+            platform: testCase.platform,
+            userHome: directory,
+            baseEnv: { PATH: binDirectory },
+            ...(testCase.pythonExecutable !== undefined
+              ? { pythonExecutable: testCase.pythonExecutable }
+              : {}),
+          }).pipe(
+            Effect.provideService(
+              FileSystem.FileSystem,
+              withProcFiles(fs, path.join(directory, "missing"), {
+                ...(testCase.limits !== undefined ? { limits: testCase.limits } : {}),
+                ...(testCase.status !== undefined ? { status: testCase.status } : {}),
+              }),
+            ),
+          );
+          const spawn = buildAntigravityAcpSpawnInput({ installation, profile, cwd: directory });
+          expect({ command: spawn.command, args: spawn.args }, testCase.name).toEqual({
+            command: "/release/acp",
+            args: testCase.platform === "linux" ? ["--uid="] : [],
+          });
+        }
+      }),
   );
 });

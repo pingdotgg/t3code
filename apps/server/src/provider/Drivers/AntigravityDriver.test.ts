@@ -199,6 +199,15 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   }).pipe(
     Effect.provide(layerInstallation),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
+    Effect.provideService(FileSystem.FileSystem, {
+      ...fs,
+      readFileString: (file, encoding) =>
+        file === "/proc/self/limits"
+          ? Effect.succeed(
+              "Max realtime timeout      unlimited            unlimited            us\n",
+            )
+          : fs.readFileString(file, encoding),
+    }),
   );
   const refresh = instance.refreshModels;
   if (!refresh) return yield* Effect.die("Antigravity does not expose model refresh.");
