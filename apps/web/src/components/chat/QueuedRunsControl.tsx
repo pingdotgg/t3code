@@ -582,7 +582,7 @@ function QueuedMessage(props: {
       </div>
       <div className="flex shrink-0 items-center gap-0.5 text-meta text-dim-foreground">
         {props.message ? (
-          <span className="hidden">
+          <span className="flex items-center gap-1">
             {attribution === "agent" && senderThreadId ? (
               <InlineButton tone="muted" onClick={() => props.onOpenThread(senderThreadId)}>
                 Open thread
@@ -601,11 +601,13 @@ function QueuedMessage(props: {
                 Open automation
               </InlineButton>
             ) : null}
-            <TimelineRowTimestamp
-              createdAt={DateTime.formatIso(props.message.createdAt)}
-              timestampFormat={props.timestampFormat}
-              alwaysVisible
-            />
+            <span className="hidden @min-[600px]/composer-surface:inline">
+              <TimelineRowTimestamp
+                createdAt={DateTime.formatIso(props.message.createdAt)}
+                timestampFormat={props.timestampFormat}
+                alwaysVisible
+              />
+            </span>
           </span>
         ) : null}
         {props.children}
