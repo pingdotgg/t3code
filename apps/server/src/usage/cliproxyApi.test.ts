@@ -345,6 +345,83 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("resolves separate Claude organizations for hub credentials sharing an email", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: accounts.map((account) => ({
+          ...account,
+          provider: "claude",
+          email: "same@example.com",
+        })),
+        upstream: (request) => ({
+          status: 200,
+          body:
+            request.url === "https://api.anthropic.com/api/oauth/profile"
+              ? { organization: { uuid: request.auth_index === "a" ? " org-max " : "org-team" } }
+              : {
+                  five_hour: { utilization: request.auth_index === "a" ? 20 : 80, resets_at: null },
+                },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(
+        result.map((account) => ({
+          id: account.id,
+          workspaceId: account.workspaceId,
+          usedPercent: account.usageLimits.windows[0]?.usedPercent,
+        })),
+      ).toEqual([
+        { id: "first.json", workspaceId: "org-max", usedPercent: 20 },
+        { id: "second.json", workspaceId: "org-team", usedPercent: 80 },
+      ]);
+    }),
+  );
+
+  it.effect(
+    "keeps replacement Claude quota without inheriting identity when its profile fails",
+    () =>
+      Effect.gen(function* () {
+        let replaced = false;
+        const test = fixture({
+          accounts: [{ ...accounts[0]!, provider: "claude" }],
+          upstream: (request) =>
+            request.url?.endsWith("/profile")
+              ? replaced
+                ? { status: 429, body: {} }
+                : { status: 200, body: { organization: { uuid: "old-organization" } } }
+              : {
+                  status: 200,
+                  body: { five_hour: { utilization: replaced ? 80 : 20, resets_at: null } },
+                },
+        });
+        const api = yield* test.api;
+        expect((yield* api.readAccounts(config))[0]?.workspaceId).toBe("old-organization");
+        // A hub can replace a credential while reusing both its file ID and auth index.
+        replaced = true;
+        const [replacement] = yield* api.readAccounts(config);
+        expect(replacement?.workspaceId).toBeUndefined();
+        expect(replacement?.usageLimits.unavailable).toBeUndefined();
+        expect(replacement?.usageLimits.windows).toMatchObject([{ usedPercent: 80 }]);
+      }),
+  );
+
+  it.effect("keeps Claude organization identity when its quota is unavailable", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) =>
+          request.url?.endsWith("/profile")
+            ? { status: 200, body: { organization: { uuid: "org-team" } } }
+            : { status: 503, body: {} },
+      });
+      const api = yield* test.api;
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.workspaceId).toBe("org-team");
+      expect(account?.usageLimits.unavailable?.reason).toBe("probeFailed");
+    }),
+  );
+
   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
     Effect.gen(function* () {
       const test = fixture();

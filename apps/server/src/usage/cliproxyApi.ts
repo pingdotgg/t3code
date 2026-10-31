@@ -52,6 +52,7 @@ const ClaudeWindow = Schema.Struct({
   utilization: Schema.Number,
   resets_at: Schema.NullOr(Schema.String),
 });
+const ClaudeProfile = Schema.Struct({ organization: Schema.Struct({ uuid: Schema.String }) });
 const ClaudeUsage = Schema.Struct({
   five_hour: Schema.optional(Schema.NullOr(ClaudeWindow)),
   seven_day: Schema.optional(Schema.NullOr(ClaudeWindow)),
@@ -88,6 +89,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
@@ -135,6 +137,7 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
 
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
+const CLAUDE_OAUTH_BASE = "https://api.anthropic.com/api/oauth";
 
 const CREDIT_REDEEM_NAMESPACE = new Uint8Array([
   0x6f, 0x1c, 0x2a, 0x9e, 0x2d, 0x4b, 0x4c, 0x1e, 0x9a, 0x7f, 0x3b, 0x8d, 0x5e, 0x0c, 0x1a, 0x42,
@@ -256,17 +259,22 @@ export const makeCliproxyApi = Effect.gen(function* () {
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const workspace =
+      account.provider === "claude"
+        ? apiCall(config, account, `${CLAUDE_OAUTH_BASE}/profile`).pipe(
+            Effect.flatMap(decodeClaudeProfile),
+            Effect.map((profile) => profile.organization.uuid.trim() || undefined),
+            Effect.orElseSucceed(() => undefined),
+          )
+        : Effect.succeed(account.id_token?.chatgpt_account_id?.trim() || undefined);
     const base = {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
-      ...(account.id_token?.chatgpt_account_id?.trim()
-        ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
-        : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
+        const body = yield* apiCall(config, account, `${CLAUDE_OAUTH_BASE}/usage`);
         const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -338,8 +346,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
             : {}),
         },
       };
-    });
-    return yield* read.pipe(
+    }).pipe(
       Effect.orElseSucceed(() => ({
         ...base,
         usageLimits: makeUnavailableUsageLimits({
@@ -349,6 +356,11 @@ export const makeCliproxyApi = Effect.gen(function* () {
         }),
       })),
     );
+    const { workspaceId, result } = yield* Effect.all(
+      { workspaceId: workspace, result: read },
+      { concurrency: 2 },
+    );
+    return { ...result, ...(workspaceId ? { workspaceId } : {}) };
   });
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
