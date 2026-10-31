@@ -24,7 +24,7 @@ export type LayoutDragSource =
 
 export type LayoutDropTarget =
   | { kind: "side"; paneId: string; side: LayoutDirection }
-  | { kind: "into"; paneId: string }
+  | { kind: "into"; paneId: string; index?: number }
   | { kind: "extend"; edge: "left" | "right" | "bottom" };
 
 export interface LayoutDragRect {
@@ -37,6 +37,7 @@ export interface LayoutDragRect {
 export interface LayoutDragPane {
   paneId: string;
   rect: LayoutDragRect;
+  tabs?: readonly { id: string; rect: LayoutDragRect }[];
   /** A side panel or terminal pane: splits beside it, but no tabs into it. */
   companion: boolean;
 }
@@ -94,7 +95,10 @@ function measure(): { panes: LayoutDragPane[]; strip: LayoutDragRect } | null {
       const paneId = element.dataset.layoutPaneId;
       const rect = element.getBoundingClientRect();
       if (!paneId || rect.width === 0 || rect.height === 0) return [];
-      return [{ paneId, rect: toRect(rect), companion: element.dataset.layoutCompanion != null }];
+      const tabs = [...element.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].map(
+        (tab) => ({ id: tab.dataset.layoutPaneTab!, rect: toRect(tab.getBoundingClientRect()) }),
+      );
+      return [{ paneId, rect: toRect(rect), tabs, companion: element.dataset.layoutCompanion != null }];
     },
   );
   return { panes, strip: toRect(strip.getBoundingClientRect()) };
@@ -155,7 +159,7 @@ function layoutDropDestination(
   target: LayoutDropTarget,
 ): LayoutTabDestination | null {
   if (target.kind === "side") return { kind: "split", paneId: target.paneId, side: target.side };
-  if (target.kind === "into") return { kind: "pane", paneId: target.paneId };
+  if (target.kind === "into") return { kind: "pane", paneId: target.paneId, index: target.index };
   const workspace = selectFocusedWorkspace(layout);
   if (target.edge === "left") return { kind: "column", workspaceId: workspace.id, index: 0 };
   if (target.edge === "right") {
@@ -183,7 +187,9 @@ function isLayoutDropUseful(
   const location = findLayoutTab(layout, (tab) => tab.id === source.tabId);
   if (!location) return false;
   const alone = location.pane.tabs.length === 1;
-  if (target.kind === "into") return target.paneId !== location.pane.id;
+  if (target.kind === "into") {
+    return target.paneId !== location.pane.id || (target.index !== undefined && target.index !== location.tabIndex);
+  }
   if (target.kind === "side") return !(alone && target.paneId === location.pane.id);
   const workspace = selectFocusedWorkspace(layout);
   const paneCount = workspace.columns.reduce((sum, column) => sum + column.panes.length, 0);
@@ -240,10 +246,20 @@ export function moveLayoutDrag(
     return;
   }
   const layout = useLayoutStore.getState().layout;
-  const raw =
+  let raw =
     options.allowTarget === false
       ? null
       : resolveLayoutDropTarget(point, measured.panes, measured.strip);
+  if (raw?.kind === "into") {
+    const paneId = raw.paneId;
+    const tabs = measured.panes.find((pane) => pane.paneId === paneId)?.tabs?.filter(
+      (tab) => source.kind !== "tab" || tab.id !== source.tabId,
+    );
+    if (tabs) {
+      const before = tabs.findIndex((tab) => point.x < (tab.rect.left + tab.rect.right) / 2);
+      raw = { ...raw, index: before === -1 ? tabs.length : before };
+    }
+  }
   const target =
     raw && isLayoutDropUseful(layout, source, raw) && isKnownPane(layout, raw) ? raw : null;
   const previous = dragState;
@@ -274,7 +290,7 @@ function sameTarget(a: LayoutDropTarget | null, b: LayoutDropTarget | null): boo
   if (a === null || b === null) return a === b;
   if (a.kind !== b.kind) return false;
   if (a.kind === "extend" && b.kind === "extend") return a.edge === b.edge;
-  if (a.kind === "into" && b.kind === "into") return a.paneId === b.paneId;
+  if (a.kind === "into" && b.kind === "into") return a.paneId === b.paneId && a.index === b.index;
   return a.kind === "side" && b.kind === "side" && a.paneId === b.paneId && a.side === b.side;
 }
 
