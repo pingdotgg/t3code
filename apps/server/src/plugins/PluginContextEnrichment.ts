@@ -1,14 +1,5 @@
-/**
- * Calls the `t3.transform.enrich` handler of enabled plugins for the run
- * context the orchestrator records (see `RunContextEnrichment`).
- *
- * A plugin takes part when it is enabled with consent that includes the
- * `transforms` capability and its manifest declares `transforms.enrich`.
- * Sources are read from the catalogue for every run, so disabling or removing
- * a plugin stops its enrichment from the next run on; a call in flight is
- * pinned to the registration it was listed with and fails if that is revoked.
- * Every failure becomes a `skipped` outcome with a reason the timeline shows.
- */
+// Pin each run’s enrichment to enabled, consented registrations; revocation must never redirect an in-flight call.
+// Convert failures into recorded skipped outcomes so provider startup can continue.
 import {
   type EnvironmentId,
   PLUGIN_ENRICH_HANDLER,
