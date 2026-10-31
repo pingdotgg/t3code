@@ -145,9 +145,9 @@ export function ComposerControlsBar(props: {
     hiddenBlockCount: restingHiddenBlockCount,
     hiddenBlockIds: hiddenRestingBlockIds,
   } = resolveComposerControlsOwnership({
-    matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
+    matchesDefault: false,
     planModeUiEnabled,
-    collapsed: composerControlsCollapsed,
+    collapsed: false,
     measuredHiddenBlockCount,
   });
   const controlSize = composerControlsCollapsed ? "xs" : "sm";
@@ -170,7 +170,7 @@ export function ComposerControlsBar(props: {
           id: "mode",
           content: (
             <ComposerFooterModeControls
-              showInteractionModeToggle={planModeUiEnabled}
+              showInteractionModeToggle={planModeUiEnabled && interactionMode === "plan"}
               interactionMode={interactionMode}
               runtimeMode={compatibleRuntimeMode}
               runtimeModeOptions={compatibleRuntimeModeOptions}
