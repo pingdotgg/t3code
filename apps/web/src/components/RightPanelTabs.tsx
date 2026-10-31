@@ -855,6 +855,7 @@ function RightPanelTab(
       data-active-tab={active}
       data-tab-key={surface.id}
       data-layout-pane-tab={layoutTabId ?? undefined}
+      data-layout-tab-reveal={filesCrumb ? "end" : undefined}
       onPointerDown={
         layoutTabId !== null ? (event) => beginLayoutTabDrag(event, layoutTabId) : undefined
       }
@@ -866,7 +867,7 @@ function RightPanelTab(
       className={cn(
         "cursor-pointer group/tab flex items-center",
         isDragging && "relative z-10",
-        active && squeezed ? "min-w-0" : "shrink-0",
+        active && squeezed && !filesCrumb ? "min-w-0" : "shrink-0",
         // In the notch a tab is the chat's 28px notch tab (pen JiaZk).
         notched
           ? "h-7 gap-1.75 rounded-control px-2.5 text-label"
