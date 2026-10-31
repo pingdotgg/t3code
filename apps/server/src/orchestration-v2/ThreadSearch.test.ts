@@ -855,6 +855,40 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
     }),
   );
 
+  // regression: #28279 a foreign build stored the settled override as a JSON boolean
+  it.effect("finds threads whose stored override is a JSON boolean", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:petrel");
+      yield* createProject(project);
+      const titled = ThreadId.make("thread:petrel-titled");
+      const messaged = ThreadId.make("thread:petrel-messaged");
+      yield* Effect.forEach(
+        [
+          thread(titled, project, { title: "Petrel nest", settledAt: at(10) }),
+          thread(messaged, project, { title: "Unrelated", settledAt: at(10) }),
+          message(messaged, "petrel-note", "user", "a petrel note", { minute: 2 }),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      for (const threadId of [titled, messaged]) {
+        yield* sql`UPDATE orchestration_v2_projection_threads
+          SET payload_json = json_set(payload_json, '$.settledOverride', json('true'))
+          WHERE thread_id = ${threadId}`;
+      }
+      const found = yield* search.searchOlderSettled({
+        query: "petrel",
+        before: DateTime.formatIso(at(30)),
+        messageThreadIds: [messaged],
+      });
+      assert.include(found, titled);
+      assert.include(found, messaged);
+    }),
+  );
+
   it.effect("matches the branch and linked pull requests, like the palette", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
