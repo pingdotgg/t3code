@@ -23,7 +23,7 @@ import {
   runCloudCommand,
   waitForReachability,
 } from "./connect.ts";
-import { resolveCliCommand } from "./invocation.ts";
+import { resolveHostCliCommand } from "./invocation.ts";
 import * as CliService from "./service.ts";
 
 type Route = "connect" | "lan";
@@ -63,22 +63,22 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
 
 /**
  * The routes `t3 up` starts from. With no route flag it asks about every
- * route; any route flag means it asks nothing and keeps the routes not named.
- * A machine with no service yet starts from T3 Connect.
+ * route, starting a machine with no service from T3 Connect. Any route flag
+ * means it asks nothing and keeps the routes not named as they are.
  */
 export const planRoutes = (
   setup: { readonly installed: boolean; readonly connect: boolean | null; readonly lan: boolean },
   flags: { readonly connect: Option.Option<boolean>; readonly lan: Option.Option<boolean> },
 ) => {
-  const keep = {
-    connect: setup.connect === true || (!setup.installed && setup.connect !== null),
+  const ask = Option.isNone(flags.connect) && Option.isNone(flags.lan);
+  const start = {
+    connect: setup.connect === true || (ask && !setup.installed && setup.connect !== null),
     lan: setup.lan,
   };
-  const ask = Option.isNone(flags.connect) && Option.isNone(flags.lan);
   return {
     routes: {
-      connect: Option.getOrElse(flags.connect, () => keep.connect),
-      lan: Option.getOrElse(flags.lan, () => keep.lan),
+      connect: Option.getOrElse(flags.connect, () => start.connect),
+      lan: Option.getOrElse(flags.lan, () => start.lan),
     } satisfies Routes,
     ask: ask
       ? (["connect", "lan"] as const).filter((r) => r !== "connect" || setup.connect !== null)
@@ -145,6 +145,7 @@ const formatNextSteps = (routes: Routes) =>
 const interactiveTerminal = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
 const setUp = Effect.fn("cli.up")(function* (flags: {
+  readonly baseDir: Option.Option<string>;
   readonly connect: Option.Option<boolean>;
   readonly lan: Option.Option<boolean>;
   readonly yes: boolean;
@@ -189,6 +190,23 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   if (!before.service.installed && !routes.connect && !routes.lan) {
     return yield* Console.log(formatNextSteps(routes));
   }
+  const { installedVersion } = before.service;
+  const newer =
+    installedVersion !== undefined &&
+    compareExactServiceVersions(installedVersion, packageJson.version) > 0;
+  // Asked before anything changes, so a declined restart leaves service.env
+  // matching what the running service read when it started.
+  const restart =
+    before.service.installed && (before.service.current || newer) && needsRestart(current, routes);
+  if (restart && interactive) {
+    const confirmed = yield* Prompt.run(
+      Prompt.Confirm({
+        message: "Restart T3 Code to apply this? Running agent turns stop.",
+        initial: true,
+      }),
+    ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
+    if (!confirmed) return yield* Console.log("Nothing changed.");
+  }
 
   if (routes.connect && !current.connect) {
     yield* Console.log("T3 Connect");
@@ -210,15 +228,12 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   }
 
   const printServeCommand = Effect.fn(function* (reason: string) {
-    const serve = yield* resolveCliCommand("serve");
-    yield* Console.log(
-      `${reason} Run this and keep the terminal open:\n  ${serve}${routes.lan ? " --lan" : ""}\n`,
-    );
+    const { command } = yield* resolveHostCliCommand("serve", [
+      ...Option.match(flags.baseDir, { onNone: () => [], onSome: (dir) => ["--base-dir", dir] }),
+      ...(routes.lan ? ["--lan"] : []),
+    ]);
+    yield* Console.log(`${reason} Run this and keep the terminal open:\n  ${command}\n`);
   });
-  const { installedVersion } = before.service;
-  const newer =
-    installedVersion !== undefined &&
-    compareExactServiceVersions(installedVersion, packageJson.version) > 0;
   let started = false;
   if (!before.service.supported) {
     yield* printServeCommand("This machine cannot run T3 Code in the background.");
@@ -241,26 +256,14 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     } else if (result.changed) {
       yield* Console.log(CliService.formatServiceChange(result));
       started = true;
-    } else if (needsRestart(current, routes)) {
-      const restart =
-        !interactive ||
-        (yield* Prompt.run(
-          Prompt.Confirm({
-            message: "Restart T3 Code to apply this? Running agent turns stop.",
-            initial: true,
-          }),
-        ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) })));
-      if (!restart) {
-        yield* Console.log("Run `t3 service restart` to apply it.");
-      } else {
-        const outcome = yield* service.restart;
-        yield* Console.log(
-          outcome === "queued"
-            ? "Restart queued. This session runs inside the service and disconnects when it goes down."
-            : "Restarted the T3 Code service.",
-        );
-        started = outcome === "restarted";
-      }
+    } else if (restart) {
+      const outcome = yield* service.restart;
+      yield* Console.log(
+        outcome === "queued"
+          ? "Restart queued. This session runs inside the service and disconnects when it goes down."
+          : "Restarted the T3 Code service.",
+      );
+      started = outcome === "restarted";
     }
   }
   if (started && routes.connect && !current.connect) yield* waitForReachability();

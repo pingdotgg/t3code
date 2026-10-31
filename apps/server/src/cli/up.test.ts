@@ -38,6 +38,12 @@ it.each([
     expected: { routes: { connect: false, lan: true }, ask: ["connect", "lan"] },
   },
   {
+    label: "a route flag on a new machine turns on only that route",
+    setup: { installed: false, connect: false, lan: false },
+    flags: { connect: none, lan: Option.some(true) },
+    expected: { routes: { connect: false, lan: true }, ask: [] },
+  },
+  {
     label: "a route flag asks nothing and keeps the other route",
     setup: { installed: true, connect: true, lan: true },
     flags: { connect: none, lan: Option.some(false) },
