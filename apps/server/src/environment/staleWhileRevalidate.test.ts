@@ -28,10 +28,16 @@ it.effect("serves the stale value while one background refresh replaces it", () 
   Effect.gen(function* () {
     const calls = yield* Ref.make(0);
     const release = yield* Deferred.make<void>();
+    const started = yield* Deferred.make<void>();
+    const refreshed = yield* Deferred.make<void>();
     const read = yield* makeStaleWhileRevalidate(
       Effect.gen(function* () {
         const call = yield* Ref.updateAndGet(calls, (count) => count + 1);
-        if (call > 1) yield* Deferred.await(release);
+        if (call > 1) {
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(release);
+          yield* Deferred.succeed(refreshed, undefined);
+        }
         return call;
       }),
       "60 seconds",
@@ -43,11 +49,11 @@ it.effect("serves the stale value while one background refresh replaces it", () 
     // one refresh starts however many callers arrive.
     assert.equal(yield* read, 1);
     assert.equal(yield* read, 1);
-    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(started);
     assert.equal(yield* Ref.get(calls), 2);
 
     yield* Deferred.succeed(release, undefined);
-    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(refreshed);
     assert.equal(yield* read, 2);
   }),
 );
@@ -92,9 +98,14 @@ it.effect("starts over after a failed first scan", () =>
 it.effect("abandons a hung refresh so a later call can start another", () =>
   Effect.gen(function* () {
     const calls = yield* Ref.make(0);
+    const started = yield* Deferred.make<void>();
+    const interrupted = yield* Deferred.make<void>();
+    const refreshed = yield* Deferred.make<void>();
     const read = yield* makeStaleWhileRevalidate(
       Ref.updateAndGet(calls, (count) => count + 1).pipe(
-        Effect.flatMap((call) => (call === 2 ? Effect.never : Effect.succeed(call))),
+        Effect.flatMap((call) => call === 2
+          ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never), Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)))
+          : Effect.succeed(call).pipe(Effect.tap(() => call === 3 ? Deferred.succeed(refreshed, undefined) : Effect.void))),
       ),
       "60 seconds",
     );
@@ -102,13 +113,14 @@ it.effect("abandons a hung refresh so a later call can start another", () =>
     assert.equal(yield* read, 1);
     yield* TestClock.adjust("61 seconds");
     assert.equal(yield* read, 1);
-    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(started);
     assert.equal(yield* Ref.get(calls), 2);
 
     // The hung refresh times out, releasing the claim for the next caller.
     yield* TestClock.adjust("30 seconds");
+    yield* Deferred.await(interrupted);
     assert.equal(yield* read, 1);
-    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(refreshed);
     assert.equal(yield* Ref.get(calls), 3);
     assert.equal(yield* read, 3);
   }).pipe(Effect.scoped),
@@ -117,6 +129,7 @@ it.effect("abandons a hung refresh so a later call can start another", () =>
 it.effect("interrupts a background refresh when the owning scope closes", () =>
   Effect.gen(function* () {
     const interrupted = yield* Deferred.make<void>();
+    const started = yield* Deferred.make<void>();
     const scope = yield* Scope.make();
     const calls = yield* Ref.make(0);
     const read = yield* makeStaleWhileRevalidate(
@@ -124,7 +137,7 @@ it.effect("interrupts a background refresh when the owning scope closes", () =>
         Effect.flatMap((call) =>
           call === 1
             ? Effect.succeed(call)
-            : Effect.never.pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
+            : Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never), Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
         ),
       ),
       "60 seconds",
@@ -133,7 +146,7 @@ it.effect("interrupts a background refresh when the owning scope closes", () =>
     yield* read;
     yield* TestClock.adjust("61 seconds");
     yield* read;
-    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(started);
     yield* Scope.close(scope, Exit.void);
     yield* Deferred.await(interrupted);
   }),
