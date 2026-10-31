@@ -1,7 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -9,6 +13,8 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -31,6 +37,7 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
     linuxWmClass: "t3code",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
+    desktopLauncherPath: Option.none(),
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
     path,
     ...overrides,
@@ -55,6 +62,7 @@ const layerHandler = (
   recorded: RecordedRegistration,
   input: {
     readonly environment?: Record<string, unknown>;
+    readonly processSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly updateDesktopDatabaseExitCode?: number;
     readonly updateDesktopDatabaseStalled?: boolean;
     readonly updateDesktopDatabaseStarted?: Deferred.Deferred<void>;
@@ -105,6 +113,7 @@ const layerHandler = (
         Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make((command) => {
+            if (input.processSpawner) return input.processSpawner.spawn(command);
             const childProcess = command as unknown as {
               readonly command: string;
               readonly args: ReadonlyArray<string>;
@@ -228,6 +237,18 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
+  it.effect("launches a distribution package through its configured launcher", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        environment: { desktopLauncherPath: Option.some("/opt/T3 Code/t3code") },
+      });
+
+      assert.include(recorded.files[0]?.content, 'Exec="/opt/T3 Code/t3code" %U');
+    });
+  });
+
   it.effect("does not rewrite the pre-ready entry while the portal can be reading it", () => {
     const recorded = emptyRecording();
 
@@ -345,6 +366,69 @@ describe("DesktopLinuxUrlHandler", () => {
       assert.deepEqual(writeFailed.commands, []);
     });
   });
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "continues registration after a timed-out cache helper ignores SIGTERM",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const nodeExecutable = yield* HostProcess.ExecutablePath;
+        const recorded = emptyRecording();
+        const spawned = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+        const ready = yield* Deferred.make<void>();
+        const processSpawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("expected a single registration command");
+            }
+            recorded.commands.push({ command: command.command, args: command.args });
+            if (command.command !== "update-desktop-database") return mockProcess(0);
+            const child = yield* realSpawner.spawn(
+              ChildProcess.make(
+                nodeExecutable,
+                [
+                  "-e",
+                  // The watchdog makes the unfixed case exit with a distinguishable code.
+                  "process.on('SIGTERM', () => setTimeout(() => process.exit(99), 5000));" +
+                    "process.stdout.write('ready\\n'); setInterval(() => {}, 2147483647);",
+                ],
+                { ...command.options, stdout: "pipe" },
+              ),
+            );
+            yield* Deferred.succeed(spawned, child);
+            yield* Stream.runHead(child.stdout);
+            yield* Deferred.succeed(ready, undefined);
+            return child;
+          }),
+        );
+        const registration = yield* runRegister(recorded, { processSpawner }).pipe(
+          Effect.forkScoped,
+        );
+        const child = yield* Deferred.await(spawned);
+        yield* Effect.addFinalizer(() =>
+          child.isRunning.pipe(
+            Effect.flatMap((running) =>
+              running ? child.kill({ killSignal: "SIGKILL" }) : Effect.void,
+            ),
+            Effect.ignore,
+          ),
+        );
+        yield* Deferred.await(ready);
+        yield* TestClock.adjust("5 seconds");
+        yield* Fiber.join(registration);
+
+        const exit = yield* Effect.exit(child.exitCode);
+        if (Exit.isFailure(exit)) {
+          assert.include(Cause.pretty(exit.cause), "SIGKILL");
+        } else {
+          assert.fail(`cache helper exited with ${exit.value} instead of being force-killed`);
+        }
+        assert.deepEqual(
+          recorded.commands.map(({ command }) => command),
+          ["update-desktop-database", "xdg-mime"],
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
 
 interface ThemeIconRun {
@@ -457,9 +541,7 @@ const themeIconFixture = (source: Uint8Array) =>
     const hicolorDir = path.join(root, "icons", "hicolor");
     const appsDir = path.join(hicolorDir, "256x256", "apps");
     const cachePath = path.join(hicolorDir, "icon-theme.cache");
-    // A fixed time in the past, in whole seconds as fs.utimes expects.
     const pastSeconds = 1_600_000_000;
-    // An existing cache that predates any installed icon.
     const seedCache = Effect.gen(function* () {
       yield* fileSystem.makeDirectory(appsDir, { recursive: true });
       yield* fileSystem.writeFile(cachePath, new Uint8Array([0]));
@@ -547,7 +629,6 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
         commands: [],
         onIconCacheRefresh: fixture.rewriteCache,
       };
-      // A cache stamped later than the new icons, as after a clock correction.
       const future = fixture.pastSeconds + 10 * 365 * 24 * 60 * 60;
       yield* fileSystem.utimes(fixture.cachePath, future, future);
 

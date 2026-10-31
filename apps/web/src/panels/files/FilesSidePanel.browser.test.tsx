@@ -14,44 +14,18 @@ import {
 } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import type { ChatComposerHandle } from "~/components/chat/ChatComposer";
-import { toastManager } from "~/components/ui/toast";
-import { ComposerHandleContext, type ComposerHandleRef } from "~/composerHandleContext";
-import { readThreadPreviewState, resetPreviewStateForTests } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
-const { siblingsByEnvironment, late, Wrapper, MenuContext, RadioContext } = await vi.hoisted(
-  async () => {
-    const { createContext: createHoistedContext } = await import("react");
-    // Settles when a test says so, like a native menu or a server round trip.
-    const deferred = <A,>() => {
-      let resolve!: (value: A) => void;
-      const promise = new Promise<A>((settle) => (resolve = settle));
-      return { promise, resolve };
-    };
-    const late = {
-      deferred,
-      // The tree's right-click handler, as handed to the Pierre tree.
-      openTreeMenu: null as null | ((item: unknown, context: unknown) => void),
-      // The tree's selection handler from its first render; the real tree keeps that one.
-      selectTreeRows: null as null | ((paths: ReadonlyArray<string>) => void),
-      menuChoice: deferred<string | null>(),
-      assetUrl: deferred<unknown>(),
-      session: deferred<unknown>(),
-      // Saved browser settings; already loaded unless a test holds them.
-      browserDefaults: null as null | Promise<unknown>,
-      previewRequests: 0,
-    };
-    return {
-      late,
-      // Files in the `src` folder, per environment.
-      siblingsByEnvironment: new Map<string, ReadonlyArray<string>>(),
-      Wrapper: ({ children }: { children?: ReactNode }) => children,
-      MenuContext: createHoistedContext<(open: boolean) => void>(() => undefined),
-      RadioContext: createHoistedContext<(value: string) => void>(() => undefined),
-    };
-  },
-);
+const { siblingsByEnvironment, Wrapper, MenuContext, RadioContext } = await vi.hoisted(async () => {
+  const { createContext: createHoistedContext } = await import("react");
+  return {
+    // Files in the `src` folder, per environment.
+    siblingsByEnvironment: new Map<string, ReadonlyArray<string>>(),
+    Wrapper: ({ children }: { children?: ReactNode }) => children,
+    MenuContext: createHoistedContext<(open: boolean) => void>(() => undefined),
+    RadioContext: createHoistedContext<(value: string) => void>(() => undefined),
+  };
+});
 
 vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
@@ -272,9 +246,10 @@ import { RegisteredSidePanel } from "../bundledPanels";
 import { PanelHostContext, type PanelHost } from "../panelHost";
 
 // The same thread id on two environments is two threads.
-const refOn = (environmentId: string, thread = "thread-a"): ScopedThreadRef => ({
+const threadId = ThreadId.make("thread-a");
+const refOn = (environmentId: string): ScopedThreadRef => ({
   environmentId: EnvironmentId.make(environmentId),
-  threadId: ThreadId.make(thread),
+  threadId,
 });
 
 // The chat layout owns one composer ref; navigation swaps the composer behind it.
@@ -309,32 +284,29 @@ async function renderFileFor(
   const host: PanelHost = {
     threadRef,
     visible: true,
-    composerDraftTarget,
+    composerDraftTarget: threadRef,
     workspaceMutationId: null,
     sendAnnotation: () => undefined,
   };
   const element = (
-    <ComposerHandleContext value={composerRef}>
-      <PanelHostContext value={host}>
-        <Suspense fallback={null}>
-          <RegisteredSidePanel
-            openInShortcutEnabled
-            id="files"
-            onNavigateFolder={() => undefined}
-            folderTrail={undefined}
-            cwd="/repo"
-            projectName="repo"
-            relativePath={relativePath}
-            availableEditors={[]}
-            revealLine={null}
-            revealRequestId={0}
-            onPendingChange={() => undefined}
-            selectedFilePending={false}
-          />
-        </Suspense>
-        <DuringCommit run={duringCommit} />
-      </PanelHostContext>
-    </ComposerHandleContext>
+    <PanelHostContext value={host}>
+      <Suspense fallback={null}>
+        <RegisteredSidePanel
+          openInShortcutEnabled
+          id="files"
+          onNavigateFolder={() => undefined}
+          folderTrail={undefined}
+          cwd="/repo"
+          projectName="repo"
+          relativePath="src/a.ts"
+          availableEditors={[]}
+          revealLine={null}
+          revealRequestId={0}
+          onPendingChange={() => undefined}
+          selectedFilePending={false}
+        />
+      </Suspense>
+    </PanelHostContext>
   );
   await act(async () => {
     composerRef.current = {
