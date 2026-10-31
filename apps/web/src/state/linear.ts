@@ -13,6 +13,16 @@ export const linearEnvironment = createLinearEnvironmentAtoms(connectionAtomRunt
 
 const NO_THREAD_IDENTIFIERS: ReadonlyMap<string, string> = new Map();
 
+/** Connection status of the primary environment's Linear workspace; null until loaded. */
+export const linearStatusAtom = Atom.make((get) => {
+  const environmentId = get(primaryEnvironmentIdAtom);
+  if (environmentId === null) return null;
+  return AsyncResult.getOrElse(
+    get(linearEnvironment.status({ environmentId, input: {} })),
+    () => null,
+  );
+}).pipe(Atom.withLabel("web-linear-status"));
+
 /**
  * Thread id -> Linear issue identifier ("ATT-615") for sidebar rows. One shared derivation so
  * thousands of rows do not each read the activity query; empty while Linear is not connected.
@@ -21,10 +31,7 @@ const NO_THREAD_IDENTIFIERS: ReadonlyMap<string, string> = new Map();
 export const linearThreadIdentifiersAtom = Atom.make((get) => {
   const environmentId = get(primaryEnvironmentIdAtom);
   if (environmentId === null) return NO_THREAD_IDENTIFIERS;
-  const status = AsyncResult.getOrElse(
-    get(linearEnvironment.status({ environmentId, input: {} })),
-    () => null,
-  );
+  const status = get(linearStatusAtom);
   if (status?.state !== "connected") return NO_THREAD_IDENTIFIERS;
   const activity = AsyncResult.getOrElse(
     get(linearEnvironment.activity({ environmentId, input: {} })),

@@ -1,7 +1,6 @@
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/reactivity";
 import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent } from "react";
 
@@ -28,7 +27,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProject, readProjects, readThreadShell, useProjects } from "../state/entities";
 import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironmentId } from "../state/environments";
-import { linearEnvironment } from "../state/linear";
+import { linearStatusAtom } from "../state/linear";
 import { reviewEnvironment } from "../state/review";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 
@@ -78,15 +77,7 @@ export function useOpenChangeRequestLink(
     // Linear links route in-app whenever Linear is connected, independent of the PR setting.
     if (!shouldOpenPullRequestExternally(event) && !event.shiftKey && !event.altKey) {
       // Read at click time so links do not subscribe to Linear status.
-      const status =
-        primaryEnvironmentId === null
-          ? null
-          : AsyncResult.getOrElse(
-              appAtomRegistry.get(
-                linearEnvironment.status({ environmentId: primaryEnvironmentId, input: {} }),
-              ),
-              () => null,
-            );
+      const status = appAtomRegistry.get(linearStatusAtom);
       const issue = resolveLinearIssueLinkIdentifier(targetUrl, status);
       if (issue !== null) {
         void navigate({ to: "/linear", search: { issue } });

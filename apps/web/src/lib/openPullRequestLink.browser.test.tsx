@@ -20,6 +20,12 @@ vi.mock("../state/entities", async (original) => ({
   readProject: () => project,
   readThreadShell: () => ({ projectId: "project", worktreePath: null }),
 }));
+vi.mock("../state/linear", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    linearStatusAtom: Atom.make({ state: "connected", organization: { urlKey: "attraccess" } }),
+  };
+});
 vi.mock("../state/server", async (original) => {
   const { Atom } = await import("effect/reactivity");
   return {
@@ -61,6 +67,15 @@ function CommitLink({ url = commitUrl }: { url?: string }) {
   return (
     <a href={url} onClick={(event) => open(event, url)}>
       Commit
+    </a>
+  );
+}
+
+function LinearLink({ url }: { url: string }) {
+  const open = useOpenChangeRequestLink(threadRef);
+  return (
+    <a href={url} onClick={(event) => open(event, url)}>
+      Issue
     </a>
   );
 }
@@ -156,4 +171,32 @@ it("opens an available commit in the closed Diff pane without the pane resetting
       [scopedThreadKey(threadRef)]: { kind: "commit", sha, baseRef: null },
     }),
   );
+});
+
+it.each([
+  ["https://linear.app/attraccess/issue/att-1189/slug?x=1", {}, "ATT-1189"],
+  ["https://linear.app/other/issue/ATT-1189", {}, null],
+  ["https://linear.app/attraccess/issue/ATT-1189", { shiftKey: true }, null],
+  ["https://linear.app/attraccess/issue/ATT-1189", { altKey: true }, null],
+  ["https://linear.app/attraccess/issue/ATT-1189", { metaKey: true }, null],
+] as const)("routes Linear issue link %s with %j to %s", async (url, modifiers, issue) => {
+  setup();
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <LinearLink url={url} />
+    </AppAtomRegistryProvider>,
+  );
+  using navigate = vi.spyOn(screen.router!, "navigate");
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true, ...modifiers });
+  screen.container.addEventListener("click", (nativeEvent) => nativeEvent.preventDefault(), {
+    once: true,
+  });
+  await act(() => screen.getByRole("link", { name: "Issue" }).element().dispatchEvent(event));
+  if (issue === null) {
+    expect(navigate).not.toHaveBeenCalled();
+  } else {
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "/linear", search: { issue } }),
+    );
+  }
 });
