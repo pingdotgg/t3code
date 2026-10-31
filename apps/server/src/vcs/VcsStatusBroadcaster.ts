@@ -577,7 +577,7 @@ export const make = Effect.gen(function* () {
           if (cached && (!cached.local || cached.remote?.value === null)) return null;
           const poller = (yield* SynchronizedRef.get(pollersRef)).get(cwd);
           // A watched cwd still needs turn-end PR updates after its snapshot is evicted.
-          if (cached?.remote?.value == null && !poller) return null;
+          if (!cached && !poller) return null;
           const demandCwds = poller ? [...(yield* Ref.get(poller.demandCwds)).keys()] : [rawCwd];
           const shouldRefresh = (yield* Effect.forEach(
             demandCwds,
