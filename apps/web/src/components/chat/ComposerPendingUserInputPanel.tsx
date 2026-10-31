@@ -158,7 +158,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       }
       if (
         target instanceof HTMLElement &&
-        target.closest('[contenteditable]:not([contenteditable="false"])')
+        target.closest(
+          'select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [aria-modal="true"], [role="menu"], [data-slot$="popup"]',
+        )
       ) {
         return;
       }
