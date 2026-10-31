@@ -23,6 +23,7 @@ import {
   type ThemeDefinition,
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
+import { themeAccentWithContrast } from "@t3tools/shared/themeContrast";
 import {
   CONTEXT_CHIP_ACCENTS,
   contextChipColorVariable,
@@ -1593,6 +1594,14 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 
 export const THEME_PREVIEW_ID = "__preview";
 
+/** `error` doubles as destructive text, so it must read on the surfaces that text sits on. */
+export function withReadableThemeText(colors: ThemeColors): ThemeColors {
+  return {
+    ...colors,
+    error: themeAccentWithContrast(colors.error, [colors.canvas, colors.surface]),
+  };
+}
+
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
 export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeAppearance): void {
   if (typeof document === "undefined") return;
@@ -1601,7 +1610,8 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
 
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
-  for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
+  const readable = withReadableThemeText(colors);
+  for (const [role, value] of Object.entries(readable) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
   applyContextChipVariables(root, colors);
@@ -1621,7 +1631,8 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     root.dataset.themeId = palette.id;
     const mode = appearance ?? legacyThemeMode(theme) ?? palette.appearance;
     const colors = getThemeColorsForMode(palette, mode) ?? palette.colors;
-    for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
+    const readable = withReadableThemeText(colors);
+    for (const [role, value] of Object.entries(readable) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
     applyContextChipVariables(root, colors);

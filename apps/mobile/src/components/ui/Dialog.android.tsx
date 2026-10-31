@@ -15,7 +15,7 @@ import { useAppearancePreferences } from "../../features/settings/appearance/App
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 
 import { useSyncExternalStore } from "react";
-import { themeColorWithContrast } from "../../lib/mobileTheme";
+import { themeColorWithContrast } from "@t3tools/shared/themeContrast";
 import type { Alert, AlertButton } from "react-native";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
 
