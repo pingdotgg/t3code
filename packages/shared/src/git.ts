@@ -188,6 +188,21 @@ function parseGitConfigValue(raw: string): string {
   return out.trim();
 }
 
+function isTrueGitConfigValue(value: string): boolean {
+  if (value === "true" || value === "yes" || value === "on") return true;
+  const numeric = /^([+-]?)(0x[0-9a-f]+|0[0-7]*|[1-9][0-9]*)([kmg]?)$/.exec(value);
+  if (numeric === null) return false;
+  const digits = numeric[2]!;
+  const magnitude = digits.startsWith("0x")
+    ? Number.parseInt(digits.slice(2), 16)
+    : Number.parseInt(digits, digits.startsWith("0") ? 8 : 10);
+  const scale =
+    numeric[3] === "k" ? 1024 : numeric[3] === "m" ? 1024 ** 2 : numeric[3] === "g" ? 1024 ** 3 : 1;
+  const number = magnitude * scale * (numeric[1] === "-" ? -1 : 1);
+  // Git's boolean parser accepts integers only within its signed 32-bit range.
+  return number !== 0 && number >= -2147483648 && number <= 2147483647;
+}
+
 export function isBareGitConfig(configText: string): boolean {
   let inCore = false;
   let bare = false;
@@ -203,7 +218,7 @@ export function isBareGitConfig(configText: string): boolean {
     const match = /^bare\s*(?:=(.*)|[#;].*)?$/i.exec(line);
     if (match === null) continue;
     const value = match[1] === undefined ? "true" : parseGitConfigValue(match[1]).toLowerCase();
-    bare = value === "true" || value === "yes" || value === "on" || value === "1";
+    bare = isTrueGitConfigValue(value);
   }
   return bare;
 }
