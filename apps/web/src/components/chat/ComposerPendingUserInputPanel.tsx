@@ -262,7 +262,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     ? "Submitting…"
     : primaryAction && !primaryAction.isLastQuestion
       ? "Next"
-      : "Answer";
+      : prompt.questions.length > 1
+        ? "Submit answers"
+        : "Answer";
 
   return (
     <Collapsible
