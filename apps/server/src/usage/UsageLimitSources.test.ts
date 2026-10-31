@@ -10,9 +10,12 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -86,6 +89,76 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
         HttpClient.HttpClient,
         HttpClient.make(() => Effect.die("Unexpected network request")),
       ),
+      NodeCrypto.layer,
+    ]),
+    Effect.scoped,
+  ),
+);
+
+it.effect("reads the selected hub while an unrelated refresh is still waiting", () =>
+  Effect.gen(function* () {
+    const stalled = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const http = HttpClient.make((request) =>
+      Effect.gen(function* () {
+        if (new URL(request.url).hostname === "slow.test") {
+          yield* Deferred.succeed(stalled, undefined);
+          yield* Deferred.await(release);
+        }
+        const body = request.url.endsWith("/auth-files")
+          ? { files: [{ id: "account", auth_index: "one", provider: "claude" }] }
+          : {
+              status_code: 200,
+              body: JSON.stringify({
+                five_hour: { utilization: 100, resets_at: "2099-01-01T00:00:00.000Z" },
+              }),
+            };
+        return HttpClientResponse.fromWeb(request, Response.json(body));
+      }),
+    );
+    const sources = yield* UsageLimitSources.make.pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    yield* Deferred.await(stalled);
+    const fallback = yield* UsageLimitSources.UsageLimitResetFallback.pipe(
+      Effect.provide(UsageLimitSources.layerResetFallback),
+      Effect.provideService(UsageLimitSources.UsageLimitSources, sources),
+    );
+    const result = yield* fallback
+      .resetAt({
+        instanceId: ProviderInstanceId.make("proxy"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+      })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust("5 seconds");
+    expect(yield* Fiber.join(result)).toBe("2099-01-01T00:00:00.000Z");
+    expect(yield* Deferred.isDone(release)).toBe(false);
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        providerInstances: {
+          [ProviderInstanceId.make("proxy")]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            environment: [
+              { name: "ANTHROPIC_BASE_URL", value: "https://fast.test", sensitive: false },
+            ],
+          },
+        },
+        usageLimitSources: Object.fromEntries(
+          ["fast", "slow"].map((id) => [
+            id,
+            {
+              kind: "cliproxy" as const,
+              url: `https://${id}.test`,
+              managementKey: "key",
+              enabled: true,
+            },
+          ]),
+        ),
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
       NodeCrypto.layer,
     ]),
     Effect.scoped,

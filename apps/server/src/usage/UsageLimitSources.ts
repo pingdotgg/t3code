@@ -33,6 +33,9 @@ export class UsageLimitSources extends Context.Service<
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly refresh: Effect.Effect<void>;
+    readonly read: (
+      sourceIds: ReadonlySet<string>,
+    ) => Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
@@ -103,6 +106,19 @@ export const make = Effect.gen(function* () {
     yield* publish(snapshots);
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
+  // Targeted reads do not publish, so unrelated refreshes and redemptions keep cache ownership.
+  const read = Effect.fn("UsageLimitSources.read")(function* (sourceIds: ReadonlySet<string>) {
+    const settings = yield* settingsService.getSettings.pipe(Effect.option);
+    const entries = Object.entries(
+      settings._tag === "Some" ? settings.value.usageLimitSources : {},
+    ).filter(([id, config]) => sourceIds.has(id) && config.enabled);
+    return yield* Effect.forEach(
+      entries,
+      ([id, config]) => readSource(id as UsageLimitSourceId, config),
+      { concurrency: 4 },
+    );
+  });
+
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
   const consumeResetCredit = Effect.fn("UsageLimitSources.consumeResetCredit")(function* (
     input: UsageLimitSourceConsumeResetCreditInput,
@@ -154,6 +170,7 @@ export const make = Effect.gen(function* () {
 
   return {
     current: Ref.get(stateRef),
+    read,
     consumeResetCredit,
     refresh,
     get streamChanges() {
@@ -249,10 +266,11 @@ export const layerResetFallback = Layer.effect(
         const hubIds = instanceHubIds(settings.value, input.instanceId);
         if (hubIds.size === 0) return null;
         // The terminal waits on this read, so a slow hub falls back to its last snapshot.
-        yield* sources.refresh.pipe(Effect.timeoutOption("5 seconds"));
+        const refreshed = yield* sources.read(hubIds).pipe(Effect.timeoutOption("5 seconds"));
+        const snapshots = refreshed._tag === "Some" ? refreshed.value : yield* sources.current;
         const now = yield* DateTime.now;
         return hubPoolResetAt(
-          (yield* sources.current).filter((source) => hubIds.has(source.id)),
+          snapshots.filter((source) => hubIds.has(source.id)),
           input.driver,
           DateTime.toEpochMillis(now),
         );
