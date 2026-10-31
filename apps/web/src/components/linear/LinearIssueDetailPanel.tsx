@@ -27,7 +27,15 @@ import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { RelativeTime } from "../RelativeTime";
 import { Button } from "../ui/button";
 import { ButtonGroup } from "../ui/group";
-import { Menu, MenuGroupLabel, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import { Skeleton } from "../ui/skeleton";
 import { LinearActivityPill } from "./LinearActivityPill";
 import {
@@ -229,24 +237,26 @@ function LaunchControls({ issueId }: { issueId: string }) {
           <ChevronDownIcon aria-hidden className="size-3 text-muted-foreground/70" />
         </MenuTrigger>
         <MenuPopup align="start" side="bottom" className="min-w-60">
-          <MenuGroupLabel>Run pipeline</MenuGroupLabel>
-          {pipelines.length === 0 ? (
-            <MenuItem disabled>No pipelines yet</MenuItem>
-          ) : (
-            pipelines.map((pipeline) => (
-              <MenuItem
-                key={pipeline.id}
-                onClick={() => launch?.openPipelineDialog(issueId, pipeline.id)}
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate">{pipeline.name}</span>
-                  <span className="truncate text-2xs text-muted-foreground">
-                    {pipeline.steps.map((step) => step.name).join(" → ")}
+          <MenuGroup>
+            <MenuGroupLabel>Run pipeline</MenuGroupLabel>
+            {pipelines.length === 0 ? (
+              <MenuItem disabled>No pipelines yet</MenuItem>
+            ) : (
+              pipelines.map((pipeline) => (
+                <MenuItem
+                  key={pipeline.id}
+                  onClick={() => launch?.openPipelineDialog(issueId, pipeline.id)}
+                >
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate">{pipeline.name}</span>
+                    <span className="truncate text-2xs text-muted-foreground">
+                      {pipeline.steps.map((step) => step.name).join(" → ")}
+                    </span>
                   </span>
-                </span>
-              </MenuItem>
-            ))
-          )}
+                </MenuItem>
+              ))
+            )}
+          </MenuGroup>
           {pipelines.length > 0 ? <MenuSeparator /> : null}
           <MenuItem
             disabled={pipelines.length === 0}
